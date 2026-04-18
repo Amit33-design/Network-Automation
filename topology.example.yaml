@@ -1,0 +1,225 @@
+# GPU Cluster Fabric Topology — Example
+# 2-spine / 4-leaf spine-leaf with RoCEv2 lossless + VXLAN/EVPN
+#
+# Usage:
+#   gpu-net build    --topology topology.example.yaml --output-dir configs/
+#   gpu-net check    pre  --topology topology.example.yaml --mock
+#   gpu-net check    post --topology topology.example.yaml --mock
+#   gpu-net readiness     --topology topology.example.yaml --mock
+
+fabric:
+  name: gpu-cluster-dc1
+  underlay_asn_spine: 65000
+  underlay_asn_leaf_start: 65001
+  ntp_servers:
+    - 169.254.169.254
+
+  # ── RoCEv2 Lossless Config ────────────────────────────────────────────
+  rocev2:
+    pfc_priority: 3                   # IEEE 802.1p priority for RoCEv2
+    pfc_queues: [3]
+    ecn_min_threshold_bytes: 150000   # ~100 x 1500B packets
+    ecn_max_threshold_bytes: 1500000
+    ecn_probability: 100
+    dscp_rocev2: 26                   # DSCP 26 → CoS 3
+    mtu: 9216
+    pfc_watchdog_enabled: true
+    pfc_watchdog_interval_ms: 100
+    dcqcn_enabled: true
+
+  # ── VXLAN / EVPN Config ───────────────────────────────────────────────
+  vxlan:
+    vni_base: 10000
+    l2_vni: 10100                     # GPU cluster L2 VNI
+    l3_vni: 10200                     # VRF L3 VNI
+    vlan_id: 100
+    vrf_name: GPU-VRF
+    anycast_gw_mac: "0000.1111.2222"
+    anycast_gw_ip: "10.100.0.1/24"
+    multicast_group: null             # null = BGP ingress replication
+
+  # ── Spine Switches ────────────────────────────────────────────────────
+  spines:
+    - name: spine1
+      host: 10.0.0.1          # management IP
+      loopback0: 10.0.0.1/32
+      asn: 65000
+      platform: nxos
+      username: admin
+      password: "{{ vault_password }}"
+      uplink_interfaces:
+        - name: Ethernet1/1
+          description: TO-leaf1-Eth1/1
+          peer_device: leaf1
+          peer_interface: Ethernet1/1
+          speed: 100G
+        - name: Ethernet1/2
+          description: TO-leaf2-Eth1/1
+          peer_device: leaf2
+          peer_interface: Ethernet1/1
+          speed: 100G
+        - name: Ethernet1/3
+          description: TO-leaf3-Eth1/1
+          peer_device: leaf3
+          peer_interface: Ethernet1/1
+          speed: 100G
+        - name: Ethernet1/4
+          description: TO-leaf4-Eth1/1
+          peer_device: leaf4
+          peer_interface: Ethernet1/1
+          speed: 100G
+
+    - name: spine2
+      host: 10.0.0.2
+      loopback0: 10.0.0.2/32
+      asn: 65000
+      platform: nxos
+      username: admin
+      password: "{{ vault_password }}"
+      uplink_interfaces:
+        - name: Ethernet1/1
+          description: TO-leaf1-Eth1/2
+          peer_device: leaf1
+          peer_interface: Ethernet1/2
+          speed: 100G
+        - name: Ethernet1/2
+          description: TO-leaf2-Eth1/2
+          peer_device: leaf2
+          peer_interface: Ethernet1/2
+          speed: 100G
+        - name: Ethernet1/3
+          description: TO-leaf3-Eth1/2
+          peer_device: leaf3
+          peer_interface: Ethernet1/2
+          speed: 100G
+        - name: Ethernet1/4
+          description: TO-leaf4-Eth1/2
+          peer_device: leaf4
+          peer_interface: Ethernet1/2
+          speed: 100G
+
+  # ── Leaf Switches (VTEP + GPU ports) ─────────────────────────────────
+  leaves:
+    - name: leaf1
+      host: 10.0.0.11
+      loopback0: 10.0.0.11/32
+      vtep_loopback: 10.1.0.11/32
+      asn: 65001
+      platform: nxos
+      username: admin
+      password: "{{ vault_password }}"
+      vlan_id: 100
+      uplink_interfaces:
+        - name: Ethernet1/1
+          description: TO-spine1-Eth1/1
+          peer_device: spine1
+          peer_interface: Ethernet1/1
+          speed: 100G
+        - name: Ethernet1/2
+          description: TO-spine2-Eth1/1
+          peer_device: spine2
+          peer_interface: Ethernet1/1
+          speed: 100G
+      gpu_interfaces:
+        - name: Ethernet1/10
+          description: GPU-SERVER-01-Port0
+          speed: 100G
+        - name: Ethernet1/11
+          description: GPU-SERVER-01-Port1
+          speed: 100G
+        - name: Ethernet1/12
+          description: GPU-SERVER-02-Port0
+          speed: 100G
+        - name: Ethernet1/13
+          description: GPU-SERVER-02-Port1
+          speed: 100G
+
+    - name: leaf2
+      host: 10.0.0.12
+      loopback0: 10.0.0.12/32
+      vtep_loopback: 10.1.0.12/32
+      asn: 65002
+      platform: nxos
+      username: admin
+      password: "{{ vault_password }}"
+      vlan_id: 100
+      uplink_interfaces:
+        - name: Ethernet1/1
+          description: TO-spine1-Eth1/2
+          peer_device: spine1
+          peer_interface: Ethernet1/2
+          speed: 100G
+        - name: Ethernet1/2
+          description: TO-spine2-Eth1/2
+          peer_device: spine2
+          peer_interface: Ethernet1/2
+          speed: 100G
+      gpu_interfaces:
+        - name: Ethernet1/10
+          description: GPU-SERVER-03-Port0
+          speed: 100G
+        - name: Ethernet1/11
+          description: GPU-SERVER-03-Port1
+          speed: 100G
+        - name: Ethernet1/12
+          description: GPU-SERVER-04-Port0
+          speed: 100G
+        - name: Ethernet1/13
+          description: GPU-SERVER-04-Port1
+          speed: 100G
+
+    - name: leaf3
+      host: 10.0.0.13
+      loopback0: 10.0.0.13/32
+      vtep_loopback: 10.1.0.13/32
+      asn: 65003
+      platform: nxos
+      username: admin
+      password: "{{ vault_password }}"
+      vlan_id: 100
+      uplink_interfaces:
+        - name: Ethernet1/1
+          description: TO-spine1-Eth1/3
+          peer_device: spine1
+          peer_interface: Ethernet1/3
+          speed: 100G
+        - name: Ethernet1/2
+          description: TO-spine2-Eth1/3
+          peer_device: spine2
+          peer_interface: Ethernet1/3
+          speed: 100G
+      gpu_interfaces:
+        - name: Ethernet1/10
+          description: GPU-SERVER-05-Port0
+          speed: 100G
+        - name: Ethernet1/11
+          description: GPU-SERVER-05-Port1
+          speed: 100G
+
+    - name: leaf4
+      host: 10.0.0.14
+      loopback0: 10.0.0.14/32
+      vtep_loopback: 10.1.0.14/32
+      asn: 65004
+      platform: nxos
+      username: admin
+      password: "{{ vault_password }}"
+      vlan_id: 100
+      uplink_interfaces:
+        - name: Ethernet1/1
+          description: TO-spine1-Eth1/4
+          peer_device: spine1
+          peer_interface: Ethernet1/4
+          speed: 100G
+        - name: Ethernet1/2
+          description: TO-spine2-Eth1/4
+          peer_device: spine2
+          peer_interface: Ethernet1/4
+          speed: 100G
+      gpu_interfaces:
+        - name: Ethernet1/10
+          description: GPU-SERVER-06-Port0
+          speed: 100G
+        - name: Ethernet1/11
+          description: GPU-SERVER-06-Port1
+          speed: 100G
