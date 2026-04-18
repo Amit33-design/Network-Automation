@@ -1,0 +1,132 @@
+name: Network Automation CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  # ── Job 1: Unit Tests ────────────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov pyyaml jinja2
+
+      - name: Run port scanner tests
+        run: |
+          PYTHONPATH=. pytest tests/ -v --tb=short
+
+      - name: Run GPU cluster tests
+        run: |
+          PYTHONPATH=. pytest tests_gpu/ -v --tb=short
+
+      - name: Combined test run with coverage
+        run: |
+          PYTHONPATH=. pytest tests/ tests_gpu/ \
+            --cov=network_scanner \
+            --cov=gpu_cluster_net \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -q
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # ── Job 2: DC Readiness Dry-Run ──────────────────────────────────────
+  readiness-dry-run:
+    name: DC Readiness Dry-Run (mock)
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml jinja2
+
+      - name: Pre-deployment readiness check (mock)
+        run: |
+          PYTHONPATH=. python -m gpu_cluster_net.cli check pre \
+            --topology topology.example.yaml \
+            --mock \
+            -o pre-report.json -f json
+
+      - name: Post-deployment readiness check (mock)
+        run: |
+          PYTHONPATH=. python -m gpu_cluster_net.cli check post \
+            --topology topology.example.yaml \
+            --mock \
+            -o post-report.json -f json
+
+      - name: Generate HTML readiness report
+        run: |
+          PYTHONPATH=. python -m gpu_cluster_net.cli readiness \
+            --topology topology.example.yaml \
+            --phase both \
+            --mock \
+            -o dc-readiness -f html
+
+      - name: Upload readiness reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc-readiness-reports
+          path: |
+            pre-report.json
+            post-report.json
+            dc-readiness.pre.html
+            dc-readiness.post.html
+
+  # ── Job 3: Config Generation ─────────────────────────────────────────
+  config-build:
+    name: Generate Device Configs
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml jinja2
+
+      - name: Build NX-OS configs from topology
+        run: |
+          mkdir -p configs/
+          PYTHONPATH=. python -m gpu_cluster_net.cli build \
+            --topology topology.example.yaml \
+            --output-dir configs/
+          echo "Generated configs:"
+          ls -lh configs/
+
+      - name: Upload generated configs
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-configs
+          path: configs/
