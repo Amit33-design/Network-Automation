@@ -1,10 +1,13 @@
 """Tests for Fabric topology models."""
+from pathlib import Path
 import pytest
 from gpu_cluster_net.models import Fabric, Spine, Leaf, RoCEv2Config, VXLANConfig
 
+TOPOLOGY = Path(__file__).parent.parent / "topology.example.yaml"
+
 
 def _make_fabric() -> Fabric:
-    return Fabric.from_yaml("/home/user/Network-Automation/topology.example.yaml")
+    return Fabric.from_yaml(str(TOPOLOGY))
 
 
 def test_fabric_loads():

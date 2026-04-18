@@ -1,8 +1,11 @@
 """Tests for pre-deployment checks."""
+from pathlib import Path
 import pytest
 from gpu_cluster_net.checks.pre_deploy import PreDeployChecker
 from gpu_cluster_net.checks.base import CheckStatus
 from gpu_cluster_net.models import Fabric
+
+TOPOLOGY = Path(__file__).parent.parent / "topology.example.yaml"
 
 
 @pytest.fixture
@@ -12,7 +15,7 @@ def checker():
 
 @pytest.fixture
 def fabric():
-    return Fabric.from_yaml("/home/user/Network-Automation/topology.example.yaml")
+    return Fabric.from_yaml(str(TOPOLOGY))
 
 
 def test_interfaces_up_pass(checker):

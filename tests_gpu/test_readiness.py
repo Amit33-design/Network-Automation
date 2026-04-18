@@ -1,14 +1,17 @@
 """Tests for DCReadiness orchestrator and reporter."""
 import json
+from pathlib import Path
 import pytest
 from gpu_cluster_net.models import Fabric
 from gpu_cluster_net.readiness import DCReadiness
 from gpu_cluster_net import reporter
 
+TOPOLOGY = Path(__file__).parent.parent / "topology.example.yaml"
+
 
 @pytest.fixture
 def fabric():
-    return Fabric.from_yaml("/home/user/Network-Automation/topology.example.yaml")
+    return Fabric.from_yaml(str(TOPOLOGY))
 
 
 @pytest.fixture
