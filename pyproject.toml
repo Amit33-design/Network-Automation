@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "network-scanner"
+version = "1.0.0"
+description = "Network port scanner: TCP, UDP, HTTP, HTTPS across network segments"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.optional-dependencies]
+netifaces = ["netifaces>=0.11.0"]
+dev = ["pytest", "pytest-cov"]
+
+[project.scripts]
+netscan = "network_scanner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["network_scanner*"]
