@@ -40,11 +40,24 @@ vlans:
   - { id: 99,  name: MGMT,    gw: "10.100.0.1",    prefix: "10.100.0.0/24"   }
   - { id: 100, name: DMZ,     gw: "172.16.100.1",  prefix: "172.16.100.0/24" }
 
-# ── Passwords (override with vault in production) ─────────────
-vault_campus_password: "ChangeMe!"
-vault_dc_password:     "ChangeMe!"
-vault_gpu_password:    "ChangeMe!"
-vault_fw_password:     "ChangeMe!"
+# ── Passwords ─────────────────────────────────────────────────
+# Store real passwords with Ansible Vault:
+#   ansible-vault encrypt_string 'MySecret' --name 'vault_campus_password'
+# Then paste the !vault block here and remove the plaintext line.
+# See: https://docs.ansible.com/ansible/latest/user_guide/vault.html
+vault_campus_password: !vault |
+  # Replace with: ansible-vault encrypt_string 'yourpassword' --name 'vault_campus_password'
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_ENCRYPTED_VALUE
+vault_dc_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_ENCRYPTED_VALUE
+vault_gpu_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_ENCRYPTED_VALUE
+vault_fw_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_ENCRYPTED_VALUE
 
 # ── Deploy safety ─────────────────────────────────────────────
 confirm_commit_timer: 30     # seconds — NX-OS confirm-commit guard

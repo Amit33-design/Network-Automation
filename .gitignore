@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Secrets & credentials
+.env
+.env.local
+*.secret
+*_vault_pass*
+vault_password_file
+
+# Ansible
+*.retry
+playbooks/.vault_pass
+
+# Backups written by nornir_tasks.py
+/tmp/netdesign_backup_*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node (if build tools are ever added)
+node_modules/
+npm-debug.log*
+
+# Logs
+*.log
+nornir.log
