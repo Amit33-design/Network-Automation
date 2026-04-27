@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+
+  # ── NetDesign AI API backend ────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: netdesign-api
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - NORNIR_WORKERS=${NORNIR_WORKERS:-10}
+      - BACKUP_DIR=/tmp/netdesign_backups
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    env_file:
+      - ./backend/.env          # create from backend/.env.example
+    volumes:
+      - ./playbooks/inventory:/app/../playbooks/inventory:ro
+      - backups:/tmp/netdesign_backups
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # ── Static frontend (optional — or just open index.html) ────
+  frontend:
+    image: nginx:alpine
+    container_name: netdesign-frontend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./preview.svg:/usr/share/nginx/html/preview.svg:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  backups:

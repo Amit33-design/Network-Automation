@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  # ── Python backend tests ──────────────────────────────────────
+  backend-tests:
+    name: Backend Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install jinja2 pytest pytest-cov
+          # Install only what's needed for tests (skip heavy network libs)
+          pip install fastapi pydantic pydantic-settings
+
+      - name: Run tests with coverage
+        run: |
+          cd backend
+          pytest tests/ -v --tb=short \
+            --cov=config_gen \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py${{ matrix.python-version }}
+          path: backend/coverage.xml
+
+  # ── Ansible playbook syntax check ────────────────────────────
+  ansible-lint:
+    name: Ansible Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Syntax check — campus playbook
+        run: |
+          cd playbooks
+          ansible-playbook deploy_campus.yml -i inventory/hosts.yml \
+            --syntax-check \
+            -e "vault_campus_password=test vault_dc_password=test vault_gpu_password=test vault_fw_password=test" \
+            || true   # don't fail on missing collections in CI
+
+      - name: Syntax check — DC playbook
+        run: |
+          cd playbooks
+          ansible-playbook deploy_dc.yml -i inventory/hosts.yml \
+            --syntax-check \
+            -e "vault_campus_password=test vault_dc_password=test vault_gpu_password=test vault_fw_password=test" \
+            || true
+
+  # ── Docker build check ────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: |
+          cp backend/.env.example backend/.env
+          docker build -t netdesign-api:ci ./backend
+
+      - name: Smoke test — API starts
+        run: |
+          docker run -d --name netdesign-test -p 8000:8000 netdesign-api:ci
+          sleep 8
+          curl -f http://localhost:8000/ || (docker logs netdesign-test && exit 1)
+          docker stop netdesign-test

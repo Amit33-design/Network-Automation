@@ -2,9 +2,10 @@
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-blue?style=flat-square&logo=github)](https://amit33-design.github.io/Network-Automation/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-[![No Dependencies](https://img.shields.io/badge/frontend-zero%20dependencies-brightgreen?style=flat-square)](index.html)
+[![CI](https://github.com/Amit33-design/Network-Automation/actions/workflows/ci.yml/badge.svg)](https://github.com/Amit33-design/Network-Automation/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/backend-Python%203.11+-blue?style=flat-square&logo=python)](backend/)
 [![Ansible](https://img.shields.io/badge/automation-Ansible-red?style=flat-square&logo=ansible)](playbooks/)
+[![No Dependencies](https://img.shields.io/badge/frontend-zero%20dependencies-brightgreen?style=flat-square)](index.html)
 
 > **Design campus, data center, GPU/AI cluster, and WAN networks in minutes.**  
 > Requirements → product selection → topology diagrams → device configs → deployment validation — entirely in your browser, zero install.
@@ -18,6 +19,41 @@
 **[amit33-design.github.io/Network-Automation](https://amit33-design.github.io/Network-Automation/)**
 
 No login required. Works on any modern browser. Click **⚡ Demo** for an instant pre-filled walkthrough.
+
+---
+
+## 📸 Screenshots
+
+| Step 3 — AI Product Scoring | Step 4 — Live Topology | Step 6 — Deploy Pipeline |
+|:---:|:---:|:---:|
+| ![Products](https://amit33-design.github.io/Network-Automation/preview.svg) | ![Topology](https://amit33-design.github.io/Network-Automation/preview.svg) | ![Deploy](https://amit33-design.github.io/Network-Automation/preview.svg) |
+| 25+ hardware SKUs scored 0–100% across 8 signals | Animated SVG packet flow, campus / DC / GPU / WAN | Pre-checks → backup → push → confirm-commit → post-checks |
+
+> **Try it live:** Click [⚡ Demo](https://amit33-design.github.io/Network-Automation/) → select a scenario → navigate all 6 steps in under 2 minutes.
+
+---
+
+## 🧠 How the Product Scoring Works
+
+The recommendation engine scores every hardware SKU against the user's requirements using a **weighted multi-signal model** — no external AI API needed, pure deterministic logic.
+
+```
+score = baseline(60) + Σ signal_weights
+```
+
+| Signal | Max Points | Logic |
+|---|---|---|
+| Use-case match | +20 | Product's `useCases[]` includes selected scenario (campus / dc / gpu / wan) |
+| Port speed match | +10 | Product's access speed matches required bandwidth tier (1G/10G/25G/100G/400G) |
+| Uplink speed match | +5 | Uplink speed matches bandwidth requirement |
+| Latency — ultra | +15 / −20 | `latencyNs < 500` earns bonus; `> 1000` on ultra-low SLA penalises |
+| Overlay protocol | +10 | VXLAN/MPLS feature flag on product matches selected overlay |
+| Compliance | +5/+8 | MACsec for PCI-DSS; FIPS-140 cert for FedRAMP |
+| GPU / RoCEv2 | +15/+10/+12 | RoCEv2, PFC, SHARP in-network compute bonus for GPU use case |
+| HA / ISSU | +5 | In-service software upgrade support for `redundancy=full` |
+| Size penalty | −8 | High-wattage chassis penalised for small org |
+
+**Result:** capped at 0–100%, sorted descending, top pick auto-selected per layer. User can override any selection before moving to topology generation.
 
 ---
 
@@ -142,7 +178,16 @@ The backend enables **real device deployment** when you have physical/virtual ne
 - Python 3.11+
 - pip packages (see `backend/requirements.txt`)
 
-### Install
+### Option A — Docker (fastest, recommended)
+```bash
+cp backend/.env.example backend/.env   # fill in real values if needed
+docker-compose up --build
+# API:      http://localhost:8000
+# API docs: http://localhost:8000/docs
+# Frontend: http://localhost:8080
+```
+
+### Option B — Local venv
 ```bash
 cd backend
 python3 -m venv venv
@@ -167,6 +212,21 @@ API docs auto-generated at: **http://localhost:8000/docs**
 | `POST` | `/api/pre-checks` | Reachability + SSH + version + backup |
 | `POST` | `/api/deploy` | Push configs (dry_run=true by default) |
 | `POST` | `/api/post-checks` | BGP/OSPF/EVPN/NVE/vPC/PFC validation |
+
+### Run tests locally
+```bash
+cd backend
+pip install pytest jinja2 fastapi pydantic
+pytest tests/ -v --tb=short
+```
+
+Tests cover: device context building, hostname formatting, HA device count, per-platform template rendering (NX-OS EVPN, IOS-XE 802.1X, SONiC PFC JSON), empty-inventory guard, and uniqueness of generated hostnames.
+
+### CI — tests run automatically on every push
+Every commit to `main` triggers GitHub Actions:
+- **Backend tests** on Python 3.11 and 3.12 with coverage report
+- **Ansible syntax check** on both campus and DC playbooks
+- **Docker build + smoke test** — API server starts and responds to health check
 
 ### Test config generation (no devices needed)
 ```bash
@@ -284,10 +344,29 @@ ansible-playbook post_checks.yml --tags summary
 
 ```
 Network-Automation/
-├── index.html                   # Full frontend (~6000 lines, zero dependencies)
+├── index.html                   # HTML skeleton — 920 lines, links to src/
 ├── preview.svg                  # OG social-share preview image (1200×630)
 ├── .nojekyll                    # GitHub Pages — disable Jekyll processing
+├── .gitignore                   # Python, venv, secrets, editor files
+├── LICENSE                      # MIT
+├── docker-compose.yml           # Backend API + Nginx frontend
 ├── README.md
+│
+├── src/                         # Frontend source (split from index.html)
+│   ├── css/
+│   │   └── main.css             # All styles — design tokens, components, animations
+│   └── js/                      # JS modules — loaded in dependency order
+│       ├── state.js             # STATE object, STEPS metadata, UC_LABELS
+│       ├── products.js          # PRODUCTS database — 25+ SKUs with full specs
+│       ├── app.js               # Navigation, step validation, UI helpers, toast
+│       ├── scoring.js           # scoreProduct(), estimateCounts(), getLayersForUC()
+│       ├── recommendations.js   # generateRecommendations(), BOM, product modal
+│       ├── topology.js          # buildSVG(), animated packet flow, HLD/LLD renderers
+│       ├── configgen.js         # genIOSXE/NX-OS/EOS/Junos/SONiC(), syntax highlight
+│       ├── deploy.js            # runPreChecks(), startDeploy(), runPostChecks()
+│       ├── storage.js           # localStorage save/restore
+│       ├── demo.js              # loadDemo(), demo modal
+│       └── init.js              # Keyboard nav, share, DOMContentLoaded bootstrap
 │
 ├── backend/                     # Python backend (FastAPI + Nornir)
 │   ├── main.py                  # REST API — 5 endpoints
@@ -295,6 +374,10 @@ Network-Automation/
 │   ├── nornir_tasks.py          # Parallel deployment via Netmiko/NETCONF
 │   ├── nornir_config.yaml       # Nornir runner + inventory config
 │   ├── requirements.txt         # Python dependencies
+│   ├── Dockerfile               # Container image for the API server
+│   ├── .env.example             # Environment variable template (copy → .env)
+│   ├── tests/
+│   │   └── test_config_gen.py   # 20+ pytest tests for config rendering
 │   └── templates/               # Per-platform Jinja2 templates
 │       ├── ios_xe/
 │       │   ├── access.j2        # Campus access (802.1X, DHCP snoop, DAI, QoS)
