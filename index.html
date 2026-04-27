@@ -4,6 +4,26 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NetDesign AI — Intelligent Network Design Platform</title>
+
+  <!-- SEO & Social sharing -->
+  <meta name="description" content="AI-powered network design platform. Define requirements, get hardware recommendations, auto-generate HLD/LLD topology diagrams, device configs, and run pre/post deployment checks." />
+  <meta name="author" content="NetDesign AI" />
+  <meta name="theme-color" content="#0a0e1a" />
+
+  <!-- Open Graph (LinkedIn, Slack, WhatsApp, iMessage) -->
+  <meta property="og:type"        content="website" />
+  <meta property="og:title"       content="NetDesign AI — Intelligent Network Design Platform" />
+  <meta property="og:description" content="Design campus, data center, GPU/AI cluster, and WAN networks in minutes. Auto-generates topology diagrams, Cisco/Arista/Juniper configs, IP plans, and validates deployments." />
+  <meta property="og:url"         content="https://amit33-design.github.io/Network-Automation/" />
+  <meta property="og:image"       content="https://amit33-design.github.io/Network-Automation/preview.png" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card"        content="summary_large_image" />
+  <meta name="twitter:title"       content="NetDesign AI — Intelligent Network Design Platform" />
+  <meta name="twitter:description" content="AI-powered: requirements → product selection → HLD/LLD diagrams → Cisco/Arista configs → deployment checks. All in the browser." />
+
+  <!-- Favicon (inline SVG) -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230a0e1a'/><text y='.9em' font-size='80' x='10'>🌐</text></svg>" />
   <style>
     /* ─── Design Tokens ─────────────────────────────────────────────── */
     :root {
@@ -545,6 +565,101 @@
       border-radius: var(--radius);
     }
     @keyframes shimmer { to { background-position: -200% 0; } }
+
+    /* ── Demo modal open state ───────────────────────────────────── */
+    #demo-modal.open { display: flex !important; }
+
+    /* ── Mobile responsive overrides ────────────────────────────── */
+    @media (max-width: 600px) {
+      #header { padding: 0 .85rem; gap: .65rem; height: 56px; }
+      .logo-text { display: none; }
+      #progress-bar .step-dot span:not(.num) { display: none; }
+      #app { padding: 1rem .85rem 5rem; }
+      .cards-grid { grid-template-columns: 1fr 1fr; }
+      .form-grid, .form-grid.three { grid-template-columns: 1fr; }
+      .span2, .span3 { grid-column: span 1; }
+      .layout-with-aside { grid-template-columns: 1fr; }
+      .sidebar-card { position: static; }
+      .cfg-layout { grid-template-columns: 1fr; }
+      .dev-list-card { position: static; }
+      #bottom-nav { padding: .65rem 1rem; }
+      .btn-lg { padding: .65rem 1.25rem; font-size: .875rem; }
+      #demo-modal > div { grid-template-columns: 1fr !important; }
+      .score-row { gap: .5rem; }
+      .score-box { padding: .75rem 1rem; }
+      .score-box .sb-num { font-size: 1.5rem; }
+    }
+    @media (max-width: 480px) {
+      .cards-grid { grid-template-columns: 1fr; }
+      .prod-grid  { grid-template-columns: 1fr; }
+      .check-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── Header logo responsive ──────────────────────────────────── */
+    #logo .ico { flex-shrink: 0; }
+
+    /* ── Smooth step panel fade ──────────────────────────────────── */
+    .step-panel { transition: opacity .15s ease; }
+    .step-panel:not(.active) { pointer-events: none; }
+
+    /* ── Focus ring for accessibility ────────────────────────────── */
+    :focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    /* ── Better scrollbar in config viewer ───────────────────────── */
+    #cfg-code-area::-webkit-scrollbar { width: 8px; height: 8px; }
+    #cfg-code-area::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 4px; }
+
+    /* ── Print stylesheet ────────────────────────────────────────── */
+    @media print {
+      #header, #bottom-nav, #toast-area, .export-bar,
+      .cfg-actions, .design-tabs, .vendor-tabs, #deploy-action-bar { display: none !important; }
+      body { background: white; color: black; }
+      .step-panel { display: block !important; }
+      .svg-wrap, .lld-table-wrap, .form-card { break-inside: avoid; }
+    }
+
+    /* ── Step connector progress animation ───────────────────────── */
+    .step-connector { transition: background .5s ease; }
+    .step-dot .num  { transition: background .3s ease, box-shadow .3s ease; }
+
+    /* ── Use card selected glow pulse ────────────────────────────── */
+    .use-card.selected { animation: glow-pulse 2.5s ease infinite; }
+
+    /* ── Subtle grid background on hero area ─────────────────────── */
+    #step-1::before {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none; z-index: -1;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 48px 48px;
+      opacity: .18;
+    }
+
+    /* ── Section number badge ────────────────────────────────────── */
+    .step-panel > .section-head .label {
+      display: inline-flex; align-items: center; gap: .4rem;
+    }
+    .step-panel > .section-head .label::before {
+      content: '';
+      display: inline-block; width: 6px; height: 6px;
+      border-radius: 50%; background: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan);
+    }
+
+    /* ── Chip hover active color ─────────────────────────────────── */
+    .chip.on { animation: none; }
+
+    /* ── Card enter animation stagger ────────────────────────────── */
+    .use-card:nth-child(1) { animation-delay: .05s; }
+    .use-card:nth-child(2) { animation-delay: .10s; }
+    .use-card:nth-child(3) { animation-delay: .15s; }
+    .use-card:nth-child(4) { animation-delay: .20s; }
+    .use-card:nth-child(5) { animation-delay: .25s; }
 
     /* ══════════════════════════════════════════════════════════════
        PART 4 — Configuration Generator Styles
@@ -1188,16 +1303,78 @@
 <!-- ── Toast area ──────────────────────────────────────────────────── -->
 <div id="toast-area"></div>
 
+<!-- ── Demo picker modal ───────────────────────────────────────────── -->
+<div id="demo-modal" onclick="if(event.target===this)closeDemoModal()"
+  style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.8);
+  backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:1.5rem">
+  <div style="background:var(--bg2);border:1px solid var(--border-hi);border-radius:16px;
+    width:100%;max-width:640px;box-shadow:var(--shadow);animation:fadeUp .25s ease">
+    <div style="padding:1.5rem 1.75rem;border-bottom:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:1.15rem;font-weight:700">⚡ Try a Demo</div>
+        <div style="font-size:.8rem;color:var(--txt2);margin-top:.25rem">Pre-filled design you can walk through in 60 seconds</div>
+      </div>
+      <button onclick="closeDemoModal()" style="background:none;border:none;color:var(--txt2);
+        font-size:1.3rem;cursor:pointer;padding:.25rem .5rem">✕</button>
+    </div>
+    <div style="padding:1.5rem 1.75rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
+      <div onclick="loadDemo('dc')" style="cursor:pointer;background:var(--bg3);border:1px solid var(--border);
+        border-radius:12px;padding:1.25rem;text-align:center;transition:all .2s"
+        onmouseover="this.style.borderColor='var(--green)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="font-size:2rem;margin-bottom:.5rem">🗄️</div>
+        <div style="font-weight:700;font-size:.9rem">Data Center</div>
+        <div style="font-size:.72rem;color:var(--txt2);margin-top:.3rem">800 hosts · Leaf-Spine · VXLAN EVPN</div>
+        <div style="margin-top:.75rem"><span class="badge badge-purple">Cisco NX-OS</span></div>
+      </div>
+      <div onclick="loadDemo('gpu')" style="cursor:pointer;background:var(--bg3);border:1px solid var(--border);
+        border-radius:12px;padding:1.25rem;text-align:center;transition:all .2s"
+        onmouseover="this.style.borderColor='var(--orange)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="font-size:2rem;margin-bottom:.5rem">⚡</div>
+        <div style="font-weight:700;font-size:.9rem">GPU / AI Cluster</div>
+        <div style="font-size:.72rem;color:var(--txt2);margin-top:.3rem">128 GPUs · 400G · RoCEv2 PFC</div>
+        <div style="margin-top:.75rem"><span class="badge badge-orange">NVIDIA SONiC</span></div>
+      </div>
+      <div onclick="loadDemo('campus')" style="cursor:pointer;background:var(--bg3);border:1px solid var(--border);
+        border-radius:12px;padding:1.25rem;text-align:center;transition:all .2s"
+        onmouseover="this.style.borderColor='var(--blue)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="font-size:2rem;margin-bottom:.5rem">🏢</div>
+        <div style="font-weight:700;font-size:.9rem">Campus LAN</div>
+        <div style="font-size:.72rem;color:var(--txt2);margin-top:.3rem">5000 users · 4 sites · 802.1X</div>
+        <div style="margin-top:.75rem"><span class="badge badge-blue">Cisco IOS-XE</span></div>
+      </div>
+    </div>
+    <div style="padding:.85rem 1.75rem;border-top:1px solid var(--border);
+      font-size:.75rem;color:var(--txt2);text-align:center">
+      Demo data pre-fills Steps 1 &amp; 2 — you then click through to see topology, configs &amp; deployment
+    </div>
+  </div>
+</div>
+
 <!-- ── Header ─────────────────────────────────────────────────────── -->
 <header id="header">
   <div id="logo">
     <div class="ico">🌐</div>
-    Net<span>Design</span> AI
+    <span class="logo-text">Net<span>Design</span> AI</span>
   </div>
 
   <nav id="progress-bar" role="navigation" aria-label="Design steps">
     <!-- Rendered by JS -->
   </nav>
+
+  <div style="display:flex;align-items:center;gap:.5rem;flex-shrink:0">
+    <button class="btn btn-ghost" onclick="openDemoModal()"
+      style="padding:.35rem .85rem;font-size:.75rem;display:flex;align-items:center;gap:.35rem">
+      ⚡ Demo
+    </button>
+    <button class="btn btn-ghost" onclick="sharePage()"
+      style="padding:.35rem .85rem;font-size:.75rem;display:flex;align-items:center;gap:.35rem"
+      title="Copy shareable link">
+      🔗 Share
+    </button>
+    <button class="btn btn-ghost" onclick="showKeyboardHelp()"
+      style="padding:.35rem .6rem;font-size:.8rem" title="Keyboard shortcuts (?)">⌨</button>
+  </div>
 </header>
 
 <!-- ── Main App ────────────────────────────────────────────────────── -->
@@ -2000,7 +2177,7 @@
 const STATE = {
   step: 1,
   totalSteps: 6,
-  uc: null,           // selected use case key
+  uc: null,
   industry: null,
   orgName: '',
   orgSize: '',
@@ -2022,6 +2199,7 @@ const STATE = {
   automation: '',
   gpuSpecifics: [],
   extraNotes: '',
+  selectedProducts: {},   // layerKey → prodId
 };
 
 /* ── Step metadata ───────────────────────────────────────────────── */
@@ -2868,7 +3046,6 @@ function renderProdCard(prod, score, rank, layerKey) {
 
 /* ── Render all recommendations ─────────────────────────────────── */
 const STATE_RECS = {};     // layerKey → sorted [{ prod, score }]
-if (!STATE.selectedProducts) STATE.selectedProducts = {};
 
 function generateRecommendations() {
   const layers   = getLayersForUC();
@@ -3080,12 +3257,14 @@ function regenerateRecs() {
   toast('Recommendations refreshed', 'info');
 }
 
-/* ── Hook into step navigation ──────────────────────────────────── */
-const _origJumpStep = jumpStep;
+/* ── Step hook: single consolidated handler ─────────────────────── */
+const _coreJumpStep = jumpStep;
 window.jumpStep = function(n) {
-  _origJumpStep(n);
+  _coreJumpStep(n);
   if (n === 3) setTimeout(generateRecommendations, 80);
   if (n === 4) setTimeout(buildDesign, 80);
+  if (n === 5) setTimeout(renderDeviceList, 80);
+  saveStateLS();
 };
 
 /* ════════════════════════════════════════════════════════════════
@@ -5197,12 +5376,7 @@ function highlight(code, os) {
   return out.join('\n');
 }
 
-/* ── Hook step 5 ────────────────────────────────────────────────── */
-const _origJumpStep2 = window.jumpStep;
-window.jumpStep = function(n) {
-  _origJumpStep2(n);
-  if (n === 5) setTimeout(renderDeviceList, 80);
-};
+/* step 5 trigger is handled by the consolidated jumpStep hook above */
 
 /* ════════════════════════════════════════════════════════════════
    PART 5 — Deploy & Validate Engine
@@ -5484,6 +5658,256 @@ function resetDeploy() {
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ════════════════════════════════════════════════════════════════
+   POLISH — localStorage, Demo Mode, Keyboard Nav, Share
+════════════════════════════════════════════════════════════════ */
+
+/* ── localStorage persistence ───────────────────────────────────── */
+const LS_KEY = 'netdesign_ai_state_v1';
+
+function saveStateLS() {
+  try {
+    const snap = {
+      uc: STATE.uc, industry: STATE.industry,
+      orgName: document.getElementById('org-name')?.value || STATE.orgName,
+      orgSize: STATE.orgSize, numSites: STATE.numSites,
+      redundancy: STATE.redundancy, traffic: STATE.traffic,
+      totalHosts: STATE.totalHosts, bwPerServer: STATE.bwPerServer,
+      oversub: STATE.oversub,
+      underlayProto: STATE.underlayProto, overlayProto: STATE.overlayProto,
+      protoFeatures: STATE.protoFeatures, fwModel: STATE.fwModel,
+      vpnType: STATE.vpnType, compliance: STATE.compliance,
+      nac: STATE.nac, appTypes: STATE.appTypes,
+      latencySla: STATE.latencySla, automation: STATE.automation,
+      gpuSpecifics: STATE.gpuSpecifics, extraNotes: STATE.extraNotes,
+      selectedProducts: STATE.selectedProducts,
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(snap));
+  } catch(e) {}
+}
+
+function restoreStateLS() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    Object.assign(STATE, s);
+    applyRestoredState();
+    return true;
+  } catch(e) { return false; }
+}
+
+function applyRestoredState() {
+  // Use case cards
+  if (STATE.uc) {
+    document.querySelectorAll('.use-card').forEach(c => {
+      if (c.dataset.uc === STATE.uc) c.classList.add('selected');
+    });
+  }
+  // Industry
+  if (STATE.industry) {
+    document.querySelectorAll('.industry-chip').forEach(c => {
+      if (c.dataset.val === STATE.industry) c.classList.add('on');
+    });
+  }
+  // Text fields
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+  setVal('org-name',      STATE.orgName);
+  setVal('org-size',      STATE.orgSize);
+  setVal('num-sites',     STATE.numSites);
+  setVal('redundancy',    STATE.redundancy);
+  setVal('total-hosts',   STATE.totalHosts);
+  setVal('bw-per-server', STATE.bwPerServer);
+  setVal('fw-model',      STATE.fwModel);
+  setVal('vpn-type',      STATE.vpnType);
+  setVal('latency-sla',   STATE.latencySla);
+  setVal('automation',    STATE.automation);
+  setVal('extra-notes',   STATE.extraNotes);
+  if (STATE.oversub) {
+    const sl = document.getElementById('oversub');
+    if (sl) { sl.value = STATE.oversub; document.getElementById('oversub-val').textContent = STATE.oversub + ':1'; }
+  }
+  // Traffic segment
+  if (STATE.traffic) {
+    const trMap = { ns:0, ew:1, both:2 };
+    const idx = trMap[STATE.traffic] ?? 0;
+    document.querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('active', i === idx));
+  }
+  // Chip groups
+  const chipMap = {
+    'underlay-proto': STATE.underlayProto, 'overlay-proto': STATE.overlayProto,
+    'compliance': STATE.compliance, 'nac': STATE.nac,
+    'app-types': STATE.appTypes, 'gpu-specifics': STATE.gpuSpecifics,
+  };
+  Object.entries(chipMap).forEach(([id, vals]) => {
+    if (!vals?.length) return;
+    document.querySelectorAll(`#${id} .chip`).forEach(c => {
+      if (vals.includes(c.textContent.trim())) c.classList.add('on');
+    });
+  });
+  // Proto features
+  if (STATE.protoFeatures?.length) {
+    document.querySelectorAll('.proto-card').forEach(c => {
+      if (STATE.protoFeatures.includes(c.textContent.trim())) c.classList.add('on');
+    });
+  }
+  updateSummary();
+}
+
+/* ── Demo mode ──────────────────────────────────────────────────── */
+function loadDemo(ucKey) {
+  // Clear existing
+  localStorage.removeItem(LS_KEY);
+  document.querySelectorAll('.use-card').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('on'));
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+  document.querySelectorAll('.proto-card').forEach(c => c.classList.remove('on'));
+
+  const demos = {
+    dc: {
+      uc:'dc', industry:'technology', orgName:'Acme Cloud Corp', orgSize:'large',
+      numSites:'2', redundancy:'ha', traffic:'ew', totalHosts:'800',
+      bwPerServer:'25g', oversub:3, fwModel:'perimeter',
+      vpnType:'ztna', latencySla:'low', automation:'ansible',
+      underlayProto:['BGP'], overlayProto:['VXLAN / EVPN'],
+      protoFeatures:['IPv6 Dual-Stack','BFD Fast Failover','ECMP Load Balancing','Anycast Gateway','VRF / Tenant separation'],
+      compliance:['SOC 2'], nac:['DHCP snooping','Dynamic ARP inspection'],
+      appTypes:['Web / HTTP(S)','Database (SQL/NoSQL)','Object Storage (S3 / Ceph)','Kubernetes / containers'],
+      gpuSpecifics:[], extraNotes:'Multi-tenant DC fabric for cloud workloads. VXLAN EVPN with BGP spine-leaf.',
+    },
+    gpu: {
+      uc:'gpu', industry:'technology', orgName:'AI Research Lab', orgSize:'enterprise',
+      numSites:'1', redundancy:'full', traffic:'ew', totalHosts:'128',
+      bwPerServer:'400g', oversub:1, fwModel:'perimeter',
+      vpnType:'ztna', latencySla:'ultra', automation:'netconf',
+      underlayProto:['BGP'], overlayProto:['None'],
+      protoFeatures:['ECMP Load Balancing','BFD Fast Failover'],
+      compliance:[], nac:['DHCP snooping'],
+      appTypes:['AI / ML training','HPC / MPI','Object Storage (S3 / Ceph)'],
+      gpuSpecifics:['RoCEv2 (Ethernet)','Priority Flow Control (PFC)','ECN / DCQCN','Rail-optimized topology'],
+      extraNotes:'H100 GPU cluster — 16 racks × 8 GPUs. Rail-optimized RoCEv2 fabric with SHARP.',
+    },
+    campus: {
+      uc:'campus', industry:'education', orgName:'State University', orgSize:'large',
+      numSites:'4', redundancy:'ha', traffic:'ns', totalHosts:'5000',
+      bwPerServer:'1g', oversub:8, fwModel:'perimeter',
+      vpnType:'ssl', latencySla:'best-effort', automation:'ansible',
+      underlayProto:['OSPF'], overlayProto:['None'],
+      protoFeatures:['IPv6 Dual-Stack','Multicast (PIM-SM)','QoS / DSCP','VRF / Tenant separation'],
+      compliance:[], nac:['802.1X (wired)','802.1X (wireless)','MAB fallback','DHCP snooping','Dynamic ARP inspection'],
+      appTypes:['Web / HTTP(S)','Voice / UC','Video streaming'],
+      gpuSpecifics:[], extraNotes:'Multi-building university campus with 4 buildings. 802.1X NAC with ISE.',
+    },
+  };
+
+  const d = demos[ucKey] || demos.dc;
+  Object.assign(STATE, d, { step: STATE.step, selectedProducts: {} });
+
+  // Apply to DOM
+  document.querySelectorAll('.use-card').forEach(c => {
+    if (c.dataset.uc === d.uc) c.classList.add('selected');
+  });
+  document.querySelectorAll('.industry-chip').forEach(c => {
+    if (c.dataset.val === d.industry) c.classList.add('on');
+  });
+
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+  setVal('org-name', d.orgName); setVal('org-size', d.orgSize);
+  setVal('num-sites', d.numSites); setVal('redundancy', d.redundancy);
+  setVal('total-hosts', d.totalHosts); setVal('bw-per-server', d.bwPerServer);
+  setVal('fw-model', d.fwModel); setVal('vpn-type', d.vpnType);
+  setVal('latency-sla', d.latencySla); setVal('automation', d.automation);
+  setVal('extra-notes', d.extraNotes);
+  const sl = document.getElementById('oversub');
+  if (sl) { sl.value = d.oversub; document.getElementById('oversub-val').textContent = d.oversub + ':1'; }
+
+  const chipMap = {
+    'underlay-proto': d.underlayProto, 'overlay-proto': d.overlayProto,
+    'compliance': d.compliance, 'nac': d.nac,
+    'app-types': d.appTypes, 'gpu-specifics': d.gpuSpecifics,
+  };
+  Object.entries(chipMap).forEach(([id, vals]) => {
+    document.querySelectorAll(`#${id} .chip`).forEach(c => {
+      c.classList.toggle('on', vals.includes(c.textContent.trim()));
+    });
+  });
+  document.querySelectorAll('.proto-card').forEach(c => {
+    c.classList.toggle('on', d.protoFeatures.includes(c.textContent.trim()));
+  });
+  const trIdx = { ns:0, ew:1, both:2 }[d.traffic] ?? 0;
+  document.querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('active', i === trIdx));
+
+  updateSummary();
+  closeDemoModal();
+  toast(`Demo loaded: ${d.orgName} — click Continue to see the full design`, 'success', 5000);
+}
+
+/* ── Demo modal ─────────────────────────────────────────────────── */
+function openDemoModal() {
+  document.getElementById('demo-modal').classList.add('open');
+}
+function closeDemoModal() {
+  document.getElementById('demo-modal').classList.remove('open');
+}
+
+/* ── Keyboard navigation ────────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'ArrowRight' || e.key === 'Enter' && e.ctrlKey) goStep(1);
+  if (e.key === 'ArrowLeft')  goStep(-1);
+  if (e.key === '?' || e.key === 'h') showKeyboardHelp();
+  if (e.key === 'Escape') {
+    closeDemoModal();
+    document.getElementById('modal-overlay')?.classList.remove('open');
+    document.getElementById('kb-help')?.remove();
+  }
+});
+
+function showKeyboardHelp() {
+  const existing = document.getElementById('kb-help');
+  if (existing) { existing.remove(); return; }
+  const d = document.createElement('div');
+  d.id = 'kb-help';
+  d.style.cssText = `position:fixed;bottom:5rem;right:1.5rem;z-index:500;
+    background:var(--bg2);border:1px solid var(--border-hi);border-radius:10px;
+    padding:1rem 1.25rem;font-size:.78rem;min-width:200px;box-shadow:var(--shadow);
+    animation:fadeUp .2s ease`;
+  d.innerHTML = `<div style="font-weight:700;margin-bottom:.6rem;color:var(--cyan)">⌨ Keyboard Shortcuts</div>
+    <div style="color:var(--txt2);display:grid;grid-template-columns:auto 1fr;gap:.3rem .85rem">
+      <kbd style="font-family:monospace;color:var(--txt0)">→</kbd><span>Next step</span>
+      <kbd style="font-family:monospace;color:var(--txt0)">←</kbd><span>Previous step</span>
+      <kbd style="font-family:monospace;color:var(--txt0)">Esc</kbd><span>Close modals</span>
+      <kbd style="font-family:monospace;color:var(--txt0)">?</kbd><span>Toggle this help</span>
+    </div>`;
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 4000);
+}
+
+/* ── Share button ───────────────────────────────────────────────── */
+function sharePage() {
+  const url = window.location.href;
+  if (navigator.share) {
+    navigator.share({ title: 'NetDesign AI', text: 'AI-powered network design platform', url })
+      .catch(() => {});
+  } else {
+    navigator.clipboard.writeText(url).then(() => toast('Link copied to clipboard!', 'success'));
+  }
+}
+
+/* ── Init: restore saved state or show welcome ──────────────────── */
+window.addEventListener('DOMContentLoaded', () => {
+  const restored = restoreStateLS();
+  if (restored && STATE.uc) {
+    toast('Previous session restored — pick up where you left off', 'info', 4000);
+  }
+});
+
+/* Auto-save on form changes */
+['org-name','org-size','num-sites','redundancy','total-hosts','bw-per-server',
+ 'fw-model','vpn-type','latency-sla','automation','extra-notes'].forEach(id => {
+  document.getElementById(id)?.addEventListener('change', saveStateLS);
+});
 </script>
 
 </body>
