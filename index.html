@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NetDesign AI — Intelligent Network Design Platform</title>
+  <style>
+    /* ─── Design Tokens ─────────────────────────────────────────────── */
+    :root {
+      --bg0:        #060b18;
+      --bg1:        #0c1226;
+      --bg2:        #101a34;
+      --bg3:        #182040;
+      --bg4:        #1e2a50;
+      --border:     #1e3060;
+      --border-hi:  #2a4a90;
+
+      --blue:       #1a7fff;
+      --blue-dim:   #0f4fa0;
+      --cyan:       #00d4ff;
+      --cyan-dim:   #007a99;
+      --green:      #00e87a;
+      --green-dim:  #007a42;
+      --orange:     #ff8c00;
+      --orange-dim: #7a4400;
+      --red:        #ff3355;
+      --red-dim:    #7a1a2a;
+      --purple:     #9955ff;
+      --purple-dim: #4a2a88;
+      --yellow:     #ffd000;
+
+      --txt0:  #e8f0ff;
+      --txt1:  #9aadd0;
+      --txt2:  #5a6e99;
+      --txt3:  #2e3d60;
+
+      --radius:  8px;
+      --radius2: 14px;
+      --shadow:  0 4px 24px rgba(0,0,0,.5);
+      --glow-b:  0 0 20px rgba(26,127,255,.25);
+      --glow-c:  0 0 20px rgba(0,212,255,.25);
+      --glow-g:  0 0 20px rgba(0,232,122,.25);
+    }
+
+    /* ─── Reset & Base ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 15px; scroll-behavior: smooth; }
+    body {
+      background: var(--bg0);
+      color: var(--txt0);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      line-height: 1.55;
+    }
+    input, select, textarea, button { font-family: inherit; }
+    ::selection { background: var(--blue-dim); color: var(--txt0); }
+
+    /* ─── Scrollbar ─────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg1); }
+    ::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 3px; }
+
+    /* ─── Animations ─────────────────────────────────────────────────  */
+    @keyframes fadeUp   { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:none; } }
+    @keyframes pulse    { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    @keyframes spin     { to { transform:rotate(360deg); } }
+    @keyframes glow-pulse {
+      0%,100% { box-shadow: 0 0 8px rgba(26,127,255,.3); }
+      50%      { box-shadow: 0 0 22px rgba(26,127,255,.7); }
+    }
+    @keyframes dash     { to { stroke-dashoffset: 0; } }
+    @keyframes flow {
+      0%   { stroke-dashoffset: 40; }
+      100% { stroke-dashoffset: 0; }
+    }
+
+    /* ─── Header ─────────────────────────────────────────────────────── */
+    #header {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(6,11,24,.92);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex; align-items: center; gap: 1.5rem;
+      height: 60px;
+    }
+    #logo {
+      display: flex; align-items: center; gap: .6rem;
+      font-size: 1.15rem; font-weight: 700; letter-spacing: -.02em;
+      white-space: nowrap;
+    }
+    #logo .ico {
+      width: 30px; height: 30px;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .9rem;
+    }
+    #logo span { color: var(--cyan); }
+
+    /* Progress Steps */
+    #progress-bar {
+      flex: 1;
+      display: flex; align-items: center; gap: 0;
+      overflow-x: auto;
+    }
+    .step-item {
+      display: flex; align-items: center; gap: 0;
+      flex-shrink: 0;
+    }
+    .step-dot {
+      display: flex; align-items: center; gap: .45rem;
+      padding: .3rem .6rem;
+      border-radius: 20px;
+      font-size: .75rem; font-weight: 600;
+      color: var(--txt2);
+      cursor: pointer;
+      transition: all .25s;
+      white-space: nowrap;
+    }
+    .step-dot .num {
+      width: 22px; height: 22px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .7rem; font-weight: 700;
+      background: var(--bg3); border: 1px solid var(--border);
+      flex-shrink: 0; transition: all .25s;
+    }
+    .step-dot.active  { color: var(--txt0); }
+    .step-dot.active .num  { background: var(--blue); border-color: var(--blue); box-shadow: var(--glow-b); }
+    .step-dot.done    { color: var(--green); }
+    .step-dot.done .num    { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+    .step-connector {
+      width: 28px; height: 2px;
+      background: var(--border);
+      flex-shrink: 0;
+      transition: background .4s;
+    }
+    .step-connector.done { background: var(--green-dim); }
+
+    /* Badge */
+    .badge {
+      display: inline-flex; align-items: center;
+      padding: .15rem .55rem;
+      border-radius: 20px; font-size: .7rem; font-weight: 600;
+      letter-spacing: .03em;
+    }
+    .badge-blue   { background: var(--blue-dim);   color: var(--cyan);  }
+    .badge-green  { background: var(--green-dim);  color: var(--green); }
+    .badge-orange { background: var(--orange-dim); color: var(--orange); }
+    .badge-purple { background: var(--purple-dim); color: var(--purple); }
+    .badge-red    { background: var(--red-dim);    color: var(--red);   }
+
+    /* ─── Layout ─────────────────────────────────────────────────────── */
+    #app {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 5rem;
+    }
+
+    /* ─── Step Panels ────────────────────────────────────────────────── */
+    .step-panel {
+      display: none;
+      animation: fadeUp .35s ease both;
+    }
+    .step-panel.active { display: block; }
+
+    /* ─── Section Header ─────────────────────────────────────────────── */
+    .section-head {
+      margin-bottom: 2rem;
+    }
+    .section-head .label {
+      font-size: .7rem; font-weight: 700; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--cyan);
+      margin-bottom: .4rem;
+    }
+    .section-head h2 {
+      font-size: 1.75rem; font-weight: 700;
+      letter-spacing: -.03em; line-height: 1.2;
+    }
+    .section-head p {
+      color: var(--txt1); margin-top: .5rem; max-width: 640px;
+    }
+
+    /* ─── Cards Grid ─────────────────────────────────────────────────── */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 1rem;
+    }
+    .use-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius2);
+      padding: 1.5rem;
+      cursor: pointer;
+      transition: all .25s;
+      position: relative;
+      overflow: hidden;
+    }
+    .use-card::before {
+      content: '';
+      position: absolute; inset: 0;
+      opacity: 0;
+      transition: opacity .25s;
+    }
+    .use-card:hover { border-color: var(--border-hi); transform: translateY(-2px); }
+    .use-card.selected {
+      border-color: var(--blue);
+      box-shadow: var(--glow-b);
+    }
+    .use-card .card-icon {
+      width: 48px; height: 48px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.5rem; margin-bottom: 1rem;
+    }
+    .use-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: .35rem; }
+    .use-card p  { font-size: .8rem; color: var(--txt1); line-height: 1.45; }
+    .use-card .card-tags { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .85rem; }
+    .check-mark {
+      position: absolute; top: .85rem; right: .85rem;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--blue); display: none;
+      align-items: center; justify-content: center;
+      font-size: .65rem; color: #fff;
+    }
+    .use-card.selected .check-mark { display: flex; }
+
+    /* ─── Form Layout ────────────────────────────────────────────────── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+    .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+    .form-grid.full  { grid-template-columns: 1fr; }
+    @media (max-width: 680px) {
+      .form-grid, .form-grid.three { grid-template-columns: 1fr; }
+    }
+    .span2 { grid-column: span 2; }
+    .span3 { grid-column: span 3; }
+
+    .form-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius2);
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .form-card-head {
+      display: flex; align-items: center; gap: .65rem;
+      margin-bottom: 1.25rem;
+      padding-bottom: .85rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .form-card-head .ico {
+      width: 32px; height: 32px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem; flex-shrink: 0;
+    }
+    .form-card-head h3 { font-size: .95rem; font-weight: 700; }
+    .form-card-head p  { font-size: .75rem; color: var(--txt1); }
+
+    /* ─── Form Controls ──────────────────────────────────────────────── */
+    .field { display: flex; flex-direction: column; gap: .4rem; }
+    .field label {
+      font-size: .75rem; font-weight: 600;
+      color: var(--txt1); letter-spacing: .04em;
+    }
+    .field label span { color: var(--red); margin-left: 2px; }
+
+    input[type=text],
+    input[type=number],
+    input[type=email],
+    select,
+    textarea {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--txt0);
+      padding: .6rem .85rem;
+      font-size: .875rem;
+      width: 100%;
+      transition: border-color .2s, box-shadow .2s;
+      outline: none;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(26,127,255,.15);
+    }
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235a6e99'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right .85rem center;
+      padding-right: 2.2rem;
+      cursor: pointer;
+    }
+    textarea { resize: vertical; min-height: 90px; }
+    input[type=number] { -moz-appearance: textfield; }
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+    .field-hint { font-size: .7rem; color: var(--txt2); margin-top: .1rem; }
+
+    /* Toggle chip group */
+    .chip-group { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .chip {
+      padding: .35rem .85rem;
+      border-radius: 20px; font-size: .78rem; font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--bg3);
+      color: var(--txt1); cursor: pointer;
+      transition: all .2s; user-select: none;
+    }
+    .chip:hover { border-color: var(--border-hi); color: var(--txt0); }
+    .chip.on {
+      background: var(--blue-dim);
+      border-color: var(--blue);
+      color: var(--cyan);
+    }
+    .chip.on-green {
+      background: var(--green-dim);
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    /* Range slider */
+    .range-wrap { display: flex; align-items: center; gap: .85rem; }
+    input[type=range] {
+      flex: 1; -webkit-appearance: none; appearance: none;
+      height: 4px; background: var(--bg4); border-radius: 2px;
+      border: none; padding: 0; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--blue); cursor: pointer;
+      box-shadow: 0 0 8px rgba(26,127,255,.5);
+    }
+    .range-val {
+      min-width: 40px; text-align: right;
+      font-size: .8rem; font-weight: 700; color: var(--cyan);
+    }
+
+    /* Segmented control */
+    .seg-ctrl {
+      display: flex; border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+      background: var(--bg3);
+    }
+    .seg-btn {
+      flex: 1; padding: .5rem .75rem;
+      font-size: .78rem; font-weight: 600;
+      color: var(--txt2); background: none; border: none;
+      cursor: pointer; transition: all .2s;
+      white-space: nowrap;
+    }
+    .seg-btn:hover { color: var(--txt0); }
+    .seg-btn.active {
+      background: var(--blue-dim);
+      color: var(--cyan);
+    }
+
+    /* ─── Summary Sidebar ─────────────────────────────────────────────  */
+    .layout-with-aside {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 1.5rem;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .layout-with-aside { grid-template-columns: 1fr; }
+    }
+    .sidebar-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius2); padding: 1.25rem;
+      position: sticky; top: 76px;
+    }
+    .sidebar-card h4 {
+      font-size: .8rem; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--txt2);
+      margin-bottom: 1rem;
+    }
+    .summary-row {
+      display: flex; justify-content: space-between;
+      align-items: center; gap: .5rem;
+      padding: .5rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: .8rem;
+    }
+    .summary-row:last-child { border-bottom: none; }
+    .summary-row .key { color: var(--txt2); }
+    .summary-row .val { font-weight: 600; color: var(--txt0); text-align: right; }
+
+    /* ─── Buttons ────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .65rem 1.4rem;
+      border-radius: var(--radius); border: none;
+      font-size: .875rem; font-weight: 600;
+      cursor: pointer; transition: all .2s;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: var(--blue);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #2288ff; box-shadow: var(--glow-b); }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--txt1);
+    }
+    .btn-ghost:hover { border-color: var(--border-hi); color: var(--txt0); }
+    .btn-danger { background: var(--red-dim); color: var(--red); border: 1px solid var(--red-dim); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+
+    .btn-lg { padding: .85rem 2rem; font-size: 1rem; border-radius: 10px; }
+
+    /* ─── Bottom Nav ─────────────────────────────────────────────────── */
+    #bottom-nav {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 90;
+      background: rgba(6,11,24,.95); backdrop-filter: blur(16px);
+      border-top: 1px solid var(--border);
+      padding: .85rem 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem;
+    }
+    #bottom-nav .left  { display: flex; align-items: center; gap: 1rem; }
+    #bottom-nav .right { display: flex; align-items: center; gap: .75rem; }
+    #step-info { font-size: .8rem; color: var(--txt2); }
+    #step-info strong { color: var(--txt0); }
+
+    /* ─── Divider ────────────────────────────────────────────────────── */
+    .divider {
+      height: 1px; background: var(--border);
+      margin: 1.5rem 0;
+    }
+    .divider-label {
+      display: flex; align-items: center; gap: .85rem;
+      margin: 1.5rem 0; color: var(--txt2); font-size: .75rem;
+      font-weight: 600; text-transform: uppercase; letter-spacing: .08em;
+    }
+    .divider-label::before,
+    .divider-label::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+
+    /* ─── Notifications ──────────────────────────────────────────────── */
+    #toast-area {
+      position: fixed; top: 70px; right: 1.5rem; z-index: 999;
+      display: flex; flex-direction: column; gap: .5rem;
+    }
+    .toast {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: .75rem 1rem;
+      font-size: .82rem; color: var(--txt0);
+      box-shadow: var(--shadow);
+      animation: fadeUp .25s ease;
+      display: flex; align-items: center; gap: .6rem;
+      min-width: 260px;
+    }
+    .toast.success { border-color: var(--green-dim); }
+    .toast.error   { border-color: var(--red-dim); }
+    .toast.info    { border-color: var(--blue-dim); }
+
+    /* ─── Highlight box ──────────────────────────────────────────────── */
+    .info-box {
+      background: var(--bg2); border-left: 3px solid var(--blue);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: .85rem 1rem; font-size: .82rem;
+      color: var(--txt1); margin: 1rem 0;
+    }
+    .info-box strong { color: var(--txt0); }
+
+    /* ─── Collapsible section ────────────────────────────────────────── */
+    .collapsible-head {
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; padding: .75rem 0;
+      user-select: none;
+    }
+    .collapsible-head h4 { font-size: .9rem; font-weight: 700; }
+    .collapsible-arrow { transition: transform .25s; }
+    .collapsible-head.open .collapsible-arrow { transform: rotate(180deg); }
+    .collapsible-body { overflow: hidden; }
+
+    /* ─── Use-Case color themes ──────────────────────────────────────── */
+    [data-uc=campus]  .card-icon { background: rgba(26,127,255,.15); }
+    [data-uc=dc]      .card-icon { background: rgba(153,85,255,.15); }
+    [data-uc=hybrid]  .card-icon { background: rgba(0,232,122,.15); }
+    [data-uc=gpu]     .card-icon { background: rgba(255,140,0,.15);  }
+    [data-uc=wan]     .card-icon { background: rgba(0,212,255,.15);  }
+
+    /* ─── Step 1 specific ────────────────────────────────────────────── */
+    .industry-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: .65rem;
+    }
+    .industry-chip {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: .75rem;
+      cursor: pointer; transition: all .2s;
+      display: flex; flex-direction: column; align-items: center; gap: .4rem;
+      font-size: .78rem; font-weight: 600; color: var(--txt1);
+      text-align: center;
+    }
+    .industry-chip .ic { font-size: 1.4rem; }
+    .industry-chip:hover { border-color: var(--border-hi); color: var(--txt0); }
+    .industry-chip.on {
+      border-color: var(--blue); color: var(--cyan);
+      background: rgba(26,127,255,.1);
+    }
+
+    /* ─── Step 2 specific ────────────────────────────────────────────── */
+    .protocol-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: .65rem;
+    }
+    .proto-card {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: .75rem 1rem;
+      cursor: pointer; transition: all .2s;
+      display: flex; align-items: center; gap: .65rem;
+      font-size: .82rem; font-weight: 600; color: var(--txt1);
+    }
+    .proto-card .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--border); flex-shrink: 0;
+      transition: background .2s;
+    }
+    .proto-card:hover { border-color: var(--border-hi); color: var(--txt0); }
+    .proto-card.on {
+      border-color: var(--cyan-dim); color: var(--cyan);
+      background: rgba(0,212,255,.07);
+    }
+    .proto-card.on .dot { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+
+    /* ─── Skeleton / Loading ─────────────────────────────────────────── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--bg3) 25%, var(--bg4) 50%, var(--bg3) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.6s infinite;
+      border-radius: var(--radius);
+    }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+  </style>
+</head>
+<body>
+
+<!-- ── Toast area ──────────────────────────────────────────────────── -->
+<div id="toast-area"></div>
+
+<!-- ── Header ─────────────────────────────────────────────────────── -->
+<header id="header">
+  <div id="logo">
+    <div class="ico">🌐</div>
+    Net<span>Design</span> AI
+  </div>
+
+  <nav id="progress-bar" role="navigation" aria-label="Design steps">
+    <!-- Rendered by JS -->
+  </nav>
+</header>
+
+<!-- ── Main App ────────────────────────────────────────────────────── -->
+<main id="app">
+
+  <!-- ══════════════════════════════════════════════════════════════
+       STEP 1 — Use Case
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="step-1" class="step-panel active">
+
+    <div class="section-head">
+      <div class="label">Step 1 of 6</div>
+      <h2>What are you building?</h2>
+      <p>Select your primary network use case. This shapes every product recommendation, topology, and configuration generated throughout the design.</p>
+    </div>
+
+    <!-- Use-case cards -->
+    <div class="cards-grid" id="uc-cards" style="margin-bottom:2rem">
+
+      <div class="use-card" data-uc="campus" onclick="selectUC(this)">
+        <div class="check-mark">✓</div>
+        <div class="card-icon">🏢</div>
+        <h3>Campus / Enterprise LAN</h3>
+        <p>Multi-floor or multi-building campus network with wired and wireless access, distribution, and core layers.</p>
+        <div class="card-tags">
+          <span class="badge badge-blue">Access</span>
+          <span class="badge badge-blue">Distribution</span>
+          <span class="badge badge-blue">Core</span>
+          <span class="badge badge-blue">Wi-Fi</span>
+        </div>
+      </div>
+
+      <div class="use-card" data-uc="dc" onclick="selectUC(this)">
+        <div class="check-mark">✓</div>
+        <div class="card-icon">🗄️</div>
+        <h3>Data Center Fabric</h3>
+        <p>Modern leaf-spine CLOS fabric for east-west traffic, VXLAN/EVPN overlay, and high-density server connectivity.</p>
+        <div class="card-tags">
+          <span class="badge badge-purple">Spine</span>
+          <span class="badge badge-purple">Leaf</span>
+          <span class="badge badge-purple">VXLAN</span>
+          <span class="badge badge-purple">EVPN</span>
+        </div>
+      </div>
+
+      <div class="use-card" data-uc="gpu" onclick="selectUC(this)">
+        <div class="check-mark">✓</div>
+        <div class="card-icon">⚡</div>
+        <h3>AI / GPU Cluster</h3>
+        <p>Ultra-low latency GPU interconnect with RoCEv2, lossless fabric, InfiniBand, and dedicated storage network.</p>
+        <div class="card-tags">
+          <span class="badge badge-orange">TOR</span>
+          <span class="badge badge-orange">RoCEv2</span>
+          <span class="badge badge-orange">PFC</span>
+          <span class="badge badge-orange">400G</span>
+        </div>
+      </div>
+
+      <div class="use-card" data-uc="hybrid" onclick="selectUC(this)">
+        <div class="check-mark">✓</div>
+        <div class="card-icon">🔗</div>
+        <h3>Hybrid (Campus + DC)</h3>
+        <p>Full-stack design combining campus access and a co-located or on-prem data center under a unified fabric.</p>
+        <div class="card-tags">
+          <span class="badge badge-green">Campus</span>
+          <span class="badge badge-green">DC</span>
+          <span class="badge badge-green">DCI</span>
+          <span class="badge badge-green">BGP</span>
+        </div>
+      </div>
+
+      <div class="use-card" data-uc="wan" onclick="selectUC(this)">
+        <div class="check-mark">✓</div>
+        <div class="card-icon">🌍</div>
+        <h3>WAN / SD-WAN</h3>
+        <p>Multi-site WAN with SD-WAN overlay, MPLS underlay, direct internet breakout, and ZTP-provisioned CPE.</p>
+        <div class="card-tags">
+          <span class="badge badge-blue">SD-WAN</span>
+          <span class="badge badge-blue">MPLS</span>
+          <span class="badge badge-blue">ZTP</span>
+          <span class="badge badge-blue">VRF</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Organization details -->
+    <div class="form-card">
+      <div class="form-card-head">
+        <div class="ico" style="background:rgba(26,127,255,.15)">🏛️</div>
+        <div>
+          <h3>Organization Details</h3>
+          <p>Helps calibrate scale, redundancy, and compliance requirements</p>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Organization name <span>*</span></label>
+          <input type="text" id="org-name" placeholder="Acme Corporation" />
+        </div>
+        <div class="field">
+          <label>Primary contact</label>
+          <input type="text" id="contact" placeholder="Jane Smith, Network Architect" />
+        </div>
+        <div class="field">
+          <label>Organization size <span>*</span></label>
+          <select id="org-size">
+            <option value="">— select —</option>
+            <option value="small">Small (&lt;100 users)</option>
+            <option value="medium">Medium (100–1,000)</option>
+            <option value="large">Large (1,000–10,000)</option>
+            <option value="enterprise">Enterprise (10,000+)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Number of sites / locations</label>
+          <input type="number" id="num-sites" placeholder="e.g. 3" min="1" max="999" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Industry -->
+    <div class="form-card">
+      <div class="form-card-head">
+        <div class="ico" style="background:rgba(0,212,255,.15)">🏭</div>
+        <div>
+          <h3>Industry Vertical</h3>
+          <p>Activates vertical-specific compliance and default security posture</p>
+        </div>
+      </div>
+      <div class="industry-grid" id="industry-grid">
+        <div class="industry-chip" data-val="finance"       onclick="toggleIndustry(this)"><span class="ic">💰</span>Financial</div>
+        <div class="industry-chip" data-val="healthcare"    onclick="toggleIndustry(this)"><span class="ic">🏥</span>Healthcare</div>
+        <div class="industry-chip" data-val="education"     onclick="toggleIndustry(this)"><span class="ic">🎓</span>Education</div>
+        <div class="industry-chip" data-val="technology"    onclick="toggleIndustry(this)"><span class="ic">💻</span>Technology</div>
+        <div class="industry-chip" data-val="manufacturing" onclick="toggleIndustry(this)"><span class="ic">🏗️</span>Manufacturing</div>
+        <div class="industry-chip" data-val="retail"        onclick="toggleIndustry(this)"><span class="ic">🛒</span>Retail</div>
+        <div class="industry-chip" data-val="government"    onclick="toggleIndustry(this)"><span class="ic">🏛️</span>Government</div>
+        <div class="industry-chip" data-val="media"         onclick="toggleIndustry(this)"><span class="ic">📡</span>Media / Telecom</div>
+        <div class="industry-chip" data-val="energy"        onclick="toggleIndustry(this)"><span class="ic">⚡</span>Energy / Utilities</div>
+        <div class="industry-chip" data-val="other"         onclick="toggleIndustry(this)"><span class="ic">🔧</span>Other</div>
+      </div>
+    </div>
+
+  </section><!-- /step-1 -->
+
+
+  <!-- ══════════════════════════════════════════════════════════════
+       STEP 2 — Requirements
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="step-2" class="step-panel">
+
+    <div class="section-head">
+      <div class="label">Step 2 of 6</div>
+      <h2>Network Requirements</h2>
+      <p>Define scale, topology, protocols, security, and application flows. The more detail you provide, the more accurate the generated design.</p>
+    </div>
+
+    <div class="layout-with-aside">
+      <div id="req-forms">
+
+        <!-- ── Topology & Scale ── -->
+        <div class="form-card">
+          <div class="form-card-head">
+            <div class="ico" style="background:rgba(26,127,255,.15)">📐</div>
+            <div><h3>Topology &amp; Scale</h3><p>Physical and logical sizing parameters</p></div>
+          </div>
+          <div class="form-grid">
+
+            <div class="field">
+              <label>Redundancy model <span>*</span></label>
+              <select id="redundancy">
+                <option value="">— select —</option>
+                <option value="none">No redundancy (PoC / Lab)</option>
+                <option value="basic">Basic (single uplinks)</option>
+                <option value="ha">High Availability (dual uplinks, ECMP)</option>
+                <option value="full">Full Redundancy (dual planes, no SPOF)</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Traffic pattern</label>
+              <div class="seg-ctrl" style="margin-top:.1rem">
+                <button class="seg-btn active" onclick="segSelect(this,'traffic','ns')">North-South</button>
+                <button class="seg-btn" onclick="segSelect(this,'traffic','ew')">East-West</button>
+                <button class="seg-btn" onclick="segSelect(this,'traffic','both')">Both</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Total endpoints (hosts / VMs)</label>
+              <input type="number" id="total-hosts" placeholder="e.g. 2000" min="1" />
+            </div>
+
+            <div class="field">
+              <label>Peak bandwidth per server</label>
+              <select id="bw-per-server">
+                <option value="">— select —</option>
+                <option value="1g">1 GbE</option>
+                <option value="10g">10 GbE</option>
+                <option value="25g">25 GbE</option>
+                <option value="100g">100 GbE</option>
+                <option value="400g">400 GbE</option>
+              </select>
+            </div>
+
+            <div class="field span2">
+              <label>Oversubscription ratio</label>
+              <div class="range-wrap">
+                <input type="range" id="oversub" min="1" max="10" value="3" step="1"
+                  oninput="document.getElementById('oversub-val').textContent=this.value+':1'" />
+                <span class="range-val" id="oversub-val">3:1</span>
+              </div>
+              <div class="field-hint">1:1 = non-blocking; 3:1 typical DC; 8:1 typical campus access</div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ── Routing & Overlay ── -->
+        <div class="form-card">
+          <div class="form-card-head">
+            <div class="ico" style="background:rgba(153,85,255,.15)">🔀</div>
+            <div><h3>Routing &amp; Overlay Protocols</h3><p>Select all that apply to your environment</p></div>
+          </div>
+
+          <div class="form-grid">
+            <div class="field span2">
+              <label>Underlay routing protocol <span>*</span></label>
+              <div class="chip-group" id="underlay-proto">
+                <div class="chip" onclick="toggleChip(this)">BGP</div>
+                <div class="chip" onclick="toggleChip(this)">OSPF</div>
+                <div class="chip" onclick="toggleChip(this)">IS-IS</div>
+                <div class="chip" onclick="toggleChip(this)">EIGRP</div>
+                <div class="chip" onclick="toggleChip(this)">Static</div>
+              </div>
+            </div>
+            <div class="field span2">
+              <label>Overlay / tunnelling</label>
+              <div class="chip-group" id="overlay-proto">
+                <div class="chip" onclick="toggleChip(this)">VXLAN / EVPN</div>
+                <div class="chip" onclick="toggleChip(this)">MPLS / SR</div>
+                <div class="chip" onclick="toggleChip(this)">GRE</div>
+                <div class="chip" onclick="toggleChip(this)">IPsec</div>
+                <div class="chip" onclick="toggleChip(this)">GENEVE</div>
+                <div class="chip" onclick="toggleChip(this)">None</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="divider-label">Additional routing features</div>
+
+          <div class="protocol-grid" id="proto-features">
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>IPv6 Dual-Stack</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>Multicast (PIM-SM)</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>QoS / DSCP</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>BFD Fast Failover</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>Route Reflectors</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>Policy Routing (PBR)</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>VRF / Tenant separation</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>Anycast Gateway</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>ECMP Load Balancing</div>
+            <div class="proto-card" onclick="toggleProto(this)"><span class="dot"></span>FlowSpec / BGP-FS</div>
+          </div>
+        </div>
+
+        <!-- ── Security Requirements ── -->
+        <div class="form-card">
+          <div class="form-card-head">
+            <div class="ico" style="background:rgba(255,51,85,.15)">🔒</div>
+            <div><h3>Security Requirements</h3><p>Firewall placement, access control, and compliance</p></div>
+          </div>
+          <div class="form-grid">
+
+            <div class="field">
+              <label>Firewall deployment model</label>
+              <select id="fw-model">
+                <option value="">— select —</option>
+                <option value="perimeter">Perimeter only</option>
+                <option value="distributed">Perimeter + distributed</option>
+                <option value="microseg">Full micro-segmentation</option>
+                <option value="none">No firewall (lab / internal)</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Remote access VPN</label>
+              <select id="vpn-type">
+                <option value="">— select —</option>
+                <option value="ipsec">IPsec IKEv2</option>
+                <option value="ssl">SSL/TLS (AnyConnect)</option>
+                <option value="ztna">ZTNA / Zero Trust</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+
+            <div class="field span2">
+              <label>Compliance frameworks</label>
+              <div class="chip-group" id="compliance">
+                <div class="chip" onclick="toggleChip(this)">PCI-DSS</div>
+                <div class="chip" onclick="toggleChip(this)">HIPAA</div>
+                <div class="chip" onclick="toggleChip(this)">SOC 2</div>
+                <div class="chip" onclick="toggleChip(this)">FedRAMP</div>
+                <div class="chip" onclick="toggleChip(this)">ISO 27001</div>
+                <div class="chip" onclick="toggleChip(this)">NIST CSF</div>
+                <div class="chip" onclick="toggleChip(this)">None</div>
+              </div>
+            </div>
+
+            <div class="field span2">
+              <label>Network access control</label>
+              <div class="chip-group" id="nac">
+                <div class="chip" onclick="toggleChip(this)">802.1X (wired)</div>
+                <div class="chip" onclick="toggleChip(this)">802.1X (wireless)</div>
+                <div class="chip" onclick="toggleChip(this)">MAB fallback</div>
+                <div class="chip" onclick="toggleChip(this)">DDoS mitigation</div>
+                <div class="chip" onclick="toggleChip(this)">Port security</div>
+                <div class="chip" onclick="toggleChip(this)">DHCP snooping</div>
+                <div class="chip" onclick="toggleChip(this)">Dynamic ARP inspection</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ── Application Flows ── -->
+        <div class="form-card">
+          <div class="form-card-head">
+            <div class="ico" style="background:rgba(0,232,122,.15)">📊</div>
+            <div><h3>Application Flows &amp; Services</h3><p>Tell us what applications traverse this network</p></div>
+          </div>
+          <div class="form-grid">
+
+            <div class="field span2">
+              <label>Application types</label>
+              <div class="chip-group" id="app-types">
+                <div class="chip" onclick="toggleChip(this)">Web / HTTP(S)</div>
+                <div class="chip" onclick="toggleChip(this)">Database (SQL/NoSQL)</div>
+                <div class="chip" onclick="toggleChip(this)">Object Storage (S3 / Ceph)</div>
+                <div class="chip" onclick="toggleChip(this)">Block Storage (iSCSI / NVMe-oF)</div>
+                <div class="chip" onclick="toggleChip(this)">Fibre Channel (FC/FCoE)</div>
+                <div class="chip" onclick="toggleChip(this)">Video streaming</div>
+                <div class="chip" onclick="toggleChip(this)">Voice / UC</div>
+                <div class="chip" onclick="toggleChip(this)">AI / ML training</div>
+                <div class="chip" onclick="toggleChip(this)">HPC / MPI</div>
+                <div class="chip" onclick="toggleChip(this)">Kubernetes / containers</div>
+                <div class="chip" onclick="toggleChip(this)">SD-WAN overlay</div>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Latency SLA (µs — microseconds)</label>
+              <select id="latency-sla">
+                <option value="">— select —</option>
+                <option value="best-effort">Best effort (&gt;1 ms)</option>
+                <option value="low">Low latency (&lt;500 µs)</option>
+                <option value="ultra">Ultra-low (&lt;5 µs — GPU/HPC)</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Automation / provisioning</label>
+              <select id="automation">
+                <option value="">— select —</option>
+                <option value="manual">Manual (CLI only)</option>
+                <option value="ansible">Ansible</option>
+                <option value="terraform">Terraform / OpenTofu</option>
+                <option value="netconf">NETCONF / RESTCONF</option>
+                <option value="napalm">NAPALM</option>
+                <option value="nso">Cisco NSO</option>
+              </select>
+            </div>
+
+            <div class="field span2">
+              <label>GPU cluster specifics <span style="color:var(--txt2);font-weight:400">(if applicable)</span></label>
+              <div class="chip-group" id="gpu-specifics">
+                <div class="chip" onclick="toggleChip(this)">InfiniBand (IB)</div>
+                <div class="chip" onclick="toggleChip(this)">RoCEv2 (Ethernet)</div>
+                <div class="chip" onclick="toggleChip(this)">Priority Flow Control (PFC)</div>
+                <div class="chip" onclick="toggleChip(this)">ECN / DCQCN</div>
+                <div class="chip" onclick="toggleChip(this)">Rail-optimized topology</div>
+                <div class="chip" onclick="toggleChip(this)">NVLink / NVSwitch</div>
+              </div>
+            </div>
+
+            <div class="field span2">
+              <label>Additional notes / special requirements</label>
+              <textarea id="extra-notes" placeholder="Describe any specific constraints, existing infrastructure, vendor preferences, or application flows not covered above…"></textarea>
+            </div>
+
+          </div>
+        </div>
+
+      </div><!-- /req-forms -->
+
+      <!-- Sidebar summary -->
+      <aside>
+        <div class="sidebar-card">
+          <h4>Design Summary</h4>
+          <div id="summary-rows">
+            <div class="summary-row"><span class="key">Use case</span><span class="val" id="sum-uc">—</span></div>
+            <div class="summary-row"><span class="key">Org size</span><span class="val" id="sum-size">—</span></div>
+            <div class="summary-row"><span class="key">Sites</span><span class="val" id="sum-sites">—</span></div>
+            <div class="summary-row"><span class="key">Redundancy</span><span class="val" id="sum-red">—</span></div>
+            <div class="summary-row"><span class="key">Traffic</span><span class="val" id="sum-traffic">North-South</span></div>
+            <div class="summary-row"><span class="key">Endpoints</span><span class="val" id="sum-hosts">—</span></div>
+            <div class="summary-row"><span class="key">Bandwidth</span><span class="val" id="sum-bw">—</span></div>
+            <div class="summary-row"><span class="key">Overlay</span><span class="val" id="sum-overlay">—</span></div>
+            <div class="summary-row"><span class="key">Firewall</span><span class="val" id="sum-fw">—</span></div>
+            <div class="summary-row"><span class="key">Compliance</span><span class="val" id="sum-comp">—</span></div>
+            <div class="summary-row"><span class="key">Automation</span><span class="val" id="sum-auto">—</span></div>
+          </div>
+          <div style="margin-top:1rem">
+            <div class="info-box" style="margin:0">
+              <strong>Tip:</strong> Selections here directly drive which hardware SKUs and configs appear in later steps.
+            </div>
+          </div>
+        </div>
+      </aside>
+
+    </div><!-- /layout-with-aside -->
+
+  </section><!-- /step-2 -->
+
+
+  <!-- ══════════════════════════════════════════════════════════════
+       STEPS 3–6 placeholders (built in subsequent parts)
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="step-3" class="step-panel">
+    <div class="section-head">
+      <div class="label">Step 3 of 6</div>
+      <h2>Product Selection</h2>
+      <p>Recommended hardware SKUs — <strong>coming in Part 2</strong>.</p>
+    </div>
+    <div class="info-box">Hardware recommendation engine will be built in Part 2 of this project.</div>
+  </section>
+
+  <section id="step-4" class="step-panel">
+    <div class="section-head">
+      <div class="label">Step 4 of 6</div>
+      <h2>Network Design (HLD / LLD)</h2>
+      <p>SVG topology diagrams — <strong>coming in Part 3</strong>.</p>
+    </div>
+    <div class="info-box">HLD/LLD topology diagrams will be built in Part 3 of this project.</div>
+  </section>
+
+  <section id="step-5" class="step-panel">
+    <div class="section-head">
+      <div class="label">Step 5 of 6</div>
+      <h2>Configuration Generator</h2>
+      <p>Per-device config output — <strong>coming in Part 4</strong>.</p>
+    </div>
+    <div class="info-box">Configuration generation engine will be built in Part 4 of this project.</div>
+  </section>
+
+  <section id="step-6" class="step-panel">
+    <div class="section-head">
+      <div class="label">Step 6 of 6</div>
+      <h2>Deploy &amp; Validate</h2>
+      <p>Pre/post checks and deployment — <strong>coming in Part 5</strong>.</p>
+    </div>
+    <div class="info-box">Deployment terminal and pre/post check dashboard will be built in Part 5 of this project.</div>
+  </section>
+
+</main><!-- /app -->
+
+<!-- ── Bottom Navigation ───────────────────────────────────────────── -->
+<nav id="bottom-nav">
+  <div class="left">
+    <div id="step-info">
+      Step <strong id="cur-step-label">1</strong> of <strong>6</strong>
+      &mdash; <span id="cur-step-name">Use Case</span>
+    </div>
+  </div>
+  <div class="right">
+    <button class="btn btn-ghost" id="btn-back" onclick="goStep(-1)" disabled>← Back</button>
+    <button class="btn btn-primary" id="btn-next" onclick="goStep(1)">Continue →</button>
+  </div>
+</nav>
+
+<!-- ════════════════════════════════════════════════════════════════
+     JavaScript — State, Navigation, UI Logic
+════════════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+/* ── App State ───────────────────────────────────────────────────── */
+const STATE = {
+  step: 1,
+  totalSteps: 6,
+  uc: null,           // selected use case key
+  industry: null,
+  orgName: '',
+  orgSize: '',
+  numSites: '',
+  redundancy: '',
+  traffic: 'ns',
+  totalHosts: '',
+  bwPerServer: '',
+  oversub: 3,
+  underlayProto: [],
+  overlayProto: [],
+  protoFeatures: [],
+  fwModel: '',
+  vpnType: '',
+  compliance: [],
+  nac: [],
+  appTypes: [],
+  latencySla: '',
+  automation: '',
+  gpuSpecifics: [],
+  extraNotes: '',
+};
+
+/* ── Step metadata ───────────────────────────────────────────────── */
+const STEPS = [
+  { n: 1, label: 'Use Case',         id: 'step-1' },
+  { n: 2, label: 'Requirements',     id: 'step-2' },
+  { n: 3, label: 'Products',         id: 'step-3' },
+  { n: 4, label: 'Design',           id: 'step-4' },
+  { n: 5, label: 'Configuration',    id: 'step-5' },
+  { n: 6, label: 'Deploy & Validate',id: 'step-6' },
+];
+
+const UC_LABELS = {
+  campus:  'Campus / Enterprise LAN',
+  dc:      'Data Center Fabric',
+  gpu:     'AI / GPU Cluster',
+  hybrid:  'Hybrid (Campus + DC)',
+  wan:     'WAN / SD-WAN',
+};
+
+/* ── Progress bar render ─────────────────────────────────────────── */
+function renderProgress() {
+  const bar = document.getElementById('progress-bar');
+  bar.innerHTML = '';
+  STEPS.forEach((s, i) => {
+    // dot
+    const dot = document.createElement('div');
+    dot.className = 'step-item';
+    const btn = document.createElement('button');
+    btn.className = 'step-dot' +
+      (s.n === STATE.step ? ' active' : '') +
+      (s.n < STATE.step   ? ' done'   : '');
+    btn.onclick = () => { if (s.n < STATE.step) jumpStep(s.n); };
+    btn.innerHTML = `<span class="num">${s.n < STATE.step ? '✓' : s.n}</span>${s.label}`;
+    btn.setAttribute('aria-label', `Step ${s.n}: ${s.label}`);
+    btn.style.cursor = s.n < STATE.step ? 'pointer' : 'default';
+    dot.appendChild(btn);
+    bar.appendChild(dot);
+    // connector
+    if (i < STEPS.length - 1) {
+      const conn = document.createElement('div');
+      conn.className = 'step-connector' + (s.n < STATE.step ? ' done' : '');
+      bar.appendChild(conn);
+    }
+  });
+}
+
+/* ── Step navigation ─────────────────────────────────────────────── */
+function goStep(dir) {
+  if (dir === 1 && !validateStep(STATE.step)) return;
+  const next = STATE.step + dir;
+  if (next < 1 || next > STATE.totalSteps) return;
+  jumpStep(next);
+}
+
+function jumpStep(n) {
+  // hide current
+  document.getElementById(`step-${STATE.step}`).classList.remove('active');
+  STATE.step = n;
+  document.getElementById(`step-${n}`).classList.add('active');
+  renderProgress();
+  updateBottomNav();
+  updateSummary();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function updateBottomNav() {
+  const s = STATE.step;
+  document.getElementById('btn-back').disabled = (s === 1);
+  document.getElementById('btn-next').textContent = s === STATE.totalSteps ? 'Finish ✓' : 'Continue →';
+  document.getElementById('cur-step-label').textContent = s;
+  document.getElementById('cur-step-name').textContent = STEPS[s - 1].label;
+}
+
+/* ── Validation (per-step) ───────────────────────────────────────── */
+function validateStep(n) {
+  if (n === 1) {
+    if (!STATE.uc) { toast('Please select a use case', 'error'); return false; }
+    const orgName = document.getElementById('org-name').value.trim();
+    if (!orgName)  { toast('Please enter an organization name', 'error'); return false; }
+    STATE.orgName = orgName;
+    STATE.orgSize = document.getElementById('org-size').value;
+    STATE.numSites = document.getElementById('num-sites').value;
+    return true;
+  }
+  if (n === 2) {
+    STATE.redundancy  = document.getElementById('redundancy').value;
+    STATE.totalHosts  = document.getElementById('total-hosts').value;
+    STATE.bwPerServer = document.getElementById('bw-per-server').value;
+    STATE.fwModel     = document.getElementById('fw-model').value;
+    STATE.vpnType     = document.getElementById('vpn-type').value;
+    STATE.latencySla  = document.getElementById('latency-sla').value;
+    STATE.automation  = document.getElementById('automation').value;
+    STATE.extraNotes  = document.getElementById('extra-notes').value;
+    if (!STATE.redundancy) { toast('Please select a redundancy model', 'error'); return false; }
+    return true;
+  }
+  return true;
+}
+
+/* ── Use-case selection ──────────────────────────────────────────── */
+function selectUC(card) {
+  document.querySelectorAll('.use-card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+  STATE.uc = card.dataset.uc;
+  updateSummary();
+}
+
+/* ── Industry toggle ─────────────────────────────────────────────── */
+function toggleIndustry(chip) {
+  document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('on'));
+  chip.classList.add('on');
+  STATE.industry = chip.dataset.val;
+}
+
+/* ── Generic chip toggle ─────────────────────────────────────────── */
+function toggleChip(chip) {
+  chip.classList.toggle('on');
+  syncChipGroup(chip.closest('[id]'));
+}
+
+function syncChipGroup(container) {
+  if (!container) return;
+  const id = container.id;
+  const vals = [...container.querySelectorAll('.chip.on')].map(c => c.textContent.trim());
+  const map = {
+    'underlay-proto':  'underlayProto',
+    'overlay-proto':   'overlayProto',
+    'compliance':      'compliance',
+    'nac':             'nac',
+    'app-types':       'appTypes',
+    'gpu-specifics':   'gpuSpecifics',
+  };
+  if (map[id]) STATE[map[id]] = vals;
+  updateSummary();
+}
+
+/* ── Protocol feature toggle ─────────────────────────────────────── */
+function toggleProto(card) {
+  card.classList.toggle('on');
+  STATE.protoFeatures = [...document.querySelectorAll('.proto-card.on')]
+    .map(c => c.textContent.trim());
+}
+
+/* ── Segmented control ───────────────────────────────────────────── */
+function segSelect(btn, key, val) {
+  btn.closest('.seg-ctrl').querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  STATE[key] = val;
+  updateSummary();
+}
+
+/* ── Summary sidebar update ──────────────────────────────────────── */
+function updateSummary() {
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val || '—';
+  };
+  set('sum-uc',      STATE.uc ? UC_LABELS[STATE.uc] : '—');
+  const sizeMap = { small:'<100 users', medium:'100–1K', large:'1K–10K', enterprise:'10K+' };
+  set('sum-size',    sizeMap[STATE.orgSize] || '—');
+  set('sum-sites',   STATE.numSites ? `${STATE.numSites} site(s)` : '—');
+  const redMap = { none:'None', basic:'Basic', ha:'High Availability', full:'Full Redundancy' };
+  set('sum-red',     redMap[STATE.redundancy] || '—');
+  const trMap = { ns:'North-South', ew:'East-West', both:'Both' };
+  set('sum-traffic', trMap[STATE.traffic] || '—');
+  set('sum-hosts',   STATE.totalHosts ? `${Number(STATE.totalHosts).toLocaleString()}` : '—');
+  const bwMap = { '1g':'1 GbE','10g':'10 GbE','25g':'25 GbE','100g':'100 GbE','400g':'400 GbE' };
+  set('sum-bw',      bwMap[STATE.bwPerServer] || '—');
+  set('sum-overlay', STATE.overlayProto.length ? STATE.overlayProto.join(', ') : '—');
+  const fwMap = { perimeter:'Perimeter', distributed:'Perimeter+Dist.', microseg:'Micro-seg', none:'None' };
+  set('sum-fw',      fwMap[STATE.fwModel] || '—');
+  set('sum-comp',    STATE.compliance.length ? STATE.compliance.join(', ') : '—');
+  const autoMap = { manual:'Manual', ansible:'Ansible', terraform:'Terraform', netconf:'NETCONF', napalm:'NAPALM', nso:'Cisco NSO' };
+  set('sum-auto',    autoMap[STATE.automation] || '—');
+
+  // Live sync from fields on step 2
+  const th = document.getElementById('total-hosts');
+  if (th) { STATE.totalHosts = th.value; set('sum-hosts', th.value ? Number(th.value).toLocaleString() : '—'); }
+}
+
+/* Live sync fields */
+['redundancy','total-hosts','bw-per-server','fw-model','vpn-type','latency-sla','automation'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', updateSummary);
+});
+document.getElementById('total-hosts')?.addEventListener('input', updateSummary);
+document.getElementById('oversub')?.addEventListener('input', e => { STATE.oversub = +e.target.value; });
+
+/* ── Toast notification ──────────────────────────────────────────── */
+let toastTimer = null;
+function toast(msg, type = 'info', duration = 3200) {
+  const area = document.getElementById('toast-area');
+  const icons = { info: 'ℹ️', success: '✅', error: '❌' };
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.innerHTML = `<span>${icons[type]}</span><span>${msg}</span>`;
+  area.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
+/* ── Init ────────────────────────────────────────────────────────── */
+renderProgress();
+updateBottomNav();
+updateSummary();
+
+/* Welcome toast */
+setTimeout(() => toast('Welcome! Start by selecting your network use case below.', 'info', 4000), 600);
+</script>
+
+</body>
+</html>
