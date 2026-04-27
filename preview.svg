@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#060b18"/>
+      <stop offset="100%" stop-color="#0f1a35"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#1a7fff"/>
+      <stop offset="100%" stop-color="#00d4ff"/>
+    </linearGradient>
+    <linearGradient id="gcard" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#141d35"/>
+      <stop offset="100%" stop-color="#0f1629"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Subtle grid -->
+  <defs>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48,0 L0,0 L0,48" fill="none" stroke="#1e3060" stroke-width="0.5" opacity="0.4"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+
+  <!-- Left glow -->
+  <ellipse cx="200" cy="315" rx="300" ry="200" fill="#1a7fff" opacity="0.04"/>
+  <!-- Right glow -->
+  <ellipse cx="1000" cy="315" rx="250" ry="180" fill="#00d4ff" opacity="0.04"/>
+
+  <!-- ── LEFT PANEL: Branding + tagline ── -->
+  <!-- Logo box -->
+  <rect x="60" y="80" width="52" height="52" rx="12" fill="url(#accent)" filter="url(#glow)"/>
+  <text x="86" y="114" text-anchor="middle" font-size="26" font-family="Arial,sans-serif">🌐</text>
+
+  <!-- Title -->
+  <text x="124" y="104" font-family="'Segoe UI',Arial,sans-serif" font-size="28" font-weight="800" fill="#e8f0ff" letter-spacing="-0.5">NetDesign</text>
+  <text x="124" y="104" font-family="'Segoe UI',Arial,sans-serif" font-size="28" font-weight="800" fill="url(#accent)" letter-spacing="-0.5">
+    <tspan x="258" y="104">AI</tspan>
+  </text>
+  <text x="60" y="155" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#5a6e99" letter-spacing="3" text-transform="uppercase">INTELLIGENT NETWORK DESIGN</text>
+
+  <!-- Tagline -->
+  <text x="60" y="215" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="700" fill="#e8f0ff">Design your network in minutes.</text>
+  <text x="60" y="245" font-family="'Segoe UI',Arial,sans-serif" font-size="17" fill="#7a90bb">Requirements → Products → Topology → Configs → Deploy</text>
+
+  <!-- Feature pills -->
+  <rect x="60"  y="276" width="108" height="26" rx="13" fill="#0f1a35" stroke="#1a7fff" stroke-width="1"/>
+  <text x="114" y="294" text-anchor="middle" font-size="11" font-weight="700" fill="#1a7fff" font-family="'Segoe UI',Arial,sans-serif">Campus LAN</text>
+
+  <rect x="178" y="276" width="122" height="26" rx="13" fill="#0f1a35" stroke="#9955ff" stroke-width="1"/>
+  <text x="239" y="294" text-anchor="middle" font-size="11" font-weight="700" fill="#9955ff" font-family="'Segoe UI',Arial,sans-serif">Data Center</text>
+
+  <rect x="310" y="276" width="122" height="26" rx="13" fill="#0f1a35" stroke="#ff8c00" stroke-width="1"/>
+  <text x="371" y="294" text-anchor="middle" font-size="11" font-weight="700" fill="#ff8c00" font-family="'Segoe UI',Arial,sans-serif">GPU / AI Cluster</text>
+
+  <rect x="60"  y="312" width="100" height="26" rx="13" fill="#0f1a35" stroke="#00e87a" stroke-width="1"/>
+  <text x="110" y="330" text-anchor="middle" font-size="11" font-weight="700" fill="#00e87a" font-family="'Segoe UI',Arial,sans-serif">WAN / SD-WAN</text>
+
+  <rect x="170" y="312" width="80" height="26" rx="13" fill="#0f1a35" stroke="#00d4ff" stroke-width="1"/>
+  <text x="210" y="330" text-anchor="middle" font-size="11" font-weight="700" fill="#00d4ff" font-family="'Segoe UI',Arial,sans-serif">Hybrid</text>
+
+  <!-- Step indicators -->
+  <text x="60" y="390" font-family="'Segoe UI',Arial,sans-serif" font-size="12" fill="#2e3d60" letter-spacing="2" font-weight="700">6 STEPS  ·  ZERO INSTALL  ·  RUNS IN BROWSER</text>
+
+  <g font-family="'Segoe UI',Arial,sans-serif" font-size="12">
+    <!-- Step list -->
+    <text x="60" y="420" fill="#7a90bb">① Use Case  ②Requirements  ③ Products  ④ Design  ⑤ Configs  ⑥ Deploy</text>
+  </g>
+
+  <!-- Vendor logos text -->
+  <text x="60" y="460" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#2e3d60" letter-spacing="1" font-weight="700">SUPPORTS</text>
+  <text x="60" y="480" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="700" fill="#1ba0d7">Cisco  </text>
+  <text x="120" y="480" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="700" fill="#e04f3b">Arista  </text>
+  <text x="178" y="480" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="700" fill="#009b3a">Juniper  </text>
+  <text x="250" y="480" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="700" fill="#76b900">NVIDIA  </text>
+  <text x="322" y="480" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="700" fill="#fa5a28">Palo Alto  </text>
+  <text x="410" y="480" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="700" fill="#e6111a">Fortinet</text>
+
+  <!-- URL badge -->
+  <rect x="60" y="540" width="440" height="40" rx="8" fill="#0c1630" stroke="#1e3060" stroke-width="1"/>
+  <text x="280" y="566" text-anchor="middle" font-family="'Courier New',monospace" font-size="14" fill="#5a9fff">amit33-design.github.io/Network-Automation</text>
+
+  <!-- ── DIVIDER ── -->
+  <line x1="560" y1="50" x2="560" y2="580" stroke="#1e3060" stroke-width="1"/>
+
+  <!-- ── RIGHT PANEL: Mini topology diagram ── -->
+  <!-- Card background -->
+  <rect x="580" y="40" width="580" height="550" rx="16" fill="url(#gcard)" stroke="#1e3060" stroke-width="1" filter="url(#shadow)"/>
+  <text x="870" y="75" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="12" fill="#2e3d60" letter-spacing="2" font-weight="700">LIVE TOPOLOGY — DATA CENTER LEAF-SPINE</text>
+
+  <!-- Internet -->
+  <rect x="780" y="88" width="180" height="36" rx="8" fill="#060b18" stroke="#1a7fff" stroke-width="1.5"/>
+  <text x="870" y="112" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="12" font-weight="700" fill="#e8f0ff">🌐  INTERNET / WAN</text>
+
+  <!-- Lines Internet → FW -->
+  <line x1="820" y1="124" x2="740" y2="170" stroke="#ff3355" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.8"/>
+  <line x1="920" y1="124" x2="1000" y2="170" stroke="#ff3355" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.8"/>
+
+  <!-- FW pair -->
+  <rect x="660" y="168" width="150" height="34" rx="7" fill="#1a0508" stroke="#ff3355" stroke-width="1.5"/>
+  <text x="735" y="190" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" font-weight="700" fill="#ff6680">🔒  FW-01</text>
+  <rect x="930" y="168" width="150" height="34" rx="7" fill="#1a0508" stroke="#ff3355" stroke-width="1.5"/>
+  <text x="1005" y="190" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" font-weight="700" fill="#ff6680">🔒  FW-02</text>
+
+  <!-- Lines FW → Spine -->
+  <line x1="735" y1="202" x2="735" y2="260" stroke="#00e87a" stroke-width="2" opacity="0.9"/>
+  <line x1="1005" y1="202" x2="1005" y2="260" stroke="#00e87a" stroke-width="2" opacity="0.9"/>
+
+  <!-- Spine pair -->
+  <rect x="640" y="258" width="170" height="34" rx="7" fill="#0a2014" stroke="#00e87a" stroke-width="1.5" filter="url(#glow)"/>
+  <text x="725" y="280" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" font-weight="700" fill="#00e87a">🦴  SPINE-01</text>
+  <rect x="920" y="258" width="170" height="34" rx="7" fill="#0a2014" stroke="#00e87a" stroke-width="1.5" filter="url(#glow)"/>
+  <text x="1005" y="280" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" font-weight="700" fill="#00e87a">🦴  SPINE-02</text>
+  <!-- Spine peer -->
+  <line x1="810" y1="275" x2="920" y2="275" stroke="#00e87a" stroke-width="1" opacity="0.3" stroke-dasharray="4,3"/>
+
+  <!-- Lines Spine → Leaf (full mesh) -->
+  <line x1="680" y1="292" x2="630" y2="358" stroke="#5dcc8a" stroke-width="1.5" opacity="0.7"/>
+  <line x1="725" y1="292" x2="760" y2="358" stroke="#5dcc8a" stroke-width="1.5" opacity="0.7"/>
+  <line x1="725" y1="292" x2="900" y2="358" stroke="#5dcc8a" stroke-width="1.2" opacity="0.4"/>
+  <line x1="725" y1="292" x2="1040" y2="358" stroke="#5dcc8a" stroke-width="1.2" opacity="0.3"/>
+  <line x1="990" y1="292" x2="630" y2="358" stroke="#5dcc8a" stroke-width="1.2" opacity="0.3"/>
+  <line x1="990" y1="292" x2="760" y2="358" stroke="#5dcc8a" stroke-width="1.2" opacity="0.4"/>
+  <line x1="1005" y1="292" x2="900" y2="358" stroke="#5dcc8a" stroke-width="1.5" opacity="0.7"/>
+  <line x1="1050" y1="292" x2="1040" y2="358" stroke="#5dcc8a" stroke-width="1.5" opacity="0.7"/>
+
+  <!-- Leaf row -->
+  <rect x="595" y="356" width="130" height="32" rx="7" fill="#071a10" stroke="#5dcc8a" stroke-width="1.5"/>
+  <text x="660" y="377" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10.5" font-weight="700" fill="#5dcc8a">🍃  LEAF-01</text>
+  <rect x="735" y="356" width="130" height="32" rx="7" fill="#071a10" stroke="#5dcc8a" stroke-width="1.5"/>
+  <text x="800" y="377" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10.5" font-weight="700" fill="#5dcc8a">🍃  LEAF-02</text>
+  <rect x="870" y="356" width="130" height="32" rx="7" fill="#071a10" stroke="#5dcc8a" stroke-width="1.5"/>
+  <text x="935" y="377" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10.5" font-weight="700" fill="#5dcc8a">🍃  LEAF-03</text>
+  <rect x="1005" y="356" width="130" height="32" rx="7" fill="#071a10" stroke="#5dcc8a" stroke-width="1.5"/>
+  <text x="1070" y="377" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10.5" font-weight="700" fill="#5dcc8a">🍃  LEAF-04</text>
+
+  <!-- Lines Leaf → Servers -->
+  <line x1="660" y1="388" x2="660" y2="434" stroke="#2a3a5a" stroke-width="1.5" opacity="0.8"/>
+  <line x1="800" y1="388" x2="800" y2="434" stroke="#2a3a5a" stroke-width="1.5" opacity="0.8"/>
+  <line x1="935" y1="388" x2="935" y2="434" stroke="#2a3a5a" stroke-width="1.5" opacity="0.8"/>
+  <line x1="1070" y1="388" x2="1070" y2="434" stroke="#2a3a5a" stroke-width="1.5" opacity="0.8"/>
+
+  <!-- Server row -->
+  <rect x="608" y="432" width="104" height="28" rx="6" fill="#0d1520" stroke="#3a4d6a" stroke-width="1"/>
+  <text x="660" y="451" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#7a90bb">🖥  Compute</text>
+  <rect x="748" y="432" width="104" height="28" rx="6" fill="#0d1520" stroke="#3a4d6a" stroke-width="1"/>
+  <text x="800" y="451" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#7a90bb">🖥  Storage</text>
+  <rect x="883" y="432" width="104" height="28" rx="6" fill="#0d1520" stroke="#3a4d6a" stroke-width="1"/>
+  <text x="935" y="451" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#7a90bb">🖥  App Svrs</text>
+  <rect x="1018" y="432" width="104" height="28" rx="6" fill="#0d1520" stroke="#3a4d6a" stroke-width="1"/>
+  <text x="1070" y="451" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#7a90bb">🖥  DB Cluster</text>
+
+  <!-- Legend -->
+  <rect x="600" y="492" width="520" height="58" rx="8" fill="#060b18" stroke="#1e3060" stroke-width="1" opacity="0.8"/>
+  <circle cx="625" cy="515" r="5" fill="#ff3355"/>
+  <text x="638" y="519" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#7a90bb">Security</text>
+  <circle cx="700" cy="515" r="5" fill="#00e87a"/>
+  <text x="713" y="519" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#7a90bb">Spine</text>
+  <circle cx="760" cy="515" r="5" fill="#5dcc8a"/>
+  <text x="773" y="519" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#7a90bb">Leaf/ToR</text>
+  <circle cx="835" cy="515" r="5" fill="#3a4d6a"/>
+  <text x="848" y="519" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#7a90bb">Servers</text>
+  <text x="625" y="538" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#3a4d6a">IS-IS underlay · BGP EVPN overlay · VXLAN encapsulation · Anycast Gateway · vPC/MLAG</text>
+
+  <!-- Animated packet dots (static for preview) -->
+  <circle cx="735" cy="165" r="3.5" fill="#ff3355" opacity="0.9"/>
+  <circle cx="725" cy="320" r="3.5" fill="#00e87a" opacity="0.9"/>
+  <circle cx="660" cy="410" r="3" fill="#5dcc8a" opacity="0.8"/>
+  <circle cx="800" cy="405" r="3" fill="#5dcc8a" opacity="0.8"/>
+</svg>
