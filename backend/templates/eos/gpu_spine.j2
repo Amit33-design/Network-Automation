@@ -1,0 +1,67 @@
+! ============================================================
+! NetDesign AI — Arista EOS  GPU SPINE CONFIG
+! Device  : {{ hostname }}
+! Role    : GPU Cluster Compute Fabric Spine
+! ============================================================
+
+hostname {{ hostname }}
+
+spanning-tree mode mstp
+
+!-- Management
+interface Management1
+   description OOB-MGMT
+   ip address {{ mgmt_ip }}/24
+   no shutdown
+
+ip route vrf MGMT 0.0.0.0/0 10.100.0.1
+
+!-- Loopback
+interface Loopback0
+   description Router-ID
+   ip address {{ loopback_ip }}/32
+
+!-- P2P to GPU TORs
+{% for i in range(1, 9) %}
+interface Ethernet{{ i }}
+   description P2P-TO-GPU-TOR-{{ i }}
+   mtu 9214
+   no switchport
+   ip address 10.3.{{ index }}.{{ loop.index0 * 2 + 1 }}/31
+   no shutdown
+{% endfor %}
+
+!-- Underlay BGP
+router bgp {{ bgp_asn }}
+   router-id {{ loopback_ip }}
+   no bgp default ipv4-unicast
+   maximum-paths 64 ecmp 64
+   !
+   address-family ipv4
+      redistribute connected
+   !
+   {% for i in range(1, 9) %}
+   neighbor 10.3.{{ index }}.{{ i * 2 }} remote-as 650{{ 10 + i }}
+   neighbor 10.3.{{ index }}.{{ i * 2 }} description GPU-TOR-{{ i }}
+   neighbor 10.3.{{ index }}.{{ i * 2 }} send-community
+   neighbor 10.3.{{ index }}.{{ i * 2 }} maximum-routes 12000
+   neighbor 10.3.{{ index }}.{{ i * 2 }} activate
+   {% endfor %}
+
+!-- ECMP / load-balance for RoCEv2
+ip load-sharing trident fields ip dst-ip src-ip ip-proto l4-dst-port l4-src-port
+
+!-- QoS — PFC for RoCEv2 (priority 3)
+{% if roce_enabled %}
+qos map dscp 24 to traffic-class 3
+priority-flow-control mode on
+{% endif %}
+
+!-- gNMI / OpenConfig (for CloudVision)
+management api gnmi
+   transport grpc default
+   provider eos-native
+
+ntp server 10.0.0.1 vrf MGMT
+
+end

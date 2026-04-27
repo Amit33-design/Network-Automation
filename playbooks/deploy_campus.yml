@@ -1,0 +1,125 @@
+---
+# NetDesign AI — Campus Deployment
+# Pushes IOS-XE configs: Access → Distribution → Core (bottom-up)
+# Usage: ansible-playbook deploy_campus.yml -i inventory/hosts.yml --ask-vault-pass
+#        Add --check for dry-run (no changes applied)
+
+- name: "DEPLOY: Campus Access Layer"
+  hosts: campus_access
+  gather_facts: false
+  serial: 1               # one switch at a time for safety
+  tags: [campus, access]
+
+  pre_tasks:
+    - name: Pre-deploy backup
+      cisco.ios.ios_command:
+        commands: ["show running-config"]
+      register: pre_backup
+
+    - name: Save pre-backup
+      copy:
+        content: "{{ pre_backup.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}_pre_deploy_{{ ansible_date_time.iso8601_basic_short }}.cfg"
+      delegate_to: localhost
+
+  tasks:
+    - name: Configure VLANs
+      cisco.ios.ios_vlans:
+        config: "{{ vlans | map(attribute='id') | list | map('int') | map('community.general.dict_formatter', {'vlan_id': '{}'}) | list }}"
+        state: merged
+      ignore_errors: true
+
+    - name: Push full config via template
+      cisco.ios.ios_config:
+        src: "{{ playbook_dir }}/../backend/templates/ios_xe/access.j2"
+        save_when: changed
+
+    - name: Verify interfaces up after change
+      cisco.ios.ios_command:
+        commands: ["show interfaces status"]
+      register: post_intf
+      retries: 3
+      delay: 5
+
+  post_tasks:
+    - name: Confirm uplinks are connected
+      assert:
+        that: "'connected' in post_intf.stdout[0]"
+        fail_msg: "Uplink may be down on {{ inventory_hostname }} — REVIEW IMMEDIATELY"
+        success_msg: "{{ inventory_hostname }} uplinks OK"
+
+
+- name: "DEPLOY: Campus Distribution Layer"
+  hosts: campus_dist
+  gather_facts: false
+  serial: 1
+  tags: [campus, dist]
+
+  tasks:
+    - name: Backup before push
+      cisco.ios.ios_command:
+        commands: ["show running-config"]
+      register: pre_backup
+
+    - name: Save backup
+      copy:
+        content: "{{ pre_backup.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}_pre_{{ ansible_date_time.iso8601_basic_short }}.cfg"
+      delegate_to: localhost
+
+    - name: Push distribution config
+      cisco.ios.ios_config:
+        src: "{{ playbook_dir }}/../backend/templates/ios_xe/distribution.j2"
+        save_when: changed
+
+    - name: Verify OSPF adjacencies
+      cisco.ios.ios_command:
+        commands: ["show ip ospf neighbor"]
+      register: ospf_out
+      retries: 5
+      delay: 10
+      until: "'FULL' in ospf_out.stdout[0]"
+
+    - name: Assert OSPF FULL
+      assert:
+        that: "'FULL' in ospf_out.stdout[0]"
+        fail_msg: "OSPF adjacency not FULL on {{ inventory_hostname }}"
+
+
+- name: "DEPLOY: Campus Core"
+  hosts: campus_core
+  gather_facts: false
+  tags: [campus, core]
+
+  tasks:
+    - name: Backup before push
+      cisco.ios.ios_command:
+        commands: ["show running-config"]
+      register: pre_backup
+
+    - name: Save backup
+      copy:
+        content: "{{ pre_backup.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}_pre_{{ ansible_date_time.iso8601_basic_short }}.cfg"
+      delegate_to: localhost
+
+    - name: Push core config
+      cisco.ios.ios_config:
+        src: "{{ playbook_dir }}/../backend/templates/ios_xe/core.j2"
+        save_when: changed
+
+    - name: Verify BGP peers
+      cisco.ios.ios_command:
+        commands: ["show ip bgp summary"]
+      register: bgp_out
+      when: "'bgp' in protocols | default([])"
+
+    - name: Check default route present
+      cisco.ios.ios_command:
+        commands: ["show ip route 0.0.0.0"]
+      register: default_route
+
+    - name: Assert default route
+      assert:
+        that: "'0.0.0.0/0' in default_route.stdout[0] or 'Gateway of last resort' in default_route.stdout[0]"
+        fail_msg: "No default route on core {{ inventory_hostname }}"

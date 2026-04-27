@@ -1,0 +1,79 @@
+! ============================================================
+! NetDesign AI — Cisco IOS-XE  CORE LAYER CONFIG
+! Device  : {{ hostname }}
+! ============================================================
+
+hostname {{ hostname }}
+
+aaa new-model
+aaa authentication login default local
+username admin privilege 15 secret 0 ChangeMe!
+service password-encryption
+ip domain-name {{ org | lower | replace(' ', '.') }}.local
+crypto key generate rsa modulus 2048
+ip ssh version 2
+line vty 0 15
+ transport input ssh
+ login authentication default
+ exec-timeout 10 0
+
+interface Loopback0
+ ip address {{ loopback_ip }} 255.255.255.255
+ description Router-ID
+
+!-- P2P links to Distribution switches
+{% for i in range(1, 5) %}
+interface GigabitEthernet1/{{ i }}/1
+ no switchport
+ ip address 10.10.{{ i }}.2 255.255.255.252
+ description P2P-TO-DIST-{{ i }}
+ no shutdown
+{% endfor %}
+
+!-- Uplink to FW / Internet
+interface GigabitEthernet1/5/1
+ no switchport
+ ip address 10.0.0.2 255.255.255.252
+ description UPLINK-TO-FW
+ no shutdown
+
+!-- OSPF
+router ospf 1
+ router-id {{ loopback_ip }}
+ auto-cost reference-bandwidth 10000
+ passive-interface default
+ {% for i in range(1, 5) %}
+ no passive-interface GigabitEthernet1/{{ i }}/1
+ {% endfor %}
+ no passive-interface GigabitEthernet1/5/1
+ network {{ loopback_ip }} 0.0.0.0 area 0
+ {% for i in range(1, 5) %}
+ network 10.10.{{ i }}.0 0.0.0.3 area 0
+ {% endfor %}
+ network 10.0.0.0 0.0.0.3 area 0
+ default-information originate
+
+!-- BGP (optional, towards FW/WAN)
+{% if 'bgp' in protocols %}
+router bgp {{ bgp_asn }}
+ bgp router-id {{ loopback_ip }}
+ bgp log-neighbor-changes
+ neighbor 10.0.0.1 remote-as 65001
+ neighbor 10.0.0.1 description FW-UPLINK
+ address-family ipv4
+  neighbor 10.0.0.1 activate
+  network {{ loopback_ip }} mask 255.255.255.255
+ exit-address-family
+{% endif %}
+
+!-- QoS Policy
+policy-map CORE-QOS
+ class class-default
+  fair-queue
+
+!-- NTP, Logging
+ntp server 10.0.0.1
+logging buffered 32768
+logging host 10.100.0.100
+
+end

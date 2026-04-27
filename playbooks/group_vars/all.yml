@@ -1,0 +1,51 @@
+---
+# NetDesign AI — Global Variables
+# Encrypt secrets: ansible-vault encrypt group_vars/all.yml
+
+# ── Organisation ──────────────────────────────────────────────
+org_name: "MyOrg"
+org_domain: "myorg.local"
+
+# ── NTP servers ───────────────────────────────────────────────
+ntp_servers:
+  - 10.0.0.1
+  - 10.0.0.2
+
+# ── Syslog ────────────────────────────────────────────────────
+syslog_server: 10.100.0.100
+
+# ── DNS ───────────────────────────────────────────────────────
+dns_servers:
+  - 8.8.8.8
+  - 1.1.1.1
+
+# ── SNMP ──────────────────────────────────────────────────────
+snmp_community: "netdesign-ro"
+snmp_location:  "DC1-Room-1"
+snmp_contact:   "noc@myorg.local"
+
+# ── BGP AS ────────────────────────────────────────────────────
+dc_bgp_asn: 65000
+wan_bgp_asn: 65001
+
+# ── VXLAN VNI base ────────────────────────────────────────────
+vxlan_vni_base: 10000
+vxlan_mcast_base: "239.1.1."
+
+# ── VLANs ─────────────────────────────────────────────────────
+vlans:
+  - { id: 10,  name: DATA,    gw: "192.168.10.1",  prefix: "192.168.10.0/24" }
+  - { id: 20,  name: VOICE,   gw: "192.168.20.1",  prefix: "192.168.20.0/24" }
+  - { id: 30,  name: SERVERS, gw: "192.168.30.1",  prefix: "192.168.30.0/24" }
+  - { id: 99,  name: MGMT,    gw: "10.100.0.1",    prefix: "10.100.0.0/24"   }
+  - { id: 100, name: DMZ,     gw: "172.16.100.1",  prefix: "172.16.100.0/24" }
+
+# ── Passwords (override with vault in production) ─────────────
+vault_campus_password: "ChangeMe!"
+vault_dc_password:     "ChangeMe!"
+vault_gpu_password:    "ChangeMe!"
+vault_fw_password:     "ChangeMe!"
+
+# ── Deploy safety ─────────────────────────────────────────────
+confirm_commit_timer: 30     # seconds — NX-OS confirm-commit guard
+backup_dir: "/tmp/netdesign_backups"

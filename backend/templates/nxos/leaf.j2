@@ -1,0 +1,144 @@
+! ============================================================
+! NetDesign AI — Cisco NX-OS  DC LEAF CONFIG
+! Device  : {{ hostname }}
+! VXLAN BGP-EVPN leaf — anycast gateway
+! ============================================================
+
+hostname {{ hostname }}
+
+feature bgp
+feature ospf
+feature isis
+feature bfd
+feature nv overlay
+feature vn-segment-vlan-based
+feature interface-vlan
+feature vpc
+feature lacp
+feature lldp
+feature dhcp
+
+no ip domain-lookup
+ip domain-name {{ org | lower | replace(' ', '.') }}.dc
+
+fabric forwarding anycast-gateway-mac 0000.2222.3333
+
+!-- Loopbacks
+interface loopback0
+  description Router-ID
+  ip address {{ loopback_ip }}/32
+  {% if underlay == 'isis' %}
+  ip router isis UNDERLAY
+  {% else %}
+  ip router ospf UNDERLAY area 0.0.0.0
+  {% endif %}
+  no shutdown
+
+interface loopback1
+  description VTEP-NVE
+  ip address 10.1.{{ index }}.{{ index }}/32
+  no shutdown
+
+!-- P2P uplinks to spines
+{% for sp in spine_ips %}
+interface Ethernet1/{{ loop.index }}
+  description UPLINK-TO-SPINE-{{ loop.index }}
+  no switchport
+  medium p2p
+  ip address 10.2.{{ loop.index }}.{{ index * 2 }}/31
+  {% if underlay == 'isis' %}
+  ip router isis UNDERLAY
+  {% else %}
+  ip ospf network point-to-point
+  ip router ospf UNDERLAY area 0.0.0.0
+  {% endif %}
+  no shutdown
+{% endfor %}
+
+!-- VLANs and VNI mapping
+{% set ns = namespace(vni=vxlan_vni_base) %}
+{% for vlan in vlans %}
+vlan {{ vlan.id }}
+  name {{ vlan.name }}
+  vn-segment {{ ns.vni }}
+{% set ns.vni = ns.vni + 1 %}
+{% endfor %}
+{% if not vlans %}
+vlan 10
+  name PROD
+  vn-segment 10010
+vlan 20
+  name DEV
+  vn-segment 10020
+{% endif %}
+
+!-- SVIs with anycast GW
+{% for vlan in vlans %}
+interface Vlan{{ vlan.id }}
+  description {{ vlan.name }}
+  no shutdown
+  ip address {{ vlan.get('gw', '172.16.' + loop.index|string + '.1') }}/24
+  fabric forwarding mode anycast-gateway
+{% endfor %}
+
+!-- NVE (VTEP)
+interface nve1
+  no shutdown
+  source-interface loopback1
+  host-reachability protocol bgp
+  {% for vlan in vlans %}
+  member vni {{ vxlan_vni_base + loop.index0 }}
+    mcast-group 239.1.1.{{ loop.index }}
+  {% endfor %}
+
+!-- Underlay routing
+{% if underlay == 'isis' %}
+router isis UNDERLAY
+  net 49.0002.{{ '%04x' % (index * 256) }}.00
+  is-type level-2
+  address-family ipv4 unicast
+    metric-style wide
+{% else %}
+router ospf UNDERLAY
+  router-id {{ loopback_ip }}
+{% endif %}
+
+!-- BGP EVPN
+router bgp {{ bgp_asn }}
+  router-id {{ loopback_ip }}
+  log-neighbor-changes
+  address-family l2vpn evpn
+  {% for sp in spine_ips %}
+  neighbor {{ sp }}
+    remote-as {{ bgp_asn }}
+    description SPINE-{{ loop.index }}-RR
+    update-source loopback0
+    address-family l2vpn evpn
+      send-community extended
+  {% endfor %}
+
+!-- vPC keepalive (peer link — Eth1/51+52)
+vpc domain {{ index }}
+  peer-keepalive destination 10.0.{{ index }}.{{ index + 1 }}
+interface port-channel1
+  switchport
+  switchport mode trunk
+  spanning-tree port type network
+  vpc peer-link
+
+!-- Telemetry (gRPC)
+telemetry
+  destination-group 1
+    ip address 10.100.0.200 port 50051 protocol gRPC encoding GPB
+  sensor-group 1
+    data-source NX-API
+    path sys/bgp/inst/dom-default/peer depth 0
+    path sys/intf depth 0
+  subscription 1
+    dst-grp 1
+    snsr-grp 1 sample-interval 15000
+
+ntp server 10.0.0.1 use-vrf management
+logging level bgp 5
+
+end

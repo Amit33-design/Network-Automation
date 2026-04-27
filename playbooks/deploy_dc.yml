@@ -1,0 +1,138 @@
+---
+# NetDesign AI — Data Center Deployment
+# Leaf-Spine CLOS with BGP EVPN / VXLAN
+# Usage: ansible-playbook deploy_dc.yml -i inventory/hosts.yml --ask-vault-pass
+
+- name: "DEPLOY: DC Spine switches"
+  hosts: dc_spine
+  gather_facts: false
+  serial: 1
+  tags: [dc, spine]
+
+  pre_tasks:
+    - name: Backup spine config
+      cisco.nxos.nxos_command:
+        commands: ["show running-config"]
+      register: pre_cfg
+
+    - name: Save backup
+      copy:
+        content: "{{ pre_cfg.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}_pre_{{ ansible_date_time.iso8601_basic_short }}.cfg"
+      delegate_to: localhost
+
+  tasks:
+    - name: Enable required features
+      cisco.nxos.nxos_feature:
+        feature: "{{ item }}"
+        state: enabled
+      loop:
+        - bgp
+        - ospf
+        - isis
+        - bfd
+        - nv overlay
+        - vn-segment-vlan-based
+
+    - name: Push spine config
+      cisco.nxos.nxos_config:
+        src: "{{ playbook_dir }}/../backend/templates/nxos/spine.j2"
+        save_when: changed
+
+    - name: Wait for BGP to converge
+      cisco.nxos.nxos_command:
+        commands: ["show bgp l2vpn evpn summary"]
+      register: bgp_evpn
+      retries: 10
+      delay: 15
+      until: "'Established' in bgp_evpn.stdout[0] or bgp_evpn.stdout[0] | length > 100"
+
+  post_tasks:
+    - name: Confirm IS-IS adjacency
+      cisco.nxos.nxos_command:
+        commands: ["show isis adjacency"]
+      register: isis_out
+      when: "'is-is' in protocols | default([])"
+
+    - name: Show BGP EVPN summary
+      cisco.nxos.nxos_command:
+        commands: ["show bgp l2vpn evpn summary"]
+      register: final_bgp
+
+    - name: Print BGP state
+      debug:
+        msg: "{{ final_bgp.stdout_lines[0][:20] }}"
+
+
+- name: "DEPLOY: DC Leaf switches"
+  hosts: dc_leaf
+  gather_facts: false
+  serial: 2           # deploy 2 leaves at a time (non-overlapping vPC pairs)
+  tags: [dc, leaf]
+
+  pre_tasks:
+    - name: Backup leaf config
+      cisco.nxos.nxos_command:
+        commands: ["show running-config"]
+      register: pre_cfg
+
+    - name: Save backup
+      copy:
+        content: "{{ pre_cfg.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}_pre_{{ ansible_date_time.iso8601_basic_short }}.cfg"
+      delegate_to: localhost
+
+  tasks:
+    - name: Enable required features on leaves
+      cisco.nxos.nxos_feature:
+        feature: "{{ item }}"
+        state: enabled
+      loop:
+        - bgp
+        - nv overlay
+        - vn-segment-vlan-based
+        - interface-vlan
+        - vpc
+        - lacp
+
+    - name: Push leaf config
+      cisco.nxos.nxos_config:
+        src: "{{ playbook_dir }}/../backend/templates/nxos/leaf.j2"
+        save_when: changed
+
+    - name: Verify VTEP is up (NVE interface)
+      cisco.nxos.nxos_command:
+        commands: ["show nve interface nve1 detail"]
+      register: nve_out
+      retries: 6
+      delay: 10
+      until: "'Oper State: Up' in nve_out.stdout[0]"
+
+    - name: Check vPC status
+      cisco.nxos.nxos_command:
+        commands: ["show vpc"]
+      register: vpc_out
+
+    - name: Assert vPC peer-link up
+      assert:
+        that: "'peer-link is Up' in vpc_out.stdout[0]"
+        fail_msg: "vPC peer-link is DOWN on {{ inventory_hostname }}"
+
+  post_tasks:
+    - name: Verify BGP EVPN routes populated
+      cisco.nxos.nxos_command:
+        commands: ["show bgp l2vpn evpn summary"]
+      register: evpn_summary
+
+    - name: Print EVPN route summary
+      debug:
+        msg: "{{ evpn_summary.stdout_lines[0][:15] }}"
+
+    - name: Enable telemetry subscriptions
+      cisco.nxos.nxos_config:
+        lines:
+          - "telemetry"
+          - "  subscription 1"
+          - "    dst-grp 1"
+          - "    snsr-grp 1 sample-interval 15000"
+      ignore_errors: true

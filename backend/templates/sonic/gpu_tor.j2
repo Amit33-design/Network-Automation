@@ -1,0 +1,94 @@
+{
+  "DEVICE_METADATA": {
+    "localhost": {
+      "hostname": "{{ hostname }}",
+      "hwsku": "Mellanox-SN4600C-D112C8",
+      "mac": "aa:bb:cc:{{ '%02x' % index }}:00:01",
+      "platform": "x86_64-mlnx_msn4600-r0",
+      "type": "ToRRouter"
+    }
+  },
+
+  "MGMT_INTERFACE": {
+    "eth0|{{ mgmt_ip }}/24": {
+      "gwaddr": "10.100.0.1"
+    }
+  },
+
+  "LOOPBACK_INTERFACE": {
+    "Loopback0": {},
+    "Loopback0|{{ loopback_ip }}/32": {}
+  },
+
+  "INTERFACE": {
+    {% for i in range(0, 8) %}
+    "Ethernet{{ i * 4 }}": {
+      "description": "UPLINK-TO-GPU-SPINE-{{ (i % 2) + 1 }}"
+    },
+    "Ethernet{{ i * 4 }}|10.3.{{ (i % 2) + 1 }}.{{ index * 2 }}/31": {}{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+
+  "PORTCHANNEL": {},
+
+  "BGP_NEIGHBOR": {
+    {% for j in range(1, 3) %}
+    "10.3.{{ j }}.{{ index * 2 - 1 }}": {
+      "rrclient": "0",
+      "name": "GPU-SPINE-{{ j }}",
+      "local_addr": "10.3.{{ j }}.{{ index * 2 }}",
+      "nhopself": "0",
+      "holdtime": "9",
+      "asn": "65000",
+      "keepalive": "3"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+
+  "DEVICE_NEIGHBOR": {},
+
+  "QUEUE": {
+    {% for q in pfc_queues %}
+    "Ethernet0|{{ q }}": {
+      "type": "lossy",
+      "wred_profile": "AZURE_LOSSLESS"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+
+  "WRED_PROFILE": {
+    "AZURE_LOSSLESS": {
+      "wred_green_enable":  "true",
+      "green_max_threshold": "{{ ecn_threshold }}",
+      "green_min_threshold": "{{ (ecn_threshold * 0.7) | int }}",
+      "green_drop_probability": "5",
+      "ecn": "ecn_all"
+    }
+  },
+
+  "PFC_WD": {
+    "GLOBAL": {
+      "POLL_INTERVAL": "400"
+    },
+    {% for port_i in range(0, 32) %}
+    "Ethernet{{ port_i * 4 }}": {
+      "action": "drop",
+      "detection_time": "400",
+      "restoration_time": "2000"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+
+  "PORT": {
+    {% for p in range(0, 32) %}
+    "Ethernet{{ p * 4 }}": {
+      "alias": "etp{{ p + 1 }}",
+      "lanes": "{{ p * 4 + 1 }},{{ p * 4 + 2 }},{{ p * 4 + 3 }},{{ p * 4 + 4 }}",
+      "mtu": "9214",
+      "speed": "100000",
+      "admin_status": "up",
+      "fec": "rs"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

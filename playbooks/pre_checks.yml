@@ -1,0 +1,131 @@
+---
+# NetDesign AI — Pre-Deployment Checks
+# Run BEFORE pushing any configs.
+# Usage: ansible-playbook pre_checks.yml -i inventory/hosts.yml --ask-vault-pass
+
+- name: "PRE-CHECK: Campus switches"
+  hosts: campus
+  gather_facts: false
+  tags: [campus, pre]
+
+  tasks:
+    - name: Verify SSH reachability
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        timeout: 10
+      delegate_to: localhost
+
+    - name: Collect show version
+      cisco.ios.ios_command:
+        commands: ["show version"]
+      register: version_out
+
+    - name: Display version
+      debug:
+        var: version_out.stdout_lines[0][:10]
+
+    - name: Backup running-config
+      cisco.ios.ios_command:
+        commands: ["show running-config"]
+      register: running_cfg
+
+    - name: Save backup to file
+      copy:
+        content: "{{ running_cfg.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}_pre_{{ ansible_date_time.iso8601_basic_short }}.cfg"
+      delegate_to: localhost
+
+    - name: Check interface status
+      cisco.ios.ios_command:
+        commands: ["show interfaces status"]
+      register: intf_status
+
+    - name: Fail if critical uplinks are down
+      fail:
+        msg: "CRITICAL: uplink interface is down on {{ inventory_hostname }}"
+      when: "'notconnect' in intf_status.stdout[0]"
+      ignore_errors: true
+
+
+- name: "PRE-CHECK: Data Center (NX-OS)"
+  hosts: datacenter
+  gather_facts: false
+  tags: [dc, pre]
+
+  tasks:
+    - name: Verify SSH reachability
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        timeout: 10
+      delegate_to: localhost
+
+    - name: Collect show version
+      cisco.nxos.nxos_command:
+        commands: ["show version"]
+      register: version_out
+
+    - name: Backup running-config
+      cisco.nxos.nxos_command:
+        commands: ["show running-config"]
+      register: running_cfg
+
+    - name: Save backup
+      copy:
+        content: "{{ running_cfg.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}_pre_{{ ansible_date_time.iso8601_basic_short }}.cfg"
+      delegate_to: localhost
+
+    - name: Check BGP summary before change
+      cisco.nxos.nxos_command:
+        commands: ["show bgp summary"]
+      register: bgp_pre
+
+    - name: Save BGP baseline
+      set_fact:
+        bgp_baseline: "{{ bgp_pre.stdout[0] }}"
+
+    - name: Check VPC status
+      cisco.nxos.nxos_command:
+        commands: ["show vpc"]
+      register: vpc_status
+
+    - name: Fail if vPC is not peer-active
+      fail:
+        msg: "vPC peer link is not active on {{ inventory_hostname }}"
+      when: "'peer-link is Down' in vpc_status.stdout[0]"
+      ignore_errors: true
+
+
+- name: "PRE-CHECK: GPU Cluster (EOS / SONiC)"
+  hosts: gpu_cluster
+  gather_facts: false
+  tags: [gpu, pre]
+
+  tasks:
+    - name: Verify SSH reachability
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        timeout: 10
+      delegate_to: localhost
+
+    - name: Backup running-config (EOS spines)
+      arista.eos.eos_command:
+        commands: ["show running-config"]
+      register: eos_cfg
+      when: inventory_hostname in groups['gpu_spine']
+
+    - name: Save EOS backup
+      copy:
+        content: "{{ eos_cfg.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}_pre_{{ ansible_date_time.iso8601_basic_short }}.cfg"
+      delegate_to: localhost
+      when: inventory_hostname in groups['gpu_spine']
+
+    - name: Check PFC counters baseline (SONiC TORs)
+      raw: "show pfc counters"
+      register: pfc_baseline
+      when: inventory_hostname in groups['gpu_tor']
+      ignore_errors: true

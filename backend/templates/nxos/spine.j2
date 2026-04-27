@@ -1,0 +1,93 @@
+! ============================================================
+! NetDesign AI — Cisco NX-OS  DC SPINE CONFIG
+! Device  : {{ hostname }}
+! Underlay: {{ underlay | upper }}  Overlay: BGP EVPN / VXLAN
+! ============================================================
+
+hostname {{ hostname }}
+
+feature bgp
+feature ospf
+feature isis
+feature bfd
+feature nv overlay
+feature vn-segment-vlan-based
+feature interface-vlan
+feature lacp
+feature lldp
+
+no ip domain-lookup
+ip domain-name {{ org | lower | replace(' ', '.') }}.dc
+
+!-- Loopback (Router-ID + VTEP)
+interface loopback0
+  ip address {{ loopback_ip }}/32
+  description Router-ID
+  no shutdown
+
+interface loopback1
+  ip address 10.1.{{ index }}.{{ index }}/32
+  description VTEP-NVE-source
+  no shutdown
+
+!-- P2P links to leaves (one per leaf, /31 addressing)
+{% for i in range(1, 9) %}
+interface Ethernet1/{{ i }}
+  description P2P-TO-LEAF-{{ i }}
+  no switchport
+  medium p2p
+  ip address 10.2.{{ index }}.{{ loop.index0 * 2 + 1 }}/31
+  {% if underlay == 'isis' %}
+  isis circuit-type level-2
+  ip router isis UNDERLAY
+  {% else %}
+  ip ospf network point-to-point
+  ip router ospf UNDERLAY area 0.0.0.0
+  {% endif %}
+  ip ospf bfd
+  no shutdown
+{% endfor %}
+
+!-- Underlay routing
+{% if underlay == 'isis' %}
+router isis UNDERLAY
+  net 49.0001.{{ '%04x' % (index * 256) }}.00
+  is-type level-2
+  address-family ipv4 unicast
+    metric-style wide
+    advertise passive-only
+  redistribute direct route-map CONNECTED
+{% else %}
+router ospf UNDERLAY
+  router-id {{ loopback_ip }}
+  passive-interface default
+  {% for i in range(1, 9) %}
+  no passive-interface Ethernet1/{{ i }}
+  {% endfor %}
+{% endif %}
+
+!-- BGP — spine is Route Reflector
+router bgp {{ bgp_asn }}
+  router-id {{ loopback_ip }}
+  log-neighbor-changes
+  address-family l2vpn evpn
+    retain route-target all
+  {% for i in range(1, 9) %}
+  neighbor 10.0.{{ i }}.{{ i }}
+    remote-as {{ bgp_asn }}
+    description LEAF-{{ i }}-EVPN-client
+    update-source loopback0
+    address-family l2vpn evpn
+      send-community extended
+      route-reflector-client
+  {% endfor %}
+
+!-- BFD global
+bfd interval 300 min_rx 300 multiplier 3
+
+!-- NTP, Logging
+ntp server 10.0.0.1 use-vrf management
+logging level bgp 5
+logging monitor 5
+
+end
