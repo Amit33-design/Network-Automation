@@ -948,6 +948,11 @@
     .flow-link-slow {
       animation: flowDash 2.5s linear infinite;
     }
+    @keyframes packetPulse {
+      0%,100% { opacity:.95; r:4; }
+      50%      { opacity:.5;  r:2.5; }
+    }
+    .pkt { animation: packetPulse 1.8s ease-in-out infinite; }
 
     /* ── Legend ──────────────────────────────────────────────────── */
     .svg-legend {
@@ -3310,6 +3315,10 @@ function buildSVG({ nodes, links, bands, W = 1100, H = 600 }) {
       <feGaussianBlur stdDeviation="3" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
+    <filter id="pkt-glow" x="-80%" y="-80%" width="360%" height="360%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="140%">
       <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity=".4"/>
     </filter>
@@ -3379,6 +3388,26 @@ function buildSVG({ nodes, links, bands, W = 1100, H = 600 }) {
     </g>`;
   }).join('');
 
+  /* ── animated packet dots (one per flow:true link, staggered) ── */
+  const flowLinks = links.filter(lk => lk.flow);
+  const packetsSVG = flowLinks.map((lk, i) => {
+    const color   = lk.color || '#00d4ff';
+    // fast spine links ~1.1 s, slow access/leaf ~2.2 s, add small offset per index
+    const baseDur = lk.slow ? 2.2 : 1.1;
+    const dur     = (baseDur + (i % 5) * 0.18).toFixed(2) + 's';
+    // stagger so packets don't all launch together
+    const begin   = ((i * 0.29) % baseDur).toFixed(2) + 's';
+    const r       = lk.slow ? 3 : 3.8;
+    return `
+    <circle r="${r}" fill="${color}" opacity="0.9" class="pkt" filter="url(#pkt-glow)"
+      style="animation-delay:${begin}">
+      <animateMotion dur="${dur}" begin="${begin}" repeatCount="indefinite"
+        calcMode="spline" keyTimes="0;1" keySplines="0.4 0 0.6 1">
+        <mpath href="#lp-${lk.from}-${lk.to}"/>
+      </animateMotion>
+    </circle>`;
+  }).join('');
+
   return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"
     style="font-family:'Segoe UI',sans-serif">
     ${defs}
@@ -3386,6 +3415,7 @@ function buildSVG({ nodes, links, bands, W = 1100, H = 600 }) {
     ${bandsSVG}
     ${linksSVG}
     ${nodesSVG}
+    ${packetsSVG}
   </svg>`;
 }
 
@@ -3547,7 +3577,8 @@ function campusHLD() {
     <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Distribution</div>
     <div class="legend-item"><div class="legend-dot" style="background:#1a7fff"></div>Access</div>
     <div class="legend-item"><div class="legend-line" style="background:#1a7fff;border-top:2px dashed #1a7fff"></div>Active data flow</div>
-    <div class="legend-item"><div class="legend-line" style="background:var(--border)"></div>Physical link</div>`;
+    <div class="legend-item"><div class="legend-line" style="background:var(--border)"></div>Physical link</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff;box-shadow:0 0 6px #00d4ff"></div>Live packet flow</div>`;
 
   return { svg: buildSVG({ nodes, links, bands, W, H: yEP + 80 }), title:'Campus Network — High Level Design', meta, legend };
 }
@@ -3633,7 +3664,8 @@ function dcHLD() {
     <div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Border / Firewall</div>
     <div class="legend-item"><div class="legend-dot" style="background:#00e87a"></div>Spine</div>
     <div class="legend-item"><div class="legend-dot" style="background:#5dcc8a"></div>Leaf / ToR</div>
-    <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #00e87a;width:22px"></div>Active flow</div>`;
+    <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #00e87a;width:22px"></div>Active flow</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#00e87a;box-shadow:0 0 6px #00e87a"></div>Live packet flow</div>`;
 
   return { svg: buildSVG({ nodes, links, bands, W, H: ySrv + 80 }), title:'Data Center Leaf-Spine — High Level Design', meta, legend };
 }
@@ -3714,7 +3746,8 @@ function gpuHLD() {
     <div class="legend-item"><div class="legend-dot" style="background:#ff8c00"></div>GPU TOR</div>
     <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Storage fabric</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ffd000"></div>OOB Management</div>
-    <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #ff8c00;width:22px"></div>RoCEv2 / RDMA flow</div>`;
+    <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #ff8c00;width:22px"></div>RoCEv2 / RDMA flow</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff8c00;box-shadow:0 0 6px #ff8c00"></div>Live packet flow</div>`;
 
   return { svg: buildSVG({ nodes, links, bands, W, H: 460 }), title:'AI / GPU Cluster — High Level Design', meta, legend };
 }
