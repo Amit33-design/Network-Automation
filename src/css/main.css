@@ -1104,6 +1104,45 @@
     .vl-nvidia  { background: #76b900; color: #fff; }
     .vl-paloalto{ background: #fa5a28; color: #fff; }
     .vl-fortinet{ background: #e6111a; color: #fff; }
+    .vl-aruba   { background: #ff6600; color: #fff; }
+    .vl-extreme { background: #6f2ca8; color: #fff; }
+    .vl-dell    { background: #007db8; color: #fff; }
+
+    /* ── Price tier badge ──────────────────────────────────────────── */
+    .tier-badge {
+      display: inline-block;
+      font-size: .65rem; font-weight: 700; letter-spacing: .04em;
+      padding: 2px 7px; border-radius: 4px;
+      margin-top: 3px;
+      text-transform: uppercase;
+    }
+
+    /* ── Vendor preference chip grid ───────────────────────────────── */
+    .vendor-pref-grid {
+      display: flex; flex-wrap: wrap; gap: .5rem;
+      margin-top: .6rem;
+    }
+    .vendor-chip {
+      display: flex; align-items: center; gap: .4rem;
+      padding: .35rem .8rem;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--bg3);
+      cursor: pointer;
+      font-size: .82rem; font-weight: 600;
+      transition: all .18s;
+      user-select: none;
+    }
+    .vendor-chip:hover { border-color: var(--border-hi); background: var(--bg4); }
+    .vendor-chip.on {
+      border-color: var(--blue);
+      background: rgba(26,127,255,.18);
+      color: var(--blue);
+    }
+    .vendor-chip .vc-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      display: inline-block;
+    }
     .vl-f5      { background: #e4002b; color: #fff; }
 
     .prod-title { flex: 1; }

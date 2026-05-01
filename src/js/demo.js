@@ -7,6 +7,7 @@ function loadDemo(ucKey) {
   document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('on'));
   document.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
   document.querySelectorAll('.proto-card').forEach(c => c.classList.remove('on'));
+  document.querySelectorAll('.vendor-chip').forEach(c => c.classList.remove('on'));
 
   const demos = {
     dc: {
@@ -19,6 +20,8 @@ function loadDemo(ucKey) {
       compliance:['SOC 2'], nac:['DHCP snooping','Dynamic ARP inspection'],
       appTypes:['Web / HTTP(S)','Database (SQL/NoSQL)','Object Storage (S3 / Ceph)','Kubernetes / containers'],
       gpuSpecifics:[], extraNotes:'Multi-tenant DC fabric for cloud workloads. VXLAN EVPN with BGP spine-leaf.',
+      // Phase 2
+      budget:'enterprise', preferredVendors:['Cisco'], numSitesTopology:3,
     },
     gpu: {
       uc:'gpu', industry:'technology', orgName:'AI Research Lab', orgSize:'enterprise',
@@ -31,6 +34,8 @@ function loadDemo(ucKey) {
       appTypes:['AI / ML training','HPC / MPI','Object Storage (S3 / Ceph)'],
       gpuSpecifics:['RoCEv2 (Ethernet)','Priority Flow Control (PFC)','ECN / DCQCN','Rail-optimized topology'],
       extraNotes:'H100 GPU cluster — 16 racks × 8 GPUs. Rail-optimized RoCEv2 fabric with SHARP.',
+      // Phase 2
+      budget:'hyperscale', preferredVendors:['Arista','NVIDIA'], numSitesTopology:3,
     },
     campus: {
       uc:'campus', industry:'education', orgName:'State University', orgSize:'large',
@@ -42,6 +47,36 @@ function loadDemo(ucKey) {
       compliance:[], nac:['802.1X (wired)','802.1X (wireless)','MAB fallback','DHCP snooping','Dynamic ARP inspection'],
       appTypes:['Web / HTTP(S)','Voice / UC','Video streaming'],
       gpuSpecifics:[], extraNotes:'Multi-building university campus with 4 buildings. 802.1X NAC with ISE.',
+      // Phase 2
+      budget:'mid', preferredVendors:['Cisco'], numSitesTopology:3,
+    },
+    // NEW: Fortinet-centric SMB campus demo
+    fortinet: {
+      uc:'campus', industry:'retail', orgName:'Regional Retailer Group', orgSize:'medium',
+      numSites:'3', redundancy:'basic', traffic:'ns', totalHosts:'250',
+      bwPerServer:'1g', oversub:5, fwModel:'perimeter',
+      vpnType:'ssl', latencySla:'best-effort', automation:'ansible',
+      underlayProto:['OSPF'], overlayProto:['None'],
+      protoFeatures:['QoS / DSCP','VRF / Tenant separation'],
+      compliance:['PCI-DSS'], nac:['802.1X (wired)','802.1X (wireless)','DHCP snooping'],
+      appTypes:['Web / HTTP(S)','VoIP / SIP'],
+      gpuSpecifics:[], extraNotes:'FortiGate + FortiSwitch Security Fabric. Managed via single-pane FortiManager.',
+      // Phase 2
+      budget:'smb', preferredVendors:['Fortinet'], numSitesTopology:3,
+    },
+    // NEW: Multi-site DC / DCI demo
+    multisite: {
+      uc:'multisite', industry:'finance', orgName:'Global Finance Corp', orgSize:'enterprise',
+      numSites:'4', redundancy:'full', traffic:'ew', totalHosts:'1200',
+      bwPerServer:'100g', oversub:2, fwModel:'distributed',
+      vpnType:'ztna', latencySla:'low', automation:'ansible',
+      underlayProto:['BGP','IS-IS'], overlayProto:['VXLAN / EVPN','MPLS'],
+      protoFeatures:['BFD Fast Failover','ECMP Load Balancing','Anycast Gateway','VRF / Tenant separation','IPv6 Dual-Stack'],
+      compliance:['PCI-DSS','SOC 2'], nac:['DHCP snooping','Dynamic ARP inspection'],
+      appTypes:['Web / HTTP(S)','Database (SQL/NoSQL)','Kubernetes / containers'],
+      gpuSpecifics:[], extraNotes:'Four geographically distributed DCs: DCA Primary, DCB Active-Active, DCC DR, DCD Edge PoP.',
+      // Phase 2
+      budget:'enterprise', preferredVendors:['Cisco','Arista'], numSitesTopology:4,
     },
   };
 
@@ -63,6 +98,12 @@ function loadDemo(ucKey) {
   setVal('fw-model', d.fwModel); setVal('vpn-type', d.vpnType);
   setVal('latency-sla', d.latencySla); setVal('automation', d.automation);
   setVal('extra-notes', d.extraNotes);
+  // Phase 2: budget + vendors
+  setVal('budget-tier', d.budget || '');
+  document.querySelectorAll('.vendor-chip').forEach(c => {
+    c.classList.toggle('on', (d.preferredVendors || []).includes(c.dataset.vendor));
+  });
+
   const sl = document.getElementById('oversub');
   if (sl) { sl.value = d.oversub; document.getElementById('oversub-val').textContent = d.oversub + ':1'; }
 

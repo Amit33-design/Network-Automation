@@ -6,7 +6,7 @@
 ════════════════════════════════════════════════════════════════ */
 
 /* ── localStorage persistence ───────────────────────────────────── */
-const LS_KEY = 'netdesign_ai_state_v1';
+const LS_KEY = 'netdesign_ai_state_v2';
 
 function saveStateLS() {
   try {
@@ -24,6 +24,9 @@ function saveStateLS() {
       latencySla: STATE.latencySla, automation: STATE.automation,
       gpuSpecifics: STATE.gpuSpecifics, extraNotes: STATE.extraNotes,
       selectedProducts: STATE.selectedProducts,
+      // Phase 2
+      budget: STATE.budget, preferredVendors: STATE.preferredVendors,
+      numSitesTopology: STATE.numSitesTopology,
     };
     localStorage.setItem(LS_KEY, JSON.stringify(snap));
   } catch(e) {}
@@ -92,6 +95,13 @@ function applyRestoredState() {
   if (STATE.protoFeatures?.length) {
     document.querySelectorAll('.proto-card').forEach(c => {
       if (STATE.protoFeatures.includes(c.textContent.trim())) c.classList.add('on');
+    });
+  }
+  // Phase 2: budget + vendor preference
+  setVal('budget-tier', STATE.budget);
+  if (STATE.preferredVendors?.length) {
+    document.querySelectorAll('.vendor-chip').forEach(c => {
+      if (STATE.preferredVendors.includes(c.dataset.vendor)) c.classList.add('on');
     });
   }
   updateSummary();

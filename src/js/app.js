@@ -60,9 +60,14 @@ function validateStep(n) {
     if (!STATE.uc) { toast('Please select a use case', 'error'); return false; }
     const orgName = document.getElementById('org-name').value.trim();
     if (!orgName)  { toast('Please enter an organization name', 'error'); return false; }
-    STATE.orgName = orgName;
-    STATE.orgSize = document.getElementById('org-size').value;
+    STATE.orgName  = orgName;
+    STATE.orgSize  = document.getElementById('org-size').value;
     STATE.numSites = document.getElementById('num-sites').value;
+    // Phase 2: budget + vendor prefs
+    const budgetEl = document.getElementById('budget-tier');
+    if (budgetEl) STATE.budget = budgetEl.value;
+    STATE.preferredVendors = [...document.querySelectorAll('.vendor-chip.on')]
+      .map(c => c.dataset.vendor);
     return true;
   }
   if (n === 2) {
@@ -93,6 +98,14 @@ function toggleIndustry(chip) {
   document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('on'));
   chip.classList.add('on');
   STATE.industry = chip.dataset.val;
+}
+
+/* ── Vendor preference chip toggle (Phase 2) ─────────────────────── */
+function toggleVendorChip(chip) {
+  chip.classList.toggle('on');
+  STATE.preferredVendors = [...document.querySelectorAll('.vendor-chip.on')]
+    .map(c => c.dataset.vendor);
+  updateSummary();
 }
 
 /* ── Generic chip toggle ─────────────────────────────────────────── */
@@ -155,6 +168,10 @@ function updateSummary() {
   set('sum-comp',    STATE.compliance.length ? STATE.compliance.join(', ') : '—');
   const autoMap = { manual:'Manual', ansible:'Ansible', terraform:'Terraform', netconf:'NETCONF', napalm:'NAPALM', nso:'Cisco NSO' };
   set('sum-auto',    autoMap[STATE.automation] || '—');
+  // Phase 2 additions
+  const bgtMap = { smb:'SMB (<$50K)', mid:'Mid ($50K–$500K)', enterprise:'Enterprise ($500K–$5M)', hyperscale:'Hyperscale ($5M+)' };
+  set('sum-budget',  STATE.budget ? bgtMap[STATE.budget] : '—');
+  set('sum-vendors', STATE.preferredVendors.length ? STATE.preferredVendors.join(', ') : 'Any');
 
   // Live sync from fields on step 2
   const th = document.getElementById('total-hosts');

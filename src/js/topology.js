@@ -177,11 +177,12 @@ const C = {
 function renderHLD() {
   const uc = STATE.uc;
   let result;
-  if (uc === 'campus')  result = campusHLD();
-  else if (uc === 'dc') result = dcHLD();
-  else if (uc === 'gpu')result = gpuHLD();
-  else if (uc === 'wan')result = wanHLD();
-  else                  result = hybridHLD();
+  if (uc === 'campus')        result = campusHLD();
+  else if (uc === 'dc')       result = dcHLD();
+  else if (uc === 'gpu')      result = gpuHLD();
+  else if (uc === 'wan')      result = wanHLD();
+  else if (uc === 'multisite')result = multiSiteHLD();
+  else                        result = hybridHLD();
 
   document.getElementById('hld-svg-container').innerHTML = result.svg;
   document.getElementById('hld-title').textContent  = result.title;
@@ -540,12 +541,124 @@ function hybridHLD() {
 }
 
 /* ════════════════════════════════════════════════════════════════
+   MULTI-SITE DC / DCI HLD
+   Shows DCA (Primary), DCB (Secondary), DCC (DR), DCD (Edge)
+   connected via a shared WAN / MPLS cloud, with VXLAN DCI links
+════════════════════════════════════════════════════════════════ */
+function multiSiteHLD() {
+  const W = 1100, H = 660;
+  const nodes = [], links = [];
+
+  // Number of sites to show (from state, clamped 3-4)
+  const numSites = Math.min(4, Math.max(3, parseInt(STATE.numSitesTopology) || 3));
+
+  // Selected hardware labels
+  const selSpine = PRODUCTS[STATE.selectedProducts['dc-spine']];
+  const selLeaf  = PRODUCTS[STATE.selectedProducts['dc-leaf']];
+  const selFW    = PRODUCTS[STATE.selectedProducts['fw']];
+  const spineLbl = selSpine ? selSpine.model : 'DC Spine';
+  const leafLbl  = selLeaf  ? selLeaf.model  : 'Leaf / ToR';
+  const fwLbl    = selFW    ? selFW.model     : 'Firewall';
+
+  // ── WAN / MPLS cloud (centre-top) ────────────────────────────────
+  nodes.push({
+    id:'wan', x: W/2 - 90, y: 28, w: 180, h: 50,
+    label:'WAN / MPLS / DCI', icon:'🌐',
+    fill:'#1a3060', stroke:'#2a4a90', textColor:'#9aadd0', glow:true,
+  });
+
+  // ── Firewall pair (optional, sits just under WAN cloud) ───────────
+  const hasFW = STATE.fwModel && STATE.fwModel !== 'none';
+  if (hasFW) {
+    nodes.push({ id:'fw-a', x: W/2 - 145, y: 110, w: 110, h: 38,
+      label: fwLbl, sub:'FW-Active', icon:'🔒',
+      fill:'#2a0a14', stroke:'#7a1a2a', textColor:'#ff8080' });
+    nodes.push({ id:'fw-b', x: W/2 + 35,  y: 110, w: 110, h: 38,
+      label: fwLbl, sub:'FW-Standby', icon:'🔒',
+      fill:'#2a0a14', stroke:'#7a1a2a', textColor:'#ff8080' });
+    links.push({ from:'wan', to:'fw-a', color:'#ff3355', width:2, flow:true });
+    links.push({ from:'wan', to:'fw-b', color:'#ff3355', width:2 });
+  }
+
+  // ── Site definitions ──────────────────────────────────────────────
+  const siteConfs = [
+    { id:'dca', label:'DCA — Primary',   sub:'Active DC',       x:  80, y: 220, color:'#1a7fff', icon:'🗄️' },
+    { id:'dcb', label:'DCB — Secondary', sub:'Active-Active',   x: 790, y: 220, color:'#00e87a', icon:'🗄️' },
+    { id:'dcc', label:'DCC — DR Site',   sub:'Disaster Recov.', x:  80, y: 490, color:'#9955ff', icon:'🛡️' },
+    { id:'dcd', label:'DCD — Edge PoP',  sub:'Edge / CDN',      x: 790, y: 490, color:'#ff8c00', icon:'⚡' },
+  ].slice(0, numSites);
+
+  // ── Draw each site as a mini leaf-spine cluster ───────────────────
+  siteConfs.forEach(site => {
+    const cx = site.x, cy = site.y;
+    const sw = 210, sh = 44;
+
+    // Site bounding label
+    nodes.push({
+      id: site.id + '-label',
+      x: cx - 5, y: cy - 30, w: sw + 10, h: 22,
+      label: site.label,
+      fill: site.color + '18', stroke: site.color + '50',
+      textColor: site.color, fontSize: 9,
+    });
+
+    // Spine pair
+    nodes.push({ id: site.id+'-sp1', x: cx,      y: cy,      w: 96, h: sh,
+      label: spineLbl, sub:'Spine-1', icon:'🦴',
+      fill:'#101a34', stroke: site.color + '80', textColor:'#e8f0ff' });
+    nodes.push({ id: site.id+'-sp2', x: cx + 114, y: cy,     w: 96, h: sh,
+      label: spineLbl, sub:'Spine-2', icon:'🦴',
+      fill:'#101a34', stroke: site.color + '80', textColor:'#e8f0ff' });
+
+    // Leaf row
+    nodes.push({ id: site.id+'-lf1', x: cx,       y: cy + 90, w: 96, h: sh,
+      label: leafLbl, sub:'Leaf-1', icon:'🍃',
+      fill:'#0c1226', stroke:'#2a4a90', textColor:'#e8f0ff' });
+    nodes.push({ id: site.id+'-lf2', x: cx + 114,  y: cy + 90, w: 96, h: sh,
+      label: leafLbl, sub:'Leaf-2', icon:'🍃',
+      fill:'#0c1226', stroke:'#2a4a90', textColor:'#e8f0ff' });
+
+    // Spine-Spine ISL
+    links.push({ from: site.id+'-sp1', to: site.id+'-sp2', color: site.color, width:2 });
+    // Spine → Leaf (full mesh)
+    ['-sp1','-sp2'].forEach(sp => ['-lf1','-lf2'].forEach(lf => {
+      links.push({ from: site.id+sp, to: site.id+lf, color: site.color, width:1.5, opacity:.7 });
+    }));
+
+    // Connect spine-1 to WAN or FW
+    const wanAnchor = hasFW ? 'fw-a' : 'wan';
+    links.push({ from: wanAnchor, to: site.id+'-sp1', color: site.color, width:2.5, flow:true, dashed:true });
+  });
+
+  // ── Inter-site DCI links (horizontal / cross) ─────────────────────
+  if (numSites >= 2) links.push({ from:'dca-sp1', to:'dcb-sp2', color:'#ffd000', width:2, dashed:true });
+  if (numSites >= 3) links.push({ from:'dca-sp1', to:'dcc-sp1', color:'#9955ff', width:1.5, dashed:true });
+  if (numSites >= 4) links.push({ from:'dcb-sp2', to:'dcd-sp2', color:'#ff8c00', width:1.5, dashed:true });
+  if (numSites >= 4) links.push({ from:'dcc-sp1', to:'dcd-sp1', color:'#ff3355', width:1.5, dashed:true });
+
+  const bands = [
+    { y: 20,  h: 72,  color:'#1a7fff', label:'WAN / MPLS / DCI BACKBONE' },
+    ...(hasFW ? [{ y: 100, h: 58, color:'#ff3355', label:'SECURITY PERIMETER' }] : []),
+  ];
+
+  const siteLegend = siteConfs.map(s =>
+    `<div class="legend-item"><div class="legend-dot" style="background:${s.color}"></div>${s.label}</div>`
+  ).join('');
+  const legend = siteLegend + `
+    <div class="legend-item"><div class="legend-dot" style="background:#ffd000;border-radius:0"></div>DCI (VXLAN stretch)</div>
+    ${hasFW ? `<div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Firewall pair</div>` : ''}`;
+
+  const meta = `Multi-site topology · ${numSites} DC locations · VXLAN/EVPN DCI · ${hasFW ? fwLbl + ' perimeter ·' : ''} Active-Active`;
+  return { svg: buildSVG({ nodes, links, bands, W, H }), title:'Multi-Site DC / DCI — High Level Design', meta, legend };
+}
+
+/* ════════════════════════════════════════════════════════════════
    LLD — IP ADDRESSING PLAN
 ════════════════════════════════════════════════════════════════ */
 function renderIPPlan() {
   const uc   = STATE.uc;
   const site = parseInt(STATE.numSites) || 1;
-  const isDC = uc === 'dc' || uc === 'hybrid';
+  const isDC = uc === 'dc' || uc === 'hybrid' || uc === 'multisite';
   const isGPU= uc === 'gpu';
 
   // IP block summary cards
@@ -622,7 +735,7 @@ function renderIPPlan() {
 ════════════════════════════════════════════════════════════════ */
 function renderVLANPlan() {
   const uc = STATE.uc;
-  const isDC = uc === 'dc' || uc === 'hybrid';
+  const isDC = uc === 'dc' || uc === 'hybrid' || uc === 'multisite';
 
   const vlans = [
     { id:10,  name:'MGMT',         subnet:'10.0.0.0/24',   gw:'10.0.0.1',    dhcp:'10.0.0.10–250',  purpose:'Network device OOB management',  layer:'pl-mgmt' },
@@ -678,7 +791,7 @@ function renderVNITable() {
 ════════════════════════════════════════════════════════════════ */
 function renderBGPDesign() {
   const uc   = STATE.uc;
-  const isDC = uc === 'dc' || uc === 'hybrid';
+  const isDC = uc === 'dc' || uc === 'hybrid' || uc === 'multisite';
   const isCampus = uc === 'campus' || uc === 'hybrid';
   const isGPU = uc === 'gpu';
 
@@ -740,7 +853,7 @@ function renderBGPDesign() {
 ════════════════════════════════════════════════════════════════ */
 function renderPhysical() {
   const uc   = STATE.uc;
-  const isDC = uc === 'dc' || uc === 'hybrid';
+  const isDC = uc === 'dc' || uc === 'hybrid' || uc === 'multisite';
   const isCampus = uc === 'campus' || uc === 'hybrid';
   const isGPU = uc === 'gpu';
   const red  = STATE.redundancy;

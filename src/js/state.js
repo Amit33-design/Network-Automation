@@ -27,6 +27,10 @@ const STATE = {
   gpuSpecifics: [],
   extraNotes: '',
   selectedProducts: {},   // layerKey → prodId
+  // Phase 2 additions
+  budget: '',             // smb | mid | enterprise | hyperscale
+  preferredVendors: [],   // ['Cisco','Fortinet', ...]  — empty = any
+  numSitesTopology: 3,    // for multi-site diagram (3-6)
 };
 
 /* ── Step metadata ───────────────────────────────────────────────── */
@@ -40,10 +44,18 @@ const STEPS = [
 ];
 
 const UC_LABELS = {
-  campus:  'Campus / Enterprise LAN',
-  dc:      'Data Center Fabric',
-  gpu:     'AI / GPU Cluster',
-  hybrid:  'Hybrid (Campus + DC)',
-  wan:     'WAN / SD-WAN',
+  campus:     'Campus / Enterprise LAN',
+  dc:         'Data Center Fabric',
+  gpu:        'AI / GPU Cluster',
+  hybrid:     'Hybrid (Campus + DC)',
+  wan:        'WAN / SD-WAN',
+  multisite:  'Multi-Site DC / DCI',
 };
 
+/* ── Budget labels ───────────────────────────────────────────────── */
+const BUDGET_LABELS = {
+  smb:        'SMB  (< $50K)',
+  mid:        'Mid-Market  ($50K – $500K)',
+  enterprise: 'Enterprise  ($500K – $5M)',
+  hyperscale: 'Hyperscale  ($5M+)',
+};

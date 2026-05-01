@@ -49,7 +49,7 @@
       <button onclick="closeDemoModal()" style="background:none;border:none;color:var(--txt2);
         font-size:1.3rem;cursor:pointer;padding:.25rem .5rem">✕</button>
     </div>
-    <div style="padding:1.5rem 1.75rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
+    <div style="padding:1.5rem 1.75rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem">
       <div onclick="loadDemo('dc')" style="cursor:pointer;background:var(--bg3);border:1px solid var(--border);
         border-radius:12px;padding:1.25rem;text-align:center;transition:all .2s"
         onmouseover="this.style.borderColor='var(--green)'" onmouseout="this.style.borderColor='var(--border)'">
@@ -73,6 +73,22 @@
         <div style="font-weight:700;font-size:.9rem">Campus LAN</div>
         <div style="font-size:.72rem;color:var(--txt2);margin-top:.3rem">5000 users · 4 sites · 802.1X</div>
         <div style="margin-top:.75rem"><span class="badge badge-blue">Cisco IOS-XE</span></div>
+      </div>
+      <div onclick="loadDemo('fortinet')" style="cursor:pointer;background:var(--bg3);border:1px solid var(--border);
+        border-radius:12px;padding:1.25rem;text-align:center;transition:all .2s"
+        onmouseover="this.style.borderColor='#e6111a'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="font-size:2rem;margin-bottom:.5rem">🔒</div>
+        <div style="font-weight:700;font-size:.9rem">Fortinet SMB Campus</div>
+        <div style="font-size:.72rem;color:var(--txt2);margin-top:.3rem">250 users · Security Fabric · PCI-DSS</div>
+        <div style="margin-top:.75rem"><span class="badge" style="background:#e6111a22;color:#e6111a;border:1px solid #e6111a44">FortiSwitch</span></div>
+      </div>
+      <div onclick="loadDemo('multisite')" style="cursor:pointer;background:var(--bg3);border:1px solid var(--border);
+        border-radius:12px;padding:1.25rem;text-align:center;transition:all .2s;grid-column:1/-1"
+        onmouseover="this.style.borderColor='var(--yellow)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="font-size:2rem;margin-bottom:.5rem">🗺️</div>
+        <div style="font-weight:700;font-size:.9rem">Multi-Site DC / DCI</div>
+        <div style="font-size:.72rem;color:var(--txt2);margin-top:.3rem">4 DC sites · DCA Primary + DCB Active-Active + DCC DR + DCD Edge · VXLAN DCI</div>
+        <div style="margin-top:.75rem"><span class="badge badge-purple">EVPN DCI</span> <span class="badge badge-blue">Enterprise</span></div>
       </div>
     </div>
     <div style="padding:.85rem 1.75rem;border-top:1px solid var(--border);
@@ -190,6 +206,19 @@
         </div>
       </div>
 
+      <div class="use-card" data-uc="multisite" onclick="selectUC(this)">
+        <div class="check-mark">✓</div>
+        <div class="card-icon">🗺️</div>
+        <h3>Multi-Site DC / DCI</h3>
+        <p>Geographically distributed data centers with active-active or active-passive DCI, VXLAN/EVPN stretch, and WAN failover.</p>
+        <div class="card-tags">
+          <span class="badge badge-purple">DCI</span>
+          <span class="badge badge-purple">Active-Active</span>
+          <span class="badge badge-purple">EVPN</span>
+          <span class="badge badge-purple">OTV</span>
+        </div>
+      </div>
+
     </div>
 
     <!-- Organization details -->
@@ -224,6 +253,37 @@
           <label>Number of sites / locations</label>
           <input type="number" id="num-sites" placeholder="e.g. 3" min="1" max="999" />
         </div>
+        <div class="field">
+          <label>Hardware budget tier</label>
+          <select id="budget-tier">
+            <option value="">— any budget —</option>
+            <option value="smb">SMB  (&lt; $50K)</option>
+            <option value="mid">Mid-Market  ($50K – $500K)</option>
+            <option value="enterprise">Enterprise  ($500K – $5M)</option>
+            <option value="hyperscale">Hyperscale  ($5M+)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vendor Preferences -->
+    <div class="form-card">
+      <div class="form-card-head">
+        <div class="ico" style="background:rgba(153,85,255,.15)">🏷️</div>
+        <div>
+          <h3>Preferred Vendors <span style="font-weight:400;font-size:.82rem;color:var(--txt1)">(optional)</span></h3>
+          <p>Products from selected vendors score higher. Leave blank for best-fit across all vendors.</p>
+        </div>
+      </div>
+      <div class="vendor-pref-grid" id="vendor-pref">
+        <div class="vendor-chip" data-vendor="Cisco"            onclick="toggleVendorChip(this)"><span class="vc-dot" style="background:#1ba0d7"></span>Cisco</div>
+        <div class="vendor-chip" data-vendor="Fortinet"         onclick="toggleVendorChip(this)"><span class="vc-dot" style="background:#e6111a"></span>Fortinet</div>
+        <div class="vendor-chip" data-vendor="HPE Aruba"        onclick="toggleVendorChip(this)"><span class="vc-dot" style="background:#ff6600"></span>HPE Aruba</div>
+        <div class="vendor-chip" data-vendor="Arista"           onclick="toggleVendorChip(this)"><span class="vc-dot" style="background:#e04f3b"></span>Arista</div>
+        <div class="vendor-chip" data-vendor="Juniper"          onclick="toggleVendorChip(this)"><span class="vc-dot" style="background:#009b3a"></span>Juniper</div>
+        <div class="vendor-chip" data-vendor="Extreme Networks" onclick="toggleVendorChip(this)"><span class="vc-dot" style="background:#6f2ca8"></span>Extreme</div>
+        <div class="vendor-chip" data-vendor="Dell EMC"         onclick="toggleVendorChip(this)"><span class="vc-dot" style="background:#007db8"></span>Dell EMC</div>
+        <div class="vendor-chip" data-vendor="NVIDIA"           onclick="toggleVendorChip(this)"><span class="vc-dot" style="background:#76b900"></span>NVIDIA</div>
       </div>
     </div>
 
@@ -517,6 +577,8 @@
             <div class="summary-row"><span class="key">Firewall</span><span class="val" id="sum-fw">—</span></div>
             <div class="summary-row"><span class="key">Compliance</span><span class="val" id="sum-comp">—</span></div>
             <div class="summary-row"><span class="key">Automation</span><span class="val" id="sum-auto">—</span></div>
+            <div class="summary-row"><span class="key">Budget tier</span><span class="val" id="sum-budget">—</span></div>
+            <div class="summary-row"><span class="key">Vendors</span><span class="val" id="sum-vendors">Any</span></div>
           </div>
           <div style="margin-top:1rem">
             <div class="info-box" style="margin:0">

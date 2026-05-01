@@ -10,11 +10,16 @@ function getOS(layerKey) {
   if (!prod) return 'ios-xe';
   const v = prod.vendor;
   const dcLayers = ['dc-leaf','dc-spine','gpu-tor','gpu-spine'];
-  if (v === 'Cisco'   && dcLayers.includes(layerKey)) return 'nxos';
-  if (v === 'Cisco')   return 'ios-xe';
-  if (v === 'Arista')  return 'eos';
-  if (v === 'Juniper') return 'junos';
-  if (v === 'NVIDIA')  return 'sonic';
+  if (v === 'Cisco'           && dcLayers.includes(layerKey)) return 'nxos';
+  if (v === 'Cisco')           return 'ios-xe';
+  if (v === 'Arista')          return 'eos';
+  if (v === 'Juniper')         return 'junos';
+  if (v === 'NVIDIA')          return 'sonic';
+  if (v === 'Dell EMC')        return 'sonic';
+  // Fortinet, HPE Aruba, Extreme — use IOS-XE template as base (closest CLI style)
+  if (v === 'Fortinet')        return 'ios-xe';
+  if (v === 'HPE Aruba')       return 'ios-xe';
+  if (v === 'Extreme Networks') return 'eos';
   return 'ios-xe';
 }
 
@@ -45,13 +50,24 @@ function buildDeviceList() {
     devs.push({ id:'acc-02',  name:'ACC-02',  layer:'campus-access', role:'Access Switch', icon:'🔌', idx:1 });
     devs.push({ id:'acc-03',  name:'ACC-03',  layer:'campus-access', role:'Access Switch', icon:'🔌', idx:2 });
   }
-  if (uc === 'dc' || uc === 'hybrid') {
-    devs.push({ id:'spine-01', name:'SPINE-01', layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:0 });
-    devs.push({ id:'spine-02', name:'SPINE-02', layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:1 });
-    devs.push({ id:'leaf-01',  name:'LEAF-01',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:0 });
-    devs.push({ id:'leaf-02',  name:'LEAF-02',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:1 });
-    devs.push({ id:'leaf-03',  name:'LEAF-03',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:2 });
-    devs.push({ id:'leaf-04',  name:'LEAF-04',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:3 });
+  if (uc === 'dc' || uc === 'hybrid' || uc === 'multisite') {
+    const sites = uc === 'multisite' ? Math.min(4, Math.max(3, parseInt(STATE.numSitesTopology) || 3)) : 1;
+    const siteIds = ['DCA','DCB','DCC','DCD'].slice(0, sites);
+    if (uc === 'multisite') {
+      siteIds.forEach((sid, si) => {
+        devs.push({ id:`${sid.toLowerCase()}-sp1`, name:`${sid}-SPINE-01`, layer:'dc-spine', role:`${sid} Spine`, icon:'🦴', idx: si*2 });
+        devs.push({ id:`${sid.toLowerCase()}-sp2`, name:`${sid}-SPINE-02`, layer:'dc-spine', role:`${sid} Spine`, icon:'🦴', idx: si*2+1 });
+        devs.push({ id:`${sid.toLowerCase()}-lf1`, name:`${sid}-LEAF-01`,  layer:'dc-leaf',  role:`${sid} Leaf`,  icon:'🍃', idx: si*2 });
+        devs.push({ id:`${sid.toLowerCase()}-lf2`, name:`${sid}-LEAF-02`,  layer:'dc-leaf',  role:`${sid} Leaf`,  icon:'🍃', idx: si*2+1 });
+      });
+    } else {
+      devs.push({ id:'spine-01', name:'SPINE-01', layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:0 });
+      devs.push({ id:'spine-02', name:'SPINE-02', layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:1 });
+      devs.push({ id:'leaf-01',  name:'LEAF-01',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:0 });
+      devs.push({ id:'leaf-02',  name:'LEAF-02',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:1 });
+      devs.push({ id:'leaf-03',  name:'LEAF-03',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:2 });
+      devs.push({ id:'leaf-04',  name:'LEAF-04',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:3 });
+    }
   }
   if (uc === 'gpu') {
     devs.push({ id:'gspine-01', name:'GPU-SPINE-01', layer:'gpu-spine', role:'GPU Spine', icon:'🧠', idx:0 });
