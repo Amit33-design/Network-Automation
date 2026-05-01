@@ -224,10 +224,12 @@ function genIOSXE(dev, layer, idx) {
   const isDist = layer === 'campus-dist';
   const isAcc  = layer === 'campus-access';
   const isFW   = layer === 'fw';
-  const hasVxlan= STATE.overlayProto.some(o=>o.includes('VXLAN'));
-  const hasBGP  = STATE.underlayProto.includes('BGP');
-  const hasOSPF = STATE.underlayProto.includes('OSPF') || (!hasBGP && !isAcc);
-  const has8021x= STATE.nac.some(n=>n.includes('802.1X'));
+  const hasVxlan = (STATE.overlayProto || []).some(o=>o.includes('VXLAN'));
+  const hasBGP   = (STATE.underlayProto || []).includes('BGP');
+  const hasOSPF  = (STATE.underlayProto || []).includes('OSPF') || (!hasBGP && !(STATE.underlayProto||[]).includes('EIGRP') && !isAcc);
+  const hasEIGRP = (STATE.underlayProto || []).includes('EIGRP');
+  const hasISIS  = (STATE.underlayProto || []).includes('IS-IS');
+  const has8021x = (STATE.nac || []).some(n=>n.includes('802.1X'));
   const hasDHCP = true;
 
   const p2p = `10.100.0.${idx*2}`;
@@ -425,14 +427,48 @@ interface Vlan40
  ip helper-address 10.0.0.100
  no shutdown
 !
-! ── ROUTING ─────────────────────────────────────────────────
+! ── ROUTING (Distribution) ──────────────────────────────────
 ${hasOSPF ? `router ospf 1
  router-id ${loIP}
  passive-interface default
  no passive-interface TenGigabitEthernet1/1
  no passive-interface TenGigabitEthernet1/2
  network 10.100.0.0 0.0.0.255 area 0
- network 10.0.0.0 0.0.255.255 area 0` : ''}
+ network 10.0.0.0 0.0.255.255 area 0
+ area 1 stub no-summary
+ area 0 authentication message-digest` : ''}
+${hasEIGRP ? `!
+router eigrp CAMPUS-FABRIC
+ !
+ address-family ipv4 unicast autonomous-system 100
+  !
+  af-interface default
+   passive-interface
+   authentication mode hmac-sha-256
+   authentication key-chain EIGRP-KEY
+  exit-af-interface
+  !
+  af-interface TenGigabitEthernet1/1
+   no passive-interface
+   hello-interval 5
+   hold-time 15
+  exit-af-interface
+  !
+  af-interface TenGigabitEthernet1/2
+   no passive-interface
+   hello-interval 5
+   hold-time 15
+  exit-af-interface
+  !
+  topology base
+   no auto-summary
+   maximum-paths 4
+  exit-af-topology
+  !
+  network 10.0.0.0 0.255.255.255
+  eigrp router-id ${loIP}
+  eigrp stub connected summary
+ exit-address-family` : ''}
 ${hasBGP ? `router bgp 65100
  bgp router-id ${loIP}
  bgp log-neighbor-changes
@@ -484,7 +520,7 @@ interface Loopback0
  description ROUTER-ID
  ip address ${loIP} 255.255.255.255
 !
-! ── ROUTING ─────────────────────────────────────────────────
+! ── ROUTING (Core) ──────────────────────────────────────────
 ${hasOSPF ? `router ospf 1
  router-id ${loIP}
  passive-interface default
@@ -496,6 +532,52 @@ ${hasOSPF ? `router ospf 1
  network 10.100.0.0 0.0.0.255 area 0
  network 10.255.0.0 0.0.0.255 area 0
  area 0 authentication message-digest` : ''}
+${hasEIGRP ? `!
+router eigrp CAMPUS-FABRIC
+ !
+ address-family ipv4 unicast autonomous-system 100
+  !
+  af-interface default
+   passive-interface
+   authentication mode hmac-sha-256
+   authentication key-chain EIGRP-KEY
+  exit-af-interface
+  !
+  af-interface TenGigabitEthernet1/1
+   no passive-interface
+   hello-interval 5
+   hold-time 15
+  exit-af-interface
+  !
+  af-interface TenGigabitEthernet2/1
+   no passive-interface
+  exit-af-interface
+  !
+  af-interface TenGigabitEthernet2/2
+   no passive-interface
+  exit-af-interface
+  !
+  af-interface TenGigabitEthernet2/3
+   no passive-interface
+  exit-af-interface
+  !
+  af-interface TenGigabitEthernet2/4
+   no passive-interface
+  exit-af-interface
+  !
+  topology base
+   no auto-summary
+   maximum-paths 4
+  exit-af-topology
+  !
+  network 10.0.0.0 0.255.255.255
+  eigrp router-id ${loIP}
+ exit-address-family
+!
+key chain EIGRP-KEY
+ key 1
+  key-string EIGRP@NetDesign2024
+  cryptographic-algorithm hmac-sha-256` : ''}
 ${hasBGP ? `router bgp 65100
  bgp router-id ${loIP}
  bgp log-neighbor-changes

@@ -690,10 +690,11 @@
     <!-- HLD / LLD tabs -->
     <div class="design-tabs">
       <button class="dtab active" onclick="switchDesignTab(this,'hld')">📐 High Level Design</button>
-      <button class="dtab" onclick="switchDesignTab(this,'lld-ip')">🌐 IP Addressing Plan</button>
+      <button class="dtab" onclick="switchDesignTab(this,'lld-ip')">🌐 IP Plan</button>
       <button class="dtab" onclick="switchDesignTab(this,'lld-vlan')">🏷 VLAN Design</button>
-      <button class="dtab" onclick="switchDesignTab(this,'lld-bgp')">🔀 BGP / Routing Design</button>
-      <button class="dtab" onclick="switchDesignTab(this,'lld-phy')">🔌 Physical Connectivity</button>
+      <button class="dtab" onclick="switchDesignTab(this,'lld-bgp')">🔀 Routing &amp; Protocols</button>
+      <button class="dtab" onclick="switchDesignTab(this,'lld-phy')">🔌 Physical Links</button>
+      <button class="dtab" onclick="switchDesignTab(this,'lld-ref');renderRefArchitectures()">📚 Reference Designs</button>
     </div>
 
     <!-- ── HLD SVG Panel ── -->
@@ -757,12 +758,56 @@
       </div>
     </div>
 
-    <!-- ── BGP Panel ── -->
+    <!-- ── Routing & Protocols Panel ── -->
     <div class="design-panel" id="dpanel-lld-bgp">
+
+      <!-- Protocol Summary (always shown) -->
+      <div class="lld-section">
+        <div class="lld-section-head">
+          <div class="ico" style="background:rgba(26,127,255,.15)">📡</div>
+          <div><h4>Routing Protocol Design Summary</h4><p>Underlay IGP, overlay, and control-plane protocol parameters — adapts to your protocol selections in Step 2</p></div>
+        </div>
+        <div class="lld-table-wrap">
+          <table class="lld-table" id="proto-table">
+            <thead><tr><th>Protocol</th><th>Scope / Role</th><th>Parameters &amp; Design Notes</th><th>Timers</th><th>Networks Advertised</th></tr></thead>
+            <tbody id="proto-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- OSPF Area Design (shown only when OSPF selected) -->
+      <div class="lld-section" id="ospf-design-section" style="display:none">
+        <div class="lld-section-head">
+          <div class="ico" style="background:rgba(153,85,255,.15)">🗺️</div>
+          <div><h4>OSPF Area Design</h4><p>Area 0 backbone, stub areas, NSSA — per Cisco/Juniper campus and DC best practices</p></div>
+        </div>
+        <div class="lld-table-wrap">
+          <table class="lld-table" id="ospf-table">
+            <thead><tr><th>Area</th><th>Devices</th><th>Type</th><th>Authentication</th><th>Timers</th><th>Design Note</th></tr></thead>
+            <tbody id="ospf-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- EIGRP Design (shown only when EIGRP selected) -->
+      <div class="lld-section" id="eigrp-design-section" style="display:none">
+        <div class="lld-section-head">
+          <div class="ico" style="background:rgba(0,212,255,.15)">⚡</div>
+          <div><h4>EIGRP AS Design</h4><p>Named-mode EIGRP — K-values, stub configuration, and authentication</p></div>
+        </div>
+        <div class="lld-table-wrap">
+          <table class="lld-table" id="eigrp-table">
+            <thead><tr><th>AS Number</th><th>Devices</th><th>K-values / Stub</th><th>Hello / Hold</th><th>Auth</th><th>Notes</th></tr></thead>
+            <tbody id="eigrp-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- BGP ASN Table (shown when BGP is relevant) -->
       <div class="lld-section">
         <div class="lld-section-head">
           <div class="ico" style="background:rgba(255,140,0,.15)">🔀</div>
-          <div><h4>BGP Autonomous System Design</h4><p>ASN assignments and eBGP/iBGP peering relationships</p></div>
+          <div><h4>BGP Autonomous System &amp; Peering Design</h4><p>ASN assignments, eBGP/iBGP roles, and address families — including EVPN for overlay</p></div>
         </div>
         <div class="lld-table-wrap">
           <table class="lld-table" id="asn-table">
@@ -771,18 +816,7 @@
           </table>
         </div>
       </div>
-      <div class="lld-section">
-        <div class="lld-section-head">
-          <div class="ico" style="background:rgba(26,127,255,.15)">📡</div>
-          <div><h4>Routing Protocol Summary</h4><p>Underlay and overlay protocol parameters</p></div>
-        </div>
-        <div class="lld-table-wrap">
-          <table class="lld-table" id="proto-table">
-            <thead><tr><th>Protocol</th><th>Scope</th><th>Parameters</th><th>Timers</th><th>Networks Advertised</th></tr></thead>
-            <tbody id="proto-tbody"></tbody>
-          </table>
-        </div>
-      </div>
+
     </div>
 
     <!-- ── Physical Connectivity Panel ── -->
@@ -797,6 +831,24 @@
             <thead><tr><th>Device A</th><th>Interface A</th><th>Device B</th><th>Interface B</th><th>LAG / PO</th><th>Speed</th><th>Cable</th><th>Purpose</th></tr></thead>
             <tbody id="phy-tbody"></tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Reference Designs Panel ── -->
+    <div class="design-panel" id="dpanel-lld-ref">
+      <div class="lld-section">
+        <div class="lld-section-head">
+          <div class="ico" style="background:rgba(0,232,122,.15)">📚</div>
+          <div>
+            <h4>Vendor Reference Architectures</h4>
+            <p>Official design guides from Cisco, Arista, Juniper, HPE Aruba, and Fortinet — filtered for your use case and preferred vendors. Click any card to open the full design document.</p>
+          </div>
+        </div>
+      </div>
+      <div class="ref-arch-grid" id="ref-arch-grid">
+        <div style="color:var(--txt2);text-align:center;padding:2rem">
+          Generate the design first (click &ldquo;Build Design&rdquo; from Step 3) to load reference documents.
         </div>
       </div>
     </div>

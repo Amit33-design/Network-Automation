@@ -1145,6 +1145,55 @@
     }
     .vl-f5      { background: #e4002b; color: #fff; }
 
+    /* ── Reference Architecture Cards ─────────────────────────────── */
+    .ref-arch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1rem;
+      padding: 0 0 1.5rem;
+    }
+    .ref-card {
+      display: flex; flex-direction: column; gap: .5rem;
+      padding: 1.1rem 1.2rem;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      text-decoration: none;
+      transition: all .2s;
+      cursor: pointer;
+    }
+    .ref-card:hover {
+      background: var(--bg3);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    }
+    .ref-vendor {
+      font-size: .72rem; font-weight: 800; letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .ref-title {
+      font-size: .88rem; font-weight: 700; color: var(--txt0);
+      line-height: 1.35;
+    }
+    .ref-desc {
+      font-size: .77rem; color: var(--txt1); line-height: 1.5;
+      flex: 1;
+    }
+    .ref-tags {
+      display: flex; flex-wrap: wrap; gap: .3rem;
+      margin-top: .25rem;
+    }
+    .ref-tag {
+      font-size: .65rem; font-weight: 600;
+      padding: 2px 7px; border-radius: 4px;
+      background: var(--bg4); color: var(--txt1);
+      border: 1px solid var(--border);
+    }
+    .ref-link {
+      font-size: .72rem; font-weight: 700;
+      color: var(--blue); margin-top: .2rem;
+    }
+
     .prod-title { flex: 1; }
     .prod-title .model { font-size: .95rem; font-weight: 700; line-height: 1.2; }
     .prod-title .vendor-name { font-size: .73rem; color: var(--txt2); margin-top: .15rem; }

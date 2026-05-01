@@ -29,8 +29,9 @@ function buildDesign() {
   renderVLANPlan();
   renderBGPDesign();
   renderPhysical();
+  renderRefArchitectures();
   // Show VXLAN section if overlay selected
-  const hasVxlan = STATE.overlayProto.some(o => o.includes('VXLAN'));
+  const hasVxlan = (STATE.overlayProto || []).some(o => o.includes('VXLAN'));
   const vxSec = document.getElementById('vxlan-section');
   if (vxSec) vxSec.style.display = hasVxlan ? 'block' : 'none';
   if (hasVxlan) renderVNITable();
@@ -126,6 +127,27 @@ function buildSVG({ nodes, links, bands, W = 1100, H = 600 }) {
     </g>`;
   }).join('');
 
+  /* ── link protocol badges (pill label at midpoint of each link) ── */
+  const badgesSVG = links.filter(lk => lk.badge).map(lk => {
+    const a = nodeMap[lk.from], b = nodeMap[lk.to];
+    if (!a || !b) return '';
+    const aw = a.w || 115, ah = a.h || 42;
+    const bw2 = b.w || 115, bh2 = b.h || 42;
+    const x1 = a.x + aw / 2, y1 = a.y + ah;
+    const x2 = b.x + bw2 / 2, y2 = b.y;
+    const sameRow = Math.abs(a.y - b.y) < 10;
+    const mx = (x1 + x2) / 2;
+    const my = sameRow ? (a.y + ah / 2) - 12 : (y1 + y2) / 2;
+    const txt = lk.badge;
+    const tw  = txt.length * 5.8 + 14;
+    const col = lk.color || '#2a4a90';
+    return `
+    <rect x="${mx - tw/2}" y="${my - 8}" width="${tw}" height="16" rx="4"
+      fill="#060b18" stroke="${col}99" stroke-width="1.2" opacity=".96"/>
+    <text x="${mx}" y="${my + 3}" text-anchor="middle" fill="${col}"
+      font-size="7.5" font-weight="800" font-family="monospace" letter-spacing=".4">${txt}</text>`;
+  }).join('');
+
   /* ── animated packet dots (one per flow:true link, staggered) ── */
   const flowLinks = links.filter(lk => lk.flow);
   const packetsSVG = flowLinks.map((lk, i) => {
@@ -152,6 +174,7 @@ function buildSVG({ nodes, links, bands, W = 1100, H = 600 }) {
     <rect width="${W}" height="${H}" fill="#0c1226" rx="10"/>
     ${bandsSVG}
     ${linksSVG}
+    ${badgesSVG}
     ${nodesSVG}
     ${packetsSVG}
   </svg>`;
@@ -191,28 +214,81 @@ function renderHLD() {
 }
 
 /* ════════════════════════════════════════════════════════════════
+   PROTOCOL HELPERS — used by all HLD builders
+════════════════════════════════════════════════════════════════ */
+function _protos() {
+  const ul = STATE.underlayProto || [];
+  const ov = STATE.overlayProto  || [];
+  return {
+    hasOSPF:  ul.includes('OSPF'),
+    hasEIGRP: ul.includes('EIGRP'),
+    hasISIS:  ul.includes('IS-IS'),
+    hasBGP:   ul.includes('BGP'),
+    hasStatic:ul.includes('Static'),
+    hasVXLAN: ov.some(p => p.includes('VXLAN')),
+    hasMPLS:  ov.some(p => p.includes('MPLS')),
+    hasIPsec: ov.includes('IPsec'),
+    hasGRE:   ov.includes('GRE'),
+    noOverlay:ov.includes('None') || ov.length === 0,
+    underlayLabel() {
+      if (this.hasOSPF)  return 'OSPF';
+      if (this.hasEIGRP) return 'EIGRP';
+      if (this.hasISIS)  return 'IS-IS';
+      if (this.hasBGP)   return 'BGP';
+      if (this.hasStatic)return 'Static';
+      return 'L3';
+    },
+    overlayLabel() {
+      if (this.hasVXLAN) return 'VXLAN/EVPN';
+      if (this.hasMPLS)  return 'MPLS/SR';
+      if (this.hasGRE)   return 'GRE Tunnel';
+      if (this.hasIPsec) return 'IPsec';
+      return 'No Overlay';
+    },
+    // Short badge for core/dist/spine links
+    coreBadge() {
+      const u = this.underlayLabel();
+      if (this.hasOSPF) return 'OSPF Area 0';
+      if (this.hasISIS) return 'IS-IS L2';
+      return u;
+    },
+    // Short badge for access/leaf links
+    accessBadge() {
+      if (this.hasOSPF)  return 'OSPF Stub';
+      if (this.hasEIGRP) return 'EIGRP';
+      return this.underlayLabel();
+    },
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════
    CAMPUS HLD
 ════════════════════════════════════════════════════════════════ */
 function campusHLD() {
-  const W = 1100, H = 600;
+  const W = 1100;
   const sz  = STATE.orgSize;
   const red = STATE.redundancy;
   const haCore = sz === 'large' || sz === 'enterprise';
   const haFW   = STATE.fwModel && STATE.fwModel !== 'none';
   const dual   = red === 'ha' || red === 'full';
+  // Detect wireless need
+  const hasWifi = (STATE.nac || []).some(n => /wireless/i.test(n)) ||
+                  (STATE.appTypes || []).some(a => /voice|video|wireless/i.test(a)) ||
+                  (STATE.protoFeatures || []).some(f => /wireless/i.test(f));
 
   const selAccess = PRODUCTS[STATE.selectedProducts['campus-access']];
   const selDist   = PRODUCTS[STATE.selectedProducts['campus-dist']];
   const selCore   = PRODUCTS[STATE.selectedProducts['campus-core']];
   const selFW     = PRODUCTS[STATE.selectedProducts['fw']];
+  const P = _protos();
 
   // Y positions per layer
-  const yInternet = 30;
-  const yFW       = haFW   ? 120 : null;
-  const yCore     = haCore ? (haFW ? 215 : 120) : null;
-  const yDist     = haCore ? 325 : (haFW ? 215 : 120);
-  const yAccess   = yDist  + 120;
-  const yEP       = yAccess + 105;
+  const yInternet = 28;
+  const yFW       = haFW   ? 118 : null;
+  const yCore     = haCore ? (haFW ? 210 : 118) : null;
+  const yDist     = haCore ? 320 : (haFW ? 210 : 118);
+  const yAccess   = yDist  + 125;
+  const yEP       = yAccess + 110;
 
   const nodes = [], links = [];
   const bw = 115, bh = 42;
@@ -223,16 +299,18 @@ function campusHLD() {
 
   // Firewall pair
   if (haFW) {
-    nodes.push({ id:'fw1', x: dual ? 330 : W/2-57, y: yFW, w:bw, h:bh,
+    nodes.push({ id:'fw1', x: dual ? 310 : W/2-57, y: yFW, w:bw, h:bh,
       label: selFW ? selFW.model.slice(0,18) : 'FW-01',
-      sub: selFW ? selFW.vendor : 'Firewall', icon:'🔒', ...C.fw });
-    links.push({ from:'inet', to:'fw1', color:'#ff3355', width:2, flow:true });
+      sub: selFW ? selFW.vendor : 'Perimeter FW', icon:'🔒', ...C.fw });
+    links.push({ from:'inet', to:'fw1', color:'#ff3355', width:2, flow:true,
+      badge:'Internet Edge' });
     if (dual) {
-      nodes.push({ id:'fw2', x: 660, y: yFW, w:bw, h:bh,
+      nodes.push({ id:'fw2', x: 680, y: yFW, w:bw, h:bh,
         label: selFW ? selFW.model.slice(0,18) : 'FW-02',
-        sub: selFW ? selFW.vendor : 'Firewall (HA)', icon:'🔒', ...C.fw });
+        sub: selFW ? selFW.vendor : 'FW HA Pair', icon:'🔒', ...C.fw });
       links.push({ from:'inet', to:'fw2', color:'#ff3355', width:2, flow:true });
-      links.push({ from:'fw1', to:'fw2', color:'#ff3355', width:1, opacity:.4 });
+      links.push({ from:'fw1', to:'fw2', color:'#ff3355', width:1.2, opacity:.5,
+        badge:'FW Sync / HA' });
     }
   }
 
@@ -240,21 +318,35 @@ function campusHLD() {
   const coreParent1 = haFW ? 'fw1' : 'inet';
   const coreParent2 = haFW && dual ? 'fw2' : (haFW ? 'fw1' : 'inet');
   if (haCore) {
-    nodes.push({ id:'core1', x: dual ? 310 : W/2-57, y: yCore, w:bw, h:bh,
+    nodes.push({ id:'core1', x: dual ? 290 : W/2-57, y: yCore, w:bw, h:bh,
       label: selCore ? selCore.model.slice(0,18) : 'CORE-01',
-      sub: selCore ? selCore.vendor : 'Core', icon:'⚙️', ...C.core });
-    links.push({ from: coreParent1, to:'core1', color:'#9955ff', width:2.2, flow:true });
+      sub: selCore ? selCore.vendor : `Core · ${P.underlayLabel()}`, icon:'⚙️', ...C.core });
+    links.push({ from: coreParent1, to:'core1', color:'#9955ff', width:2.2, flow:true,
+      badge: P.coreBadge() });
     if (dual) {
-      nodes.push({ id:'core2', x: 680, y: yCore, w:bw, h:bh,
+      nodes.push({ id:'core2', x: 700, y: yCore, w:bw, h:bh,
         label: selCore ? selCore.model.slice(0,18) : 'CORE-02',
-        sub: selCore ? selCore.vendor : 'Core (HA)', icon:'⚙️', ...C.core });
+        sub: selCore ? selCore.vendor : 'Core HA', icon:'⚙️', ...C.core });
       links.push({ from: coreParent2, to:'core2', color:'#9955ff', width:2.2, flow:true });
-      links.push({ from:'core1', to:'core2', color:'#9955ff', width:1, opacity:.35 });
+      links.push({ from:'core1', to:'core2', color:'#9955ff', width:1.5, opacity:.45,
+        badge: P.hasOSPF ? 'VSS / StackWise' : (P.hasEIGRP ? 'EIGRP ISL' : 'Core ISL') });
     }
   }
 
+  // WLC — Wireless LAN Controller
+  if (hasWifi) {
+    const wlcY = haCore ? (yCore || yDist) : yDist;
+    const wlcX = dual ? 920 : 940;
+    nodes.push({ id:'wlc', x: wlcX, y: wlcY, w: 130, h: bh,
+      label: 'WLC / Mobility', sub: 'CAPWAP Controller', icon:'📶',
+      fill:'#071828', stroke:'#00e87a' });
+    const wlcParent = haCore ? (dual ? 'core2' : 'core1') : (haFW ? 'fw1' : 'inet');
+    links.push({ from: wlcParent, to:'wlc', color:'#00e87a', width:1.5, opacity:.8,
+      badge:'CAPWAP / 5520' });
+  }
+
   // Distribution — 4 nodes
-  const distXs = dual ? [80, 320, 580, 820] : [180, 450, 720, 970];
+  const distXs = dual ? [55, 280, 550, 775] : [160, 420, 680, 940];
   const distIds = ['dist1','dist2','dist3','dist4'];
   const distParents = haCore
     ? (dual ? ['core1','core1','core2','core2'] : ['core1','core1','core1','core1'])
@@ -262,151 +354,185 @@ function campusHLD() {
              : ['inet','inet','inet','inet']);
 
   distXs.forEach((x, i) => {
-    if (x + bw > W + 20) return;
+    if (x + bw > W + 30) return;
     nodes.push({ id: distIds[i], x, y: yDist, w:bw, h:bh,
       label: selDist ? selDist.model.slice(0,14) : `DIST-0${i+1}`,
       sub: selDist ? selDist.vendor : 'Distribution', icon:'🔀', ...C.dist });
-    links.push({ from: distParents[i], to: distIds[i], color:'#00d4ff', width:1.8, flow:true, slow:true });
-    // Cross-link between dist pairs
+    links.push({ from: distParents[i], to: distIds[i], color:'#00d4ff', width:1.8, flow:true, slow:true,
+      badge: i === 0 ? P.coreBadge() : undefined });
     if (i % 2 === 0 && distXs[i+1]) {
-      links.push({ from: distIds[i], to: distIds[i+1], color:'#00d4ff', width:1, opacity:.25 });
+      links.push({ from: distIds[i], to: distIds[i+1], color:'#00d4ff', width:1, opacity:.22 });
     }
   });
 
-  // Access — 4 nodes (under each dist)
+  // Access — 4 nodes
   distXs.forEach((x, i) => {
-    if (x + bw > W + 20) return;
+    if (x + bw > W + 30) return;
     const aid = `acc${i+1}`;
     nodes.push({ id: aid, x, y: yAccess, w:bw, h:bh,
       label: selAccess ? selAccess.model.slice(0,14) : `ACC-0${i+1}`,
-      sub: selAccess ? selAccess.vendor : 'Access', icon:'🔌', ...C.access });
-    links.push({ from: distIds[i], to: aid, color:'#1a7fff', width:1.5, slow:true });
+      sub: selAccess ? selAccess.vendor : 'Access · L2', icon:'🔌', ...C.access });
+    links.push({ from: distIds[i], to: aid, color:'#1a7fff', width:1.5, slow:true,
+      badge: i === 0 ? P.accessBadge() : undefined });
   });
 
-  // Endpoints row
+  // Endpoints — with wireless APs
   const epTypes = [
-    { id:'ep-pc',  icon:'💻', label:'Workstations' },
-    { id:'ep-ph',  icon:'📞', label:'IP Phones' },
-    { id:'ep-ap',  icon:'📶', label:'Wi-Fi APs' },
-    { id:'ep-srv', icon:'🖥', label:'Servers' },
+    { id:'ep-pc',  icon:'💻', label:'Workstations', color:'#2a3a5a' },
+    { id:'ep-ph',  icon:'📞', label:'IP Phones (PoE)', color:'#2a3a5a' },
+    { id:'ep-ap',  icon:'📡', label: hasWifi ? 'Wi-Fi APs (CAPWAP)' : 'Wi-Fi APs', color: hasWifi ? '#00e87a22' : '#2a3a5a',
+      stroke: hasWifi ? '#00e87a' : '#2a3a5a' },
+    { id:'ep-srv', icon:'🖥',  label:'Servers / Printers', color:'#2a3a5a' },
   ];
   distXs.forEach((x, i) => {
-    if (i >= epTypes.length || x + 90 > W + 20) return;
+    if (i >= epTypes.length || x + 95 > W + 30) return;
     const ep = epTypes[i];
-    nodes.push({ id: ep.id, x: x + 10, y: yEP, w: 90, h: 34,
-      label: ep.label, icon: ep.icon, ...C.server, fontSize:8 });
-    links.push({ from:`acc${i+1}`, to: ep.id, color:'#2a3a5a', width:1, opacity:.5 });
+    nodes.push({ id: ep.id, x: x + 8, y: yEP, w: 98, h: 36,
+      label: ep.label, icon: ep.icon,
+      fill: ep.color, stroke: ep.stroke || '#2a3a5a', fontSize: 7.5 });
+    links.push({ from:`acc${i+1}`, to: ep.id, color: ep.stroke || '#2a3a5a', width:1, opacity:.5 });
   });
+
+  // WLC → AP management link
+  if (hasWifi) {
+    links.push({ from:'wlc', to:'ep-ap', color:'#00e87a', width:1, opacity:.35 });
+  }
 
   // Bands
   const bands = [];
-  if (haFW)   bands.push({ y: yFW   - 10, h: 62, color:'#ff3355', label:'SECURITY' });
-  if (haCore) bands.push({ y: yCore - 10, h: 62, color:'#9955ff', label:'CORE' });
-  bands.push({ y: yDist   - 10, h: 62, color:'#00d4ff', label:'DISTRIBUTION' });
-  bands.push({ y: yAccess - 10, h: 62, color:'#1a7fff', label:'ACCESS' });
-  bands.push({ y: yEP     - 10, h: 50, color:'#5a6e99', label:'ENDPOINTS' });
+  if (haFW)   bands.push({ y: yFW   - 12, h: 65, color:'#ff3355', label:'SECURITY PERIMETER' });
+  if (haCore) bands.push({ y: yCore - 12, h: 65, color:'#9955ff', label:`CORE — ${P.coreBadge()} BACKBONE` });
+  bands.push({ y: yDist   - 12, h: 65, color:'#00d4ff', label:`DISTRIBUTION — ${P.coreBadge()} · L3 ROUTING` });
+  bands.push({ y: yAccess - 12, h: 65, color:'#1a7fff', label:`ACCESS — L2 VLANs · 802.1X NAC · PoE` });
+  bands.push({ y: yEP     - 12, h: 55, color:'#5a6e99', label:`ENDPOINTS · ${hasWifi ? 'WIRELESS (CAPWAP) ·' : ''} SERVERS` });
 
-  const selAccName = selAccess ? selAccess.model : '—';
-  const selDistName = selDist  ? selDist.model   : '—';
-  const meta = `Campus hierarchy · ${dual ? 'Dual-uplink HA' : 'Single uplink'} · Access: ${selAccName} · Dist: ${selDistName}`;
+  const selAccName  = selAccess ? selAccess.model : '—';
+  const selDistName = selDist   ? selDist.model   : '—';
+  const meta = `Campus 3-tier · ${dual ? 'HA dual-uplink' : 'Single uplink'} · ${P.underlayLabel()} underlay${P.hasOSPF ? ' (Area 0 backbone)' : ''} · Access: ${selAccName} · Dist: ${selDistName}${hasWifi ? ' · Wireless CAPWAP' : ''}`;
 
   const legend = `
     <div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Security / Firewall</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#9955ff"></div>Core</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#9955ff"></div>Core (${P.underlayLabel()})</div>
     <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Distribution</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#1a7fff"></div>Access</div>
-    <div class="legend-item"><div class="legend-line" style="background:#1a7fff;border-top:2px dashed #1a7fff"></div>Active data flow</div>
-    <div class="legend-item"><div class="legend-line" style="background:var(--border)"></div>Physical link</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff;box-shadow:0 0 6px #00d4ff"></div>Live packet flow</div>`;
+    <div class="legend-item"><div class="legend-dot" style="background:#1a7fff"></div>Access (L2 VLANs)</div>
+    ${hasWifi ? `<div class="legend-item"><div class="legend-dot" style="background:#00e87a"></div>WLC / Wireless APs</div>` : ''}
+    <div class="legend-item" style="gap:.5rem"><div style="width:22px;height:0;border-top:1px solid #1a7fff;border-radius:2px;margin-top:5px"></div>Physical link</div>
+    <div class="legend-item" style="gap:.5rem"><div style="width:22px;height:12px;background:#060b18;border:1px solid #00d4ff99;border-radius:3px;font-size:6px;color:#00d4ff;text-align:center;line-height:12px;font-family:monospace">OSPF</div>Protocol badge</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff;box-shadow:0 0 6px #00d4ff"></div>Animated packet flow</div>`;
 
-  return { svg: buildSVG({ nodes, links, bands, W, H: yEP + 80 }), title:'Campus Network — High Level Design', meta, legend };
+  return { svg: buildSVG({ nodes, links, bands, W, H: yEP + 85 }), title:'Campus Network — High Level Design', meta, legend };
 }
 
 /* ════════════════════════════════════════════════════════════════
    DATA CENTER (LEAF-SPINE) HLD
 ════════════════════════════════════════════════════════════════ */
 function dcHLD() {
-  const W = 1100, H = 560;
+  const W = 1100;
   const red    = STATE.redundancy;
   const dual   = red === 'ha' || red === 'full';
   const haFW   = STATE.fwModel && STATE.fwModel !== 'none';
   const selLeaf  = PRODUCTS[STATE.selectedProducts['dc-leaf']];
   const selSpine = PRODUCTS[STATE.selectedProducts['dc-spine']];
   const selFW    = PRODUCTS[STATE.selectedProducts['fw']];
+  const P = _protos();
+
+  // Determine underlay/overlay labels for annotations
+  const underlayBadge = P.coreBadge();  // 'OSPF Area 0', 'IS-IS L2', 'BGP', etc.
+  const overlayBadge  = P.overlayLabel();// 'VXLAN/EVPN', 'MPLS/SR', 'No Overlay'
+
+  // BGP ASNs for DC EVPN/BGP designs
+  const spineASN = P.hasBGP || P.hasVXLAN ? 'AS 65000' : '';
+  const leafASNs = P.hasBGP || P.hasVXLAN
+    ? ['AS 65001','AS 65002','AS 65003','AS 65004'] : ['','','',''];
 
   const yInternet = 25;
-  const yBorder   = haFW ? 110 : null;
-  const ySpine    = haFW ? 215 : 110;
-  const yLeaf     = ySpine + 140;
-  const ySrv      = yLeaf  + 115;
+  const yBorder   = haFW ? 112 : null;
+  const ySpine    = haFW ? 218 : 112;
+  const yLeaf     = ySpine + 145;
+  const ySrv      = yLeaf  + 120;
 
   const nodes = [], links = [];
   const bw = 118, bh = 42;
 
-  // Internet
+  // Internet/WAN
   nodes.push({ id:'inet', x: W/2 - 70, y: yInternet, w:140, h:44,
     label:'INTERNET / WAN', icon:'🌐', ...C.internet, glow:true });
 
-  // Border FW
+  // Border Firewall
   if (haFW) {
     ['border1','border2'].forEach((id, i) => {
-      const x = i === 0 ? 280 : 700;
+      const x = i === 0 ? 270 : 710;
       nodes.push({ id, x, y: yBorder, w:bw, h:bh,
         label: selFW ? selFW.model.slice(0,16) : `BORDER-0${i+1}`,
         sub: selFW ? selFW.vendor : 'Border FW', icon:'🔒', ...C.fw });
-      links.push({ from:'inet', to:id, color:'#ff3355', width:2, flow:true });
+      links.push({ from:'inet', to:id, color:'#ff3355', width:2, flow:true,
+        badge: i === 0 ? 'BGP eBGP' : undefined });
     });
-    links.push({ from:'border1', to:'border2', color:'#ff3355', width:1, opacity:.35 });
+    links.push({ from:'border1', to:'border2', color:'#ff3355', width:1.2, opacity:.4,
+      badge:'FW HA Sync' });
   }
 
-  // Spines
+  // Spines — with ASN sub-label
   const spineParent1 = haFW ? 'border1' : 'inet';
   const spineParent2 = haFW ? 'border2' : 'inet';
   ['spine1','spine2'].forEach((id, i) => {
-    const x = i === 0 ? 260 : 720;
+    const x = i === 0 ? 250 : 730;
     nodes.push({ id, x, y: ySpine, w:bw, h:bh,
       label: selSpine ? selSpine.model.slice(0,16) : `SPINE-0${i+1}`,
-      sub: selSpine ? selSpine.vendor : 'DC Spine', icon:'🦴', ...C.dcspine, glow:true });
-    links.push({ from: i === 0 ? spineParent1 : spineParent2, to: id, color:'#00e87a', width:2.2, flow:true });
+      sub: selSpine ? `${selSpine.vendor}${spineASN ? ' · '+spineASN : ''}` : `DC Spine${spineASN ? ' · '+spineASN : ''}`,
+      icon:'🦴', ...C.dcspine, glow:true });
+    links.push({ from: i === 0 ? spineParent1 : spineParent2, to: id,
+      color:'#00e87a', width:2.2, flow:true,
+      badge: i === 0 ? underlayBadge : undefined });
   });
-  links.push({ from:'spine1', to:'spine2', color:'#00e87a', width:1, opacity:.3 });
+  links.push({ from:'spine1', to:'spine2', color:'#00e87a', width:1.2, opacity:.32,
+    badge: P.hasOSPF ? 'OSPF RR' : (P.hasBGP ? 'iBGP RR' : undefined) });
 
-  // Leaves (4)
-  const leafXs = [60, 295, 530, 765];
+  // Leaves (4) — with individual ASN labels
+  const leafXs = [50, 295, 538, 782];
   leafXs.forEach((x, i) => {
     const id = `leaf${i+1}`;
+    const asnLabel = leafASNs[i] ? `${selLeaf ? selLeaf.vendor : 'Leaf'} · ${leafASNs[i]}` : (selLeaf ? selLeaf.vendor : 'DC Leaf');
     nodes.push({ id, x, y: yLeaf, w:bw, h:bh,
       label: selLeaf ? selLeaf.model.slice(0,14) : `LEAF-0${i+1}`,
-      sub: selLeaf ? selLeaf.vendor : 'DC Leaf', icon:'🍃', ...C.dcleaf });
-    // Full mesh to both spines
-    links.push({ from:'spine1', to:id, color:'#5dcc8a', width:1.5, flow:true, slow:true });
+      sub: asnLabel + (P.hasVXLAN ? ' · VTEP' : ''),
+      icon:'🍃', ...C.dcleaf });
+    links.push({ from:'spine1', to:id, color:'#5dcc8a', width:1.5, flow:true, slow:true,
+      badge: i === 0 ? overlayBadge : undefined });
     links.push({ from:'spine2', to:id, color:'#5dcc8a', width:1.5, flow:true, slow:true });
   });
 
-  // Server clusters
+  // Server clusters with role labels
   leafXs.forEach((x, i) => {
     const id = `srv${i+1}`;
-    const labels = ['Compute', 'Storage', 'App Svrs', 'DB Cluster'];
-    nodes.push({ id, x: x + 8, y: ySrv, w: 100, h:34,
-      label: labels[i], icon:'🖥', ...C.server, fontSize:8 });
-    links.push({ from:`leaf${i+1}`, to:id, color:'#2a3a5a', width:1, opacity:.6 });
+    const srvData = [
+      { label:'Compute Pool', sub:'KVM / VMware', icon:'🖥' },
+      { label:'Storage Nodes', sub:'NVMe-oF / Ceph', icon:'🗄️' },
+      { label:'App Servers',   sub:'Docker / K8s', icon:'📦' },
+      { label:'DB Cluster',    sub:'Oracle / Postgres', icon:'🗃️' },
+    ];
+    const sd = srvData[i] || srvData[0];
+    nodes.push({ id, x: x + 5, y: ySrv, w: 108, h: 38,
+      label: sd.label, sub: sd.sub, icon: sd.icon,
+      fill:'#0d1520', stroke:'#2a3a5a', fontSize:8 });
+    links.push({ from:`leaf${i+1}`, to:id, color:'#2a3a5a', width:1, opacity:.65 });
   });
 
   const bands = [];
-  if (haFW) bands.push({ y: yBorder - 10, h: 62, color:'#ff3355', label:'BORDER / SECURITY' });
-  bands.push({ y: ySpine - 10, h: 62, color:'#00e87a', label:'SPINE' });
-  bands.push({ y: yLeaf  - 10, h: 62, color:'#5dcc8a', label:'LEAF (ToR)' });
-  bands.push({ y: ySrv   - 10, h: 50, color:'#5a6e99', label:'SERVERS' });
+  if (haFW) bands.push({ y: yBorder - 12, h: 65, color:'#ff3355', label:'BORDER SECURITY / PERIMETER FW' });
+  bands.push({ y: ySpine - 12, h: 65, color:'#00e87a', label:`SPINE — ${underlayBadge}${spineASN ? ' · '+spineASN : ''}` });
+  bands.push({ y: yLeaf  - 12, h: 65, color:'#5dcc8a', label:`LEAF / ToR — ${overlayBadge}${P.hasVXLAN ? ' · VTEP · Anycast GW' : ''}` });
+  bands.push({ y: ySrv   - 12, h: 55, color:'#5a6e99', label:'SERVER CLUSTERS' });
 
-  const meta = `Leaf-Spine CLOS · ${leafXs.length} leaves · 2 spines · ${selLeaf ? selLeaf.model : '—'} leaf · ${selSpine ? selSpine.model : '—'} spine`;
+  const meta = `Leaf-Spine CLOS · 4 leaves · 2 spines · Underlay: ${P.underlayLabel()} · Overlay: ${P.overlayLabel()} · ${selLeaf ? selLeaf.model : '—'} leaf · ${selSpine ? selSpine.model : '—'} spine`;
   const legend = `
     <div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Border / Firewall</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#00e87a"></div>Spine</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#5dcc8a"></div>Leaf / ToR</div>
-    <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #00e87a;width:22px"></div>Active flow</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#00e87a;box-shadow:0 0 6px #00e87a"></div>Live packet flow</div>`;
+    <div class="legend-item"><div class="legend-dot" style="background:#00e87a"></div>Spine (${P.underlayLabel()})</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#5dcc8a"></div>Leaf / ToR (${P.overlayLabel()})</div>
+    ${spineASN ? `<div class="legend-item" style="gap:.5rem"><div style="width:22px;height:12px;background:#060b18;border:1px solid #00e87a99;border-radius:3px;font-size:5.5px;color:#00e87a;text-align:center;line-height:12px;font-family:monospace">${underlayBadge}</div>Protocol label on link</div>` : ''}
+    <div class="legend-item"><div class="legend-dot" style="background:#00e87a;box-shadow:0 0 6px #00e87a"></div>Animated packet flow</div>`;
 
-  return { svg: buildSVG({ nodes, links, bands, W, H: ySrv + 80 }), title:'Data Center Leaf-Spine — High Level Design', meta, legend };
+  return { svg: buildSVG({ nodes, links, bands, W, H: ySrv + 85 }), title:'Data Center Leaf-Spine — High Level Design', meta, legend };
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -425,15 +551,28 @@ function gpuHLD() {
   nodes.push({ id:'oob', x: W/2 - 57, y: 25, w:bw, h:bh,
     label:'OOB MGMT SW', sub:'Management', icon:'🛡', ...C.dist });
 
+  const P = _protos();
+  const hasBGP   = P.hasBGP || true; // GPU always uses BGP
+  const hasRoCE  = (STATE.gpuSpecifics || []).some(g => /RoCEv2/i.test(g));
+  const hasPFC   = (STATE.gpuSpecifics || []).some(g => /PFC/i.test(g));
+  const hasECN   = (STATE.gpuSpecifics || []).some(g => /ECN/i.test(g));
+  const hasRailOpt = (STATE.gpuSpecifics || []).some(g => /rail/i.test(g));
+
+  const fabricType  = hasRoCE ? 'RoCEv2 / RDMA' : 'Ethernet';
+  const fabricBadge = hasRoCE ? 'RoCEv2' : 'Ethernet';
+  const qosBadge    = hasPFC  ? 'PFC+ECN' : 'QoS';
+
   // GPU Spines (compute fabric)
   [0,1].forEach(i => {
     const id = `gspine${i+1}`;
     nodes.push({ id, x: 130 + i * 480, y: 130, w:bw, h:bh,
       label: selSpine ? selSpine.model.slice(0,14) : `GPU-SPINE-0${i+1}`,
-      sub: selSpine ? selSpine.vendor : 'GPU Spine', icon:'🧠', ...C.gpuspine, glow:true });
+      sub: selSpine ? `${selSpine.vendor} · BGP AS 65010` : 'GPU Spine · BGP AS 65010',
+      icon:'🧠', ...C.gpuspine, glow:true });
     links.push({ from:'oob', to:id, color:'#ffd000', width:1, opacity:.3 });
   });
-  links.push({ from:'gspine1', to:'gspine2', color:'#ffd000', width:1.5, opacity:.4 });
+  links.push({ from:'gspine1', to:'gspine2', color:'#ffd000', width:1.5, opacity:.4,
+    badge: 'iBGP / ECMP' });
 
   // GPU TORs (4 racks)
   const torXs = [40, 260, 480, 700];
@@ -441,8 +580,10 @@ function gpuHLD() {
     const id = `tor${i+1}`;
     nodes.push({ id, x, y: 255, w:bw, h:bh,
       label: selTOR ? selTOR.model.slice(0,14) : `GPU-TOR-0${i+1}`,
-      sub: selTOR ? selTOR.vendor : 'GPU TOR', icon:'⚡', ...C.gputor });
-    links.push({ from:'gspine1', to:id, color:'#ff8c00', width:2, flow:true });
+      sub: selTOR ? `${selTOR.vendor} · AS 6501${i+1}` : `GPU TOR · AS 6501${i+1}`,
+      icon:'⚡', ...C.gputor });
+    links.push({ from:'gspine1', to:id, color:'#ff8c00', width:2, flow:true,
+      badge: i === 0 ? fabricBadge : undefined });
     links.push({ from:'gspine2', to:id, color:'#ff8c00', width:2, flow:true });
     links.push({ from:'oob', to:id, color:'#ffd000', width:1, opacity:.2 });
   });
@@ -450,10 +591,12 @@ function gpuHLD() {
   // GPU Servers (4 racks × 8 GPUs visual)
   torXs.forEach((x, i) => {
     const id = `gsrv${i+1}`;
+    const rackLabel = hasRailOpt ? `Rail-${i+1} GPUs` : `Rack-${i+1} GPUs`;
     nodes.push({ id, x: x + 5, y: 375, w: 105, h:38,
-      label:`Rack-${i+1} GPUs`, sub:'H100 / A100 × 8', icon:'🎮',
-      fill:'#1a0a00', stroke:'#ff6600', fontSize:8 });
-    links.push({ from:`tor${i+1}`, to:id, color:'#ff6600', width:1.8, flow:true, slow:true });
+      label: rackLabel, sub:`H100 / A100 × 8 · ${fabricBadge}`,
+      icon:'🎮', fill:'#1a0a00', stroke:'#ff6600', fontSize:8 });
+    links.push({ from:`tor${i+1}`, to:id, color:'#ff6600', width:1.8, flow:true, slow:true,
+      badge: i === 0 ? (hasRoCE ? 'RoCEv2 RDMA' : 'Ethernet') : undefined });
   });
 
   // Storage fabric (right side)
@@ -474,19 +617,19 @@ function gpuHLD() {
   });
 
   const bands = [
-    { y: 110, h: 60, color:'#ffd000', label:'GPU SPINE (COMPUTE FABRIC)' },
-    { y: 235, h: 60, color:'#ff8c00', label:'GPU TOR' },
-    { y: 355, h: 55, color:'#ff6600', label:'GPU SERVERS' },
+    { y: 110, h: 60, color:'#ffd000', label:`GPU SPINE — eBGP ECMP · ${hasRailOpt ? 'RAIL-OPTIMIZED' : 'CLOS FABRIC'}` },
+    { y: 235, h: 60, color:'#ff8c00', label:`GPU TOR — ${fabricType}${hasPFC ? ' · PFC Priority 3' : ''}${hasECN ? ' · ECN 150KB' : ''}` },
+    { y: 355, h: 55, color:'#ff6600', label:`GPU SERVERS — ${hasRailOpt ? 'RAIL TOPOLOGY ·' : ''} RDMA NIC · NVMe-oF Storage` },
   ];
 
-  const meta = `${torXs.length} GPU TOR racks · ${torXs.length * 8} total GPU slots · ${selTOR ? selTOR.model : '—'} TOR · ${selSpine ? selSpine.model : '—'} spine`;
+  const meta = `${torXs.length} TOR racks · ${torXs.length * 8} GPU slots · Fabric: ${fabricType} · ${hasPFC ? 'PFC lossless · ' : ''}${hasECN ? 'ECN · ' : ''}BGP ECMP · ${selTOR ? selTOR.model : '—'} TOR · ${selSpine ? selSpine.model : '—'} spine`;
   const legend = `
-    <div class="legend-item"><div class="legend-dot" style="background:#ffd000"></div>GPU Spine (compute)</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#ff8c00"></div>GPU TOR</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Storage fabric</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#ffd000"></div>OOB Management</div>
-    <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #ff8c00;width:22px"></div>RoCEv2 / RDMA flow</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#ff8c00;box-shadow:0 0 6px #ff8c00"></div>Live packet flow</div>`;
+    <div class="legend-item"><div class="legend-dot" style="background:#ffd000"></div>GPU Spine (eBGP ECMP)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff8c00"></div>GPU TOR${hasPFC ? ' (PFC lossless)' : ''}</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Storage fabric (NVMe-oF)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffd000;opacity:.5"></div>OOB Management</div>
+    <div class="legend-item" style="gap:.5rem"><div style="width:22px;height:12px;background:#060b18;border:1px solid #ff8c0099;border-radius:3px;font-size:5.5px;color:#ff8c00;text-align:center;line-height:12px;font-family:monospace">${fabricBadge}</div>Protocol badge on link</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff8c00;box-shadow:0 0 6px #ff8c00"></div>Animated packet flow</div>`;
 
   return { svg: buildSVG({ nodes, links, bands, W, H: 460 }), title:'AI / GPU Cluster — High Level Design', meta, legend };
 }
@@ -792,43 +935,94 @@ function renderVNITable() {
 function renderBGPDesign() {
   const uc   = STATE.uc;
   const isDC = uc === 'dc' || uc === 'hybrid' || uc === 'multisite';
-  const isCampus = uc === 'campus' || uc === 'hybrid';
+  const isCampus = uc === 'campus' || uc === 'hybrid' || uc === 'wan';
   const isGPU = uc === 'gpu';
+  const P = _protos();
 
-  const asnRows = [];
+  const asnRows   = [];
   const protoRows = [];
-
-  if (isCampus) {
-    asnRows.push(['CORE-01 / CORE-02', 'Core', '65100', 'iBGP Route Reflector', 'DIST-01..04', 'IPv4 Unicast, VPNv4']);
-    asnRows.push(['DIST-01',           'Dist', '65100', 'iBGP RR Client',        'CORE-01',     'IPv4 Unicast']);
-    asnRows.push(['DIST-02',           'Dist', '65100', 'iBGP RR Client',        'CORE-01',     'IPv4 Unicast']);
-    asnRows.push(['FW-01',             'FW',   '65200', 'eBGP upstream',         'CORE-01',     'IPv4 Unicast']);
-    protoRows.push(['OSPF Area 0','Underlay (Campus)','Process 1 · Router-ID per device','Hello 10s / Dead 40s','10.0.0.0/8 summary']);
-    protoRows.push(['BGP 65100','Campus iBGP','Route Reflector CORE-01/02','Keepalive 60s / Hold 180s','Default + site prefixes']);
-  }
-  if (isDC) {
-    asnRows.push(['SPINE-01',   'DC Spine', '65000', 'eBGP Route Reflector (EVPN)', 'LEAF-01..04',           'IPv4 Unicast, L2VPN EVPN']);
-    asnRows.push(['SPINE-02',   'DC Spine', '65000', 'eBGP Route Reflector (EVPN)', 'LEAF-01..04',           'IPv4 Unicast, L2VPN EVPN']);
-    asnRows.push(['LEAF-01',    'DC Leaf',  '65001', 'eBGP (to both spines)',        'SPINE-01, SPINE-02',    'IPv4 Unicast, L2VPN EVPN']);
-    asnRows.push(['LEAF-02',    'DC Leaf',  '65002', 'eBGP (to both spines)',        'SPINE-01, SPINE-02',    'IPv4 Unicast, L2VPN EVPN']);
-    asnRows.push(['LEAF-03',    'DC Leaf',  '65003', 'eBGP (to both spines)',        'SPINE-01, SPINE-02',    'IPv4 Unicast, L2VPN EVPN']);
-    asnRows.push(['LEAF-04',    'DC Leaf',  '65004', 'eBGP (to both spines)',        'SPINE-01, SPINE-02',    'IPv4 Unicast, L2VPN EVPN']);
-    protoRows.push(['IS-IS L2','DC Underlay','NET 49.0001.xxxx.xxxx.xxxx.00 · wide metrics','Hello 3s / Dead 9s','Loopback0 + P2P /31 links']);
-    protoRows.push(['BGP 65000 / 650xx','EVPN Overlay','EVPN type 2 (MAC-IP), type 3 (IMET), type 5 (IP Prefix)','Keepalive 3s / Hold 9s','VNI prefix routes + MAC routes']);
-  }
-  if (isGPU) {
-    asnRows.push(['GPU-SPINE-01', 'GPU Spine', '65010', 'eBGP upstream', 'GPU-TOR-01..04', 'IPv4 Unicast']);
-    asnRows.push(['GPU-TOR-01',   'GPU TOR',   '65011', 'eBGP to spines', 'GPU-SPINE-01/02','IPv4 Unicast']);
-    protoRows.push(['BGP 6501x','GPU Fabric','Unnumbered eBGP on P2P links · ECMP 64-way','Keepalive 1s / Hold 3s','Server loopbacks + GPU subnets']);
-    protoRows.push(['PFC / ECN','RoCEv2 QoS','Priority Flow Control on priority 3 · ECN threshold 150KB','N/A','All GPU-server facing ports']);
-  }
+  const ospfRows  = [];  // OSPF-specific area table
+  const eigrpRows = [];  // EIGRP-specific
 
   const layerPill = (l) => {
-    const m = { 'Core':'pl-core','Dist':'pl-dist','FW':'pl-fw','DC Spine':'pl-spine','DC Leaf':'pl-leaf','GPU Spine':'pl-tor','GPU TOR':'pl-tor' };
+    const m = { 'Core':'pl-core','Dist':'pl-dist','FW':'pl-fw','DC Spine':'pl-spine','DC Leaf':'pl-leaf','GPU Spine':'pl-tor','GPU TOR':'pl-tor','WAN':'pl-core' };
     return `<span class="pill-layer ${m[l]||'pl-mgmt'}">${l}</span>`;
   };
 
-  document.getElementById('asn-tbody').innerHTML = asnRows.map(r => `
+  /* ── CAMPUS routing design ─────────────────────────────────── */
+  if (isCampus) {
+    // OSPF design
+    if (P.hasOSPF) {
+      ospfRows.push({ area:'0 (Backbone)', devices:'CORE-01, CORE-02, DIST-01..04', type:'Normal', auth:'MD5 Auth', hello:'10s / Dead 40s', note:'All distribution & core links in Area 0' });
+      ospfRows.push({ area:'1 (Access-Bldg-A)', devices:'DIST-01, ACC-01, ACC-02', type:'Stub', auth:'MD5 Auth', hello:'10s / Dead 40s', note:'Stub area — no external routes' });
+      ospfRows.push({ area:'2 (Access-Bldg-B)', devices:'DIST-02, ACC-03, ACC-04', type:'Stub', auth:'MD5 Auth', hello:'10s / Dead 40s', note:'Stub area — default route only' });
+      if (uc === 'hybrid' || parseInt(STATE.numSites) > 2) {
+        ospfRows.push({ area:'3 (Remote Sites)', devices:'Branch routers', type:'NSSA', auth:'MD5 Auth', hello:'10s / Dead 40s', note:'NSSA — redistributes static/connected' });
+      }
+    }
+    // EIGRP design
+    if (P.hasEIGRP) {
+      eigrpRows.push({ as:'100', devices:'All campus routers + L3 switches', k:'K1=1 K2=0 K3=1 K4=0 K5=0', hello:'5s / Hold 15s', auth:'HMAC-SHA-256', note:'Single EIGRP AS, summarised at distribution' });
+      eigrpRows.push({ as:'100', devices:'DIST-01 → Access (stub)', k:'eigrp stub connected', hello:'5s / Hold 15s', auth:'HMAC-SHA-256', note:'Stub flag on access switches — reduces query domain' });
+    }
+    // BGP (iBGP for WAN or campus with internet)
+    if (P.hasBGP || uc === 'wan') {
+      asnRows.push(['CORE-01 / CORE-02', 'Core',  '65100', 'iBGP Route Reflector', 'DIST-01..04, FW-01', 'IPv4 Unicast, VPNv4']);
+      asnRows.push(['DIST-01',           'Dist',  '65100', 'iBGP RR Client',        'CORE-01',            'IPv4 Unicast']);
+      asnRows.push(['DIST-02',           'Dist',  '65100', 'iBGP RR Client',        'CORE-01',            'IPv4 Unicast']);
+      asnRows.push(['FW-01 / Border',    'FW',    '65200', 'eBGP upstream (ISP)',    'ISP AS / MPLS PE',   'IPv4 Unicast, default']);
+    }
+    // Protocol summary
+    if (P.hasOSPF)  protoRows.push(['OSPF v2/v3', 'Underlay — Campus', `Process 1 · Areas 0,1,2${parseInt(STATE.numSites)>2?',3':''} · Router-ID = Loopback0`, 'Hello 10s / Dead 40s', 'Area 0 backbone · stub areas at access']);
+    if (P.hasEIGRP) protoRows.push(['EIGRP AS 100','Underlay — Campus', 'Named mode · auto-summary OFF · stub on access switches', 'Hello 5s / Hold 15s', 'All campus routes · summarized at dist']);
+    if (P.hasISIS)  protoRows.push(['IS-IS Level-2','Underlay', 'Single-area · wide metrics · loopback0 NET addr', 'Hello 3s / Dead 9s', 'Loopback0 + P2P /31 links']);
+    if (P.hasBGP || uc === 'wan') protoRows.push(['BGP AS 65100', 'Campus iBGP + WAN eBGP', 'Route Reflector at CORE · eBGP to ISP / MPLS PE', 'Keepalive 60s / Hold 180s', 'Default route from ISP + VPN prefixes']);
+    if (P.hasVXLAN) protoRows.push(['VXLAN/EVPN','Campus overlay','BGP EVPN type-2 (MAC), type-3 (IMET) for campus fabric','Keepalive 3s / Hold 9s','Per-VLAN VNI, Anycast GW, distributed IRB']);
+  }
+
+  /* ── DC routing design ─────────────────────────────────────── */
+  if (isDC) {
+    // Underlay
+    if (P.hasOSPF) {
+      ospfRows.push({ area:'0 (Backbone)', devices:'SPINE-01, SPINE-02, all LEAFs', type:'Normal', auth:'MD5 / SHA-1', hello:'3s / Dead 9s', note:'Point-to-point /31 links — no DR/BDR election' });
+    }
+    if (P.hasISIS) {
+      protoRows.push(['IS-IS L2','DC Underlay','NET 49.0001.xxxx.xxxx.xxxx.00 · wide metrics · BFD', 'Hello 3s / Dead 9s', 'Loopback0 /32 + P2P /31 links · all spines + leaves']);
+    }
+    if (P.hasEIGRP) {
+      eigrpRows.push({ as:'200', devices:'All DC switches (spine+leaf)', k:'K1=1 K3=1 only', hello:'3s / Hold 9s', auth:'HMAC-SHA-256', note:'Named mode · redistribute connected (loopbacks) only' });
+    }
+    // BGP EVPN overlay
+    const bgpAF = P.hasVXLAN ? 'IPv4 Unicast, L2VPN EVPN' : (P.hasMPLS ? 'IPv4 Unicast, VPNv4, VPNv6' : 'IPv4 Unicast');
+    asnRows.push(['SPINE-01',  'DC Spine', '65000', 'eBGP RR (EVPN / underlay)', 'LEAF-01..04',        bgpAF]);
+    asnRows.push(['SPINE-02',  'DC Spine', '65000', 'eBGP RR (EVPN / underlay)', 'LEAF-01..04',        bgpAF]);
+    asnRows.push(['LEAF-01',   'DC Leaf',  '65001', 'eBGP (dual-homed to spines)','SPINE-01, SPINE-02', bgpAF]);
+    asnRows.push(['LEAF-02',   'DC Leaf',  '65002', 'eBGP (dual-homed to spines)','SPINE-01, SPINE-02', bgpAF]);
+    asnRows.push(['LEAF-03',   'DC Leaf',  '65003', 'eBGP (dual-homed to spines)','SPINE-01, SPINE-02', bgpAF]);
+    asnRows.push(['LEAF-04',   'DC Leaf',  '65004', 'eBGP (dual-homed to spines)','SPINE-01, SPINE-02', bgpAF]);
+
+    const underlayName = P.hasOSPF ? 'OSPF Area 0' : (P.hasISIS ? 'IS-IS L2' : (P.hasEIGRP ? 'EIGRP AS 200' : 'BGP Underlay'));
+    if (P.hasVXLAN) protoRows.push([underlayName,'DC Underlay', 'Fabric /31 P2P links · Loopback0 /32 per device · BFD co-req', 'Hello 3s / Dead 9s', 'Loopbacks reachable → VTEP tunnels up']);
+    if (P.hasVXLAN) protoRows.push(['BGP EVPN (L2VPN)','Overlay — VXLAN', 'Type-2 MAC-IP · Type-3 IMET multicast · Type-5 IP Prefix · Anycast GW', 'Keepalive 3s / Hold 9s', 'Per-tenant VNI (L2VNI) + L3VNI per VRF']);
+    if (P.hasMPLS)  protoRows.push(['BGP + LDP/SR','Overlay — MPLS', 'VPNv4/VPNv6 · SR-MPLS label stack · RSVP-TE optional', 'Keepalive 5s / Hold 15s', 'Per-VRF label · traffic engineering paths']);
+    if (P.noOverlay)protoRows.push(['Pure L3 Routed','No overlay', `All routes via ${underlayName} · host /32 prefixes redistributed`, 'per IGP settings', 'No tunneling — all fabric links routed']);
+  }
+
+  /* ── GPU routing design ─────────────────────────────────────── */
+  if (isGPU) {
+    asnRows.push(['GPU-SPINE-01','GPU Spine','65010','eBGP RR · ECMP 64-way','GPU-TOR-01..04','IPv4 Unicast']);
+    asnRows.push(['GPU-SPINE-02','GPU Spine','65010','eBGP RR · ECMP 64-way','GPU-TOR-01..04','IPv4 Unicast']);
+    asnRows.push(['GPU-TOR-01', 'GPU TOR',  '65011','eBGP (to both spines)','GPU-SPINE-01/02','IPv4 Unicast']);
+    asnRows.push(['GPU-TOR-02', 'GPU TOR',  '65012','eBGP (to both spines)','GPU-SPINE-01/02','IPv4 Unicast']);
+    protoRows.push(['BGP (unnumbered)','GPU Fabric Underlay','Unnumbered eBGP on P2P interfaces · no IP on fabric links · ECMP 64-way','Keepalive 1s / Hold 3s','GPU server loopbacks + storage subnets']);
+    protoRows.push(['PFC / ECN / DSCP','RoCEv2 QoS','PFC on priority 3 (DSCP 26) · ECN threshold 150 KB · DCQCN algorithm · lossless queues','QoS Map','All GPU and storage-facing ports on TOR']);
+    if ((STATE.gpuSpecifics || []).some(g => /SHARP/i.test(g))) {
+      protoRows.push(['SHARP / NCCL','Collective Offload','In-network reduction · aggregation trees · SHARP v2 · requires NVIDIA switch ASIC','N/A','GPU-SPINE only']);
+    }
+  }
+
+  /* ── Render ASN table ─────────────────────────────────────── */
+  document.getElementById('asn-tbody').innerHTML = asnRows.length ? asnRows.map(r => `
     <tr>
       <td><strong>${r[0]}</strong></td>
       <td>${layerPill(r[1])}</td>
@@ -836,8 +1030,10 @@ function renderBGPDesign() {
       <td style="color:var(--txt1)">${r[3]}</td>
       <td class="mono" style="font-size:.72rem">${r[4]}</td>
       <td style="color:var(--txt2)">${r[5]}</td>
-    </tr>`).join('');
+    </tr>`).join('')
+  : '<tr><td colspan="6" style="color:var(--txt2);text-align:center;padding:1rem">BGP not selected — see OSPF/EIGRP design below</td></tr>';
 
+  /* ── Render protocol summary table ───────────────────────── */
   document.getElementById('proto-tbody').innerHTML = protoRows.map(r => `
     <tr>
       <td><strong>${r[0]}</strong></td>
@@ -846,6 +1042,44 @@ function renderBGPDesign() {
       <td class="mono">${r[3]}</td>
       <td style="color:var(--txt2)">${r[4]}</td>
     </tr>`).join('');
+
+  /* ── Render OSPF area design (if OSPF selected) ───────────── */
+  const ospfSec = document.getElementById('ospf-design-section');
+  if (ospfSec) {
+    if (P.hasOSPF && ospfRows.length) {
+      ospfSec.style.display = 'block';
+      document.getElementById('ospf-tbody').innerHTML = ospfRows.map(r => `
+        <tr>
+          <td><span class="asn-badge" style="background:rgba(153,85,255,.15);color:#c088ff">Area ${r.area}</span></td>
+          <td class="mono" style="font-size:.72rem">${r.devices}</td>
+          <td>${r.type}</td>
+          <td class="mono" style="font-size:.72rem">${r.auth}</td>
+          <td class="mono">${r.hello}</td>
+          <td style="color:var(--txt2)">${r.note}</td>
+        </tr>`).join('');
+    } else {
+      ospfSec.style.display = 'none';
+    }
+  }
+
+  /* ── Render EIGRP design (if EIGRP selected) ──────────────── */
+  const eigrpSec = document.getElementById('eigrp-design-section');
+  if (eigrpSec) {
+    if (P.hasEIGRP && eigrpRows.length) {
+      eigrpSec.style.display = 'block';
+      document.getElementById('eigrp-tbody').innerHTML = eigrpRows.map(r => `
+        <tr>
+          <td><span class="asn-badge" style="background:rgba(0,212,255,.12);color:#00d4ff">AS ${r.as}</span></td>
+          <td class="mono" style="font-size:.72rem">${r.devices}</td>
+          <td class="mono" style="font-size:.72rem">${r.k}</td>
+          <td class="mono">${r.hello}</td>
+          <td class="mono" style="font-size:.72rem">${r.auth}</td>
+          <td style="color:var(--txt2)">${r.note}</td>
+        </tr>`).join('');
+    } else {
+      eigrpSec.style.display = 'none';
+    }
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -900,6 +1134,155 @@ function renderPhysical() {
   }
 
   document.getElementById('phy-tbody').innerHTML = rows.join('');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   REFERENCE ARCHITECTURE LIBRARY
+   Vendor design docs filtered by current use case
+════════════════════════════════════════════════════════════════ */
+const REF_DOCS = [
+  // ── CAMPUS ──────────────────────────────────────────────────
+  { vendor:'Cisco', uc:['campus','hybrid','wan'], color:'#1ba0d7',
+    title:'Cloud Campus LAN Design Guide (CVD)',
+    desc:'Cisco Validated Design — 3-tier campus with SDA-ready architecture, QoS, and wireless integration.',
+    url:'https://www.cisco.com/c/en/us/solutions/collateral/enterprise/design-zone-campus/cloud-campus-lan-design-guide.html',
+    tags:['Campus','CVD','SDA','802.1X'] },
+  { vendor:'Cisco', uc:['campus','hybrid'], color:'#1ba0d7',
+    title:'Campus LAN & WLAN Design Guide',
+    desc:'Comprehensive wired + wireless campus design covering access, distribution, core, and QoS.',
+    url:'https://www.cisco.com/c/en/us/td/docs/solutions/CVD/Campus/cisco-campus-lan-wlan-design-guide.html',
+    tags:['WLAN','CVD','OSPF','STP'] },
+  { vendor:'Cisco', uc:['campus'], color:'#1ba0d7',
+    title:'Software-Defined Access (SDA) Design Guide',
+    desc:'Cisco SDA with LISP/VXLAN campus overlay — fabric edge, border, and control-plane nodes.',
+    url:'https://www.cisco.com/c/en/us/td/docs/solutions/CVD/Campus/cisco-sda-design-guide.html',
+    tags:['SDA','LISP','VXLAN','ISE'] },
+  { vendor:'Cisco', uc:['campus','hybrid'], color:'#1ba0d7',
+    title:'Campus BGP EVPN VXLAN Fabric CVD',
+    desc:'Modern campus fabric using BGP EVPN VXLAN for distributed anycast gateway and microsegmentation.',
+    url:'https://www.cisco.com/c/en/us/td/docs/solutions/CVD/Campus/Cloud_Campus_Fabric_with_BGP_EVPN_VXLAN_CVD_v0_9.html',
+    tags:['VXLAN','EVPN','BGP','Anycast GW'] },
+  { vendor:'Arista', uc:['campus','hybrid'], color:'#e04f3b',
+    title:'Cognitive Campus Architecture',
+    desc:'Arista campus design with CloudVision telemetry, EVPN/VXLAN for campus, and AI-driven ops.',
+    url:'https://www.arista.com/assets/data/pdf/Whitepapers/Cognitive-Campus-Architecture-WP.pdf',
+    tags:['CloudVision','EVPN','Campus','Telemetry'] },
+  { vendor:'Arista', uc:['campus'], color:'#e04f3b',
+    title:'Campus Network Security Design Guide',
+    desc:'Arista campus security guide — 802.1X, dynamic segmentation, AGNI, and Zero Trust access.',
+    url:'https://www.arista.com/assets/data/pdf/Campus-Network-Security-Design-Guide.pdf',
+    tags:['802.1X','Zero Trust','AGNI','NAC'] },
+  { vendor:'Juniper', uc:['campus','hybrid'], color:'#009b3a',
+    title:'Campus Fabric IP Clos Architecture (JVD)',
+    desc:'Juniper campus IP Clos with EX Series, EVPN-VXLAN, and Mist AI for wired+wireless assurance.',
+    url:'https://www.juniper.net/documentation/us/en/software/jvd/jvd-campus-fabric-ip-clos-wired-assurance/campus_fabric_ip_clos_high-level_architecture.html',
+    tags:['IP Clos','EX Series','Mist AI','EVPN'] },
+  { vendor:'Juniper', uc:['campus'], color:'#009b3a',
+    title:'EVPN Multihoming Campus Architecture',
+    desc:'Juniper EVPN-VXLAN campus multihoming with ESI-LAG, Active-Active redundancy, and IRB.',
+    url:'https://www.juniper.net/documentation/en_US/release-independent/nce/topics/concept/nce-evpn-vxlan-campus-arch.html',
+    tags:['EVPN','Multihoming','ESI-LAG','IRB'] },
+  { vendor:'HPE Aruba', uc:['campus'], color:'#ff6600',
+    title:'Mobile-First Campus — Midsize Networks',
+    desc:'HPE Aruba CX design for mid-market campus — ArubaOS-CX, AirWave, Central management.',
+    url:'https://www.arubanetworks.com/resource/mobile-first-campus-for-midsize-networks-design-and-deployment-guide/',
+    tags:['ArubaOS-CX','CX 6300','Central','Midsize'] },
+  { vendor:'HPE Aruba', uc:['campus'], color:'#ff6600',
+    title:'Mobile-First Campus — Large Networks',
+    desc:'HPE Aruba design for large enterprise — CX 8360/9300, VSX stacking, dynamic segmentation.',
+    url:'https://www.arubanetworks.com/resource/mobile-first-campus-for-large-networks-design-and-deployment-guide/',
+    tags:['VSX','CX 9300','802.1X','Dynamic Seg'] },
+  { vendor:'Fortinet', uc:['campus'], color:'#e6111a',
+    title:'FortiSwitch Large Campus Deployment Guide',
+    desc:'FortiSwitch + FortiGate Security Fabric campus design — FortiLink, FortiManager, single-pane.',
+    url:'https://docs.fortinet.com/document/fortiswitch/7.4.0/large-campus-deployment-guide/420648/design-overview',
+    tags:['FortiLink','Security Fabric','FortiManager','VLAN'] },
+  { vendor:'Fortinet', uc:['campus'], color:'#e6111a',
+    title:'FortiSwitch Reference Architecture Guide 7.6',
+    desc:'Fortinet reference architectures for small, medium, and large campus FortiSwitch deployments.',
+    url:'https://docs.fortinet.com/document/fortiswitch/7.6.0/switching-reference-architecture-guide/746434/reference-architectures',
+    tags:['FortiSwitch','Reference Arch','HA','MC-LAG'] },
+
+  // ── DATA CENTER ──────────────────────────────────────────────
+  { vendor:'Cisco', uc:['dc','hybrid','multisite'], color:'#1ba0d7',
+    title:'Nexus 9000 VXLAN EVPN Design Guide',
+    desc:'Cisco Nexus 9000 leaf-spine with BGP EVPN, VXLAN, vPC, and anycast gateway.',
+    url:'https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-vxlan-bgp-evpn-design-and-implementation-guide.html',
+    tags:['NX-OS','VXLAN','EVPN','vPC'] },
+  { vendor:'Cisco', uc:['dc','multisite'], color:'#1ba0d7',
+    title:'VXLAN EVPN Multi-Site Design',
+    desc:'Cisco Multi-Site Architecture with BGP EVPN DCI — Type-5 routes, border gateway, site-local.',
+    url:'https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/white-paper-c11-739942.html',
+    tags:['Multi-Site','DCI','Type-5','Border GW'] },
+  { vendor:'Cisco', uc:['wan'], color:'#1ba0d7',
+    title:'Cisco Catalyst SD-WAN Design Guide',
+    desc:'SD-WAN architecture with vManage, vSmart controller, vEdge CPE — ZTP and policy design.',
+    url:'https://www.cisco.com/c/en/us/td/docs/solutions/CVD/SDWAN/cisco-sdwan-design-guide.html',
+    tags:['SD-WAN','vEdge','vManage','ZTP'] },
+  { vendor:'Arista', uc:['dc','hybrid','multisite'], color:'#e04f3b',
+    title:'DC Interconnection with VXLAN (DCI)',
+    desc:'Arista DCI design — VXLAN/EVPN stretch, multi-domain EVPN, and OTV alternatives.',
+    url:'https://www.arista.com/assets/data/pdf/Whitepapers/Arista_Design_Guide_DCI_with_VXLAN.pdf',
+    tags:['DCI','VXLAN','Multi-domain','EOS'] },
+  { vendor:'Arista', uc:['dc','multisite'], color:'#e04f3b',
+    title:'EVPN Data Center Gateway — Hierarchical',
+    desc:'Hierarchical multi-domain EVPN with Arista — border leaf, DCI gateway, type-5 propagation.',
+    url:'https://www.arista.com/assets/data/pdf/Whitepapers/EVPN-Data-Center-EVPN-Gateway-for-Hierarchical-Multi-Domain-EVPN-and-DCI-WP.pdf',
+    tags:['EVPN GW','Type-5','Border Leaf','DCI'] },
+  { vendor:'Juniper', uc:['dc','hybrid','multisite'], color:'#009b3a',
+    title:'Data Center EVPN-VXLAN Reference Architecture',
+    desc:'Juniper QFX leaf-spine with EVPN-VXLAN — IP Fabric, IRB, ECMP, and multihoming.',
+    url:'https://www.juniper.net/content/dam/www/assets/reference-architectures/us/en/ip-fabric-evpn-vxlan-reference-architecture.pdf',
+    tags:['QFX','IP Fabric','EVPN','Multihoming'] },
+  { vendor:'Juniper', uc:['dc'], color:'#009b3a',
+    title:'Spine-and-Leaf IP Fabric Design Considerations',
+    desc:'Juniper whitepaper on CLOS topology design choices, ECMP, MTU, and failure domains.',
+    url:'https://www.juniper.net/content/dam/www/assets/white-papers/us/en/design-considerations-for-spine-and-leaf-ip-fabrics.pdf',
+    tags:['CLOS','ECMP','MTU','QFX Series'] },
+
+  // ── GPU / AI ─────────────────────────────────────────────────
+  { vendor:'Arista', uc:['gpu'], color:'#e04f3b',
+    title:'AI Network Fabric Deployment Guide',
+    desc:'Arista 7800R GPU fabric — 400G/800G rails, BGP ECMP, PFC, ECN, SHARP, CloudVision.',
+    url:'https://www.arista.com/assets/data/pdf/AI-Network-Fabric_Deployment_Guide.pdf',
+    tags:['400G','RoCEv2','PFC','ECN'] },
+  { vendor:'Arista', uc:['gpu'], color:'#e04f3b',
+    title:'Lossless Fabric for AI/ML — RoCE Deployment',
+    desc:'Arista + Broadcom RoCEv2 deployment — PFC, ECN/DCQCN, lossless queues, WRED.',
+    url:'https://www.arista.com/assets/data/pdf/Broadcom-RoCE-Deployment-Guide.pdf',
+    tags:['RoCEv2','PFC','DCQCN','Lossless'] },
+  { vendor:'Arista', uc:['gpu'], color:'#e04f3b',
+    title:'High-Performance Ethernet for AI Networking',
+    desc:'Rail-optimised GPU topology with Arista — compute/storage/OOB fabrics, SHARP, SR-IOV.',
+    url:'https://www.arista.com/assets/data/pdf/Arista-Broadcom-AI-Networking-Deployment-Guide.pdf',
+    tags:['Rail Topology','SHARP','800G','InfiniBand alt'] },
+];
+
+function renderRefArchitectures() {
+  const uc  = STATE.uc || 'campus';
+  const vendors = STATE.preferredVendors || [];
+  const el  = document.getElementById('ref-arch-grid');
+  if (!el) return;
+
+  // Filter by UC, optionally boost preferred vendors
+  let docs = REF_DOCS.filter(d => d.uc.includes(uc) || d.uc.includes('campus'));
+  if (vendors.length > 0) {
+    docs = [...docs.filter(d => vendors.includes(d.vendor)),
+            ...docs.filter(d => !vendors.includes(d.vendor))];
+  }
+  // Deduplicate
+  const seen = new Set();
+  docs = docs.filter(d => { if (seen.has(d.url)) return false; seen.add(d.url); return true; });
+
+  el.innerHTML = docs.map(d => `
+    <a class="ref-card" href="${d.url}" target="_blank" rel="noopener noreferrer"
+       style="border-color:${d.color}33">
+      <div class="ref-vendor" style="color:${d.color}">${d.vendor}</div>
+      <div class="ref-title">${d.title}</div>
+      <div class="ref-desc">${d.desc}</div>
+      <div class="ref-tags">${d.tags.map(t => `<span class="ref-tag">${t}</span>`).join('')}</div>
+      <div class="ref-link">Open design doc ↗</div>
+    </a>`).join('');
 }
 
 /* ── Exports ────────────────────────────────────────────────────── */
