@@ -46,6 +46,11 @@ function jumpStep(n) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   // Keep intent panel in sync
   if (typeof renderIntentPanel === 'function') renderIntentPanel();
+  // Initialize gate + policy when step 6 is reached
+  if (n === 6) {
+    if (typeof initGate === 'function')         initGate();
+    if (typeof renderPolicyPanel === 'function') renderPolicyPanel();
+  }
 }
 
 function updateBottomNav() {

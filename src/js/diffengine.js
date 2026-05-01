@@ -125,6 +125,21 @@ function closeDiffView() {
   if (active) active.click();
 }
 
+/* ── Delta summary (for deploy delta preview) ───────────────── */
+// Returns aggregate diff stats across all devices with history
+function getDeltaSummary() {
+  let totalAdd = 0, totalDel = 0, totalSame = 0, devCount = 0;
+  for (const [id, h] of Object.entries(CONFIG_HISTORY)) {
+    if (!h || !h.prev || h.prev === h.curr) continue;
+    const diff = computeDiff(h.prev, h.curr);
+    totalAdd  += diff.filter(l => l.type === 'add').length;
+    totalDel  += diff.filter(l => l.type === 'del').length;
+    totalSame += diff.filter(l => l.type === 'same').length;
+    devCount++;
+  }
+  return { added: totalAdd, removed: totalDel, unchanged: totalSame, devices: devCount };
+}
+
 function toggleDiff() {
   if (_diffMode) {
     closeDiffView();

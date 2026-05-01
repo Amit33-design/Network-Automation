@@ -1846,3 +1846,162 @@
       background: var(--bg4); color: var(--txt3); border-radius: 3px;
       font-size: .65rem; padding: .05rem .35rem; white-space: nowrap;
     }
+
+    /* ══════════════════════════════════════════════════════════════
+       PHASE 5 — Gate · Confidence · Policy · Delta · Rollback
+       ══════════════════════════════════════════════════════════════ */
+
+    /* ── Gate + Confidence row layout ──────────────────────────── */
+    .gate-confidence-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+      align-items: stretch;
+    }
+    @media (max-width: 680px) {
+      .gate-confidence-row { grid-template-columns: 1fr; }
+    }
+
+    /* ── Gate banner ─────────────────────────────────────────────── */
+    .gate-panel-wrap { min-width: 0; }
+    .gate-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: .9rem 1.1rem;
+      border-radius: var(--radius2);
+      border: 1.5px solid;
+      height: 100%;
+      flex-wrap: wrap;
+    }
+    .gate-banner.gate-pending { background: rgba(30,40,80,.5);  border-color: var(--border-hi);           }
+    .gate-banner.gate-pass    { background: rgba(0,232,122,.08); border-color: rgba(0,232,122,.4);         }
+    .gate-banner.gate-warn    { background: rgba(255,208,0,.07); border-color: rgba(255,208,0,.35);        }
+    .gate-banner.gate-blocked { background: rgba(255,51,85,.09); border-color: rgba(255,51,85,.45);        }
+
+    .gate-title         { font-weight: 700; font-size: .9rem; color: var(--txt0); margin-bottom: .2rem; }
+    .gate-status-txt    { font-size: .82rem; font-weight: 600; letter-spacing: .03em; }
+    .gate-banner.gate-pass    .gate-status-txt { color: var(--green);  }
+    .gate-banner.gate-warn    .gate-status-txt { color: var(--yellow); }
+    .gate-banner.gate-blocked .gate-status-txt { color: var(--red);    }
+    .gate-banner.gate-pending .gate-status-txt { color: var(--txt2);   }
+    .gate-reason { font-size: .72rem; color: var(--red); margin-top: .25rem; }
+
+    .gate-signals { display: flex; gap: .5rem; flex-shrink: 0; }
+    .gate-signal  {
+      display: flex; flex-direction: column; align-items: center;
+      gap: .15rem; padding: .4rem .6rem;
+      border-radius: 8px; background: var(--bg3);
+      min-width: 68px; text-align: center;
+    }
+    .gs-icon  { font-size: 1rem; line-height: 1; }
+    .gs-lbl   { font-size: .62rem; color: var(--txt2); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+    .gs-st    { font-size: .65rem; font-weight: 700; letter-spacing: .04em; }
+    .gs-pass    .gs-st { color: var(--green);  }
+    .gs-warn    .gs-st { color: var(--yellow); }
+    .gs-fail    .gs-st { color: var(--red);    }
+    .gs-pending .gs-st { color: var(--txt2);   }
+
+    /* Blocked deploy button state */
+    #btn-deploy.gate-btn-blocked {
+      opacity: .45; cursor: not-allowed;
+      background: var(--red-dim) !important; border-color: var(--red) !important;
+    }
+
+    /* ── Confidence score ──────────────────────────────────────── */
+    .confidence-panel-wrap {
+      background: var(--bg2);
+      border: 1px solid var(--border-hi);
+      border-radius: var(--radius2);
+      padding: .85rem 1rem;
+      min-width: 240px;
+    }
+    .conf-wrap      { display: flex; align-items: center; gap: .85rem; }
+    .conf-ring-box  { position: relative; width: 72px; height: 72px; flex-shrink: 0; }
+    .conf-svg       { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .conf-num       { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                      font-size: 1.25rem; font-weight: 800; font-family: var(--mono); }
+    .conf-pct-sign  { font-size: .65rem; margin-top: .15rem; }
+    .conf-title     { font-size: .88rem; font-weight: 700; }
+    .conf-sub       { font-size: .72rem; color: var(--txt3); margin-bottom: .45rem; }
+    .conf-breakdown { display: flex; flex-direction: column; gap: .15rem; }
+    .conf-row       { display: flex; justify-content: space-between; font-size: .7rem; color: var(--txt2); gap: .5rem; }
+    .conf-pts       { color: var(--green); font-family: var(--mono); font-weight: 600; }
+
+    /* ── Delta deploy summary bar ──────────────────────────────── */
+    .delta-summary {
+      display: flex; align-items: center; gap: .65rem; flex-wrap: wrap;
+      background: rgba(0,212,255,.07); border: 1px solid rgba(0,212,255,.2);
+      border-radius: var(--radius); padding: .55rem 1rem;
+      margin-bottom: 1rem; font-size: .8rem;
+    }
+    .delta-tag  { font-weight: 700; color: var(--cyan); }
+    .delta-add  { color: var(--green); font-family: var(--mono); font-weight: 600; }
+    .delta-del  { color: var(--red);   font-family: var(--mono); font-weight: 600; }
+    .delta-same { color: var(--txt2);  font-family: var(--mono); }
+
+    /* ── Policy Engine panel ───────────────────────────────────── */
+    .policy-panel-section {
+      margin-bottom: 1.75rem;
+    }
+    #policy-panel { display: flex; flex-direction: column; gap: .5rem; }
+    .policy-pass  {
+      display: flex; align-items: center; gap: .75rem;
+      background: rgba(0,232,122,.07); border: 1px solid rgba(0,232,122,.2);
+      border-radius: var(--radius); padding: .75rem 1rem;
+      color: var(--txt1);
+    }
+    .pol-row  {
+      display: flex; align-items: flex-start; gap: .75rem;
+      padding: .65rem .9rem; border-radius: var(--radius);
+      border-left: 3px solid;
+    }
+    .pol-fail { background: rgba(255,51,85,.08);  border-color: var(--red);    }
+    .pol-warn { background: rgba(255,208,0,.07);  border-color: var(--yellow); }
+    .pol-info { background: rgba(0,212,255,.06);  border-color: var(--cyan);   }
+
+    .pol-badge {
+      font-size: .65rem; font-weight: 700; padding: .2rem .45rem;
+      border-radius: 4px; white-space: nowrap; letter-spacing: .05em; flex-shrink: 0; margin-top: .05rem;
+    }
+    .pol-badge-fail { background: rgba(255,51,85,.2);  color: var(--red);    }
+    .pol-badge-warn { background: rgba(255,208,0,.18); color: var(--yellow); }
+    .pol-badge-info { background: rgba(0,212,255,.15); color: var(--cyan);   }
+
+    .pol-content { flex: 1; }
+    .pol-name    { font-weight: 600; font-size: .82rem; color: var(--txt0); }
+    .pol-msg     { font-size: .75rem; color: var(--txt2); margin-top: .2rem; line-height: 1.4; }
+
+    /* ── Granular Rollback Modal ───────────────────────────────── */
+    #rollback-modal.open { display: flex !important; }
+
+    .rb-scope-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: .6rem;
+    }
+    @media (max-width: 500px) { .rb-scope-grid { grid-template-columns: 1fr; } }
+
+    .rb-scope-card {
+      background: var(--bg3); border: 1px solid var(--border-hi);
+      border-radius: var(--radius); padding: .75rem .7rem; cursor: pointer;
+      text-align: center; transition: border-color .15s, background .15s;
+    }
+    .rb-scope-card:hover      { border-color: var(--blue); background: rgba(26,127,255,.1); }
+    .rb-scope-full            { border-color: rgba(255,51,85,.3); }
+    .rb-scope-full:hover      { border-color: var(--red); background: rgba(255,51,85,.1); }
+    .rb-scope-icon  { font-size: 1.4rem; margin-bottom: .35rem; }
+    .rb-scope-name  { font-size: .8rem; font-weight: 700; color: var(--txt0); }
+    .rb-scope-desc  { font-size: .7rem; color: var(--txt2); margin-top: .2rem; line-height: 1.35; }
+
+    .rb-device-list {
+      display: flex; flex-direction: column; gap: .35rem;
+      max-height: 160px; overflow-y: auto;
+      background: var(--bg3); border-radius: var(--radius);
+      padding: .5rem .75rem;
+    }
+    .rb-dev-check {
+      display: flex; align-items: center; gap: .5rem;
+      font-size: .8rem; color: var(--txt1); cursor: pointer;
+    }
+    .rb-dev-check input { accent-color: var(--blue); cursor: pointer; }

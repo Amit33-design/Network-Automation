@@ -143,6 +143,59 @@
 <!-- ── Toast area ──────────────────────────────────────────────────── -->
 <div id="toast-area"></div>
 
+<!-- ── Granular Rollback Modal ────────────────────────────────────────── -->
+<div id="rollback-modal" onclick="if(event.target===this)closeRollbackModal()"
+  style="display:none;position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.82);
+  backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:1.5rem">
+  <div style="background:var(--bg2);border:1px solid rgba(255,85,85,.35);border-radius:16px;
+    width:100%;max-width:500px;box-shadow:0 12px 48px rgba(255,85,85,.2);animation:fadeUp .25s ease">
+    <div style="padding:1.25rem 1.75rem;border-bottom:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:1.1rem;font-weight:700">↺ Rollback Options</div>
+        <div style="font-size:.8rem;color:var(--txt3);margin-top:.2rem">Choose rollback scope — granular or full</div>
+      </div>
+      <button onclick="closeRollbackModal()" style="background:none;border:none;color:var(--txt2);font-size:1.2rem;cursor:pointer">✕</button>
+    </div>
+    <div style="padding:1.25rem 1.75rem">
+
+      <!-- Scope options -->
+      <div class="rb-scope-grid">
+        <div class="rb-scope-card" onclick="rollbackScope('device')">
+          <div class="rb-scope-icon">🖥️</div>
+          <div class="rb-scope-name">Device Rollback</div>
+          <div class="rb-scope-desc">Restore selected devices only — minimal blast radius</div>
+        </div>
+        <div class="rb-scope-card" onclick="rollbackScope('stage')">
+          <div class="rb-scope-icon">📋</div>
+          <div class="rb-scope-name">Stage Rollback</div>
+          <div class="rb-scope-desc">Restore all devices in the deploy stage</div>
+        </div>
+        <div class="rb-scope-card rb-scope-full" onclick="rollbackScope('full')">
+          <div class="rb-scope-icon">♻️</div>
+          <div class="rb-scope-name">Full Rollback</div>
+          <div class="rb-scope-desc">Restore all devices to pre-deployment state</div>
+        </div>
+      </div>
+
+      <!-- Device picker (for device-level rollback) -->
+      <div style="margin-top:1.25rem">
+        <div style="font-size:.8rem;font-weight:600;color:var(--txt2);margin-bottom:.5rem">Select devices for device-level rollback:</div>
+        <div id="rb-device-list" class="rb-device-list"></div>
+      </div>
+
+      <div style="margin-top:1rem;font-size:.74rem;color:var(--txt3)">
+        ⚠️ Rollback restores from backup taken before this deployment run.
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  // Ensure rollback modal display toggle works
+  document.getElementById('rollback-modal').style.display = 'flex';
+  document.getElementById('rollback-modal').style.display = 'none';
+</script>
+
 <!-- ── Export Modal ─────────────────────────────────────────────────── -->
 <div id="export-modal" onclick="if(event.target===this)closeExportModal()"
   style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.8);
@@ -1103,6 +1156,44 @@
       </div>
     </div>
 
+    <!-- ══ Deployment Gate + Confidence Score ══ -->
+    <div class="gate-confidence-row">
+      <!-- Gate panel -->
+      <div id="gate-panel" class="gate-panel-wrap">
+        <div class="gate-banner gate-pending">
+          <div class="gate-banner-left">
+            <div class="gate-title">🚦 Deployment Gate</div>
+            <div class="gate-status-txt">⏳ AWAITING SIGNALS</div>
+          </div>
+          <div class="gate-signals">
+            <div class="gate-signal gs-pending"><div class="gs-icon">⏳</div><div class="gs-lbl">Simulation</div><div class="gs-st">PENDING</div></div>
+            <div class="gate-signal gs-pending"><div class="gs-icon">⏳</div><div class="gs-lbl">Pre-checks</div><div class="gs-st">PENDING</div></div>
+            <div class="gate-signal gs-pending"><div class="gs-icon">⏳</div><div class="gs-lbl">Policy</div><div class="gs-st">PENDING</div></div>
+          </div>
+        </div>
+      </div>
+      <!-- Confidence score -->
+      <div id="confidence-panel" class="confidence-panel-wrap">
+        <div class="conf-wrap">
+          <div class="conf-ring-box">
+            <svg viewBox="0 0 36 36" class="conf-svg">
+              <circle cx="18" cy="18" r="15.9155" fill="none" stroke="var(--bg3)" stroke-width="3.2"/>
+              <circle cx="18" cy="18" r="15.9155" fill="none" stroke="var(--txt3)" stroke-width="3.2"
+                stroke-dasharray="45 100" stroke-dashoffset="25" stroke-linecap="round"/>
+            </svg>
+            <div class="conf-num" style="color:var(--txt3)">45<span class="conf-pct-sign">%</span></div>
+          </div>
+          <div class="conf-detail">
+            <div class="conf-title" style="color:var(--txt3)">Pending</div>
+            <div class="conf-sub">Deployment Confidence Score</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delta deploy summary (shown when config diff exists) -->
+    <div id="delta-summary" class="delta-summary" style="display:none"></div>
+
     <!-- Action bar -->
     <div style="display:flex;gap:.85rem;flex-wrap:wrap;margin-bottom:1.75rem" id="deploy-action-bar">
       <button class="btn btn-ghost" id="btn-precheck" onclick="runPreChecks()">🔍 Run Pre-Checks</button>
@@ -1160,6 +1251,17 @@
       <div id="terminal-output">
         <span class="t-dim">NetDesign AI Deployment Engine v1.0 — Ready</span><br>
         <span class="t-dim">Run Pre-Checks to begin the deployment workflow...</span><br>
+      </div>
+    </div>
+
+    <!-- Policy Engine panel (always visible in step 6) -->
+    <div class="policy-panel-section">
+      <div class="divider-label">🛡️ Policy Engine — Best Practice Checks</div>
+      <div id="policy-panel">
+        <div class="policy-pass">
+          <span style="font-size:1.4rem">⏳</span>
+          <div><strong>Policy evaluation pending</strong><div style="font-size:.78rem;color:var(--txt3);margin-top:.15rem">Navigate to step 6 to evaluate your design against best-practice rules</div></div>
+        </div>
       </div>
     </div>
 
@@ -1257,6 +1359,8 @@
 <script src="src/js/configgen.js"></script>
 <script src="src/js/intentmodel.js"></script>
 <script src="src/js/diffengine.js"></script>
+<script src="src/js/policyengine.js"></script>
+<script src="src/js/gate.js"></script>
 <script src="src/js/simulation.js"></script>
 <script src="src/js/observability.js"></script>
 <script src="src/js/export.js"></script>

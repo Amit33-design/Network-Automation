@@ -142,9 +142,12 @@ async function runPreChecks() {
   termLog(`Pre-checks: ${passed} passed, ${warned} warnings, ${failed} failed`, ok ? 't-ok' : 't-err');
 
   DEPLOY_STATE.precheck = true;
+  // Feed result into gate
+  if (typeof updateGate === 'function') updateGate('precheck', ok ? 'PASS' : 'FAIL');
+
   if (ok) {
-    document.getElementById('btn-deploy').disabled = false;
-    termLog('✓ All critical checks passed — deployment enabled', 't-ok');
+    termLog('✓ All critical checks passed — deployment gate updated', 't-ok');
+    // Deploy button will be enabled by renderGate() via updateGate above
   } else {
     termLog('✗ Fix failed checks before deploying', 't-err');
     showResumeButton('precheck');
@@ -368,9 +371,40 @@ function getDeployLines(dev, os) {
 /* ── Deploy ──────────────────────────────────────────────────── */
 async function startDeploy() {
   if (!DEPLOY_STATE.precheck) { toast('Run pre-checks first', 'error'); return; }
+
+  // Gate enforcement
+  if (typeof canDeploy === 'function' && !canDeploy()) {
+    const reason = GATE.simulation === 'FAIL'
+      ? 'Simulation failed — topology has critical failure risk'
+      : 'Pre-deployment gate is blocking deployment';
+    toast(`🔒 Deployment blocked — ${reason}`, 'error', 6000);
+    termLog(`✗ GATE BLOCKED: ${reason}`, 't-err');
+    return;
+  }
+
   document.getElementById('btn-deploy').disabled   = true;
   document.getElementById('btn-postcheck').disabled = true;
   BACKUP_STORE.length = 0;
+
+  // Delta summary (if config history exists)
+  if (typeof getDeltaSummary === 'function') {
+    const delta = getDeltaSummary();
+    const deltaEl = document.getElementById('delta-summary');
+    if (deltaEl) {
+      if (delta.devices > 0) {
+        deltaEl.style.display = 'flex';
+        deltaEl.innerHTML = `
+          <span class="delta-tag">📊 Delta Deploy</span>
+          <span class="delta-add">+${delta.added} added</span>
+          <span class="delta-del">−${delta.removed} removed</span>
+          <span class="delta-same">${delta.unchanged} unchanged</span>
+          <span style="color:var(--txt3);font-size:.75rem">across ${delta.devices} device${delta.devices!==1?'s':''}</span>`;
+        termLog(`📊 Delta computed: +${delta.added} / -${delta.removed} lines across ${delta.devices} devices`, 't-info');
+      } else {
+        deltaEl.style.display = 'none';
+      }
+    }
+  }
 
   const devs = buildDeviceList();
   initDeviceStatusTable(devs);
@@ -533,7 +567,7 @@ function simulatePostCheck(c) {
   return { status:'pass', detail:'Post-check passed', val:'OK' };
 }
 
-/* ── Rollback System ─────────────────────────────────────────── */
+/* ── Rollback System (granular) ──────────────────────────────── */
 
 function showRollbackButton() {
   const bar = document.getElementById('deploy-action-bar');
@@ -542,47 +576,94 @@ function showRollbackButton() {
   btn.id = 'btn-rollback';
   btn.className = 'btn btn-ghost';
   btn.style.cssText = 'border-color:#ff5555;color:#ff5555';
-  btn.innerHTML = '↺ Rollback to Backup';
-  btn.onclick = startRollback;
+  btn.innerHTML = '↺ Rollback Options';
+  btn.onclick = openRollbackModal;
   bar.appendChild(btn);
-  termLog('↺ Rollback available — click "Rollback to Backup" to restore pre-deploy state', 't-warn');
+  termLog('↺ Rollback available — click "Rollback Options" to choose scope', 't-warn');
 }
 
-async function startRollback() {
+function openRollbackModal() {
+  const modal = document.getElementById('rollback-modal');
+  if (!modal) return;
+
+  const devs = buildDeviceList();
+  const deviceOptions = devs.map(d =>
+    `<label class="rb-dev-check">
+       <input type="checkbox" value="${d.id}" checked>
+       <span>${d.icon} ${d.name} <span style="color:var(--txt3);font-size:.75rem">(${d.role})</span></span>
+     </label>`
+  ).join('');
+
+  document.getElementById('rb-device-list').innerHTML = deviceOptions;
+  modal.classList.add('open');
+}
+
+function closeRollbackModal() {
+  const modal = document.getElementById('rollback-modal');
+  if (modal) modal.classList.remove('open');
+}
+
+async function rollbackScope(scope) {
+  closeRollbackModal();
   if (BACKUP_STORE.length === 0) {
-    toast('No backup snapshots available for rollback', 'error');
+    toast('No backup snapshots available', 'error');
     return;
   }
 
-  const btn = document.getElementById('btn-rollback');
-  if (btn) { btn.disabled = true; btn.textContent = 'Rolling back…'; }
-
   termLog('═══ INITIATING ROLLBACK ═══', 't-err');
-  termLog(`Restoring ${BACKUP_STORE.length} device configurations from backup…`, 't-warn');
-  obsLog && obsLog('Rollback initiated', 'warn', 'rollback');
 
-  for (const bk of BACKUP_STORE) {
-    await delay(200 + Math.random() * 150);
-    termLog(`  └─ ${bk.name.split('/').pop().split('_')[0]}: restored from ${bk.name}`, 't-warn');
+  if (scope === 'device') {
+    // Only rollback checked devices
+    const checked = [...document.querySelectorAll('#rb-device-list input:checked')].map(i => i.value);
+    if (checked.length === 0) { toast('Select at least one device', 'error'); return; }
+    const targets = BACKUP_STORE.filter(b => checked.includes(b.deviceId));
+    termLog(`Device rollback — restoring ${targets.length} device(s)…`, 't-warn');
+    for (const bk of targets) {
+      await delay(200 + Math.random() * 150);
+      const devName = bk.name.split('/').pop().split('_')[0];
+      termLog(`  └─ ${devName}: restored from ${bk.name}`, 't-warn');
+      setDeviceStatus(bk.deviceId, 'failed', 'Rolled back ↺');
+    }
+    termLog(`✓ ${targets.length} device(s) rolled back`, 't-ok');
+    toast(`Device rollback complete (${targets.length} devices)`, 'success', 4000);
+
+  } else if (scope === 'stage') {
+    // Stage rollback — prompt which stage
+    const stageTargets = BACKUP_STORE.filter(b => b.layer);
+    termLog(`Stage rollback — restoring ${stageTargets.length} devices from deploy stage…`, 't-warn');
+    for (const bk of stageTargets) {
+      await delay(180 + Math.random() * 120);
+      const devName = bk.name.split('/').pop().split('_')[0];
+      termLog(`  └─ ${devName}: restored from ${bk.name}`, 't-warn');
+      setDeviceStatus(bk.deviceId, 'failed', 'Stage rolled back ↺');
+    }
+    setStepStatus('ds-deploy-status', 'rolled_back');
+    termLog('✓ Deploy stage rolled back', 't-ok');
+    toast('Stage rollback complete', 'success', 4000);
+
+  } else {
+    // Full rollback
+    termLog(`Full rollback — restoring all ${BACKUP_STORE.length} devices…`, 't-warn');
+    for (const bk of BACKUP_STORE) {
+      await delay(200 + Math.random() * 150);
+      const devName = bk.name.split('/').pop().split('_')[0];
+      termLog(`  └─ ${devName}: restored from ${bk.name}`, 't-warn');
+    }
+    await delay(400);
+    termLog('✓ All devices restored to pre-deployment configuration', 't-ok');
+    termLog('  Run Post-Checks again to verify rollback success', 't-info');
+    toast('Full rollback complete — verify with post-checks', 'success', 5000);
+    setStepStatus('ds-deploy-status',   'rolled_back');
+    setStepStatus('ds-verify-status',   'rolled_back');
+    setStepStatus('ds-postcheck-status','rolled_back');
+    DEPLOY_STATE.deployed = false;
   }
 
-  await delay(400);
-  termLog('✓ All devices restored to pre-deployment configuration', 't-ok');
-  termLog('  Run Post-Checks again to verify rollback success', 't-info');
-  toast('Rollback complete — verify with post-checks', 'success', 5000);
-
-  // Mark deploy stages as rolled_back
-  setStepStatus('ds-deploy-status', 'rolled_back');
-  setStepStatus('ds-verify-status', 'rolled_back');
-  setStepStatus('ds-postcheck-status', 'rolled_back');
-  DEPLOY_STATE.deployed = false;
-
-  if (btn) { btn.textContent = '✓ Rolled Back'; }
-  obsLog && obsLog('Rollback completed successfully', 'success', 'rollback');
-
-  // Re-enable deploy after rollback
-  document.getElementById('btn-deploy').disabled = false;
+  if (typeof obsLog === 'function') obsLog(`Rollback (${scope}) complete`, 'warn', 'rollback');
 }
+
+/* startRollback kept as an alias for backward compat (called nowhere, but safe to keep) */
+async function startRollback() { return rollbackScope('full'); }
 
 /* ── Scorecard ───────────────────────────────────────────────── */
 function renderScoreRow(pass, warn, fail, total, phase) {

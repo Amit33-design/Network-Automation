@@ -25,6 +25,7 @@ function simulateFailure(devId) {
   });
   renderFailureImpacts();
   highlightFailedInSVG();
+  if (typeof evaluateSimGate === 'function') evaluateSimGate();
 }
 
 function clearAllSimFailures() {
@@ -32,6 +33,7 @@ function clearAllSimFailures() {
   document.querySelectorAll('.sim-dev-btn').forEach(btn => btn.classList.remove('sim-failed'));
   renderFailureImpacts();
   highlightFailedInSVG();
+  if (typeof evaluateSimGate === 'function') evaluateSimGate();
 }
 
 function getImpactProfile(layer) {
