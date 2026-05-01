@@ -2005,3 +2005,28 @@
       font-size: .8rem; color: var(--txt1); cursor: pointer;
     }
     .rb-dev-check input { accent-color: var(--blue); cursor: pointer; }
+
+    /* ── Backend Settings Modal ────────────────────────────────── */
+    #backend-modal.open { display: flex !important; }
+    .backend-row   { margin-bottom: 1rem; }
+    .backend-label { display: block; font-size: .75rem; font-weight: 600;
+                     color: var(--txt2); margin-bottom: .35rem; text-transform: uppercase; letter-spacing: .04em; }
+    .backend-input {
+      width: 100%; background: var(--bg3); border: 1px solid var(--border-hi);
+      border-radius: 6px; color: var(--txt0); font-size: .82rem;
+      padding: .45rem .6rem; outline: none; box-sizing: border-box;
+    }
+    .backend-input:focus { border-color: var(--blue); }
+
+    .mode-btn {
+      background: var(--bg3); border: 1px solid var(--border-hi); border-radius: 7px;
+      color: var(--txt2); font-size: .8rem; padding: .4rem .85rem; cursor: pointer;
+      transition: all .15s;
+    }
+    .mode-btn.mode-active { background: var(--bg4); border-color: var(--blue); color: var(--txt0); }
+    .mode-btn.mode-live.mode-active { border-color: var(--red); color: var(--red); }
+
+    .backend-device-row {
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+      padding: .6rem .75rem;
+    }

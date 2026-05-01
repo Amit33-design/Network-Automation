@@ -143,6 +143,196 @@
 <!-- ── Toast area ──────────────────────────────────────────────────── -->
 <div id="toast-area"></div>
 
+<!-- ── Backend Settings Modal ────────────────────────────────────────── -->
+<div id="backend-modal" onclick="if(event.target===this)closeBackendSettings()"
+  style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.85);
+  backdrop-filter:blur(8px);align-items:flex-start;justify-content:center;padding:2rem 1rem;overflow-y:auto">
+  <div style="background:var(--bg2);border:1px solid var(--border-hi);border-radius:16px;
+    width:100%;max-width:640px;box-shadow:var(--shadow);animation:fadeUp .25s ease;margin:auto">
+
+    <!-- Header -->
+    <div style="padding:1.25rem 1.5rem;border-bottom:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">⚙️ Backend Connection</div>
+        <div style="font-size:.78rem;color:var(--txt3);margin-top:.2rem">Configure real device automation (Nornir + Netmiko)</div>
+      </div>
+      <button onclick="closeBackendSettings()" style="background:none;border:none;color:var(--txt2);font-size:1.2rem;cursor:pointer">✕</button>
+    </div>
+
+    <div style="padding:1.25rem 1.5rem">
+
+      <!-- Connection toggle -->
+      <div class="backend-row">
+        <label class="backend-label">Mode</label>
+        <div style="display:flex;gap:.5rem">
+          <button id="btn-sim-mode" onclick="setBackendMode('sim')" class="mode-btn mode-active">🧪 Simulation</button>
+          <button id="btn-live-mode" onclick="setBackendMode('live')" class="mode-btn">🔴 Live Deploy</button>
+        </div>
+      </div>
+
+      <!-- Backend URL -->
+      <div class="backend-row">
+        <label class="backend-label">Backend URL</label>
+        <input id="backend-url-input" type="url" class="backend-input"
+          placeholder="http://10.0.0.100:8000"
+          oninput="updateBackendDot()">
+        <div style="font-size:.7rem;color:var(--txt3);margin-top:.3rem">
+          Your Python backend IP — must have SSH reachability to network devices
+        </div>
+      </div>
+
+      <!-- API key -->
+      <div class="backend-row">
+        <label class="backend-label">API Key</label>
+        <input id="backend-apikey-input" type="password" class="backend-input"
+          placeholder="nd_live_xxxxxxxxxx"
+          oninput="updateBackendDot()">
+        <div style="font-size:.7rem;color:var(--txt3);margin-top:.3rem">
+          Matches BACKEND_API_KEY in your backend .env file
+        </div>
+      </div>
+
+      <!-- Test connection -->
+      <div style="display:flex;gap:.6rem;margin-bottom:1.25rem">
+        <button class="btn btn-ghost" onclick="testBackendConnection()" style="font-size:.8rem">
+          🔌 Test Connection
+        </button>
+        <span id="backend-test-result" style="font-size:.78rem;color:var(--txt2);align-self:center"></span>
+      </div>
+
+      <!-- Device inventory -->
+      <div class="divider-label" style="margin-bottom:.75rem">📋 Device Inventory</div>
+      <div style="font-size:.75rem;color:var(--txt3);margin-bottom:.75rem">
+        Enter management IPs and credentials. These stay in your browser — never sent to GitHub.
+      </div>
+      <div id="backend-device-rows" style="display:flex;flex-direction:column;gap:.5rem;max-height:280px;overflow-y:auto"></div>
+      <button class="btn btn-ghost" onclick="addBackendDeviceRow()" style="margin-top:.6rem;font-size:.78rem;width:100%">
+        + Add Device
+      </button>
+
+      <!-- Save -->
+      <div style="display:flex;gap:.6rem;margin-top:1.25rem;justify-content:flex-end">
+        <button class="btn btn-ghost" onclick="closeBackendSettings()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveBackendSettings()">💾 Save Settings</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+<script>
+  document.getElementById('backend-modal').style.display = 'none';
+
+  function openBackendSettings() {
+    const s = BackendClient.isLiveMode ? (typeof BackendClient === 'object') : false;
+    document.getElementById('backend-url-input').value    = BackendClient.getBackendUrl?.() || '';
+    document.getElementById('backend-apikey-input').value = BackendClient.getApiKey?.()     || '';
+    setBackendMode(BackendClient.isLiveMode?.() ? 'live' : 'sim');
+    populateBackendDeviceRows();
+    document.getElementById('backend-modal').style.display = 'flex';
+  }
+
+  function closeBackendSettings() {
+    document.getElementById('backend-modal').style.display = 'none';
+  }
+
+  function setBackendMode(mode) {
+    document.getElementById('btn-sim-mode').classList.toggle('mode-active',  mode === 'sim');
+    document.getElementById('btn-live-mode').classList.toggle('mode-active', mode === 'live');
+    document.getElementById('btn-live-mode').classList.toggle('mode-live',   mode === 'live');
+    window._pendingMode = mode;
+  }
+
+  function saveBackendSettings() {
+    const url  = document.getElementById('backend-url-input').value.trim();
+    const key  = document.getElementById('backend-apikey-input').value.trim();
+    const live = window._pendingMode === 'live';
+    BackendClient.configure(url, key, live);
+    updateBackendDot();
+    closeBackendSettings();
+    toast(live ? '🔴 Live mode enabled — deploy will hit real devices' : '🧪 Simulation mode active', live ? 'warn' : 'info', 4000);
+  }
+
+  function updateBackendDot() {
+    const dot  = document.getElementById('backend-status-dot');
+    const live = BackendClient.isLiveMode?.();
+    dot.style.background = live ? 'var(--green)' : 'var(--txt3)';
+    dot.title = live ? 'Live mode — connected to backend' : 'Simulation mode';
+  }
+
+  async function testBackendConnection() {
+    const url = document.getElementById('backend-url-input').value.trim();
+    const key = document.getElementById('backend-apikey-input').value.trim();
+    const el  = document.getElementById('backend-test-result');
+    if (!url) { el.textContent = '⚠ Enter a backend URL first'; el.style.color = 'var(--yellow)'; return; }
+    el.textContent = '⏳ Testing…'; el.style.color = 'var(--txt2)';
+    try {
+      const r = await fetch(url.replace(/\/$/, '') + '/api/health', {
+        headers: { 'X-API-Key': key }
+      });
+      if (r.ok) {
+        const data = await r.json();
+        el.textContent = `✅ Connected — backend v${data.version || '?'}`;
+        el.style.color = 'var(--green)';
+      } else {
+        el.textContent = `❌ HTTP ${r.status}`;
+        el.style.color = 'var(--red)';
+      }
+    } catch(e) {
+      el.textContent = `❌ ${e.message}`;
+      el.style.color = 'var(--red)';
+    }
+  }
+
+  function populateBackendDeviceRows() {
+    const container = document.getElementById('backend-device-rows');
+    const devs = typeof buildDeviceList === 'function' ? buildDeviceList() : [];
+    if (devs.length === 0) {
+      container.innerHTML = '<div style="color:var(--txt3);font-size:.78rem;padding:.5rem">Complete Step 1–3 first to auto-populate device list</div>';
+      return;
+    }
+    const saved = JSON.parse(localStorage.getItem('nd_device_inventory') || '{}');
+    container.innerHTML = devs.map(d => {
+      const s = saved[d.id] || {};
+      const pmOpts = ['ios-xe','nxos','eos','sonic','junos'].map(p =>
+        `<option value="${p}"${(s.platform||'ios-xe')===p?' selected':''}>${p}</option>`
+      ).join('');
+      return `<div class="backend-device-row" data-dev-id="${d.id}" data-role="${d.role || ''}">
+        <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.35rem">
+          <span style="font-size:.9rem">${d.icon||'🖥️'}</span>
+          <input class="backend-input bdr-name" style="flex:1;padding:.3rem .5rem;font-size:.78rem"
+            value="${s.name || d.name}" placeholder="Display name">
+          <select class="backend-input bdr-platform" style="padding:.3rem .4rem;font-size:.75rem">${pmOpts}</select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 60px;gap:.35rem">
+          <input class="backend-input bdr-host"   placeholder="10.0.0.${d.idx||1}" value="${s.hostname||''}" style="font-size:.75rem;padding:.3rem .4rem">
+          <input class="backend-input bdr-user"   placeholder="admin"              value="${s.username||'admin'}" style="font-size:.75rem;padding:.3rem .4rem">
+          <input class="backend-input bdr-pass"   type="password" placeholder="password" value="${s.password||''}" style="font-size:.75rem;padding:.3rem .4rem">
+          <input class="backend-input bdr-port"   placeholder="22" value="${s.port||22}" style="font-size:.75rem;padding:.3rem .4rem">
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function addBackendDeviceRow() {
+    const container = document.getElementById('backend-device-rows');
+    const row = document.createElement('div');
+    row.className = 'backend-device-row';
+    row.dataset.devId = 'custom-' + Date.now();
+    row.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 60px;gap:.35rem">
+      <input class="backend-input bdr-name"     placeholder="Device name"  style="font-size:.75rem;padding:.3rem .4rem">
+      <input class="backend-input bdr-host"     placeholder="10.0.0.x"     style="font-size:.75rem;padding:.3rem .4rem">
+      <input class="backend-input bdr-user"     placeholder="admin"        style="font-size:.75rem;padding:.3rem .4rem">
+      <input class="backend-input bdr-pass" type="password" placeholder="password" style="font-size:.75rem;padding:.3rem .4rem">
+      <input class="backend-input bdr-port"     placeholder="22"           style="font-size:.75rem;padding:.3rem .4rem">
+    </div>`;
+    container.appendChild(row);
+  }
+
+  // Initialize dot on page load
+  document.addEventListener('DOMContentLoaded', updateBackendDot);
+</script>
+
 <!-- ── Granular Rollback Modal ────────────────────────────────────────── -->
 <div id="rollback-modal" onclick="if(event.target===this)closeRollbackModal()"
   style="display:none;position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.82);
@@ -319,6 +509,12 @@
       style="padding:.35rem .85rem;font-size:.75rem;display:flex;align-items:center;gap:.35rem"
       title="Copy shareable link">
       🔗 Share
+    </button>
+    <button class="btn btn-ghost" id="btn-backend-settings" onclick="openBackendSettings()"
+      style="padding:.35rem .7rem;font-size:.75rem;display:flex;align-items:center;gap:.3rem"
+      title="Configure live backend connection">
+      <span id="backend-status-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);display:inline-block"></span>
+      Backend
     </button>
     <button class="btn btn-ghost" onclick="showKeyboardHelp()"
       style="padding:.35rem .6rem;font-size:.8rem" title="Keyboard shortcuts (?)">⌨</button>
@@ -1359,6 +1555,7 @@
 <script src="src/js/configgen.js"></script>
 <script src="src/js/intentmodel.js"></script>
 <script src="src/js/diffengine.js"></script>
+<script src="src/js/backend.js"></script>
 <script src="src/js/policyengine.js"></script>
 <script src="src/js/gate.js"></script>
 <script src="src/js/simulation.js"></script>

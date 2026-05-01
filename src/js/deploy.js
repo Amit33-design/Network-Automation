@@ -110,6 +110,34 @@ async function resumeFromStage(stage) {
 
 /* ── Pre-Checks ──────────────────────────────────────────────── */
 async function runPreChecks() {
+  // ── LIVE MODE: delegate to real backend ────────────────────────
+  if (typeof BackendClient !== 'undefined' && BackendClient.isLiveMode()) {
+    document.getElementById('check-dashboard').style.display = 'block';
+    document.getElementById('precheck-results-section').style.display = 'block';
+    termLog('🔴 LIVE MODE — connecting to real devices via backend…', 't-info');
+    try {
+      await BackendClient.createSession();
+      BackendClient.connectTerminal(BackendClient.getSessionId());
+      // Generate configs first (server-side Jinja2)
+      termLog('Generating configs (server-side Jinja2)…', 't-dim');
+      await BackendClient.generateConfig();
+      // Run pre-checks
+      const result = await BackendClient.runPrecheck();
+      // Render results into existing check grid
+      BackendClient.renderCheckResults(result.results, 'precheck-grid');
+      renderScoreRow(result.passed, result.warned, result.failed, result.total, 'pre');
+      const ok = result.failed === 0;
+      DEPLOY_STATE.precheck = true;
+      if (typeof updateGate === 'function') updateGate('precheck', ok ? 'PASS' : 'FAIL');
+      termLog(`Pre-checks: ${result.passed} passed, ${result.warned} warnings, ${result.failed} failed`,
+              ok ? 't-ok' : 't-err');
+      if (ok) document.getElementById('btn-deploy').disabled = false;
+      return;
+    } catch(e) {
+      termLog(`✗ Backend pre-check failed: ${e.message} — falling back to simulation`, 't-err');
+    }
+  }
+  // ── SIMULATION fallback ────────────────────────────────────────
   document.getElementById('check-dashboard').style.display = 'block';
   document.getElementById('precheck-results-section').style.display = 'block';
   document.getElementById('btn-deploy').disabled = true;
@@ -372,6 +400,30 @@ function getDeployLines(dev, os) {
 async function startDeploy() {
   if (!DEPLOY_STATE.precheck) { toast('Run pre-checks first', 'error'); return; }
 
+  // ── LIVE MODE ──────────────────────────────────────────────────
+  if (typeof BackendClient !== 'undefined' && BackendClient.isLiveMode()) {
+    document.getElementById('btn-deploy').disabled = true;
+    const useDelta = document.getElementById('delta-mode-toggle')?.checked;
+    termLog(`🔴 LIVE DEPLOY — mode: ${useDelta ? 'delta' : 'full'}`, 't-info');
+    try {
+      // Backup first
+      termLog('Backing up running configs…', 't-dim');
+      await BackendClient.backup();
+      // Deploy
+      const result = useDelta ? await BackendClient.deployDelta() : await BackendClient.deployFull();
+      BackendClient.applyDeployResult(result);
+      DEPLOY_STATE.deployed = true;
+      document.getElementById('btn-postcheck').disabled = false;
+      termLog(`✓ Deploy complete — ${result.devices.filter(d=>d.status==='success').length}/${result.devices.length} devices`, 't-ok');
+      toast('Live deployment complete! Run post-checks now.', 'success', 5000);
+      return;
+    } catch(e) {
+      termLog(`✗ Backend deploy failed: ${e.message}`, 't-err');
+      toast(`Deploy failed: ${e.message}`, 'error', 6000);
+      return;
+    }
+  }
+
   // Gate enforcement
   if (typeof canDeploy === 'function' && !canDeploy()) {
     const reason = GATE.simulation === 'FAIL'
@@ -474,6 +526,28 @@ async function startDeploy() {
 /* ── Post-Checks ─────────────────────────────────────────────── */
 async function runPostChecks() {
   if (!DEPLOY_STATE.deployed) { toast('Deploy first', 'error'); return; }
+
+  // ── LIVE MODE ──────────────────────────────────────────────────
+  if (typeof BackendClient !== 'undefined' && BackendClient.isLiveMode()) {
+    document.getElementById('postcheck-results-section').style.display = 'block';
+    termLog('🔴 LIVE POST-CHECKS — querying real device state…', 't-info');
+    try {
+      const result = await BackendClient.runPostcheck();
+      BackendClient.renderCheckResults(result.results, 'postcheck-grid');
+      renderScoreRow(result.passed, result.warned, result.failed, result.total, 'post');
+      if (result.failed > 0) {
+        termLog('✗ Post-check failures — rollback available', 't-err');
+        showRollbackButton();
+      } else {
+        termLog('🎉 All post-checks passed — network operational', 't-ok');
+        toast('Network is operational! All live post-checks passed.', 'success', 6000);
+      }
+      DEPLOY_STATE.postcheck = true;
+      return;
+    } catch(e) {
+      termLog(`✗ Backend post-check failed: ${e.message}`, 't-err');
+    }
+  }
   document.getElementById('postcheck-results-section').style.display = 'block';
   setStepStatus('ds-postcheck-status', 'running');
   pipelineStageStart('postcheck');
