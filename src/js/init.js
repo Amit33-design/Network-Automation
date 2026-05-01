@@ -45,8 +45,15 @@ function sharePage() {
 
 /* ── Init: restore saved state or show welcome ──────────────────── */
 window.addEventListener('DOMContentLoaded', () => {
+  // Landing page
+  if (typeof initLanding === 'function') initLanding();
+
   const restored = restoreStateLS();
   if (restored && STATE.uc) {
+    // If we have a saved session, skip landing automatically
+    if (typeof startDesigning === 'function' && !sessionStorage.getItem('nd_landing_dismissed')) {
+      // Don't auto-skip — let user see landing even with restored state
+    }
     toast('Previous session restored — pick up where you left off', 'info', 4000);
   }
 });

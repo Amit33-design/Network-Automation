@@ -204,6 +204,167 @@ function checkCardHTML(c, status, detail, val) {
   </div>`;
 }
 
+/* ── Device-level Status Table ───────────────────────────────── */
+let _devStatusMap = {};  // deviceId → { status, lastAction, startedAt }
+
+function initDeviceStatusTable(devs) {
+  _devStatusMap = {};
+  devs.forEach(d => { _devStatusMap[d.id] = { status:'pending', lastAction:'—', startedAt:null }; });
+  renderDeviceStatusTable(devs);
+  document.getElementById('device-status-section').style.display = 'block';
+}
+
+function setDeviceStatus(devId, status, action) {
+  if (_devStatusMap[devId]) {
+    _devStatusMap[devId].status     = status;
+    _devStatusMap[devId].lastAction = action;
+    if (status === 'running') _devStatusMap[devId].startedAt = Date.now();
+  }
+  const row = document.getElementById(`dsr-${devId}`);
+  if (!row) return;
+  const icons = { pending:'⏳', running:'🔄', done:'✅', failed:'❌', backed_up:'💾' };
+  const cls   = { pending:'', running:' dsr-running', done:' dsr-done', failed:' dsr-failed', backed_up:' dsr-done' };
+  row.querySelector('.dsr-status').innerHTML  = `${icons[status]||'⏳'} <span class="dsr-st-text">${status}</span>`;
+  row.querySelector('.dsr-action').textContent = action;
+  row.className = 'dsr-row' + (cls[status]||'');
+
+  if (status === 'done' || status === 'backed_up') {
+    const elapsed = _devStatusMap[devId].startedAt ? `${((Date.now() - _devStatusMap[devId].startedAt)/1000).toFixed(1)}s` : '';
+    row.querySelector('.dsr-dur').textContent = elapsed;
+  }
+}
+
+function renderDeviceStatusTable(devs) {
+  const el = document.getElementById('device-status-table');
+  if (!el) return;
+  el.innerHTML = `
+    <table class="dev-status-tbl">
+      <thead><tr>
+        <th>Device</th><th>Role</th><th>OS</th>
+        <th>Status</th><th>Last Action</th><th>Time</th>
+      </tr></thead>
+      <tbody>
+        ${devs.map(d => `
+          <tr class="dsr-row" id="dsr-${d.id}">
+            <td><span class="dsr-icon">${d.icon}</span> <strong>${d.name}</strong></td>
+            <td style="color:var(--txt2)">${d.role}</td>
+            <td><span class="dsr-os-pill">${OS_LABELS[getOS(d.layer)]}</span></td>
+            <td class="dsr-status">⏳ <span class="dsr-st-text">pending</span></td>
+            <td class="dsr-action" style="color:var(--txt2)">—</td>
+            <td class="dsr-dur" style="color:var(--txt3);font-family:var(--mono);font-size:.72rem">—</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+/* ── Platform-specific deploy log lines ─────────────────────── */
+function getDeployLines(dev, os) {
+  const layer = dev.layer;
+  const lines = {
+    'ios-xe': {
+      'campus-access': [
+        '  • Opening SSH session (22/tcp)',
+        '  • Entering configuration mode',
+        '  • Applying VLAN database (10 entries)',
+        '  • Configuring 802.1X on access ports',
+        '  • Enabling DHCP snooping + DAI',
+        '  • Setting QoS policy-map on uplinks',
+        '  • Configuring PortFast + BPDUguard',
+        '  • Saving: copy run start',
+      ],
+      'campus-dist': [
+        '  • SSH session established',
+        '  • Configuring STP root priority',
+        '  • Adding OSPF area 0 (3 interfaces)',
+        '  • Setting HSRP standby group',
+        '  • Applying MLS QoS trust dscp',
+        '  • Saving configuration',
+      ],
+      'campus-core': [
+        '  • SSH session established',
+        '  • Configuring BGP 65000 (eBGP to FW)',
+        '  • Adding OSPF area 0 redistribution',
+        '  • Setting default-route via FW',
+        '  • Configuring NTP + SNMP',
+        '  • Saving: copy run start',
+      ],
+    },
+    'nxos': {
+      'dc-spine': [
+        '  • NETCONF session opened (830/tcp)',
+        '  • Feature: bgp, isis, bfd enabled',
+        '  • Configuring IS-IS (NET 49.0001.0000.0000.000x.00)',
+        '  • BGP AS 65000 — Route Reflector role',
+        '  • Adding EVPN address-family l2vpn',
+        '  • Configuring BFD timers (300ms)',
+        '  • gRPC telemetry subscription added',
+        '  • copy run start',
+      ],
+      'dc-leaf': [
+        '  • NETCONF session opened',
+        '  • Feature: nv overlay, vn-segment-vlan-based enabled',
+        '  • Configuring NVE1 (VTEP 10.0.0.' + (dev.idx+1) + ')',
+        '  • VXLAN VNI bindings: ' + (8 + dev.idx*2) + ' L2VNIs, 2 L3VNIs',
+        '  • BGP eBGP peer to SPINE-01/02',
+        '  • Anycast gateway: ip anycast-gateway-mac',
+        '  • vPC domain ' + (dev.idx+1) + ' configured',
+        '  • PFC priority 3 (RoCEv2) enabled',
+        '  • copy run start',
+      ],
+    },
+    'eos': {
+      'dc-spine': [
+        '  • eAPI session opened (https/443)',
+        '  • Router BGP 65000 — EVPN RR',
+        '  • IS-IS underlay configured',
+        '  • ECMP 64 paths enabled',
+        '  • gNMI/CloudVision-ready telemetry',
+        '  • write memory',
+      ],
+      'dc-leaf': [
+        '  • eAPI session established',
+        '  • VXLAN VTEP interface Vxlan1',
+        '  • BGP EVPN address-family',
+        '  • Anycast IP/MAC configured',
+        '  • PFC watchdog enabled',
+        '  • write memory',
+      ],
+      'gpu-spine': [
+        '  • eAPI session opened',
+        '  • BGP 400G ECMP spine fabric',
+        '  • PFC priority 3+4 (RoCEv2)',
+        '  • DSCP 26/46 QoS marking',
+        '  • write memory',
+      ],
+    },
+    'sonic': {
+      'gpu-tor': [
+        '  • config_db.json pushed via REST',
+        '  • PFC enabled (priority 3)',
+        '  • WRED/ECN thresholds configured',
+        '  • MTU 9216 on all GPU ports',
+        '  • PFC watchdog activated',
+        '  • config save',
+      ],
+    },
+    'junos': {
+      default: [
+        '  • NETCONF session (port 830)',
+        '  • Commit check — no syntax errors',
+        '  • Applying hierarchical config stanzas',
+        '  • BGP/OSPF/EVPN policies loaded',
+        '  • commit confirmed 5',
+        '  • Commit confirmed ✓',
+      ],
+    },
+  };
+
+  const osLines = lines[os];
+  if (!osLines) return ['  • Configuration applied'];
+  const layerLines = osLines[layer] || osLines['default'] || ['  • Configuration applied'];
+  return layerLines;
+}
+
 /* ── Deploy ──────────────────────────────────────────────────── */
 async function startDeploy() {
   if (!DEPLOY_STATE.precheck) { toast('Run pre-checks first', 'error'); return; }
@@ -211,42 +372,61 @@ async function startDeploy() {
   document.getElementById('btn-postcheck').disabled = true;
   BACKUP_STORE.length = 0;
 
+  const devs = buildDeviceList();
+  initDeviceStatusTable(devs);
+
   // ─ Backup ─
   setStepStatus('ds-backup-status', 'running');
   pipelineStageStart('backup');
   termLog('Backing up running configurations…', 't-info');
-  const devs = buildDeviceList();
   for (const d of devs) {
-    await delay(100);
-    const ts = Date.now();
+    setDeviceStatus(d.id, 'running', 'Creating backup…');
+    await delay(80 + Math.random()*60);
+    const ts     = Date.now();
     const bkName = `/backups/${d.name}_${ts}.cfg`;
     BACKUP_STORE.push({ name:bkName, deviceId:d.id, ts, layer:d.layer });
-    termLog(`  └─ ${d.name}: backup → ${bkName}`, 't-dim');
+    termLog(`  └─ ${d.name}: ${bkName}`, 't-dim');
+    setDeviceStatus(d.id, 'backed_up', bkName);
   }
-  await delay(200);
+  await delay(150);
   setStepStatus('ds-backup-status', 'done');
   pipelineStageEnd('backup', true);
   termLog(`✓ ${devs.length} device backups complete`, 't-ok');
 
-  // ─ Push ─
+  // Reset device status for deploy phase
+  devs.forEach(d => setDeviceStatus(d.id, 'pending', 'Waiting…'));
+
+  // ─ Push configs ─
   setStepStatus('ds-deploy-status', 'running');
   pipelineStageStart('deploy');
-  termLog('Pushing configurations via NETCONF/SSH…', 't-info');
+  termLog('Pushing configurations via NETCONF / SSH…', 't-info');
+
   for (const d of devs) {
-    await delay(160 + Math.random() * 140);
     const os = getOS(d.layer);
-    termLog(`  └─ ${d.name} [${OS_LABELS[os]}]: config applied`, 't-ok');
+    setDeviceStatus(d.id, 'running', `Connecting [${OS_LABELS[os]}]…`);
+    termLog(`► ${d.name} [${OS_LABELS[os]}]`, 't-info');
+
+    const lines = getDeployLines(d, os);
+    for (const line of lines) {
+      await delay(55 + Math.random() * 45);
+      termLog(line, 't-dim');
+      setDeviceStatus(d.id, 'running', line.trim().replace(/^•\s*/,''));
+    }
+    await delay(60);
+    termLog(`✓ ${d.name}: configuration committed`, 't-ok');
+    setDeviceStatus(d.id, 'done', 'Configuration committed ✓');
   }
+
   await delay(200);
   setStepStatus('ds-deploy-status', 'done');
   pipelineStageEnd('deploy', true);
-  termLog('✓ All configurations pushed', 't-ok');
+  termLog(`✓ All ${devs.length} devices configured`, 't-ok');
 
   // ─ Commit guard ─
   setStepStatus('ds-verify-status', 'running');
   pipelineStageStart('verify');
   termLog('Initiating confirm-commit with 5-minute rollback timer…', 't-info');
-  await delay(700);
+  await delay(600);
   termLog('  └─ Commit confirmed — rollback guard cancelled', 't-ok');
   setStepStatus('ds-verify-status', 'done');
   pipelineStageEnd('verify', true);
@@ -436,6 +616,8 @@ function resetDeploy() {
   document.getElementById('check-dashboard').style.display = 'none';
   document.getElementById('precheck-results-section').style.display = 'none';
   document.getElementById('postcheck-results-section').style.display = 'none';
+  const dss = document.getElementById('device-status-section');
+  if (dss) dss.style.display = 'none';
   document.getElementById('btn-deploy').disabled = true;
   document.getElementById('btn-postcheck').disabled = true;
 

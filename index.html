@@ -31,8 +31,156 @@
 
 <body>
 
+<!-- ══════════════════════════════════════════════════════════════════
+     LANDING PAGE — shown on first visit, dismissed with CTA
+════════════════════════════════════════════════════════════════════ -->
+<section id="landing">
+
+  <!-- Navigation bar on landing -->
+  <nav class="land-nav">
+    <div class="land-logo">
+      <div class="ico" style="width:28px;height:28px;background:linear-gradient(135deg,var(--blue),var(--cyan));border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:.85rem">🌐</div>
+      <span>Net<span style="color:var(--cyan)">Design</span> AI</span>
+    </div>
+    <div style="display:flex;gap:.75rem">
+      <button class="btn btn-ghost" onclick="tryDemo()" style="font-size:.78rem;padding:.3rem .8rem">⚡ Demo</button>
+      <button class="btn btn-primary" onclick="startDesigning()" style="font-size:.78rem;padding:.3rem .9rem">Launch App →</button>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <div class="land-hero">
+    <div class="land-badge">🧩 Intent-Driven · Multi-Vendor · Browser-Native</div>
+    <h1 class="land-h1">
+      From network intent to<br>
+      <span class="land-gradient">production-ready design</span><br>
+      in minutes
+    </h1>
+    <p class="land-sub">
+      Define your requirements. Get hardware recommendations, HLD/LLD topology diagrams,
+      production configs for Cisco, Arista, Juniper &amp; NVIDIA, and a safe staged deployment pipeline — entirely in your browser.
+    </p>
+    <div class="land-ctas">
+      <button class="btn btn-primary land-cta-primary" onclick="startDesigning()">Start Designing →</button>
+      <button class="btn btn-ghost land-cta-ghost"    onclick="tryDemo()">⚡ Try Demo</button>
+    </div>
+
+    <!-- Live stats -->
+    <div class="land-stats">
+      <div class="land-stat"><span class="ls-val" data-count="40" data-suffix="+">40+</span><span class="ls-lbl">Hardware SKUs</span></div>
+      <div class="land-stat-sep"></div>
+      <div class="land-stat"><span class="ls-val" data-count="5">5</span><span class="ls-lbl">OS Platforms</span></div>
+      <div class="land-stat-sep"></div>
+      <div class="land-stat"><span class="ls-val" data-count="6">6</span><span class="ls-lbl">Use Cases</span></div>
+      <div class="land-stat-sep"></div>
+      <div class="land-stat"><span class="ls-val">100%</span><span class="ls-lbl">Browser-Native</span></div>
+    </div>
+  </div>
+
+  <!-- Feature cards -->
+  <div class="land-features">
+
+    <div class="land-feat">
+      <div class="lf-icon" style="background:rgba(153,85,255,.15);color:#aa77ff">🧩</div>
+      <h3>Intent Model</h3>
+      <p>Express requirements as a structured intent object. Every topology, config, and deployment derives from it — deterministic and auditable.</p>
+    </div>
+
+    <div class="land-feat">
+      <div class="lf-icon" style="background:rgba(0,212,255,.15);color:var(--cyan)">🏆</div>
+      <h3>AI Product Scoring</h3>
+      <p>40+ hardware SKUs scored across 13 signals — use case, latency SLA, budget, vendor preference, compliance, and GPU/RoCEv2 requirements.</p>
+    </div>
+
+    <div class="land-feat">
+      <div class="lf-icon" style="background:rgba(26,127,255,.15);color:var(--blue)">📐</div>
+      <h3>Auto Topology + Config</h3>
+      <p>Animated HLD SVG + LLD tables generated instantly. Production-ready configs for IOS-XE, NX-OS, EOS, Junos, and SONiC per device.</p>
+    </div>
+
+    <div class="land-feat">
+      <div class="lf-icon" style="background:rgba(0,232,122,.15);color:var(--green)">🛡️</div>
+      <h3>Safe Deployment Pipeline</h3>
+      <p>Pre-checks → backup → dry-run → staged push → post-validation. Rollback on failure. Device-level status tracking in real time.</p>
+    </div>
+
+    <div class="land-feat">
+      <div class="lf-icon" style="background:rgba(255,140,0,.15);color:var(--orange)">🧪</div>
+      <h3>Network Simulation</h3>
+      <p>Simulate device failures, visualise failover paths, reachability matrix, and control-plane route propagation — before you deploy.</p>
+    </div>
+
+    <div class="land-feat">
+      <div class="lf-icon" style="background:rgba(255,51,85,.15);color:var(--red)">📤</div>
+      <h3>Export &amp; Report</h3>
+      <p>Export topology SVG, all configs as a bundle, LLD CSV, and a self-contained HTML design report — ready to share with your team.</p>
+    </div>
+
+  </div>
+
+  <!-- Use cases strip -->
+  <div class="land-use-cases">
+    <div class="luc-label">Supported use cases</div>
+    <div class="luc-chips">
+      <span>🏢 Campus / Enterprise LAN</span>
+      <span>🗄️ Data Center Leaf-Spine</span>
+      <span>⚡ AI / GPU Cluster</span>
+      <span>🌍 WAN / SD-WAN</span>
+      <span>🔗 Hybrid (Campus + DC)</span>
+      <span>🗺️ Multi-Site DCI</span>
+    </div>
+  </div>
+
+  <!-- Footer on landing -->
+  <div class="land-footer">
+    <span>MIT License · Open Source</span>
+    <a href="https://github.com/Amit33-design/Network-Automation" target="_blank" rel="noopener">GitHub ↗</a>
+    <span>Built by Amit Tiwari</span>
+  </div>
+
+</section>
+
 <!-- ── Toast area ──────────────────────────────────────────────────── -->
 <div id="toast-area"></div>
+
+<!-- ── Export Modal ─────────────────────────────────────────────────── -->
+<div id="export-modal" onclick="if(event.target===this)closeExportModal()"
+  style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.8);
+  backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:1.5rem">
+  <div style="background:var(--bg2);border:1px solid var(--border-hi);border-radius:16px;
+    width:100%;max-width:560px;box-shadow:var(--shadow);animation:fadeUp .25s ease">
+    <div style="padding:1.25rem 1.75rem;border-bottom:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:1.1rem;font-weight:700">📤 Export Design</div>
+        <div style="font-size:.78rem;color:var(--txt2);margin-top:.2rem">Choose what to export</div>
+      </div>
+      <button onclick="closeExportModal()" style="background:none;border:none;color:var(--txt2);font-size:1.3rem;cursor:pointer">✕</button>
+    </div>
+    <div style="padding:1.25rem 1.75rem;display:flex;flex-direction:column;gap:.75rem">
+      <div onclick="exportSVG();closeExportModal()" class="export-opt">
+        <div class="exp-icon" style="background:rgba(0,212,255,.15);color:var(--cyan)">📐</div>
+        <div><div style="font-weight:600;font-size:.88rem">Topology Diagram (SVG)</div><div style="font-size:.76rem;color:var(--txt2)">High-level design diagram, scalable vector format</div></div>
+        <span style="color:var(--txt3);margin-left:auto">↓</span>
+      </div>
+      <div onclick="exportLLD();closeExportModal()" class="export-opt">
+        <div class="exp-icon" style="background:rgba(26,127,255,.15);color:var(--blue)">📊</div>
+        <div><div style="font-weight:600;font-size:.88rem">LLD Tables (CSV)</div><div style="font-size:.76rem;color:var(--txt2)">IP plan, VLAN design, BGP, physical links</div></div>
+        <span style="color:var(--txt3);margin-left:auto">↓</span>
+      </div>
+      <div onclick="exportAllConfigs();closeExportModal()" class="export-opt">
+        <div class="exp-icon" style="background:rgba(0,232,122,.15);color:var(--green)">⚙️</div>
+        <div><div style="font-weight:600;font-size:.88rem">All Device Configs (.txt)</div><div style="font-size:.76rem;color:var(--txt2)">Complete configurations for all devices in one file</div></div>
+        <span style="color:var(--txt3);margin-left:auto">↓</span>
+      </div>
+      <div onclick="exportHTMLReport();closeExportModal()" class="export-opt" style="border-color:var(--blue);background:rgba(26,127,255,.04)">
+        <div class="exp-icon" style="background:rgba(153,85,255,.15);color:#aa77ff">📄</div>
+        <div><div style="font-weight:600;font-size:.88rem">Full HTML Design Report</div><div style="font-size:.76rem;color:var(--txt2)">Self-contained report: intent, topology, BOM, configs, protocols</div></div>
+        <span style="color:var(--txt3);margin-left:auto">↓</span>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ── Demo picker modal ───────────────────────────────────────────── -->
 <div id="demo-modal" onclick="if(event.target===this)closeDemoModal()"
@@ -682,9 +830,11 @@
 
     <!-- Export bar -->
     <div class="export-bar">
-      <button class="btn btn-ghost" onclick="exportSVG()">⬇ Export HLD (SVG)</button>
-      <button class="btn btn-ghost" onclick="exportLLD()">⬇ Export LLD (CSV)</button>
-      <button class="btn btn-ghost" onclick="printDesign()">🖨 Print Design</button>
+      <button class="btn btn-ghost" onclick="exportSVG()">⬇ HLD (SVG)</button>
+      <button class="btn btn-ghost" onclick="exportLLD()">⬇ LLD (CSV)</button>
+      <button class="btn btn-ghost" onclick="exportAllConfigs()">⬇ All Configs</button>
+      <button class="btn btn-ghost" onclick="exportHTMLReport()">📄 HTML Report</button>
+      <button class="btn btn-ghost" onclick="printDesign()">🖨 Print</button>
     </div>
 
     <!-- HLD / LLD tabs -->
@@ -696,6 +846,7 @@
       <button class="dtab" onclick="switchDesignTab(this,'lld-phy')">🔌 Physical Links</button>
       <button class="dtab" onclick="switchDesignTab(this,'lld-ref');renderRefArchitectures()">📚 Reference Designs</button>
       <button class="dtab" onclick="switchDesignTab(this,'simulate');renderSimulationTab()">🧪 Simulate</button>
+      <button class="dtab" onclick="switchDesignTab(this,'summary');renderDesignSummary()">📋 Summary</button>
     </div>
 
     <!-- ── HLD SVG Panel ── -->
@@ -854,6 +1005,15 @@
       </div>
     </div>
 
+    <!-- ── Design Summary Panel ── -->
+    <div class="design-panel" id="dpanel-summary">
+      <div id="summary-tab-content">
+        <div style="color:var(--txt2);text-align:center;padding:3rem">
+          Generate products &amp; topology (Step 3 → Build Design) to see the design summary.
+        </div>
+      </div>
+    </div>
+
     <!-- ── Simulation Panel ── -->
     <div class="design-panel" id="dpanel-simulate">
       <div id="sim-tab-content">
@@ -949,6 +1109,12 @@
       <button class="btn btn-primary btn-lg" id="btn-deploy" onclick="startDeploy()" disabled>🚀 Deploy Configurations</button>
       <button class="btn btn-ghost" id="btn-postcheck" onclick="runPostChecks()" disabled>✅ Run Post-Checks</button>
       <button class="btn btn-ghost" onclick="resetDeploy()">↺ Reset</button>
+    </div>
+
+    <!-- Device-level deployment status -->
+    <div id="device-status-section" style="display:none;margin-bottom:1.75rem">
+      <div class="divider-label" style="margin-bottom:.75rem">🖥️ Device Deployment Status</div>
+      <div id="device-status-table"></div>
     </div>
 
     <!-- Deploy step tracker -->
@@ -1093,9 +1259,11 @@
 <script src="src/js/diffengine.js"></script>
 <script src="src/js/simulation.js"></script>
 <script src="src/js/observability.js"></script>
+<script src="src/js/export.js"></script>
 <script src="src/js/deploy.js"></script>
 <script src="src/js/storage.js"></script>
 <script src="src/js/demo.js"></script>
+<script src="src/js/landing.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>
