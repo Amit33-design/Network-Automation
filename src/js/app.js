@@ -44,6 +44,8 @@ function jumpStep(n) {
   updateBottomNav();
   updateSummary();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  // Keep intent panel in sync
+  if (typeof renderIntentPanel === 'function') renderIntentPanel();
 }
 
 function updateBottomNav() {

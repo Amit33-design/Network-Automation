@@ -59,3 +59,8 @@ const BUDGET_LABELS = {
   enterprise: 'Enterprise  ($500K – $5M)',
   hyperscale: 'Hyperscale  ($5M+)',
 };
+
+/* ── Config history for diff engine ─────────────────────────── */
+// Populated by diffengine.js — keyed by deviceId
+// (declaration here so storage.js can persist/restore it)
+// CONFIG_HISTORY is declared in diffengine.js at runtime

@@ -1360,3 +1360,228 @@
     .ds-row { display: flex; justify-content: space-between; font-size: .82rem; padding: .35rem 0; border-bottom: 1px solid var(--border); }
     .ds-row:last-child { border-bottom: none; }
     .ds-row .dk { color: var(--txt2); }
+
+    /* ════════════════════════════════════════════════════════════
+       PHASE-3 FEATURES: Intent Model · Diff Engine · Simulation
+       Rollback · Pipeline Tracking · Observability
+    ════════════════════════════════════════════════════════════ */
+
+    /* ── Deploy stage timestamp ──────────────────────────────── */
+    .ds-timestamp {
+      font-size: .7rem; color: var(--txt3);
+      margin-top: .2rem; font-family: var(--mono);
+    }
+    .ds-status.rolled_back { background: rgba(255,136,0,.15); color: var(--orange); }
+
+    /* ── Intent Model Panel ──────────────────────────────────── */
+    .intent-panel {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius2); margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+    .intent-panel-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: .75rem 1.25rem; cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background .15s;
+    }
+    .intent-panel-hdr:hover { background: var(--bg3); }
+    .intent-badge {
+      background: rgba(153,85,255,.15); color: #aa77ff;
+      border: 1px solid rgba(153,85,255,.25);
+      border-radius: 20px; font-size: .68rem; padding: .1rem .5rem;
+      font-weight: 600;
+    }
+    .intent-panel-body { padding: .75rem 1.25rem; }
+    .intent-json {
+      font-family: var(--mono); font-size: .75rem; line-height: 1.6;
+      color: var(--txt1); white-space: pre; overflow-x: auto;
+      margin: 0; padding: 0;
+    }
+    /* JSON syntax colours */
+    .ij-key  { color: #7dd3fc; }   /* light blue  */
+    .ij-str  { color: #86efac; }   /* light green */
+    .ij-num  { color: #fbbf24; }   /* amber       */
+    .ij-bool { color: #f472b6; }   /* pink        */
+    .ij-null { color: var(--txt3); }
+
+    /* ── Config Diff Engine ──────────────────────────────────── */
+    .diff-stats-bar {
+      display: flex; align-items: center; gap: 1rem;
+      padding: .5rem .85rem; background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+      font-size: .78rem; flex-wrap: wrap;
+    }
+    .diff-stat-add  { color: var(--green);  font-weight: 600; }
+    .diff-stat-del  { color: #ff5555;       font-weight: 600; }
+    .diff-stat-same { color: var(--txt2); }
+    .diff-pre { background: var(--bg1) !important; }
+    .dfl-add  { display:block; color: var(--green);  background: rgba(0,232,122,.08); }
+    .dfl-del  { display:block; color: #ff5555;       background: rgba(255,85,85,.08); }
+    .dfl-same { display:block; color: var(--txt2); }
+    #btn-diff.diff-active { border-color: var(--orange); color: var(--orange); }
+
+    /* ── Simulation Panel ────────────────────────────────────── */
+    .sim-panel {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius2); padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .sim-sec-hdr { margin-bottom: 1.25rem; }
+    .sim-sec-hdr h4 { font-size: .95rem; font-weight: 700; margin-bottom: .35rem; }
+    .sim-sec-hdr p  { font-size: .82rem; color: var(--txt2); line-height: 1.5; }
+
+    .sim-dev-grid {
+      display: flex; flex-wrap: wrap; gap: .5rem;
+      margin-bottom: 1rem;
+    }
+    .sim-dev-btn {
+      display: flex; align-items: center; gap: .35rem;
+      padding: .35rem .75rem; border-radius: var(--radius);
+      border: 1px solid var(--border); background: var(--bg3);
+      color: var(--txt1); font-size: .78rem; font-weight: 600;
+      cursor: pointer; transition: all .18s;
+    }
+    .sim-dev-btn:hover { border-color: var(--border-hi); color: var(--txt0); }
+    .sim-dev-btn.sim-failed {
+      border-color: #ff5555; background: rgba(255,85,85,.12);
+      color: #ff5555;
+    }
+
+    .sim-impact-list { display: flex; flex-direction: column; gap: .85rem; margin-bottom: 1rem; }
+    .sim-impact-card {
+      background: var(--bg3); border-radius: var(--radius);
+      border: 1px solid var(--border);
+      border-left-width: 3px; padding: 1rem;
+    }
+    .sim-impact-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: .5rem;
+    }
+    .sim-dev-name { font-weight: 700; font-size: .88rem; }
+    .sim-sev {
+      font-size: .68rem; font-weight: 700; padding: .15rem .5rem;
+      border-radius: 4px; letter-spacing: .05em;
+    }
+    .sim-impact-desc { font-size: .82rem; color: var(--txt1); line-height: 1.5; }
+    .sim-failover { font-size: .78rem; color: var(--txt2); margin-top: .4rem; }
+    .sim-no-ha    { color: var(--orange); }
+
+    .sim-health-wrap { margin-top: .75rem; }
+    .sim-health-label {
+      display: flex; justify-content: space-between;
+      font-size: .8rem; margin-bottom: .35rem;
+    }
+    .sim-health-track {
+      height: 8px; background: var(--bg4); border-radius: 4px; overflow: hidden;
+    }
+    .sim-health-bar { height: 100%; border-radius: 4px; }
+    .sim-empty {
+      text-align: center; padding: 2rem; color: var(--txt2); font-size: .88rem;
+    }
+
+    /* Reachability Matrix */
+    .reach-table-wrap { overflow-x: auto; margin-bottom: 1rem; }
+    .reach-table {
+      border-collapse: collapse; font-size: .76rem;
+      font-family: var(--mono);
+    }
+    .reach-table th, .reach-table td {
+      padding: .35rem .5rem; border: 1px solid var(--border);
+      text-align: center; white-space: nowrap;
+    }
+    .reach-table th { background: var(--bg3); font-weight: 700; font-size: .7rem; }
+    .reach-row-lbl  { font-weight: 600; background: var(--bg3); text-align: left !important; }
+    .reach-self     { color: var(--txt3); }
+    .reach-ok       { color: var(--green);  background: rgba(0,232,122,.07); font-weight: 700; }
+    .reach-partial  { color: var(--orange); background: rgba(255,136,0,.07); font-weight: 700; }
+    .reach-blocked  { color: #ff5555;       background: rgba(255,85,85,.07); font-weight: 700; }
+    .reach-legend   { display: flex; gap: 1.25rem; font-size: .75rem; flex-wrap: wrap; }
+    .rleg           { display: flex; align-items: center; gap: .3rem; }
+    .rleg-ok        { color: var(--green);  }
+    .rleg-partial   { color: var(--orange); }
+    .rleg-blocked   { color: #ff5555; }
+
+    /* Route propagation */
+    .pfx-code    { font-family: var(--mono); font-size: .78rem; color: var(--cyan); }
+    .proto-pill  {
+      display: inline-block; background: rgba(153,85,255,.15);
+      color: #aa77ff; border: 1px solid rgba(153,85,255,.25);
+      border-radius: 4px; padding: .1rem .45rem;
+      font-size: .7rem; font-weight: 600; white-space: nowrap;
+    }
+    .prop-path-cell { font-size: .75rem; }
+    .prop-hop   { color: var(--txt1); white-space: nowrap; }
+    .prop-arrow { color: var(--txt3); }
+    .conv-pill  {
+      display: inline-block; background: rgba(0,212,255,.1);
+      color: var(--cyan); border-radius: 4px; padding: .1rem .4rem;
+      font-size: .7rem; font-family: var(--mono); white-space: nowrap;
+    }
+
+    /* ── Observability ───────────────────────────────────────── */
+    .obs-section { margin-top: 2rem; }
+    .obs-block {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius2); overflow: hidden; margin-bottom: 1.25rem;
+    }
+    .obs-block-hdr {
+      padding: .75rem 1.25rem; font-size: .82rem; font-weight: 700;
+      border-bottom: 1px solid var(--border); background: var(--bg3);
+    }
+    .obs-placeholder { padding: 1rem 1.25rem; color: var(--txt3); font-size: .82rem; }
+
+    /* Metrics */
+    .obs-metric-grid {
+      display: flex; gap: 0; margin-bottom: 1.25rem;
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius2); overflow: hidden;
+    }
+    .obs-metric {
+      flex: 1; padding: 1rem .75rem; text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .obs-metric:last-child { border-right: none; }
+    .om-val { font-size: 1.6rem; font-weight: 800; line-height: 1; }
+    .om-lbl { font-size: .72rem; color: var(--txt2); margin-top: .3rem; }
+
+    /* Timeline */
+    .tl-bars { padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: .65rem; }
+    .tl-row  { display: flex; align-items: center; gap: .85rem; }
+    .tl-lbl  { font-size: .75rem; color: var(--txt2); min-width: 130px; white-space: nowrap; }
+    .tl-track {
+      flex: 1; height: 22px; background: var(--bg4);
+      border-radius: 4px; position: relative; overflow: hidden;
+    }
+    .tl-bar {
+      position: absolute; height: 100%; border-radius: 4px;
+      display: flex; align-items: center; transition: width .3s ease;
+      min-width: 4px;
+    }
+    .tl-dur { font-size: .65rem; color: rgba(255,255,255,.85); padding: 0 .4rem; white-space: nowrap; }
+    .tl-status {
+      font-size: .68rem; font-weight: 700; min-width: 60px;
+      text-align: right; white-space: nowrap;
+    }
+    .tl-st-success { color: var(--green);  }
+    .tl-st-failed  { color: #ff5555;       }
+    .tl-st-running { color: var(--blue);   }
+
+    /* Event Log */
+    .obs-event-log {
+      max-height: 280px; overflow-y: auto; padding: .5rem .75rem;
+      font-family: var(--mono); font-size: .73rem;
+    }
+    .obs-ev {
+      display: flex; align-items: baseline; gap: .5rem;
+      padding: .2rem 0; border-bottom: 1px solid rgba(255,255,255,.04);
+      line-height: 1.4;
+    }
+    .obs-ev:last-child { border-bottom: none; }
+    .obs-time  { color: var(--txt3); min-width: 80px; }
+    .obs-icon  { min-width: 14px; text-align: center; font-size: .75rem; }
+    .obs-msg   { flex: 1; }
+    .obs-stag  {
+      background: var(--bg4); color: var(--txt3); border-radius: 3px;
+      font-size: .65rem; padding: .05rem .35rem; white-space: nowrap;
+    }

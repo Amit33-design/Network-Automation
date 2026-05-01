@@ -695,6 +695,7 @@
       <button class="dtab" onclick="switchDesignTab(this,'lld-bgp')">🔀 Routing &amp; Protocols</button>
       <button class="dtab" onclick="switchDesignTab(this,'lld-phy')">🔌 Physical Links</button>
       <button class="dtab" onclick="switchDesignTab(this,'lld-ref');renderRefArchitectures()">📚 Reference Designs</button>
+      <button class="dtab" onclick="switchDesignTab(this,'simulate');renderSimulationTab()">🧪 Simulate</button>
     </div>
 
     <!-- ── HLD SVG Panel ── -->
@@ -853,6 +854,15 @@
       </div>
     </div>
 
+    <!-- ── Simulation Panel ── -->
+    <div class="design-panel" id="dpanel-simulate">
+      <div id="sim-tab-content">
+        <div style="color:var(--txt2);text-align:center;padding:3rem">
+          Generate the design first (Step 3 → Build Design) to enable simulation.
+        </div>
+      </div>
+    </div>
+
   </section><!-- /step-4 -->
 
   <!-- ══════════════════════════════════════════════════════════════
@@ -890,6 +900,7 @@
             <button class="btn-cfg-action" onclick="copyConfig()">📋 Copy</button>
             <button class="btn-cfg-action" onclick="downloadConfig()">⬇ Download</button>
             <button class="btn-cfg-action" onclick="toggleAllSections()">⊞ All</button>
+            <button class="btn-cfg-action" id="btn-diff" onclick="toggleDiff()" title="Compare with previous config version">⊕ Diff</button>
           </div>
         </div>
         <div class="cfg-section-nav" id="cfg-section-nav"></div>
@@ -912,6 +923,24 @@
       <div class="label">Step 6 of 6</div>
       <h2>Deploy &amp; Validate</h2>
       <p>Run pre-deployment checks, push configurations to devices, then verify network health with automated post-checks.</p>
+    </div>
+
+    <!-- Intent Model Panel -->
+    <div class="intent-panel" id="intent-panel">
+      <div class="intent-panel-hdr" onclick="toggleIntentPanel()">
+        <div style="display:flex;align-items:center;gap:.65rem">
+          <span style="font-size:1rem">🧩</span>
+          <span style="font-weight:700;font-size:.88rem">Intent Object</span>
+          <span class="intent-badge" id="intent-field-count">0 fields</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <button class="btn-cfg-action" onclick="event.stopPropagation();copyIntentJSON()" style="font-size:.72rem;padding:.2rem .5rem">📋 Copy JSON</button>
+          <span id="intent-panel-arrow" style="color:var(--txt2);font-size:.75rem">▼</span>
+        </div>
+      </div>
+      <div class="intent-panel-body" id="intent-panel-body">
+        <pre class="intent-json" id="intent-json-pre"></pre>
+      </div>
     </div>
 
     <!-- Action bar -->
@@ -994,6 +1023,41 @@
       </div>
     </div>
 
+    <!-- ══ Observability Section ══ -->
+    <div class="obs-section" id="obs-section">
+      <div class="divider-label" style="margin-top:2.5rem">📊 Deployment Observability</div>
+
+      <!-- Metrics -->
+      <div id="obs-metrics">
+        <div class="obs-metric-grid">
+          <div class="obs-metric"><div class="om-val" style="color:var(--txt3)">—</div><div class="om-lbl">Devices</div></div>
+          <div class="obs-metric"><div class="om-val" style="color:var(--txt3)">—</div><div class="om-lbl">Checks Run</div></div>
+          <div class="obs-metric"><div class="om-val" style="color:var(--txt3)">—</div><div class="om-lbl">Log Events</div></div>
+          <div class="obs-metric"><div class="om-val" style="color:var(--txt3)">—</div><div class="om-lbl">Errors</div></div>
+          <div class="obs-metric"><div class="om-val" style="color:var(--txt3)">—</div><div class="om-lbl">Total Time</div></div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="obs-block">
+        <div class="obs-block-hdr">⏱ Pipeline Timeline</div>
+        <div id="obs-timeline">
+          <div class="obs-placeholder">Pipeline timeline will appear here once the deployment runs.</div>
+        </div>
+      </div>
+
+      <!-- Event Log -->
+      <div class="obs-block">
+        <div class="obs-block-hdr" style="display:flex;align-items:center;justify-content:space-between">
+          <span>📋 Event Log</span>
+          <button class="btn-cfg-action" onclick="resetObservability()" style="font-size:.72rem">Clear</button>
+        </div>
+        <div class="obs-event-log" id="obs-event-log">
+          <div class="obs-placeholder">Events will be logged here as the pipeline runs.</div>
+        </div>
+      </div>
+    </div>
+
   </section><!-- /step-6 -->
 
 </main><!-- /app -->
@@ -1025,6 +1089,10 @@
 <script src="src/js/recommendations.js"></script>
 <script src="src/js/topology.js"></script>
 <script src="src/js/configgen.js"></script>
+<script src="src/js/intentmodel.js"></script>
+<script src="src/js/diffengine.js"></script>
+<script src="src/js/simulation.js"></script>
+<script src="src/js/observability.js"></script>
 <script src="src/js/deploy.js"></script>
 <script src="src/js/storage.js"></script>
 <script src="src/js/demo.js"></script>

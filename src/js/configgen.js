@@ -150,11 +150,31 @@ function selectDevice(id) {
   // Generate config
   const raw = generateConfig(ACTIVE_DEV, os);
 
+  // Diff engine: snapshot on first render; rotate on subsequent
+  if (typeof snapshotConfigFirst === 'function') {
+    if (!CONFIG_HISTORY[id]) {
+      snapshotConfigFirst(id, raw);
+    } else {
+      snapshotConfigUpdate(id, raw);
+    }
+  }
+
+  // Mark the dev-item with data-dev-id for diff engine
+  if (el) el.dataset.devId = id;
+
   // Build section nav
   renderSectionNav(raw);
 
+  // Restore non-diff view if we switched device mid-diff
+  if (typeof _diffMode !== 'undefined' && _diffMode) closeDiffView();
+
   // Render highlighted code
-  document.getElementById('cfg-code-pre').innerHTML = highlight(raw, os);
+  const area = document.getElementById('cfg-code-area');
+  if (area) {
+    area.innerHTML = `<pre class="cfg-code" id="cfg-code-pre">${highlight(raw, os)}</pre>`;
+  } else {
+    document.getElementById('cfg-code-pre').innerHTML = highlight(raw, os);
+  }
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
