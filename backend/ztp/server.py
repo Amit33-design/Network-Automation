@@ -33,6 +33,20 @@ from jinja2 import Environment, FileSystemLoader
 
 log = logging.getLogger(__name__)
 
+
+def _role_to_uc(role: str) -> str:
+    """Map device role string to use-case key."""
+    role = role.lower()
+    if "campus" in role:
+        return "campus"
+    if "gpu" in role:
+        return "gpu"
+    if "wan" in role or "cpe" in role or "hub" in role:
+        return "wan"
+    if "dc" in role or "spine" in role or "leaf" in role:
+        return "dc"
+    return "campus"
+
 REGISTRY_PATH  = Path(__file__).parent.parent / "ztp_registry.json"
 TEMPLATE_DIR   = Path(__file__).parent / "templates"
 
@@ -68,6 +82,12 @@ class ZTPDevice:
     provisioned_at: Optional[float] = None
     last_seen:     Optional[float] = None
     error:         Optional[str] = None
+    # ── Policy baking flag ───────────────────────────────────────────────
+    # When True: ZTP bootstrap = Day 0 minimal + ALL enabled policy blocks
+    # When False: ZTP bootstrap = Day 0 minimal only (SSH + mgmt IP)
+    # Individual policy flags in policy_flags override per-device
+    bake_policies: bool = False
+    policy_flags:  dict = field(default_factory=dict)
     # Extra context passed to Jinja2 template
     extra:         dict = field(default_factory=dict)
 
@@ -124,11 +144,13 @@ class ZTPServer:
                 role        = d.get("role", "campus-access"),
                 mgmt_ip     = d.get("mgmt_ip", "10.100.0.1"),
                 mgmt_mask   = d.get("mgmt_mask", "255.255.255.0"),
-                mgmt_gw     = d.get("mgmt_gw", ""),
-                loopback_ip = d.get("loopback_ip", ""),
-                bgp_asn     = d.get("bgp_asn", 65000),
-                vlans       = d.get("vlans", []),
-                extra       = d.get("extra", {}),
+                mgmt_gw       = d.get("mgmt_gw", ""),
+                loopback_ip   = d.get("loopback_ip", ""),
+                bgp_asn       = d.get("bgp_asn", 65000),
+                vlans         = d.get("vlans", []),
+                bake_policies = d.get("bake_policies", False),
+                policy_flags  = d.get("policy_flags", {}),
+                extra         = d.get("extra", {}),
             )
             result.append(self.register(dev))
         return result
@@ -229,30 +251,92 @@ class ZTPServer:
         return self._jinja_envs[platform]
 
     def _render_day0(self, dev: ZTPDevice) -> str:
-        platform = dev.platform.replace("-", "_")
-        tpl_name = "day0.j2"
-        tpl_dir  = TEMPLATE_DIR / platform
+        """
+        Render Day 0 bootstrap config.
+
+        If dev.bake_policies is True, append all enabled policy blocks
+        (static routing, VLAN, trunk, wireless, BGP, ACL, 802.1X, QoS, AAA)
+        so the device gets its full production config on first boot.
+
+        If bake_policies is False, return the minimal Day 0 template only
+        (SSH reachable, mgmt IP, NTP, syslog — enough for Netmiko to connect).
+        """
+        platform_dir = dev.platform.replace("-", "_")
+        tpl_name     = "day0.j2"
+        tpl_dir      = TEMPLATE_DIR / platform_dir
 
         if not (tpl_dir / tpl_name).exists():
-            log.warning("ZTP: no day0 template for %s — using generic", platform)
-            return self._generic_bootstrap(dev.serial, dev)
+            log.warning("ZTP: no day0 template for %s — using generic", platform_dir)
+            base = self._generic_bootstrap(dev.serial, dev)
+        else:
+            env = self._get_env(platform_dir)
+            tpl = env.get_template(tpl_name)
+            ctx = {
+                "hostname":    dev.hostname,
+                "serial":      dev.serial,
+                "platform":    dev.platform,
+                "role":        dev.role,
+                "mgmt_ip":     dev.mgmt_ip,
+                "mgmt_mask":   dev.mgmt_mask,
+                "mgmt_gw":     dev.mgmt_gw,
+                "loopback_ip": dev.loopback_ip or dev.mgmt_ip,
+                "bgp_asn":     dev.bgp_asn,
+                "vlans":       dev.vlans,
+                **dev.extra,
+            }
+            base = tpl.render(**ctx)
 
-        env = self._get_env(platform)
-        tpl = env.get_template(tpl_name)
-        ctx = {
+        if not dev.bake_policies:
+            return base
+
+        # ── Bake policies into ZTP config ────────────────────────────────
+        # Build a state-like dict that the policy generators understand
+        log.info("ZTP: baking policies into bootstrap for %s", dev.hostname)
+        state_for_policy = {
+            "uc":           _role_to_uc(dev.role),
+            "orgName":      dev.hostname.split("-")[0] if "-" in dev.hostname else dev.hostname,
+            "redundancy":   "single",
+            "protocols":    dev.extra.get("protocols", []),
+            "security":     dev.extra.get("security", []),
+            "vlans":        dev.vlans,
+            "appFlows":     [],
+            # Policy flags: per-device overrides, default all True
+            **{k: dev.policy_flags.get(k, True) for k in [
+                "include_bgp_policy", "include_acl", "include_dot1x",
+                "include_qos", "include_aaa", "include_static_routing",
+                "include_vlan_policy", "include_trunk_policy", "include_wireless",
+            ]},
+        }
+
+        device_ctx = {
             "hostname":    dev.hostname,
-            "serial":      dev.serial,
-            "platform":    dev.platform,
-            "role":        dev.role,
+            "layer":       dev.role,
+            "uc":          state_for_policy["uc"],
+            "org":         state_for_policy["orgName"],
+            "redundancy":  "single",
+            "index":       1,
+            "product_id":  "",
+            "protocols":   state_for_policy["protocols"],
+            "security":    state_for_policy["security"],
+            "vlans":       dev.vlans,
+            "app_flows":   [],
             "mgmt_ip":     dev.mgmt_ip,
             "mgmt_mask":   dev.mgmt_mask,
-            "mgmt_gw":     dev.mgmt_gw,
             "loopback_ip": dev.loopback_ip or dev.mgmt_ip,
             "bgp_asn":     dev.bgp_asn,
-            "vlans":       dev.vlans,
             **dev.extra,
         }
-        return tpl.render(**ctx)
+
+        # Import here to avoid circular imports at module load
+        try:
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            from config_gen import _append_policies, _platform_from_dir
+            platform_key = _platform_from_dir(platform_dir)
+            return _append_policies(base, device_ctx, platform_key, state_for_policy)
+        except Exception as exc:
+            log.error("ZTP: policy bake failed for %s: %s", dev.hostname, exc)
+            return base + f"\n! POLICY BAKE ERROR: {exc}\n"
 
     def _generic_bootstrap(self, serial: str, dev: ZTPDevice | None = None) -> str:
         hostname = dev.hostname if dev else f"DEVICE-{serial[-4:].upper()}"

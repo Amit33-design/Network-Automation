@@ -1561,6 +1561,7 @@
                 <th>Platform</th>
                 <th>Role</th>
                 <th>Mgmt IP</th>
+                <th title="Bake = full policies in ZTP bootstrap">Config Mode</th>
                 <th>State</th>
                 <th>Provisioned</th>
                 <th>Actions</th>
@@ -1591,7 +1592,8 @@
         </div>
         <div class="ztp-reg-col-labels">
           <span>Serial *</span><span>Hostname *</span><span>Platform</span><span>Role</span>
-          <span>Mgmt IP *</span><span>Gateway</span><span>Loopback</span><span>BGP ASN</span><span></span>
+          <span>Mgmt IP *</span><span>Gateway</span><span>Loopback</span><span>BGP ASN</span>
+          <span title="Bake all policies into ZTP bootstrap">Bake Policies</span><span></span>
         </div>
         <div id="ztp-register-rows"></div>
         <button class="btn btn-primary" style="margin-top:.75rem;width:100%"
@@ -1650,9 +1652,44 @@
             <div class="pgo-card">
               <span class="pgo-icon">🏷️</span>
               <strong>VLAN Policy</strong>
-              <small>Naming conventions · Trunk pruning · Native VLAN hardening</small>
+              <small>VLAN DB · STP priorities · VACLs · PVLAN · SVIs</small>
             </div>
           </label>
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-static" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">🗺️</span>
+              <strong>Static Routing</strong>
+              <small>Default routes · Floating statics · Null0 discard · IP SLA tracking</small>
+            </div>
+          </label>
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-trunk" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">🔗</span>
+              <strong>Trunk / Uplinks</strong>
+              <small>LACP port-channels · Allowed VLANs · Storm control · BPDU guard · UDLD</small>
+            </div>
+          </label>
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-wireless" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">📶</span>
+              <strong>Wireless / Wi-Fi</strong>
+              <small>Corp SSID WPA3-Enterprise · Guest OWE · IoT MAB · RF profiles · Band steering</small>
+            </div>
+          </label>
+        </div>
+        <div class="ztp-bake-global-row">
+          <label class="ztp-global-bake-label">
+            <input type="checkbox" id="ztp-bake-all-global" onchange="toggleGlobalBake(this.checked)">
+            <span>⚙️ Enable "Bake Policies" on all new ZTP devices by default</span>
+          </label>
+          <p class="pgo-hint" style="margin:.3rem 0 0">
+            When enabled, each device's ZTP bootstrap config will include the full production
+            config (all selected policies above) — single-touch provisioning, no separate
+            Netmiko push needed.
+          </p>
         </div>
       </div>
     </div><!-- /ztp-section -->
@@ -1717,12 +1754,19 @@
 /* ── Policy options global helper ──────────────────────────── */
 function updatePolicyOptions() {
   if (typeof STATE === 'undefined') return;
-  STATE.include_bgp_policy = document.getElementById('pol-bgp')?.checked !== false;
-  STATE.include_acl        = document.getElementById('pol-acl')?.checked !== false;
-  STATE.include_dot1x      = document.getElementById('pol-dot1x')?.checked !== false;
-  STATE.include_qos        = document.getElementById('pol-qos')?.checked !== false;
-  STATE.include_aaa        = document.getElementById('pol-aaa')?.checked !== false;
-  STATE.include_vlan_policy= document.getElementById('pol-vlan')?.checked !== false;
+  STATE.include_bgp_policy    = document.getElementById('pol-bgp')?.checked     !== false;
+  STATE.include_acl           = document.getElementById('pol-acl')?.checked     !== false;
+  STATE.include_dot1x         = document.getElementById('pol-dot1x')?.checked   !== false;
+  STATE.include_qos           = document.getElementById('pol-qos')?.checked     !== false;
+  STATE.include_aaa           = document.getElementById('pol-aaa')?.checked     !== false;
+  STATE.include_vlan_policy   = document.getElementById('pol-vlan')?.checked    !== false;
+  STATE.include_static_routing= document.getElementById('pol-static')?.checked  !== false;
+  STATE.include_trunk_policy  = document.getElementById('pol-trunk')?.checked   !== false;
+  STATE.include_wireless      = document.getElementById('pol-wireless')?.checked !== false;
+}
+/* ── Global bake toggle (pre-checks all new row Bake checkboxes) ── */
+function toggleGlobalBake(checked) {
+  document.querySelectorAll('.zrr-bake').forEach(cb => { cb.checked = checked; });
 }
 /* ── Init ZTP panel when step 6 opens ──────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {

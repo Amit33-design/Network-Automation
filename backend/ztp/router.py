@@ -37,17 +37,20 @@ def _server_url(request: Request) -> str:
 # ── Pydantic models ───────────────────────────────────────────────────────
 
 class DeviceRegisterRequest(BaseModel):
-    serial:      str
-    hostname:    str
-    platform:    str = "ios-xe"
-    role:        str = "campus-access"
-    mgmt_ip:     str
-    mgmt_mask:   str = "255.255.255.0"
-    mgmt_gw:     str = ""
-    loopback_ip: str = ""
-    bgp_asn:     int = 65000
-    vlans:       list[dict[str, Any]] = Field(default_factory=list)
-    extra:       dict[str, Any] = Field(default_factory=dict)
+    serial:        str
+    hostname:      str
+    platform:      str = "ios-xe"
+    role:          str = "campus-access"
+    mgmt_ip:       str
+    mgmt_mask:     str = "255.255.255.0"
+    mgmt_gw:       str = ""
+    loopback_ip:   str = ""
+    bgp_asn:       int = 65000
+    vlans:         list[dict[str, Any]] = Field(default_factory=list)
+    # ZTP policy baking
+    bake_policies: bool = False                # True = full production config on first boot
+    policy_flags:  dict[str, bool] = Field(default_factory=dict)  # per-policy overrides
+    extra:         dict[str, Any] = Field(default_factory=dict)
 
 
 class BulkRegisterRequest(BaseModel):
@@ -66,6 +69,7 @@ class DeviceStatusResponse(BaseModel):
     role:           str
     mgmt_ip:        str
     state:          str
+    bake_policies:  bool
     registered_at:  float
     contacted_at:   Optional[float]
     provisioned_at: Optional[float]
@@ -81,6 +85,7 @@ def _dev_to_response(dev: ZTPDevice) -> DeviceStatusResponse:
         role           = dev.role,
         mgmt_ip        = dev.mgmt_ip,
         state          = dev.state.value,
+        bake_policies  = dev.bake_policies,
         registered_at  = dev.registered_at,
         contacted_at   = dev.contacted_at,
         provisioned_at = dev.provisioned_at,
@@ -134,17 +139,19 @@ async def checkin(serial: str, body: CheckinRequest):
 async def register_device(body: DeviceRegisterRequest):
     """Pre-register a single device for ZTP onboarding."""
     dev = ZTPDevice(
-        serial      = body.serial,
-        hostname    = body.hostname,
-        platform    = body.platform,
-        role        = body.role,
-        mgmt_ip     = body.mgmt_ip,
-        mgmt_mask   = body.mgmt_mask,
-        mgmt_gw     = body.mgmt_gw,
-        loopback_ip = body.loopback_ip,
-        bgp_asn     = body.bgp_asn,
-        vlans       = body.vlans,
-        extra       = body.extra,
+        serial        = body.serial,
+        hostname      = body.hostname,
+        platform      = body.platform,
+        role          = body.role,
+        mgmt_ip       = body.mgmt_ip,
+        mgmt_mask     = body.mgmt_mask,
+        mgmt_gw       = body.mgmt_gw,
+        loopback_ip   = body.loopback_ip,
+        bgp_asn       = body.bgp_asn,
+        vlans         = body.vlans,
+        bake_policies = body.bake_policies,
+        policy_flags  = body.policy_flags,
+        extra         = body.extra,
     )
     ztp_server.register(dev)
     return _dev_to_response(dev)

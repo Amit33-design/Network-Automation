@@ -81,6 +81,9 @@ const ZTP = (() => {
     const ptime = dev.provisioned_at
       ? new Date(dev.provisioned_at * 1000).toLocaleTimeString()
       : '—';
+    const bakeBadge = dev.bake_policies
+      ? '<span class="ztp-bake-badge" title="Full production config on first boot">⚙️ Full</span>'
+      : '<span class="ztp-bake-badge ztp-bake-day0" title="Minimal Day 0 only">🌱 Day0</span>';
     return `
       <tr class="ztp-device-row ${cls}" data-serial="${dev.serial}">
         <td class="ztp-icon">${icon}</td>
@@ -89,6 +92,7 @@ const ZTP = (() => {
         <td><span class="ztp-platform-badge ${dev.platform}">${dev.platform}</span></td>
         <td>${dev.role}</td>
         <td>${dev.mgmt_ip}</td>
+        <td>${bakeBadge}</td>
         <td><span class="ztp-state-pill ${cls}">${label}</span></td>
         <td>${ptime}</td>
         <td>
@@ -240,7 +244,8 @@ const ZTP = (() => {
       const mgmt_ip  = row.querySelector('.zrr-mgmt')?.value.trim();
       const mgmt_gw  = row.querySelector('.zrr-gw')?.value.trim();
       const loopback = row.querySelector('.zrr-loopback')?.value.trim();
-      const bgp_asn  = parseInt(row.querySelector('.zrr-asn')?.value || '65000');
+      const bgp_asn      = parseInt(row.querySelector('.zrr-asn')?.value || '65000');
+      const bake_policies= row.querySelector('.zrr-bake')?.checked ?? false;
 
       if (!serial || !hostname || !mgmt_ip) {
         row.classList.add('ztp-row-error');
@@ -248,7 +253,8 @@ const ZTP = (() => {
         return;
       }
       row.classList.remove('ztp-row-error');
-      devices.push({ serial, hostname, platform, role, mgmt_ip, mgmt_gw, loopback_ip: loopback, bgp_asn });
+      devices.push({ serial, hostname, platform, role, mgmt_ip, mgmt_gw,
+                     loopback_ip: loopback, bgp_asn, bake_policies });
     });
 
     if (!valid) {
@@ -452,6 +458,10 @@ const ZTP = (() => {
       <input class="zrr-gw"       type="text"   placeholder="Gateway"         value="${prefill.mgmt_gw || ''}" />
       <input class="zrr-loopback" type="text"   placeholder="Loopback IP"     value="${prefill.loopback_ip || ''}" />
       <input class="zrr-asn"      type="number" placeholder="BGP ASN"         value="${prefill.bgp_asn || 65000}" min="1" max="4294967295" />
+      <label class="zrr-bake-label" title="Bake all policies into ZTP bootstrap (full production config on first boot)">
+        <input class="zrr-bake" type="checkbox" ${prefill.bake_policies ? 'checked' : ''} />
+        <span class="zrr-bake-txt">Bake</span>
+      </label>
       <button class="ztp-btn-sm ztp-btn-danger" onclick="this.closest('.ztp-reg-row').remove()">✕</button>`;
     container.appendChild(row);
   }

@@ -2349,3 +2349,70 @@
   .ztp-board-scroll { font-size: .73rem; }
   .pgo-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* ── ZTP Bake policy extras ────────────────────────────────── */
+.ztp-bake-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  padding: .15rem .45rem;
+  border-radius: 4px;
+  font-size: .68rem;
+  font-weight: 600;
+  background: rgba(26,127,255,.12);
+  border: 1px solid rgba(26,127,255,.25);
+  color: var(--blue);
+  white-space: nowrap;
+}
+.ztp-bake-day0 {
+  background: rgba(100,120,180,.1);
+  border-color: rgba(100,120,180,.2);
+  color: #8899cc;
+}
+
+.zrr-bake-label {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.zrr-bake-label input[type=checkbox] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+.zrr-bake-txt {
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--blue);
+}
+
+.ztp-reg-col-labels,
+.ztp-reg-row {
+  grid-template-columns: 1fr 1fr 80px 110px 100px 90px 90px 70px 90px 30px;
+}
+
+.ztp-bake-global-row {
+  margin-top: 1rem;
+  padding: .75rem 1rem;
+  background: rgba(26,127,255,.06);
+  border: 1px solid rgba(26,127,255,.2);
+  border-radius: 8px;
+}
+.ztp-global-bake-label {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: .84rem;
+  color: var(--blue);
+}
+.ztp-global-bake-label input[type=checkbox] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
