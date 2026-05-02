@@ -2,11 +2,26 @@
 NetDesign AI — FastAPI Backend
 ================================
 Provides REST endpoints for:
-  POST /api/generate-configs   — Jinja2 config generation per device
+  POST /api/generate-configs   — Jinja2 config generation per device (with policies)
   POST /api/deploy             — Nornir/Netmiko parallel config push
-  POST /api/pre-checks         — Pre-deployment validation (reachability, version, etc.)
-  POST /api/post-checks        — Post-deployment validation (BGP, OSPF, counters)
+  POST /api/pre-checks         — Pre-deployment validation
+  POST /api/post-checks        — Post-deployment validation
   GET  /api/inventory          — Return current Nornir inventory
+  GET  /ztp/*                  — Zero Touch Provisioning server
+
+Policy blocks appended to every generated config:
+  BGP route-maps · prefix-lists · community strings (per use case)
+  Infrastructure ACL (iACL) · VLAN ACLs · VTY ACL
+  802.1X / IBNS 2.0 (campus only) · MAB fallback · CoA
+  QoS class-maps · priority queuing · PFC/ECN (GPU)
+  AAA/TACACS+ · SNMPv3 · Syslog · NTP authentication
+
+ZTP endpoints:
+  GET  /ztp/bootstrap/{serial}   — serve Day 0 config to booting device
+  GET  /ztp/script/{platform}    — POAP/EOS-ZTP Python script
+  POST /ztp/checkin/{serial}     — device reports provisioning result
+  POST /ztp/register             — pre-register device
+  GET  /ztp/status               — onboarding dashboard
 
 Run with:
   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -32,14 +47,15 @@ from nornir_tasks import (
     deploy_configs,
     get_inventory_hosts,
 )
+from ztp.router import ztp_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 app = FastAPI(
     title="NetDesign AI Backend",
-    description="Config generation and device deployment API for NetDesign AI",
-    version="1.0.0",
+    description="Config generation, policy injection, ZTP, and device deployment API",
+    version="2.0.0",
 )
 
 # Allow calls from the static frontend (GitHub Pages or local file://)
@@ -49,6 +65,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount ZTP router
+app.include_router(ztp_router)
 
 
 # ─────────────────────────────────────────────
@@ -68,6 +87,12 @@ class DesignState(BaseModel):
     compliance: list[str] = []
     vlans: list[dict[str, Any]] = []
     appFlows: list[dict[str, Any]] = []
+    # Policy generation options (all default True)
+    include_bgp_policy: bool = True
+    include_acl:        bool = True
+    include_dot1x:      bool = True
+    include_qos:        bool = True
+    include_aaa:        bool = True
 
 
 class DeployRequest(BaseModel):

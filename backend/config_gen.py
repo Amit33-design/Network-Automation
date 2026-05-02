@@ -1,12 +1,20 @@
 """
 NetDesign AI — Jinja2 Config Generator
 ========================================
-Renders per-device configurations using platform-specific Jinja2 templates.
+Renders per-device configurations using platform-specific Jinja2 templates,
+then appends comprehensive policy blocks (BGP, ACL, 802.1X, QoS, AAA).
 
 Usage:
     from config_gen import generate_all_configs
     configs = generate_all_configs(state_dict)
     # returns { "spine1": "<rendered config>", "leaf1": "...", ... }
+
+Policy options (state dict keys, all default True):
+    include_bgp_policy  — BGP route-maps, prefix-lists, community strings
+    include_acl         — Infrastructure ACL (iACL), VLAN ACLs, VTY ACL
+    include_dot1x       — 802.1X / IBNS 2.0 (campus only)
+    include_qos         — QoS class-maps, policy-maps, PFC (GPU)
+    include_aaa         — TACACS+, RADIUS, SNMPv3, Syslog, NTP
 """
 
 from __future__ import annotations
@@ -16,6 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+# Policy generators
+from policies.bgp_policy import generate_bgp_policy
+from policies.acl         import generate_acl
+from policies.dot1x       import generate_dot1x
+from policies.qos_policy  import generate_qos
+from policies.aaa_policy  import generate_aaa
 
 log = logging.getLogger(__name__)
 
@@ -125,10 +140,77 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
     return ctx
 
 
+def _platform_from_dir(platform_dir: str) -> str:
+    """Convert template directory name to platform key used by policy generators."""
+    return {
+        "ios_xe": "ios-xe",
+        "nxos":   "nxos",
+        "eos":    "eos",
+        "junos":  "junos",
+        "sonic":  "sonic",
+    }.get(platform_dir, "ios-xe")
+
+
+def _append_policies(base_config: str, ctx: dict[str, Any], platform: str,
+                     state: dict[str, Any]) -> str:
+    """
+    Append policy blocks to a rendered base config.
+    Each generator returns '' for platforms/layers where it's not applicable.
+    """
+    blocks: list[str] = [base_config]
+    sep = "\n!\n!-- ═══════════════ POLICY BLOCKS ═══════════════\n!\n"
+
+    include_bgp  = state.get("include_bgp_policy", True)
+    include_acl  = state.get("include_acl", True)
+    include_dot1x= state.get("include_dot1x", True)
+    include_qos  = state.get("include_qos", True)
+    include_aaa  = state.get("include_aaa", True)
+
+    if include_bgp:
+        try:
+            b = generate_bgp_policy(ctx, platform)
+            if b.strip(): blocks.append(b)
+        except Exception as exc:
+            log.warning("BGP policy error for %s: %s", ctx.get("hostname"), exc)
+
+    if include_acl:
+        try:
+            b = generate_acl(ctx, platform)
+            if b.strip(): blocks.append(b)
+        except Exception as exc:
+            log.warning("ACL error for %s: %s", ctx.get("hostname"), exc)
+
+    if include_dot1x:
+        try:
+            b = generate_dot1x(ctx, platform)
+            if b.strip(): blocks.append(b)
+        except Exception as exc:
+            log.warning("802.1X error for %s: %s", ctx.get("hostname"), exc)
+
+    if include_qos:
+        try:
+            b = generate_qos(ctx, platform)
+            if b.strip(): blocks.append(b)
+        except Exception as exc:
+            log.warning("QoS error for %s: %s", ctx.get("hostname"), exc)
+
+    if include_aaa:
+        try:
+            b = generate_aaa(ctx, platform)
+            if b.strip(): blocks.append(b)
+        except Exception as exc:
+            log.warning("AAA error for %s: %s", ctx.get("hostname"), exc)
+
+    if len(blocks) > 1:
+        return blocks[0] + sep + "\n".join(blocks[1:])
+    return base_config
+
+
 def generate_all_configs(state: dict[str, Any]) -> dict[str, str]:
     """
     Generate configs for all layers with selected products.
     Returns a dict mapping device hostname → rendered config text.
+    Policies (BGP, ACL, 802.1X, QoS, AAA) are appended after base templates.
     """
     configs: dict[str, str] = {}
     products = state.get("selectedProducts", {})
@@ -141,14 +223,18 @@ def generate_all_configs(state: dict[str, Any]) -> dict[str, str]:
 
         # Determine platform dir + template
         platform_dir, tpl_file = LAYER_PLATFORM_MAP.get(layer, ("ios_xe", "generic.j2"))
+        platform_key = _platform_from_dir(platform_dir)
 
         # Count devices: HA = 2, single = 1
         count = 2 if dual else 1
 
         for i in range(1, count + 1):
             ctx = _build_device_context(state, layer, i)
+            # Render base template
             rendered = _render(platform_dir, tpl_file, ctx)
-            configs[ctx["hostname"]] = rendered
-            log.info("Generated config for %s (%s/%s)", ctx["hostname"], platform_dir, tpl_file)
+            # Append policy blocks
+            full_config = _append_policies(rendered, ctx, platform_key, state)
+            configs[ctx["hostname"]] = full_config
+            log.info("Generated config+policies for %s (%s/%s)", ctx["hostname"], platform_dir, tpl_file)
 
     return configs

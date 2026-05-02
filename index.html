@@ -1522,7 +1522,153 @@
       </div>
     </div>
 
+    <!-- ══ ZTP — Zero Touch Provisioning Panel ══ -->
+    <div class="ztp-section" id="ztp-section">
+      <div class="divider-label" style="margin-top:2.5rem">
+        🚀 Zero Touch Provisioning (ZTP)
+        <span class="ztp-label-badge">POAP · EOS-ZTP · PnP · Junos-ZTP</span>
+      </div>
+
+      <!-- Stats bar -->
+      <div id="ztp-stats" class="ztp-stats-bar">
+        <div class="ztp-stat">
+          <span class="ztp-stat-num">0</span>
+          <span class="ztp-stat-label">Total</span>
+        </div>
+        <div class="ztp-progress-wrap">
+          <div class="ztp-progress-bar" style="width:0%"></div>
+          <span class="ztp-progress-label">0% provisioned</span>
+        </div>
+      </div>
+
+      <!-- Device status board -->
+      <div class="ztp-board-wrap">
+        <div class="ztp-board-toolbar">
+          <span class="ztp-board-title">📋 Device Onboarding Board</span>
+          <div class="ztp-toolbar-actions">
+            <button class="btn-cfg-action" onclick="ZTP.showDHCPOptions()">📡 DHCP Options</button>
+            <button class="btn-cfg-action" onclick="ZTP.startPolling()">🔄 Refresh</button>
+            <button class="btn-cfg-action" onclick="ZTP.populateFromTopology()">⚡ From Topology</button>
+          </div>
+        </div>
+        <div class="ztp-board-scroll">
+          <table class="ztp-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Serial</th>
+                <th>Hostname</th>
+                <th>Platform</th>
+                <th>Role</th>
+                <th>Mgmt IP</th>
+                <th>State</th>
+                <th>Provisioned</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="ztp-device-tbody">
+              <tr><td colspan="9" class="ztp-empty">No devices registered. Add below or import CSV.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Status message -->
+      <div id="ztp-status-msg" class="ztp-status-msg" style="display:none"></div>
+
+      <!-- Device registration form -->
+      <div class="ztp-register-section">
+        <div class="ztp-reg-header">
+          <strong>➕ Register Devices for ZTP</strong>
+          <div class="ztp-reg-actions">
+            <button class="btn-cfg-action" onclick="ZTP.addDeviceRow()">+ Add Row</button>
+            <label class="btn-cfg-action ztp-csv-label">
+              📂 Import CSV
+              <input type="file" accept=".csv" style="display:none"
+                onchange="ZTP.importCSV(this.files[0])" />
+            </label>
+          </div>
+        </div>
+        <div class="ztp-reg-col-labels">
+          <span>Serial *</span><span>Hostname *</span><span>Platform</span><span>Role</span>
+          <span>Mgmt IP *</span><span>Gateway</span><span>Loopback</span><span>BGP ASN</span><span></span>
+        </div>
+        <div id="ztp-register-rows"></div>
+        <button class="btn btn-primary" style="margin-top:.75rem;width:100%"
+          onclick="ZTP.registerFromForm()">
+          🚀 Pre-register All Devices
+        </button>
+      </div>
+
+      <!-- Policy options selector -->
+      <div class="policy-gen-options">
+        <div class="divider-label" style="margin-top:2rem">⚙️ Config Policy Options</div>
+        <p class="pgo-hint">These policy blocks will be appended to every generated config. Disable any you want to manage manually.</p>
+        <div class="pgo-grid">
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-bgp" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">🛣️</span>
+              <strong>BGP Policies</strong>
+              <small>Route-maps · Prefix-lists · Communities · AS-path filters</small>
+            </div>
+          </label>
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-acl" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">🛡️</span>
+              <strong>Infrastructure ACL</strong>
+              <small>iACL · VLAN ACLs · Anti-spoofing · VTY access</small>
+            </div>
+          </label>
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-dot1x" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">🔐</span>
+              <strong>802.1X / NAC</strong>
+              <small>IBNS 2.0 · MAB fallback · Guest VLAN · CoA · RADIUS</small>
+            </div>
+          </label>
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-qos" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">📶</span>
+              <strong>QoS Policy</strong>
+              <small>8-class campus · PFC/ECN GPU · CBWFQ WAN · DSCP marking</small>
+            </div>
+          </label>
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-aaa" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">🔑</span>
+              <strong>AAA / Management</strong>
+              <small>TACACS+ · SNMPv3 · Syslog · NTP auth · SSH hardening</small>
+            </div>
+          </label>
+          <label class="pgo-toggle">
+            <input type="checkbox" id="pol-vlan" checked onchange="updatePolicyOptions()">
+            <div class="pgo-card">
+              <span class="pgo-icon">🏷️</span>
+              <strong>VLAN Policy</strong>
+              <small>Naming conventions · Trunk pruning · Native VLAN hardening</small>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div><!-- /ztp-section -->
+
   </section><!-- /step-6 -->
+
+  <!-- ZTP DHCP Options Modal -->
+  <div id="ztp-dhcp-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)ZTP.closeDHCPModal()">
+    <div class="modal-box" style="max-width:700px">
+      <div class="modal-header">
+        <h3>📡 DHCP Server Configuration for ZTP</h3>
+        <button class="modal-close" onclick="ZTP.closeDHCPModal()">✕</button>
+      </div>
+      <div id="ztp-dhcp-content" class="ztp-dhcp-content"></div>
+    </div>
+  </div>
 
 </main><!-- /app -->
 
@@ -1560,12 +1706,41 @@
 <script src="src/js/gate.js"></script>
 <script src="src/js/simulation.js"></script>
 <script src="src/js/observability.js"></script>
+<script src="src/js/ztp.js"></script>
 <script src="src/js/export.js"></script>
 <script src="src/js/deploy.js"></script>
 <script src="src/js/storage.js"></script>
 <script src="src/js/demo.js"></script>
 <script src="src/js/landing.js"></script>
 <script src="src/js/init.js"></script>
+<script>
+/* ── Policy options global helper ──────────────────────────── */
+function updatePolicyOptions() {
+  if (typeof STATE === 'undefined') return;
+  STATE.include_bgp_policy = document.getElementById('pol-bgp')?.checked !== false;
+  STATE.include_acl        = document.getElementById('pol-acl')?.checked !== false;
+  STATE.include_dot1x      = document.getElementById('pol-dot1x')?.checked !== false;
+  STATE.include_qos        = document.getElementById('pol-qos')?.checked !== false;
+  STATE.include_aaa        = document.getElementById('pol-aaa')?.checked !== false;
+  STATE.include_vlan_policy= document.getElementById('pol-vlan')?.checked !== false;
+}
+/* ── Init ZTP panel when step 6 opens ──────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  const origGoStep = window.goStep;
+  if (typeof origGoStep === 'function') {
+    window.goStep = function(dir) {
+      origGoStep(dir);
+      const step = parseInt(document.querySelector('[data-step].active')?.dataset?.step || '1');
+      if (step === 6) {
+        if (typeof ZTP !== 'undefined') ZTP.initPanel();
+        ZTP.startPolling();
+      } else {
+        if (typeof ZTP !== 'undefined') ZTP.stopPolling();
+      }
+    };
+  }
+});
+</script>
 
 </body>
 </html>
