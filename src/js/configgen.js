@@ -342,12 +342,22 @@ function downloadConfig() {
 function generateConfig(dev, os) {
   const layer = dev.layer;
   const idx   = dev.idx || 0;
-  if (os === 'ios-xe') return genIOSXE(dev, layer, idx);
-  if (os === 'nxos')   return genNXOS(dev, layer, idx);
-  if (os === 'eos')    return genEOS(dev, layer, idx);
-  if (os === 'junos')  return genJunos(dev, layer, idx);
-  if (os === 'sonic')  return genSONiC(dev, layer, idx);
-  return genIOSXE(dev, layer, idx);
+  let base = '';
+  if (os === 'ios-xe') base = genIOSXE(dev, layer, idx);
+  else if (os === 'nxos')   base = genNXOS(dev, layer, idx);
+  else if (os === 'eos')    base = genEOS(dev, layer, idx);
+  else if (os === 'junos')  base = genJunos(dev, layer, idx);
+  else if (os === 'sonic')  base = genSONiC(dev, layer, idx);
+  else base = genIOSXE(dev, layer, idx);
+
+  // Append enabled policy blocks (BGP, iACL, 802.1X, QoS, AAA, VLAN, Static, Trunk, Wireless)
+  const policyBlocks = (typeof buildPolicyBlocks === 'function')
+    ? buildPolicyBlocks(dev, os)
+    : '';
+  if (policyBlocks) {
+    base += '\n\n' + policyBlocks;
+  }
+  return base;
 }
 
 /* ════════════════════════════════════════════════════════════════
