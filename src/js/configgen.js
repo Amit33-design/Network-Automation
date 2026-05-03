@@ -26,63 +26,145 @@ function getOS(layerKey) {
 const OS_LABELS = { 'ios-xe':'IOS-XE', 'nxos':'NX-OS', 'eos':'EOS', 'junos':'Junos', 'sonic':'SONiC' };
 
 /* ── Device list builder ────────────────────────────────────────── */
+/* ── Config preview cap (UI shows up to N devices; note shown for remainder) ── */
+const CONFIG_PREVIEW_MAX = 20;
+
 function buildDeviceList() {
-  const uc  = STATE.uc;
-  const red = STATE.redundancy;
+  const uc   = STATE.uc;
+  const red  = STATE.redundancy;
   const dual = red === 'ha' || red === 'full';
   const haFW = STATE.fwModel && STATE.fwModel !== 'none';
   const sz   = STATE.orgSize;
-  const haCore = sz === 'large' || sz === 'enterprise';
+  const haCore = sz === 'large' || sz === 'enterprise' ||
+                 uc === 'campus';   // always show core for campus
+
+  // Pull capacity model counts
+  const cap = capacityFromState(STATE);
   const devs = [];
 
+  // ── Firewall ──────────────────────────────────────────────────
   if (haFW) {
-    devs.push({ id:'fw-01', name:'FW-01', layer:'fw', role:'Perimeter Firewall', icon:'🔒', idx:0 });
-    if (dual) devs.push({ id:'fw-02', name:'FW-02', layer:'fw', role:'Firewall (HA)', icon:'🔒', idx:1 });
+    devs.push({ id:'fw-01', name:'FW-01', layer:'fw', role:'Internet Perimeter FW', icon:'🔒', idx:0 });
+    if (dual) devs.push({ id:'fw-02', name:'FW-02', layer:'fw', role:'Firewall HA pair', icon:'🔒', idx:1 });
   }
+
+  // ── CAMPUS ────────────────────────────────────────────────────
   if (uc === 'campus' || uc === 'hybrid') {
-    if (haCore) {
-      devs.push({ id:'core-01', name:'CORE-01', layer:'campus-core', role:'Core Switch', icon:'⚙️', idx:0 });
-      if (dual) devs.push({ id:'core-02', name:'CORE-02', layer:'campus-core', role:'Core Switch (HA)', icon:'⚙️', idx:1 });
+    const c = cap.campus || { core:2, dist:4, access:6 };
+
+    // Core (always show actual count, capped at CONFIG_PREVIEW_MAX)
+    const coreCount = Math.min(c.core, CONFIG_PREVIEW_MAX);
+    for (let i = 0; i < coreCount; i++) {
+      devs.push({ id:`core-${String(i+1).padStart(2,'0')}`, name:`CORE-${String(i+1).padStart(2,'0')}`,
+        layer:'campus-core', role:'Core Switch', icon:'⚙️', idx:i });
     }
-    devs.push({ id:'dist-01', name:'DIST-01', layer:'campus-dist', role:'Distribution', icon:'🔀', idx:0 });
-    devs.push({ id:'dist-02', name:'DIST-02', layer:'campus-dist', role:'Distribution', icon:'🔀', idx:1 });
-    devs.push({ id:'acc-01',  name:'ACC-01',  layer:'campus-access', role:'Access Switch', icon:'🔌', idx:0 });
-    devs.push({ id:'acc-02',  name:'ACC-02',  layer:'campus-access', role:'Access Switch', icon:'🔌', idx:1 });
-    devs.push({ id:'acc-03',  name:'ACC-03',  layer:'campus-access', role:'Access Switch', icon:'🔌', idx:2 });
+
+    // Distribution
+    const distCount = Math.min(c.dist, CONFIG_PREVIEW_MAX - devs.length);
+    for (let i = 0; i < distCount; i++) {
+      devs.push({ id:`dist-${String(i+1).padStart(2,'0')}`, name:`DIST-${String(i+1).padStart(2,'0')}`,
+        layer:'campus-dist', role:`Distribution ${dual?'HA':''}`, icon:'🔀', idx:i,
+        _totalInLayer: c.dist });
+    }
+
+    // Access — show up to remaining budget, flag total
+    const accAvail  = Math.max(0, CONFIG_PREVIEW_MAX - devs.length);
+    const accPreview = Math.min(c.access, accAvail);
+    for (let i = 0; i < accPreview; i++) {
+      const zone = ['FL1','FL2','SRV','IOT'][Math.floor(i / Math.ceil(accPreview/4))];
+      devs.push({ id:`acc-${String(i+1).padStart(2,'0')}`, name:`ACC-${zone}-${String(i+1).padStart(2,'0')}`,
+        layer:'campus-access', role:`Access Switch (${zone})`, icon:'🔌', idx:i,
+        _totalInLayer: c.access });
+    }
+    if (c.access > accPreview) {
+      devs.push({ id:'acc-overflow', name:`+ ${c.access - accPreview} more access switches`,
+        layer:'campus-access', role:'_overflow', icon:'📋', idx:accPreview,
+        _overflow:true, _total:c.access });
+    }
   }
+
+  // ── DATA CENTER ───────────────────────────────────────────────
   if (uc === 'dc' || uc === 'hybrid' || uc === 'multisite') {
-    const sites = uc === 'multisite' ? Math.min(4, Math.max(3, parseInt(STATE.numSitesTopology) || 3)) : 1;
-    const siteIds = ['DCA','DCB','DCC','DCD'].slice(0, sites);
+    const c = cap.dc || { spines:4, leafs:4 };
     if (uc === 'multisite') {
-      siteIds.forEach((sid, si) => {
-        devs.push({ id:`${sid.toLowerCase()}-sp1`, name:`${sid}-SPINE-01`, layer:'dc-spine', role:`${sid} Spine`, icon:'🦴', idx: si*2 });
-        devs.push({ id:`${sid.toLowerCase()}-sp2`, name:`${sid}-SPINE-02`, layer:'dc-spine', role:`${sid} Spine`, icon:'🦴', idx: si*2+1 });
-        devs.push({ id:`${sid.toLowerCase()}-lf1`, name:`${sid}-LEAF-01`,  layer:'dc-leaf',  role:`${sid} Leaf`,  icon:'🍃', idx: si*2 });
-        devs.push({ id:`${sid.toLowerCase()}-lf2`, name:`${sid}-LEAF-02`,  layer:'dc-leaf',  role:`${sid} Leaf`,  icon:'🍃', idx: si*2+1 });
+      const sites = Math.min(4, Math.max(3, parseInt(STATE.numSitesTopology) || 3));
+      ['DCA','DCB','DCC','DCD'].slice(0, sites).forEach((sid, si) => {
+        devs.push({ id:`${sid.toLowerCase()}-sp1`, name:`${sid}-SPINE-01`, layer:'dc-spine', role:`${sid} Spine`, icon:'🦴', idx:si*2   });
+        devs.push({ id:`${sid.toLowerCase()}-sp2`, name:`${sid}-SPINE-02`, layer:'dc-spine', role:`${sid} Spine`, icon:'🦴', idx:si*2+1 });
+        devs.push({ id:`${sid.toLowerCase()}-lf1`, name:`${sid}-LEAF-01`,  layer:'dc-leaf',  role:`${sid} Leaf`,  icon:'🍃', idx:si*2   });
+        devs.push({ id:`${sid.toLowerCase()}-lf2`, name:`${sid}-LEAF-02`,  layer:'dc-leaf',  role:`${sid} Leaf`,  icon:'🍃', idx:si*2+1 });
       });
     } else {
-      devs.push({ id:'spine-01', name:'SPINE-01', layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:0 });
-      devs.push({ id:'spine-02', name:'SPINE-02', layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:1 });
-      devs.push({ id:'leaf-01',  name:'LEAF-01',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:0 });
-      devs.push({ id:'leaf-02',  name:'LEAF-02',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:1 });
-      devs.push({ id:'leaf-03',  name:'LEAF-03',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:2 });
-      devs.push({ id:'leaf-04',  name:'LEAF-04',  layer:'dc-leaf',  role:'DC Leaf',  icon:'🍃', idx:3 });
+      const spinePreview = Math.min(c.spines, CONFIG_PREVIEW_MAX - devs.length);
+      for (let i = 0; i < spinePreview; i++) {
+        devs.push({ id:`spine-${String(i+1).padStart(2,'0')}`, name:`SPINE-${String(i+1).padStart(2,'0')}`,
+          layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:i,
+          _totalInLayer: c.spines });
+      }
+      const leafAvail   = Math.max(0, CONFIG_PREVIEW_MAX - devs.length);
+      const leafPreview = Math.min(c.leafs, leafAvail);
+      const roles = [
+        ...Array(c.prodLeafs||Math.ceil(c.leafs*.5)).fill('PROD'),
+        ...Array(c.storLeafs||Math.ceil(c.leafs*.25)).fill('STOR'),
+        ...Array(c.devLeafs||0).fill('DEV'),
+      ];
+      for (let i = 0; i < leafPreview; i++) {
+        const fn = roles[i] || 'PROD';
+        devs.push({ id:`leaf-${String(i+1).padStart(2,'0')}`, name:`LEAF-${fn}-${String(i+1).padStart(2,'0')}`,
+          layer:'dc-leaf', role:`DC Leaf (${fn})`, icon:'🍃', idx:i,
+          _totalInLayer: c.leafs });
+      }
+      if (c.leafs > leafPreview) {
+        devs.push({ id:'leaf-overflow', name:`+ ${c.leafs - leafPreview} more leaf switches`,
+          layer:'dc-leaf', role:'_overflow', icon:'📋', idx:leafPreview,
+          _overflow:true, _total:c.leafs });
+      }
     }
   }
+
+  // ── GPU ───────────────────────────────────────────────────────
   if (uc === 'gpu') {
-    devs.push({ id:'gspine-01', name:'GPU-SPINE-01', layer:'gpu-spine', role:'GPU Spine', icon:'🧠', idx:0 });
-    devs.push({ id:'gspine-02', name:'GPU-SPINE-02', layer:'gpu-spine', role:'GPU Spine', icon:'🧠', idx:1 });
-    devs.push({ id:'tor-01',    name:'GPU-TOR-01',   layer:'gpu-tor',   role:'GPU TOR',   icon:'⚡', idx:0 });
-    devs.push({ id:'tor-02',    name:'GPU-TOR-02',   layer:'gpu-tor',   role:'GPU TOR',   icon:'⚡', idx:1 });
-    devs.push({ id:'tor-03',    name:'GPU-TOR-03',   layer:'gpu-tor',   role:'GPU TOR',   icon:'⚡', idx:2 });
-    devs.push({ id:'tor-04',    name:'GPU-TOR-04',   layer:'gpu-tor',   role:'GPU TOR',   icon:'⚡', idx:3 });
+    const c = cap.gpu || { spines:2, tors:4 };
+    const spinePreview = Math.min(c.spines, CONFIG_PREVIEW_MAX - devs.length);
+    for (let i = 0; i < spinePreview; i++) {
+      devs.push({ id:`gspine-${String(i+1).padStart(2,'0')}`, name:`GPU-SPINE-${String(i+1).padStart(2,'0')}`,
+        layer:'gpu-spine', role:'GPU Spine', icon:'🧠', idx:i,
+        _totalInLayer: c.spines });
+    }
+    const torAvail   = Math.max(0, CONFIG_PREVIEW_MAX - devs.length);
+    const torPreview = Math.min(c.tors, torAvail);
+    for (let i = 0; i < torPreview; i++) {
+      devs.push({ id:`tor-${String(i+1).padStart(2,'0')}`, name:`GPU-TOR-${String(i+1).padStart(2,'0')}`,
+        layer:'gpu-tor', role:'GPU TOR', icon:'⚡', idx:i,
+        _totalInLayer: c.tors });
+    }
+    if (c.tors > torPreview) {
+      devs.push({ id:'tor-overflow', name:`+ ${c.tors - torPreview} more TOR switches`,
+        layer:'gpu-tor', role:'_overflow', icon:'📋', idx:torPreview,
+        _overflow:true, _total:c.tors });
+    }
   }
+
+  // ── WAN ───────────────────────────────────────────────────────
   if (uc === 'wan') {
-    devs.push({ id:'hq-rtr',  name:'HQ-RTR-01',  layer:'campus-core', role:'HQ Core Router', icon:'🌐', idx:0 });
-    devs.push({ id:'br-01',   name:'BRANCH-01',  layer:'campus-access',role:'Branch CPE',     icon:'📡', idx:0 });
-    devs.push({ id:'br-02',   name:'BRANCH-02',  layer:'campus-access',role:'Branch CPE',     icon:'📡', idx:1 });
-    devs.push({ id:'br-03',   name:'BRANCH-03',  layer:'campus-access',role:'Branch CPE',     icon:'📡', idx:2 });
+    const c = cap.wan || { hubRouters:2, cpe:4 };
+    for (let i = 0; i < Math.min(c.hubRouters, 4); i++) {
+      devs.push({ id:`hq-rtr-${i+1}`, name:`HQ-RTR-${String(i+1).padStart(2,'0')}`,
+        layer:'campus-core', role:'HQ Core Router', icon:'🌐', idx:i });
+    }
+    const cpePreview = Math.min(c.cpe, CONFIG_PREVIEW_MAX - devs.length);
+    for (let i = 0; i < cpePreview; i++) {
+      devs.push({ id:`br-${String(i+1).padStart(2,'0')}`, name:`BRANCH-${String(i+1).padStart(2,'0')}`,
+        layer:'campus-access', role:'Branch CPE', icon:'📡', idx:i,
+        _totalInLayer: c.cpe });
+    }
+    if (c.cpe > cpePreview) {
+      devs.push({ id:'br-overflow', name:`+ ${c.cpe - cpePreview} more branch CPEs`,
+        layer:'campus-access', role:'_overflow', icon:'📋', idx:cpePreview,
+        _overflow:true, _total:c.cpe });
+    }
   }
+
   return devs;
 }
 
@@ -92,26 +174,58 @@ let ACTIVE_DEV  = null;
 
 function renderDeviceList() {
   DEVICE_LIST = buildDeviceList();
+  const allDevs = DEVICE_LIST;
+  const realDevs = allDevs.filter(d => !d._overflow);
+
   const body  = document.getElementById('dev-list-body');
   const badge = document.getElementById('dev-count-badge');
-  badge.textContent = DEVICE_LIST.length;
+
+  // Badge shows real total (from capacity model), not just preview count
+  const cap = capacityFromState(STATE);
+  let totalDevices = realDevs.length;
+  if (cap.campus) totalDevices = cap.campus.access + cap.campus.dist + cap.campus.core;
+  if (cap.dc)     totalDevices = cap.dc.leafs + cap.dc.spines;
+  if (cap.gpu)    totalDevices = cap.gpu.tors + cap.gpu.spines;
+  if (cap.wan)    totalDevices = cap.wan.cpe + cap.wan.hubRouters;
+  badge.textContent = totalDevices;
 
   // Group by layer
   const groups = {};
-  DEVICE_LIST.forEach(d => {
+  allDevs.forEach(d => {
     if (!groups[d.layer]) groups[d.layer] = [];
     groups[d.layer].push(d);
   });
   const groupLabels = {
-    'fw':'Security', 'campus-core':'Core', 'campus-dist':'Distribution',
-    'campus-access':'Access', 'dc-spine':'DC Spine', 'dc-leaf':'DC Leaf',
-    'gpu-spine':'GPU Spine', 'gpu-tor':'GPU TOR',
+    'fw':'🔒 Security / Firewall',
+    'campus-core':'⚙️ Core Layer',
+    'campus-dist':'🔀 Distribution Layer',
+    'campus-access':'🔌 Access Layer',
+    'dc-spine':'🦴 DC Spine',
+    'dc-leaf':'🍃 DC Leaf / ToR',
+    'gpu-spine':'🧠 GPU Spine',
+    'gpu-tor':'⚡ GPU TOR',
   };
 
   let html = '';
-  Object.entries(groups).forEach(([layer, devs]) => {
-    html += `<div class="dev-group-label">${groupLabels[layer] || layer}</div>`;
-    devs.forEach(d => {
+  Object.entries(groups).forEach(([layer, layerDevs]) => {
+    // Count total in this layer (from capacity model, not just preview)
+    const firstReal = layerDevs.find(d => !d._overflow);
+    const layerTotal = firstReal?._totalInLayer || layerDevs.filter(d=>!d._overflow).length;
+    html += `<div class="dev-group-label">${groupLabels[layer] || layer}
+      <span style="opacity:.5;font-size:.75em;margin-left:.4rem">×${layerTotal}</span>
+    </div>`;
+    layerDevs.forEach(d => {
+      if (d._overflow) {
+        // Show "overflow" pill — not clickable for config
+        html += `<div class="dev-item" style="opacity:.55;cursor:default;border-style:dashed">
+          <span class="di-icon">${d.icon}</span>
+          <div class="di-info">
+            <div class="di-name" style="font-style:italic">${d.name}</div>
+            <div class="di-role">Config preview limited to ${CONFIG_PREVIEW_MAX} devices</div>
+          </div>
+        </div>`;
+        return;
+      }
       const os = getOS(d.layer);
       html += `<div class="dev-item" id="di-${d.id}" onclick="selectDevice('${d.id}')">
         <span class="di-icon">${d.icon}</span>
@@ -125,14 +239,15 @@ function renderDeviceList() {
   });
   body.innerHTML = html;
 
-  // Auto-select first device
-  if (DEVICE_LIST.length) selectDevice(DEVICE_LIST[0].id);
+  // Auto-select first real (non-overflow) device
+  const firstReal = DEVICE_LIST.find(d => !d._overflow);
+  if (firstReal) selectDevice(firstReal.id);
 }
 
 /* ── Select & render a device config ───────────────────────────── */
 function selectDevice(id) {
   ACTIVE_DEV = DEVICE_LIST.find(d => d.id === id);
-  if (!ACTIVE_DEV) return;
+  if (!ACTIVE_DEV || ACTIVE_DEV._overflow) return;
 
   // Update sidebar active state
   document.querySelectorAll('.dev-item').forEach(el => el.classList.remove('active'));
@@ -235,6 +350,26 @@ function generateConfig(dev, os) {
   return genIOSXE(dev, layer, idx);
 }
 
+/* ════════════════════════════════════════════════════════════════
+   RESOLVED STATE ADAPTER
+   ─────────────────────────────────────────────────────────────
+   Config generators read protocol/feature flags from RESOLVED_STATE
+   when available (populated by policyengine.js after AUTO_FIX runs),
+   falling back to raw STATE.* for backward compatibility.
+
+   This means: if the policy engine auto-enabled PFC for a GPU design,
+   config generators will emit PFC config even if the user never
+   explicitly toggled it in the UI.
+════════════════════════════════════════════════════════════════ */
+function _rs(field, fallback) {
+  // Read from RESOLVED_STATE if available; fall back to evaluated fallback
+  if (typeof RESOLVED_STATE !== 'undefined' && RESOLVED_STATE !== null) {
+    const v = RESOLVED_STATE[field];
+    if (v !== undefined) return v;
+  }
+  return (typeof fallback === 'function') ? fallback() : fallback;
+}
+
 /* ── IOS-XE (Campus) ────────────────────────────────────────────── */
 function genIOSXE(dev, layer, idx) {
   const name   = dev.name;
@@ -244,13 +379,18 @@ function genIOSXE(dev, layer, idx) {
   const isDist = layer === 'campus-dist';
   const isAcc  = layer === 'campus-access';
   const isFW   = layer === 'fw';
-  const hasVxlan = (STATE.overlayProto || []).some(o=>o.includes('VXLAN'));
-  const hasBGP   = (STATE.underlayProto || []).includes('BGP');
-  const hasOSPF  = (STATE.underlayProto || []).includes('OSPF') || (!hasBGP && !(STATE.underlayProto||[]).includes('EIGRP') && !isAcc);
-  const hasEIGRP = (STATE.underlayProto || []).includes('EIGRP');
-  const hasISIS  = (STATE.underlayProto || []).includes('IS-IS');
-  const has8021x = (STATE.nac || []).some(n=>n.includes('802.1X'));
-  const hasDHCP = true;
+
+  // Read from RESOLVED_STATE (policy-engine resolved) → fallback to STATE
+  const hasVxlan = _rs('vxlanEnabled', () => (STATE.overlayProto || []).some(o=>o.includes('VXLAN')));
+  const hasBGP   = _rs('bgpEnabled',   () => (STATE.underlayProto || []).includes('BGP'));
+  const hasOSPF  = _rs('ospfEnabled',  () =>
+    (STATE.underlayProto || []).includes('OSPF') || (!hasBGP && !(STATE.underlayProto||[]).includes('EIGRP') && !isAcc));
+  const hasEIGRP = _rs('eigrpEnabled', () => (STATE.underlayProto || []).includes('EIGRP'));
+  const hasISIS  = _rs('isisEnabled',  () => (STATE.underlayProto || []).includes('IS-IS'));
+  const has8021x = _rs('dot1xEnabled', () => (STATE.nac || []).some(n=>n.includes('802.1X')));
+  const hasPFC   = _rs('pfcEnabled',   () => (STATE.gpuSpecifics || []).includes('pfc'));
+  const hasRoCE  = _rs('roceEnabled',  () => (STATE.gpuSpecifics || []).includes('rocev2'));
+  const hasDHCP  = true;
 
   const p2p = `10.100.0.${idx*2}`;
   const p2pMask = '255.255.255.254';
@@ -665,8 +805,11 @@ function genNXOS(dev, layer, idx) {
   const loIP    = isSpine ? `10.255.1.${idx+1}` : (isTOR ? `10.255.5.${idx+1}` : `10.255.2.${idx+1}`);
   const vtepIP  = `10.255.3.${idx+1}`;
   const mgmtIP  = `10.0.0.${isSpine ? 5+idx : 11+idx}`;
-  const hasVxlan= STATE.overlayProto.some(o=>o.includes('VXLAN')) && !isTOR;
-  const hasEVPN = hasVxlan;
+  // Use RESOLVED_STATE when available (policy engine may have AUTO_FIX'd EVPN→BGP or PFC)
+  const hasVxlan= _rs('vxlanEnabled', () => STATE.overlayProto.some(o=>o.includes('VXLAN'))) && !isTOR;
+  const hasEVPN = _rs('evpnEnabled',  () => hasVxlan);
+  const hasPFC  = _rs('pfcEnabled',   () => (STATE.gpuSpecifics || []).includes('pfc'));
+  const hasRoCE = _rs('roceEnabled',  () => (STATE.gpuSpecifics || []).includes('rocev2'));
 
   let cfg = `! ═══════════════════════════════════════════════════════════
 ! Device : ${name}
@@ -1097,7 +1240,10 @@ function genEOS(dev, layer, idx) {
   const asn     = isSpine ? 65000 : 65001 + idx;
   const loIP    = isSpine ? `10.255.1.${idx+1}` : `10.255.2.${idx+1}`;
   const vtepIP  = `10.255.3.${idx+1}`;
-  const hasVxlan= STATE.overlayProto.some(o=>o.includes('VXLAN')) && !isTOR;
+  // Use RESOLVED_STATE when available (policy engine may have AUTO_FIX'd EVPN→BGP or PFC)
+  const hasVxlan= _rs('vxlanEnabled', () => STATE.overlayProto.some(o=>o.includes('VXLAN'))) && !isTOR;
+  const hasPFC  = _rs('pfcEnabled',   () => (STATE.gpuSpecifics || []).includes('pfc'));
+  const hasRoCE = _rs('roceEnabled',  () => (STATE.gpuSpecifics || []).includes('rocev2'));
 
   return `! ═══════════════════════════════════════════════════════════
 ! Device : ${name}

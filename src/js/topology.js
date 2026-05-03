@@ -184,6 +184,11 @@ function buildSVG({ nodes, links, bands, W = 1100, H = 600 }) {
 const C = {
   internet: { fill:'#0a1e3a', stroke:'#1a7fff' },
   fw:       { fill:'#2a0a0f', stroke:'#ff3355' },
+  corpfw:   { fill:'#2a0615', stroke:'#ff6688' },   // internal/corporate FW
+  lb:       { fill:'#150020', stroke:'#cc44ff' },   // load balancer / ADC
+  dmzsw:    { fill:'#1a0e00', stroke:'#ff9900' },   // DMZ switch
+  wanrtr:   { fill:'#071828', stroke:'#2288ff' },   // WAN/ISP edge router
+  oob:      { fill:'#0a1020', stroke:'#5a6e99' },   // OOB management
   core:     { fill:'#1a0a2e', stroke:'#9955ff' },
   dist:     { fill:'#0a1a2e', stroke:'#00d4ff' },
   access:   { fill:'#071828', stroke:'#1a7fff' },
@@ -262,19 +267,38 @@ function _protos() {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   CAMPUS HLD
+   CAMPUS HLD  —  Enhanced multi-tier with per-zone distribution
+   Layers:
+     Internet cloud → WAN/ISP Edge Routers (BGP eBGP dual-homed)
+     → Internet Perimeter FW (HA pair)
+     → Campus Core (HA pair, VSS/StackWise)
+     → Per-Zone Distribution (Floor 1 / Floor 2 / Server Farm / IoT-Guest)
+     → Access layer (per zone, 802.1X, PoE+)
+     → Endpoints (PCs, Phones, Wi-Fi APs, IoT, Servers)
+     Side-car: WLC (CAPWAP), OOB Management Switch
 ════════════════════════════════════════════════════════════════ */
 function campusHLD() {
-  const W = 1100;
-  const sz  = STATE.orgSize;
+  const W   = 1100;
   const red = STATE.redundancy;
-  const haCore = sz === 'large' || sz === 'enterprise';
-  const haFW   = STATE.fwModel && STATE.fwModel !== 'none';
-  const dual   = red === 'ha' || red === 'full';
-  // Detect wireless need
-  const hasWifi = (STATE.nac || []).some(n => /wireless/i.test(n)) ||
-                  (STATE.appTypes || []).some(a => /voice|video|wireless/i.test(a)) ||
-                  (STATE.protoFeatures || []).some(f => /wireless/i.test(f));
+  const dual = red === 'ha' || red === 'full';
+  const haFW = STATE.fwModel && STATE.fwModel !== 'none';
+
+  // ── Capacity model ────────────────────────────────────────────
+  const cap  = campusCapacity(parseInt(STATE.totalHosts) || 100, {
+    sites: parseInt(STATE.numSites) || 1,
+    redundancy: red,
+  });
+  const totalAccess = cap.access;
+  const totalDist   = cap.dist;
+  const totalCore   = cap.core;
+  const zoneAccess  = cap.zoneAccess;   // [FL1, FL2, SRV, IoT]
+
+  const hasWifi  = (STATE.nac || []).some(n => /wireless/i.test(n)) ||
+                   (STATE.appTypes || []).some(a => /voice|video|wireless/i.test(a)) ||
+                   (STATE.protoFeatures || []).some(f => /wireless/i.test(f));
+  const hasIoT   = (STATE.appTypes || []).some(a => /iot|bms|ot|scada/i.test(a));
+  const hasVoice = (STATE.appTypes || []).some(a => /voice|phone|ucm|cucm/i.test(a));
+  const hasDot1x = (STATE.nac || []).some(n => /802\.1x|dot1x|nac/i.test(n));
 
   const selAccess = PRODUCTS[STATE.selectedProducts['campus-access']];
   const selDist   = PRODUCTS[STATE.selectedProducts['campus-dist']];
@@ -282,257 +306,410 @@ function campusHLD() {
   const selFW     = PRODUCTS[STATE.selectedProducts['fw']];
   const P = _protos();
 
-  // Y positions per layer
-  const yInternet = 28;
-  const yFW       = haFW   ? 118 : null;
-  const yCore     = haCore ? (haFW ? 210 : 118) : null;
-  const yDist     = haCore ? 320 : (haFW ? 210 : 118);
-  const yAccess   = yDist  + 125;
-  const yEP       = yAccess + 110;
+  // ── Row Y positions ────────────────────────────────────────────
+  const yInternet = 22;
+  const yWanRtr   = 100;   // WAN / ISP edge routers (BGP eBGP dual-homed)
+  const yFW       = 188;   // Internet perimeter FW
+  const yCore     = 280;   // Campus core switches
+  const yDist     = 378;   // Distribution — 4 zones / floors
+  const yAccess   = 476;   // Access layer
+  const yEP       = 575;   // Endpoints
+  const H         = yEP + 90;
 
   const nodes = [], links = [];
   const bw = 115, bh = 42;
 
-  // Internet cloud
-  nodes.push({ id:'inet', x: W/2 - 70, y: yInternet, w:140, h:44,
-    label:'INTERNET', icon:'🌐', ...C.internet, glow: true });
+  // ── Internet Cloud ─────────────────────────────────────────────
+  nodes.push({ id:'inet', x: W/2 - 75, y: yInternet, w:155, h:46,
+    label:'INTERNET / ISP', icon:'🌐', ...C.internet, glow:true });
 
-  // Firewall pair
-  if (haFW) {
-    nodes.push({ id:'fw1', x: dual ? 310 : W/2-57, y: yFW, w:bw, h:bh,
-      label: selFW ? selFW.model.slice(0,18) : 'FW-01',
-      sub: selFW ? selFW.vendor : 'Perimeter FW', icon:'🔒', ...C.fw });
-    links.push({ from:'inet', to:'fw1', color:'#ff3355', width:2, flow:true,
-      badge:'Internet Edge' });
-    if (dual) {
-      nodes.push({ id:'fw2', x: 680, y: yFW, w:bw, h:bh,
-        label: selFW ? selFW.model.slice(0,18) : 'FW-02',
-        sub: selFW ? selFW.vendor : 'FW HA Pair', icon:'🔒', ...C.fw });
-      links.push({ from:'inet', to:'fw2', color:'#ff3355', width:2, flow:true });
-      links.push({ from:'fw1', to:'fw2', color:'#ff3355', width:1.2, opacity:.5,
-        badge:'FW Sync / HA' });
-    }
+  // ── WAN / ISP Edge Routers ─────────────────────────────────────
+  // Dual-homed for ISP diversity; BGP eBGP peering with ISP
+  const wanXs = dual ? [268, 710] : [W/2 - 57];
+  wanXs.forEach((x, i) => {
+    const id = `wanrtr${i+1}`;
+    nodes.push({ id, x, y: yWanRtr, w: bw, h: bh,
+      label: `WAN-RTR-0${i+1}`, sub:'ISP Edge · BGP eBGP',
+      icon:'🌐', ...C.wanrtr });
+    links.push({ from:'inet', to:id, color:'#2288ff', width:2.2, flow:true,
+      badge: i === 0 ? 'BGP eBGP' : undefined });
+  });
+  if (dual) {
+    links.push({ from:'wanrtr1', to:'wanrtr2', color:'#2288ff', width:1, opacity:.22,
+      badge:'ISP Diversity' });
   }
 
-  // Core layer
-  const coreParent1 = haFW ? 'fw1' : 'inet';
-  const coreParent2 = haFW && dual ? 'fw2' : (haFW ? 'fw1' : 'inet');
-  if (haCore) {
-    nodes.push({ id:'core1', x: dual ? 290 : W/2-57, y: yCore, w:bw, h:bh,
-      label: selCore ? selCore.model.slice(0,18) : 'CORE-01',
-      sub: selCore ? selCore.vendor : `Core · ${P.underlayLabel()}`, icon:'⚙️', ...C.core });
-    links.push({ from: coreParent1, to:'core1', color:'#9955ff', width:2.2, flow:true,
-      badge: P.coreBadge() });
-    if (dual) {
-      nodes.push({ id:'core2', x: 700, y: yCore, w:bw, h:bh,
-        label: selCore ? selCore.model.slice(0,18) : 'CORE-02',
-        sub: selCore ? selCore.vendor : 'Core HA', icon:'⚙️', ...C.core });
-      links.push({ from: coreParent2, to:'core2', color:'#9955ff', width:2.2, flow:true });
-      links.push({ from:'core1', to:'core2', color:'#9955ff', width:1.5, opacity:.45,
-        badge: P.hasOSPF ? 'VSS / StackWise' : (P.hasEIGRP ? 'EIGRP ISL' : 'Core ISL') });
-    }
+  // ── Internet Perimeter Firewall (HA pair) ──────────────────────
+  // Stateful inspection, NAT, IPS, URL filtering
+  const fwXs = dual ? [268, 710] : [W/2 - 57];
+  fwXs.forEach((x, i) => {
+    const id = `fw${i+1}`;
+    nodes.push({ id, x, y: yFW, w: bw, h: bh,
+      label: selFW ? selFW.model.slice(0,16) : `FW-0${i+1}`,
+      sub: selFW ? `${selFW.vendor} · Perimeter` : 'Perimeter FW · IPS',
+      icon:'🔒', ...C.fw });
+    links.push({ from:`wanrtr${Math.min(i+1, wanXs.length)}`, to:id,
+      color:'#ff3355', width:2, flow:true,
+      badge: i === 0 ? 'NAT · IPS · URL' : undefined });
+  });
+  if (dual) {
+    links.push({ from:'fw1', to:'fw2', color:'#ff3355', width:1.2, opacity:.4,
+      badge:'FW HA Sync' });
   }
 
-  // WLC — Wireless LAN Controller
-  if (hasWifi) {
-    const wlcY = haCore ? (yCore || yDist) : yDist;
-    const wlcX = dual ? 920 : 940;
-    nodes.push({ id:'wlc', x: wlcX, y: wlcY, w: 130, h: bh,
-      label: 'WLC / Mobility', sub: 'CAPWAP Controller', icon:'📶',
-      fill:'#071828', stroke:'#00e87a' });
-    const wlcParent = haCore ? (dual ? 'core2' : 'core1') : (haFW ? 'fw1' : 'inet');
-    links.push({ from: wlcParent, to:'wlc', color:'#00e87a', width:1.5, opacity:.8,
-      badge:'CAPWAP / 5520' });
-  }
-
-  // Distribution — 4 nodes
-  const distXs = dual ? [55, 280, 550, 775] : [160, 420, 680, 940];
-  const distIds = ['dist1','dist2','dist3','dist4'];
-  const distParents = haCore
-    ? (dual ? ['core1','core1','core2','core2'] : ['core1','core1','core1','core1'])
-    : (haFW ? (dual ? ['fw1','fw1','fw2','fw2'] : ['fw1','fw1','fw1','fw1'])
-             : ['inet','inet','inet','inet']);
-
-  distXs.forEach((x, i) => {
-    if (x + bw > W + 30) return;
-    nodes.push({ id: distIds[i], x, y: yDist, w:bw, h:bh,
-      label: selDist ? selDist.model.slice(0,14) : `DIST-0${i+1}`,
-      sub: selDist ? selDist.vendor : 'Distribution', icon:'🔀', ...C.dist });
-    links.push({ from: distParents[i], to: distIds[i], color:'#00d4ff', width:1.8, flow:true, slow:true,
+  // ── Campus Core (HA pair) ─────────────────────────────────────
+  // Dual-core for VSS/StackWise-Virtual; L3 routing backbone
+  const coreXs = dual ? [268, 710] : [W/2 - 57];
+  coreXs.forEach((x, i) => {
+    const id = `core${i+1}`;
+    nodes.push({ id, x, y: yCore, w: bw, h: bh,
+      label: selCore ? selCore.model.slice(0,16) : `CORE-0${i+1}`,
+      sub: selCore ? `${selCore.vendor} · ${P.underlayLabel()}` : `Core · ${P.underlayLabel()}`,
+      icon:'⚙️', ...C.core, glow:true });
+    links.push({ from:`fw${Math.min(i+1, fwXs.length)}`, to:id,
+      color:'#9955ff', width:2.2, flow:true,
       badge: i === 0 ? P.coreBadge() : undefined });
-    if (i % 2 === 0 && distXs[i+1]) {
-      links.push({ from: distIds[i], to: distIds[i+1], color:'#00d4ff', width:1, opacity:.22 });
+  });
+  if (dual) {
+    links.push({ from:'core1', to:'core2', color:'#9955ff', width:1.6, opacity:.45,
+      badge: P.hasOSPF ? 'VSS · StackWise-Virtual' : 'Core ISL' });
+  }
+
+  // ── WLC — Wireless LAN Controller ─────────────────────────────
+  if (hasWifi) {
+    nodes.push({ id:'wlc', x:918, y:yCore, w:132, h:bh,
+      label:'WLC / Mobility', sub:'CAPWAP · 9800-CL', icon:'📶',
+      fill:'#071828', stroke:'#00e87a' });
+    links.push({ from: dual ? 'core2' : 'core1', to:'wlc',
+      color:'#00e87a', width:1.4, opacity:.8, badge:'CAPWAP' });
+  }
+
+  // ── OOB Management Switch ─────────────────────────────────────
+  nodes.push({ id:'oob-sw', x:918, y:yFW, w:132, h:bh,
+    label:'OOB-MGMT-SW', sub:'Out-of-Band · VRF MGMT', icon:'🛡',
+    ...C.oob });
+  links.push({ from: dual ? 'fw2' : 'fw1', to:'oob-sw',
+    color:'#5a6e99', width:1, opacity:.5 });
+
+  // ── Distribution — 4 zones / floors ───────────────────────────
+  // Each zone represents a HA distribution pair (MLAG/vPC).
+  // Node label shows actual count from capacity model.
+  const distPerZone = Math.max(1, Math.ceil(totalDist / 4));
+  const zones = [
+    { id:'dist1', lbl:'DIST-FL1',  sub:`Floor 1 · VLAN 10/30/40 · ×${distPerZone} sw`,   icon:'🔀', x:50  },
+    { id:'dist2', lbl:'DIST-FL2',  sub:`Floor 2 · VLAN 11/31/41 · ×${distPerZone} sw`,   icon:'🔀', x:280 },
+    { id:'dist3', lbl:'DIST-SRV',  sub:`Server Farm · VLAN 50/51 · ×${distPerZone} sw`,  icon:'🔀', x:515 },
+    { id:'dist4', lbl:'DIST-IOT',  sub:`IoT/Guest · VLAN 60/61/21 · ×${Math.max(1,totalDist-distPerZone*3)} sw`, icon:'🔀', x:752 },
+  ];
+  zones.forEach((z, i) => {
+    nodes.push({ id:z.id, x:z.x, y:yDist, w:bw, h:bh,
+      label: selDist ? selDist.model.slice(0,13) : z.lbl,
+      sub:   selDist
+        ? `${selDist.vendor} · ${z.sub.split('·').slice(-1)[0].trim()}`
+        : z.sub,
+      icon:z.icon, ...C.dist });
+    // Dual uplink: each dist connects to BOTH core switches
+    links.push({ from:'core1', to:z.id, color:'#00d4ff', width:1.8, flow:true, slow:true,
+      badge: i === 0 ? P.coreBadge() : undefined });
+    if (dual) {
+      links.push({ from:'core2', to:z.id, color:'#00d4ff', width:1.4, opacity:.45 });
+    }
+    // MLAG/vPC peer-link between adjacent distribution pairs
+    if (i % 2 === 0 && zones[i+1]) {
+      links.push({ from:z.id, to:zones[i+1].id,
+        color:'#00d4ff', width:1, opacity:.18,
+        badge: i === 0 ? 'MLAG ISL' : undefined });
     }
   });
 
-  // Access — 4 nodes
-  distXs.forEach((x, i) => {
-    if (x + bw > W + 30) return;
-    const aid = `acc${i+1}`;
-    nodes.push({ id: aid, x, y: yAccess, w:bw, h:bh,
-      label: selAccess ? selAccess.model.slice(0,14) : `ACC-0${i+1}`,
-      sub: selAccess ? selAccess.vendor : 'Access · L2', icon:'🔌', ...C.access });
-    links.push({ from: distIds[i], to: aid, color:'#1a7fff', width:1.5, slow:true,
+  // ── Access Layer — one block per zone (represents N switches) ─
+  const accTypes = [
+    { lbl:'ACC-FL1',  sub:`×${zoneAccess[0]} sw · PoE+ · 802.1X${hasDot1x?' ISE':''}`, icon:'🔌' },
+    { lbl:'ACC-FL2',  sub:`×${zoneAccess[1]} sw · PoE+ · 802.1X${hasDot1x?' ISE':''}`, icon:'🔌' },
+    { lbl:'ACC-SRV',  sub:`×${zoneAccess[2]} sw · 10G NIC · Server Access`, icon:'🖥' },
+    { lbl:'ACC-IOT',  sub:`×${zoneAccess[3]} sw · IoT VLAN · ACL`, icon:'🌡' },
+  ];
+  zones.forEach((z, i) => {
+    const at = accTypes[i];
+    nodes.push({ id:`acc${i+1}`, x:z.x, y:yAccess, w:bw, h:bh,
+      label: selAccess ? selAccess.model.slice(0,13) : at.lbl,
+      sub:   selAccess
+        ? `${selAccess.vendor} · ${at.sub.split('·').slice(-1)[0].trim()}`
+        : at.sub,
+      icon:at.icon, ...C.access });
+    links.push({ from:z.id, to:`acc${i+1}`, color:'#1a7fff', width:1.6, slow:true,
       badge: i === 0 ? P.accessBadge() : undefined });
   });
 
-  // Endpoints — with wireless APs
-  const epTypes = [
-    { id:'ep-pc',  icon:'💻', label:'Workstations', color:'#2a3a5a' },
-    { id:'ep-ph',  icon:'📞', label:'IP Phones (PoE)', color:'#2a3a5a' },
-    { id:'ep-ap',  icon:'📡', label: hasWifi ? 'Wi-Fi APs (CAPWAP)' : 'Wi-Fi APs', color: hasWifi ? '#00e87a22' : '#2a3a5a',
-      stroke: hasWifi ? '#00e87a' : '#2a3a5a' },
-    { id:'ep-srv', icon:'🖥',  label:'Servers / Printers', color:'#2a3a5a' },
+  // ── Endpoints — per zone, differentiated by function ─────────
+  const epData = [
+    { id:'ep1', icon:'💻',
+      label: hasVoice ? 'PCs · IP Phones' : 'Workstations',
+      fill:'#1a2a3a', stroke:'#3a5a8a' },
+    { id:'ep2', icon: hasWifi ? '📡' : '💻',
+      label: hasWifi ? 'Wi-Fi APs (CAPWAP)' : 'Floor 2 PCs',
+      fill: hasWifi ? '#071828' : '#1a2a3a',
+      stroke: hasWifi ? '#00e87a' : '#3a5a8a' },
+    { id:'ep3', icon:'🖥',
+      label:'App / DB Servers',
+      fill:'#0d1520', stroke:'#5a6e99' },
+    { id:'ep4', icon: hasIoT ? '🌡' : '📱',
+      label: hasIoT ? 'IoT / BMS / OT' : 'Guest Devices',
+      fill:'#1a0e00', stroke:'#ff9900' },
   ];
-  distXs.forEach((x, i) => {
-    if (i >= epTypes.length || x + 95 > W + 30) return;
-    const ep = epTypes[i];
-    nodes.push({ id: ep.id, x: x + 8, y: yEP, w: 98, h: 36,
-      label: ep.label, icon: ep.icon,
-      fill: ep.color, stroke: ep.stroke || '#2a3a5a', fontSize: 7.5 });
-    links.push({ from:`acc${i+1}`, to: ep.id, color: ep.stroke || '#2a3a5a', width:1, opacity:.5 });
+  zones.forEach((z, i) => {
+    const ep = epData[i];
+    nodes.push({ id:ep.id, x:z.x + 5, y:yEP, w:105, h:36,
+      label:ep.label, icon:ep.icon,
+      fill:ep.fill, stroke:ep.stroke, fontSize:7.5 });
+    links.push({ from:`acc${i+1}`, to:ep.id, color:ep.stroke, width:1, opacity:.55 });
   });
-
-  // WLC → AP management link
   if (hasWifi) {
-    links.push({ from:'wlc', to:'ep-ap', color:'#00e87a', width:1, opacity:.35 });
+    links.push({ from:'wlc', to:'ep2', color:'#00e87a', width:1, opacity:.28 });
   }
 
-  // Bands
-  const bands = [];
-  if (haFW)   bands.push({ y: yFW   - 12, h: 65, color:'#ff3355', label:'SECURITY PERIMETER' });
-  if (haCore) bands.push({ y: yCore - 12, h: 65, color:'#9955ff', label:`CORE — ${P.coreBadge()} BACKBONE` });
-  bands.push({ y: yDist   - 12, h: 65, color:'#00d4ff', label:`DISTRIBUTION — ${P.coreBadge()} · L3 ROUTING` });
-  bands.push({ y: yAccess - 12, h: 65, color:'#1a7fff', label:`ACCESS — L2 VLANs · 802.1X NAC · PoE` });
-  bands.push({ y: yEP     - 12, h: 55, color:'#5a6e99', label:`ENDPOINTS · ${hasWifi ? 'WIRELESS (CAPWAP) ·' : ''} SERVERS` });
+  // ── Layer bands ───────────────────────────────────────────────
+  const bands = [
+    { y:yWanRtr  - 12, h:65, color:'#2288ff',
+      label:'WAN EDGE — BGP eBGP · Dual-ISP · Route Filtering · AS-PATH hardening' },
+    { y:yFW      - 12, h:65, color:'#ff3355',
+      label:'INTERNET PERIMETER — Stateful FW · NAT · IPS · URL Filter · Anti-Malware' },
+    { y:yCore    - 12, h:65, color:'#9955ff',
+      label:`CAMPUS CORE — ${totalCore} switch${totalCore>1?'es':''} · ${P.coreBadge()} · VSS/StackWise-Virtual · L3 ECMP · Gateway` },
+    { y:yDist    - 12, h:65, color:'#00d4ff',
+      label:`DISTRIBUTION — ${totalDist} switches across 4 zones · MLAG/vPC HA pairs · Inter-VLAN Routing · STP Root · DHCP Relay` },
+    { y:yAccess  - 12, h:65, color:'#1a7fff',
+      label:`ACCESS — ${totalAccess} switches total · ${hasDot1x?'802.1X NAC · ':''} PoE+ · Port-Security · DAI · DHCP Snooping` },
+    { y:yEP      - 12, h:55, color:'#5a6e99',
+      label:`ENDPOINTS — ${cap.endpoints.toLocaleString()} devices (${cap.effective.toLocaleString()} w/growth) · PCs${hasVoice?' · IP Phones':''}${hasWifi?' · Wi-Fi APs':''}${hasIoT?' · IoT/BMS':''}` },
+  ];
 
-  const selAccName  = selAccess ? selAccess.model : '—';
-  const selDistName = selDist   ? selDist.model   : '—';
-  const meta = `Campus 3-tier · ${dual ? 'HA dual-uplink' : 'Single uplink'} · ${P.underlayLabel()} underlay${P.hasOSPF ? ' (Area 0 backbone)' : ''} · Access: ${selAccName} · Dist: ${selDistName}${hasWifi ? ' · Wireless CAPWAP' : ''}`;
+  const meta = `Capacity: ${totalAccess} access · ${totalDist} distribution · ${totalCore} core · ${cap.endpoints.toLocaleString()} endpoints → ${cap.effective.toLocaleString()} w/25% growth · ${dual?'HA':'single'} · ${P.underlayLabel()} underlay · ${selAccess?selAccess.model:'—'} access · ${selDist?selDist.model:'—'} dist${hasWifi?' · CAPWAP':''}${hasIoT?' · IoT':''}  `;
 
   const legend = `
-    <div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Security / Firewall</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#9955ff"></div>Core (${P.underlayLabel()})</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Distribution</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#1a7fff"></div>Access (L2 VLANs)</div>
-    ${hasWifi ? `<div class="legend-item"><div class="legend-dot" style="background:#00e87a"></div>WLC / Wireless APs</div>` : ''}
-    <div class="legend-item" style="gap:.5rem"><div style="width:22px;height:0;border-top:1px solid #1a7fff;border-radius:2px;margin-top:5px"></div>Physical link</div>
-    <div class="legend-item" style="gap:.5rem"><div style="width:22px;height:12px;background:#060b18;border:1px solid #00d4ff99;border-radius:3px;font-size:6px;color:#00d4ff;text-align:center;line-height:12px;font-family:monospace">OSPF</div>Protocol badge</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2288ff"></div>WAN Edge / ISP BGP</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Internet Perimeter FW</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#9955ff"></div>Campus Core (${P.underlayLabel()})</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Distribution (per zone/floor)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1a7fff"></div>Access (802.1X · PoE+)</div>
+    ${hasWifi ? `<div class="legend-item"><div class="legend-dot" style="background:#00e87a"></div>WLC / CAPWAP Wireless</div>` : ''}
+    ${hasIoT  ? `<div class="legend-item"><div class="legend-dot" style="background:#ff9900"></div>IoT / BMS Zone (Isolated)</div>` : ''}
+    <div class="legend-item"><div class="legend-dot" style="background:#5a6e99"></div>OOB Management</div>
     <div class="legend-item"><div class="legend-dot" style="background:#00d4ff;box-shadow:0 0 6px #00d4ff"></div>Animated packet flow</div>`;
 
-  return { svg: buildSVG({ nodes, links, bands, W, H: yEP + 85 }), title:'Campus Network — High Level Design', meta, legend };
+  return { svg:buildSVG({ nodes, links, bands, W, H }), title:'Campus Network — High Level Design', meta, legend };
 }
 
 /* ════════════════════════════════════════════════════════════════
    DATA CENTER (LEAF-SPINE) HLD
+   Full multi-tier: WAN Edge → Internet FW → DMZ (LB ADC + DMZ SW)
+                  → Corporate FW → CLOS Spines → Function-labeled
+                    Leaves (PROD/STOR/DEV) → Server clusters
 ════════════════════════════════════════════════════════════════ */
 function dcHLD() {
   const W = 1100;
-  const red    = STATE.redundancy;
-  const dual   = red === 'ha' || red === 'full';
-  const haFW   = STATE.fwModel && STATE.fwModel !== 'none';
+  const red      = STATE.redundancy;
+  const dual     = red === 'ha' || red === 'full';
   const selLeaf  = PRODUCTS[STATE.selectedProducts['dc-leaf']];
   const selSpine = PRODUCTS[STATE.selectedProducts['dc-spine']];
   const selFW    = PRODUCTS[STATE.selectedProducts['fw']];
   const P = _protos();
 
-  // Determine underlay/overlay labels for annotations
-  const underlayBadge = P.coreBadge();  // 'OSPF Area 0', 'IS-IS L2', 'BGP', etc.
-  const overlayBadge  = P.overlayLabel();// 'VXLAN/EVPN', 'MPLS/SR', 'No Overlay'
+  // ── Capacity model ────────────────────────────────────────────
+  const cap = dcCapacity(parseInt(STATE.totalHosts) || 100, { redundancy: red });
+  const totalLeafs  = cap.leafs;
+  const totalSpines = cap.spines;
 
-  // BGP ASNs for DC EVPN/BGP designs
+  const underlayBadge = P.coreBadge();
+  const overlayBadge  = P.overlayLabel();
   const spineASN = P.hasBGP || P.hasVXLAN ? 'AS 65000' : '';
   const leafASNs = P.hasBGP || P.hasVXLAN
     ? ['AS 65001','AS 65002','AS 65003','AS 65004'] : ['','','',''];
 
-  const yInternet = 25;
-  const yBorder   = haFW ? 112 : null;
-  const ySpine    = haFW ? 218 : 112;
-  const yLeaf     = ySpine + 145;
-  const ySrv      = yLeaf  + 120;
+  // ── Row Y coordinates (7 tiers + internet) ───────────────────
+  const yInternet = 22;
+  const yEdgeRtr  = 98;    // WAN Edge Routers
+  const yInetFW   = 183;   // Internet Perimeter FW (HA)
+  const yDMZ      = 268;   // LB ADC pair + DMZ Switches
+  const yCorpFW   = 358;   // Corporate / Internal FW (HA)
+  const ySpine    = 443;   // DC CLOS Spines
+  const yLeaf     = 533;   // Function-labeled Leaves
+  const ySrv      = 623;   // Server clusters
+  const H         = ySrv + 82;
 
   const nodes = [], links = [];
   const bw = 118, bh = 42;
 
-  // Internet/WAN
+  // X anchor sets
+  const edgeXs = [215, 767];             // 2-node rows (routers, FWs, spines)
+  const dmzXs  = [42, 302, 562, 822];   // 4-node rows (DMZ tier, leaves, servers)
+
+  // ── Internet / WAN ────────────────────────────────────────────
   nodes.push({ id:'inet', x: W/2 - 70, y: yInternet, w:140, h:44,
     label:'INTERNET / WAN', icon:'🌐', ...C.internet, glow:true });
 
-  // Border Firewall
-  if (haFW) {
-    ['border1','border2'].forEach((id, i) => {
-      const x = i === 0 ? 270 : 710;
-      nodes.push({ id, x, y: yBorder, w:bw, h:bh,
-        label: selFW ? selFW.model.slice(0,16) : `BORDER-0${i+1}`,
-        sub: selFW ? selFW.vendor : 'Border FW', icon:'🔒', ...C.fw });
-      links.push({ from:'inet', to:id, color:'#ff3355', width:2, flow:true,
-        badge: i === 0 ? 'BGP eBGP' : undefined });
-    });
-    links.push({ from:'border1', to:'border2', color:'#ff3355', width:1.2, opacity:.4,
-      badge:'FW HA Sync' });
-  }
+  // ── WAN Edge Routers — BGP eBGP dual-homed ───────────────────
+  edgeXs.forEach((x, i) => {
+    const id = `edgertr${i+1}`;
+    nodes.push({ id, x, y: yEdgeRtr, w: bw, h: bh,
+      label:`WAN-EDGE-0${i+1}`,
+      sub:`BGP eBGP · Dual-ISP · AS 6400${i+1}`,
+      icon:'🌐', ...C.wanrtr });
+    links.push({ from:'inet', to:id, color:'#2288ff', width:2, flow:true,
+      badge: i === 0 ? 'BGP eBGP' : undefined });
+  });
+  links.push({ from:'edgertr1', to:'edgertr2', color:'#2288ff', width:1.2, opacity:.35,
+    badge:'eBGP Peer' });
 
-  // Spines — with ASN sub-label
-  const spineParent1 = haFW ? 'border1' : 'inet';
-  const spineParent2 = haFW ? 'border2' : 'inet';
-  ['spine1','spine2'].forEach((id, i) => {
-    const x = i === 0 ? 250 : 730;
-    nodes.push({ id, x, y: ySpine, w:bw, h:bh,
-      label: selSpine ? selSpine.model.slice(0,16) : `SPINE-0${i+1}`,
-      sub: selSpine ? `${selSpine.vendor}${spineASN ? ' · '+spineASN : ''}` : `DC Spine${spineASN ? ' · '+spineASN : ''}`,
+  // ── Internet Perimeter FW — HA pair ──────────────────────────
+  const inetFWBase = selFW ? selFW.model.slice(0,14) : 'INET-FW';
+  const inetFWSub  = selFW
+    ? `${selFW.vendor} · Internet Perimeter`
+    : 'Stateful FW · NAT · IPS · URL Filter';
+  edgeXs.forEach((x, i) => {
+    const id = `inetfw${i+1}`;
+    nodes.push({ id, x, y: yInetFW, w: bw, h: bh,
+      label:`${inetFWBase}-0${i+1}`,
+      sub: inetFWSub, icon:'🔥', ...C.fw });
+    links.push({ from:`edgertr${i+1}`, to:id, color:'#ff3355', width:2, flow:true,
+      badge: i === 0 ? 'Filtered traffic' : undefined });
+  });
+  links.push({ from:'inetfw1', to:'inetfw2', color:'#ff3355', width:1.2, opacity:.4,
+    badge:'HA State Sync' });
+
+  // ── DMZ Tier: LB ADC pair + DMZ Switch pair ───────────────────
+  // LB-ADC-01/02 — L4/L7 application VIP hosting, SSL offload
+  ['lb1','lb2'].forEach((id, i) => {
+    nodes.push({ id, x: dmzXs[i], y: yDMZ, w: bw, h: bh,
+      label:`LB-ADC-0${i+1}`,
+      sub:'L4/L7 VIP · SSL Offload · SNAT · Health Checks',
+      icon:'⚖️', ...C.lb });
+    links.push({ from:`inetfw${i+1}`, to:id, color:'#cc44ff', width:1.8, flow:true,
+      badge: i === 0 ? 'VIP inbound' : undefined });
+  });
+  links.push({ from:'lb1', to:'lb2', color:'#cc44ff', width:1.2, opacity:.38,
+    badge:'ADC Config Sync' });
+
+  // DMZ-SW-01/02 — isolated VLAN segments for DMZ services
+  ['dmzsw1','dmzsw2'].forEach((id, i) => {
+    nodes.push({ id, x: dmzXs[i + 2], y: yDMZ, w: bw, h: bh,
+      label:`DMZ-SW-0${i+1}`,
+      sub:'DMZ Segment · VLAN Isolated · iACL',
+      icon:'🔀', ...C.dmzsw });
+    links.push({ from:`inetfw${i+1}`, to:id, color:'#ff9900', width:1.5,
+      badge: i === 0 ? 'DMZ zone' : undefined });
+  });
+  links.push({ from:'dmzsw1', to:'dmzsw2', color:'#cc6600', width:1.2, opacity:.35,
+    badge:'DMZ ISL' });
+
+  // ── Corporate / Internal FW — HA pair ────────────────────────
+  const corpFWBase = selFW ? selFW.model.slice(0,13) : 'CORP-FW';
+  const corpFWSub  = selFW
+    ? `${selFW.vendor} · Internal Zones`
+    : 'Zone Segmentation · iACL · East-West';
+  edgeXs.forEach((x, i) => {
+    const id = `corpfw${i+1}`;
+    nodes.push({ id, x, y: yCorpFW, w: bw, h: bh,
+      label:`${corpFWBase}-0${i+1}`,
+      sub: corpFWSub, icon:'🛡', ...C.corpfw });
+    // LB → Corp FW
+    links.push({ from:`lb${i+1}`, to:id, color:'#9922cc', width:1.6, flow:true,
+      badge: i === 0 ? 'Server-bound' : undefined });
+    // DMZ SW → Corp FW
+    links.push({ from:`dmzsw${i+1}`, to:id, color:'#9922cc', width:1.3 });
+  });
+  links.push({ from:'corpfw1', to:'corpfw2', color:'#9922cc', width:1.2, opacity:.4,
+    badge:'HA State Sync' });
+
+  // ── DC CLOS Spines — full-mesh to both Corp FWs ──────────────
+  edgeXs.forEach((x, i) => {
+    const id = `spine${i+1}`;
+    nodes.push({ id, x, y: ySpine, w: bw, h: bh,
+      label: selSpine ? selSpine.model.slice(0,14) : `SPINE-0${i+1}`,
+      sub: (selSpine ? selSpine.vendor : 'DC Spine') +
+           ` · ×${totalSpines} tot` + (spineASN ? ` · ${spineASN}` : ''),
       icon:'🦴', ...C.dcspine, glow:true });
-    links.push({ from: i === 0 ? spineParent1 : spineParent2, to: id,
-      color:'#00e87a', width:2.2, flow:true,
-      badge: i === 0 ? underlayBadge : undefined });
+    links.push({ from:'corpfw1', to:id, color:'#00e87a', width:2, flow:true,
+      badge: (i === 0) ? underlayBadge : undefined });
+    links.push({ from:'corpfw2', to:id, color:'#00e87a', width:2 });
   });
-  links.push({ from:'spine1', to:'spine2', color:'#00e87a', width:1.2, opacity:.32,
-    badge: P.hasOSPF ? 'OSPF RR' : (P.hasBGP ? 'iBGP RR' : undefined) });
+  links.push({ from:'spine1', to:'spine2', color:'#00e87a', width:1.4, opacity:.32,
+    badge: P.hasOSPF ? 'OSPF RR' : (P.hasBGP ? 'iBGP RR' : 'ISL') });
 
-  // Leaves (4) — with individual ASN labels
-  const leafXs = [50, 295, 538, 782];
-  leafXs.forEach((x, i) => {
-    const id = `leaf${i+1}`;
-    const asnLabel = leafASNs[i] ? `${selLeaf ? selLeaf.vendor : 'Leaf'} · ${leafASNs[i]}` : (selLeaf ? selLeaf.vendor : 'DC Leaf');
-    nodes.push({ id, x, y: yLeaf, w:bw, h:bh,
-      label: selLeaf ? selLeaf.model.slice(0,14) : `LEAF-0${i+1}`,
-      sub: asnLabel + (P.hasVXLAN ? ' · VTEP' : ''),
-      icon:'🍃', ...C.dcleaf });
-    links.push({ from:'spine1', to:id, color:'#5dcc8a', width:1.5, flow:true, slow:true,
+  // ── DC Leaves — function-labeled PROD / STOR / DEV ───────────
+  // HLD shows 4 representative leaves; actual count from capacity model
+  const leafData = [
+    { id:'leaf1', x:dmzXs[0], label:'LEAF-PROD',
+      sub:`×${cap.prodLeafs} sw · PROD · ${leafASNs[0]||'ToR'}${P.hasVXLAN?' · VTEP':''}`, icon:'🍃' },
+    { id:'leaf2', x:dmzXs[1], label:'LEAF-PROD-B',
+      sub:`PROD-B Redundancy · ${leafASNs[1]||'ToR'}${P.hasVXLAN?' · VTEP':''}`, icon:'🍃' },
+    { id:'leaf3', x:dmzXs[2], label:'LEAF-STOR',
+      sub:`×${cap.storLeafs} sw · Storage · ${leafASNs[2]||'ToR'}${P.hasVXLAN?' · VTEP':''}`, icon:'🗄️' },
+    { id:'leaf4', x:dmzXs[3], label:'LEAF-DEV',
+      sub:`×${cap.devLeafs} sw · Dev/Test · ${leafASNs[3]||'ToR'}${P.hasVXLAN?' · VTEP':''}`, icon:'🧪' },
+  ];
+  leafData.forEach((ld, i) => {
+    nodes.push({ id:ld.id, x:ld.x, y:yLeaf, w:bw, h:bh,
+      label: selLeaf ? selLeaf.model.slice(0,13) : ld.label,
+      sub:   selLeaf
+               ? `${selLeaf.vendor} · ${ld.sub.split('·').pop().trim()}`
+               : ld.sub,
+      icon:ld.icon, ...C.dcleaf });
+    // Both spines → each leaf (CLOS full-mesh)
+    links.push({ from:'spine1', to:ld.id, color:'#5dcc8a', width:1.5, flow:true, slow:true,
       badge: i === 0 ? overlayBadge : undefined });
-    links.push({ from:'spine2', to:id, color:'#5dcc8a', width:1.5, flow:true, slow:true });
+    links.push({ from:'spine2', to:ld.id, color:'#5dcc8a', width:1.5, flow:true, slow:true });
   });
 
-  // Server clusters with role labels
-  leafXs.forEach((x, i) => {
-    const id = `srv${i+1}`;
-    const srvData = [
-      { label:'Compute Pool', sub:'KVM / VMware', icon:'🖥' },
-      { label:'Storage Nodes', sub:'NVMe-oF / Ceph', icon:'🗄️' },
-      { label:'App Servers',   sub:'Docker / K8s', icon:'📦' },
-      { label:'DB Cluster',    sub:'Oracle / Postgres', icon:'🗃️' },
-    ];
-    const sd = srvData[i] || srvData[0];
-    nodes.push({ id, x: x + 5, y: ySrv, w: 108, h: 38,
-      label: sd.label, sub: sd.sub, icon: sd.icon,
+  // ── Server Clusters — one per leaf ───────────────────────────
+  const srvData = [
+    { id:'srv1', label:'Prod Compute',  sub:'KVM / VMware ESXi',    icon:'🖥' },
+    { id:'srv2', label:'App Servers',   sub:'Docker / Kubernetes',  icon:'📦' },
+    { id:'srv3', label:'Storage Array', sub:'NVMe-oF / Ceph RBD',   icon:'🗄️' },
+    { id:'srv4', label:'Dev / Test',    sub:'CI/CD · Sandbox VMs',  icon:'🧪' },
+  ];
+  srvData.forEach((sd, i) => {
+    nodes.push({ id:sd.id, x: dmzXs[i] + 5, y: ySrv, w:108, h:38,
+      label:sd.label, sub:sd.sub, icon:sd.icon,
       fill:'#0d1520', stroke:'#2a3a5a', fontSize:8 });
-    links.push({ from:`leaf${i+1}`, to:id, color:'#2a3a5a', width:1, opacity:.65 });
+    links.push({ from:leafData[i].id, to:sd.id, color:'#2a3a5a', width:1, opacity:.65 });
   });
 
-  const bands = [];
-  if (haFW) bands.push({ y: yBorder - 12, h: 65, color:'#ff3355', label:'BORDER SECURITY / PERIMETER FW' });
-  bands.push({ y: ySpine - 12, h: 65, color:'#00e87a', label:`SPINE — ${underlayBadge}${spineASN ? ' · '+spineASN : ''}` });
-  bands.push({ y: yLeaf  - 12, h: 65, color:'#5dcc8a', label:`LEAF / ToR — ${overlayBadge}${P.hasVXLAN ? ' · VTEP · Anycast GW' : ''}` });
-  bands.push({ y: ySrv   - 12, h: 55, color:'#5a6e99', label:'SERVER CLUSTERS' });
+  // ── Layer bands ───────────────────────────────────────────────
+  const bands = [
+    { y:yEdgeRtr - 12, h:65, color:'#2288ff',
+      label:'WAN EDGE — BGP eBGP · Dual-ISP · AS-PATH Hardening · Route Filtering · BFD' },
+    { y:yInetFW  - 12, h:65, color:'#ff3355',
+      label:'INTERNET PERIMETER FW — Stateful · NAT · IPS · URL Filter · Anti-Malware · SSL Inspect' },
+    { y:yDMZ     - 12, h:65, color:'#ff9900',
+      label:'DMZ TIER — LB ADC (L4/L7 VIP · SSL Offload · SNAT) + DMZ Switches (VLAN Isolated)' },
+    { y:yCorpFW  - 12, h:65, color:'#9922cc',
+      label:'CORPORATE / INTERNAL FW — Zone Segmentation · East-West Inspection · iACL · HA Pair' },
+    { y:ySpine   - 12, h:65, color:'#00e87a',
+      label:`SPINE — ${underlayBadge}${spineASN ? ' · '+spineASN : ''} · ECMP · Route Reflector · CLOS` },
+    { y:yLeaf    - 12, h:65, color:'#5dcc8a',
+      label:`LEAF / ToR — ${overlayBadge}${P.hasVXLAN?' · VTEP · Anycast GW':''} · PROD · STOR · DEV` },
+    { y:ySrv     - 12, h:55, color:'#5a6e99',
+      label:'SERVER CLUSTERS — Prod Compute · App Servers · Storage (NVMe-oF/Ceph) · Dev/Test' },
+  ];
 
-  const meta = `Leaf-Spine CLOS · 4 leaves · 2 spines · Underlay: ${P.underlayLabel()} · Overlay: ${P.overlayLabel()} · ${selLeaf ? selLeaf.model : '—'} leaf · ${selSpine ? selSpine.model : '—'} spine`;
+  const meta = `Capacity: ${totalLeafs} leaf switches (PROD ${cap.prodLeafs} / STOR ${cap.storLeafs} / DEV ${cap.devLeafs}) · ` +
+    `${totalSpines} spines · ${cap.servers.toLocaleString()} servers · ` +
+    `Oversubscription ${cap.oversub}:1 · ${cap.downlinkBW}G down / ${cap.uplinkBW}G up per leaf · ` +
+    `Underlay: ${P.underlayLabel()} · Overlay: ${P.overlayLabel()} · ` +
+    `${selLeaf?selLeaf.model:'—'} leaf · ${selSpine?selSpine.model:'—'} spine`;
+
   const legend = `
-    <div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Border / Firewall</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#00e87a"></div>Spine (${P.underlayLabel()})</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#5dcc8a"></div>Leaf / ToR (${P.overlayLabel()})</div>
-    ${spineASN ? `<div class="legend-item" style="gap:.5rem"><div style="width:22px;height:12px;background:#060b18;border:1px solid #00e87a99;border-radius:3px;font-size:5.5px;color:#00e87a;text-align:center;line-height:12px;font-family:monospace">${underlayBadge}</div>Protocol label on link</div>` : ''}
+    <div class="legend-item"><div class="legend-dot" style="background:#2288ff"></div>WAN Edge Routers (BGP eBGP)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Internet Perimeter FW (HA)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#cc44ff"></div>Load Balancer ADC (L4/L7 VIP)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff9900"></div>DMZ Switches (Isolated VLAN)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#9922cc"></div>Corporate / Internal FW (HA)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#00e87a"></div>DC Spines (${P.underlayLabel()})</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#5dcc8a"></div>DC Leaves — PROD / STOR / DEV</div>
     <div class="legend-item"><div class="legend-dot" style="background:#00e87a;box-shadow:0 0 6px #00e87a"></div>Animated packet flow</div>`;
 
-  return { svg: buildSVG({ nodes, links, bands, W, H: ySrv + 85 }), title:'Data Center Leaf-Spine — High Level Design', meta, legend };
+  return { svg: buildSVG({ nodes, links, bands, W, H }), title:'Data Center Leaf-Spine — High Level Design', meta, legend };
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -543,6 +720,17 @@ function gpuHLD() {
   const selTOR   = PRODUCTS[STATE.selectedProducts['gpu-tor']];
   const selSpine = PRODUCTS[STATE.selectedProducts['gpu-spine']];
 
+  // ── Capacity model ────────────────────────────────────────────
+  const gpuCount  = parseInt(STATE.gpuCount || STATE.totalHosts) || 64;
+  const gpuPerSrv = parseInt(STATE.gpusPerServer) || 8;
+  const portSpd   = parseInt(STATE.portSpeed) || 100;
+  const cap = gpuCapacity(gpuCount, {
+    gpusPerServer: gpuPerSrv,
+    speed: portSpd,
+  });
+  const totalTORs   = cap.tors;
+  const totalSpines = cap.spines;
+
   // 3 fabrics: OOB MGMT | Compute | Storage
   const nodes = [], links = [];
   const bw = 115, bh = 40;
@@ -552,7 +740,7 @@ function gpuHLD() {
     label:'OOB MGMT SW', sub:'Management', icon:'🛡', ...C.dist });
 
   const P = _protos();
-  const hasBGP   = P.hasBGP || true; // GPU always uses BGP
+  const hasBGP   = P.hasBGP || true;
   const hasRoCE  = (STATE.gpuSpecifics || []).some(g => /RoCEv2/i.test(g));
   const hasPFC   = (STATE.gpuSpecifics || []).some(g => /PFC/i.test(g));
   const hasECN   = (STATE.gpuSpecifics || []).some(g => /ECN/i.test(g));
@@ -560,27 +748,30 @@ function gpuHLD() {
 
   const fabricType  = hasRoCE ? 'RoCEv2 / RDMA' : 'Ethernet';
   const fabricBadge = hasRoCE ? 'RoCEv2' : 'Ethernet';
-  const qosBadge    = hasPFC  ? 'PFC+ECN' : 'QoS';
 
-  // GPU Spines (compute fabric)
+  // GPU Spines — show 2 representative nodes with total count badge
   [0,1].forEach(i => {
     const id = `gspine${i+1}`;
     nodes.push({ id, x: 130 + i * 480, y: 130, w:bw, h:bh,
       label: selSpine ? selSpine.model.slice(0,14) : `GPU-SPINE-0${i+1}`,
-      sub: selSpine ? `${selSpine.vendor} · BGP AS 65010` : 'GPU Spine · BGP AS 65010',
+      sub: (selSpine ? `${selSpine.vendor} · ` : '') +
+           `×${totalSpines} spines · BGP AS 65010`,
       icon:'🧠', ...C.gpuspine, glow:true });
     links.push({ from:'oob', to:id, color:'#ffd000', width:1, opacity:.3 });
   });
   links.push({ from:'gspine1', to:'gspine2', color:'#ffd000', width:1.5, opacity:.4,
-    badge: 'iBGP / ECMP' });
+    badge: `iBGP · ${cap.isNonBlocking?'1:1 non-blocking':'ECMP'}` });
 
-  // GPU TORs (4 racks)
-  const torXs = [40, 260, 480, 700];
+  // GPU TORs — show up to 4 representative nodes, label with actual count
+  const visibleTORs = Math.min(4, totalTORs);
+  const torXs = [40, 260, 480, 700].slice(0, visibleTORs);
   torXs.forEach((x, i) => {
     const id = `tor${i+1}`;
+    const isFirst = i === 0;
     nodes.push({ id, x, y: 255, w:bw, h:bh,
       label: selTOR ? selTOR.model.slice(0,14) : `GPU-TOR-0${i+1}`,
-      sub: selTOR ? `${selTOR.vendor} · AS 6501${i+1}` : `GPU TOR · AS 6501${i+1}`,
+      sub: (selTOR ? `${selTOR.vendor} · ` : '') +
+           (isFirst ? `×${totalTORs} total · ` : '') + `AS 6501${i+1}`,
       icon:'⚡', ...C.gputor });
     links.push({ from:'gspine1', to:id, color:'#ff8c00', width:2, flow:true,
       badge: i === 0 ? fabricBadge : undefined });
@@ -588,12 +779,14 @@ function gpuHLD() {
     links.push({ from:'oob', to:id, color:'#ffd000', width:1, opacity:.2 });
   });
 
-  // GPU Servers (4 racks × 8 GPUs visual)
+  // GPU Servers — one node per visible TOR
+  const gpusPerRack = gpuPerSrv * Math.ceil(cap.servers / totalTORs);
   torXs.forEach((x, i) => {
     const id = `gsrv${i+1}`;
-    const rackLabel = hasRailOpt ? `Rail-${i+1} GPUs` : `Rack-${i+1} GPUs`;
+    const rackLabel = hasRailOpt ? `Rail-${i+1} · ×${gpuPerSrv}GPU` : `Rack-${i+1} · ×${gpuPerSrv}GPU`;
     nodes.push({ id, x: x + 5, y: 375, w: 105, h:38,
-      label: rackLabel, sub:`H100 / A100 × 8 · ${fabricBadge}`,
+      label: rackLabel,
+      sub: `${cap.servers} servers · ${cap.gpus} GPUs total · ${fabricBadge}`,
       icon:'🎮', fill:'#1a0a00', stroke:'#ff6600', fontSize:8 });
     links.push({ from:`tor${i+1}`, to:id, color:'#ff6600', width:1.8, flow:true, slow:true,
       badge: i === 0 ? (hasRoCE ? 'RoCEv2 RDMA' : 'Ethernet') : undefined });
@@ -601,34 +794,40 @@ function gpuHLD() {
 
   // Storage fabric (right side)
   nodes.push({ id:'sstor1', x: 870, y: 130, w:bw, h:bh,
-    label:'STOR-SPINE-01', sub:'Storage Spine', icon:'💾', ...C.stor });
+    label:'STOR-SPINE-01', sub:'Storage Spine · NVMe-oF', icon:'💾', ...C.stor });
   nodes.push({ id:'sstor2', x: 870, y: 255, w:bw, h:bh,
-    label:'STOR-LEAF-01', sub:'Storage Leaf', icon:'🗄️', ...C.stor });
+    label:'STOR-LEAF-01', sub:'Storage Leaf · GPUDirect', icon:'🗄️', ...C.stor });
   nodes.push({ id:'sstor3', x: 870, y: 375, w: 105, h:38,
-    label:'NVMe-oF / NFS', sub:'Storage Array', icon:'🗃️',
+    label:'NVMe-oF / NFS', sub:'All-Flash Storage Array', icon:'🗃️',
     fill:'#0a1a2e', stroke:'#00d4ff', fontSize:8 });
 
   links.push({ from:'oob',    to:'sstor1', color:'#00d4ff', width:1, opacity:.3 });
   links.push({ from:'sstor1', to:'sstor2', color:'#00d4ff', width:2, flow:true });
   links.push({ from:'sstor2', to:'sstor3', color:'#00d4ff', width:1.8, flow:true, slow:true });
-  // Storage to GPU servers
-  [0,1,2,3].forEach(i => {
+  torXs.forEach((_, i) => {
     links.push({ from:'sstor2', to:`gsrv${i+1}`, color:'#00d4ff', width:1, opacity:.2 });
   });
 
   const bands = [
-    { y: 110, h: 60, color:'#ffd000', label:`GPU SPINE — eBGP ECMP · ${hasRailOpt ? 'RAIL-OPTIMIZED' : 'CLOS FABRIC'}` },
-    { y: 235, h: 60, color:'#ff8c00', label:`GPU TOR — ${fabricType}${hasPFC ? ' · PFC Priority 3' : ''}${hasECN ? ' · ECN 150KB' : ''}` },
-    { y: 355, h: 55, color:'#ff6600', label:`GPU SERVERS — ${hasRailOpt ? 'RAIL TOPOLOGY ·' : ''} RDMA NIC · NVMe-oF Storage` },
+    { y: 110, h: 60, color:'#ffd000',
+      label:`GPU SPINE — ×${totalSpines} spines · eBGP ECMP · ${cap.isNonBlocking?'1:1 NON-BLOCKING':'CLOS FABRIC'} · ${cap.torUpBW}G aggregate uplink` },
+    { y: 235, h: 60, color:'#ff8c00',
+      label:`GPU TOR — ×${totalTORs} switches · ${fabricType}${hasPFC?' · PFC Priority 3':''}${hasECN?' · ECN 150KB':''} · ${cap.torDownBW}G downlink` },
+    { y: 355, h: 55, color:'#ff6600',
+      label:`GPU SERVERS — ${cap.servers} servers · ${cap.gpus} GPUs · ${gpuPerSrv} GPU/server · ${hasRailOpt?'RAIL TOPOLOGY · ':''}RDMA NIC · NVMe-oF` },
   ];
 
-  const meta = `${torXs.length} TOR racks · ${torXs.length * 8} GPU slots · Fabric: ${fabricType} · ${hasPFC ? 'PFC lossless · ' : ''}${hasECN ? 'ECN · ' : ''}BGP ECMP · ${selTOR ? selTOR.model : '—'} TOR · ${selSpine ? selSpine.model : '—'} spine`;
+  const meta = `Capacity: ${totalTORs} TOR switches · ${totalSpines} spines · ${cap.servers} servers · ${cap.gpus} GPUs · ` +
+    `Oversubscription: ${cap.oversub}:1 ${cap.isNonBlocking?'✓ non-blocking':'⚠ check uplinks'} · ` +
+    `${portSpd}G ports · ${hasPFC?'PFC lossless · ':''}${hasECN?'ECN · ':''}` +
+    `${selTOR?selTOR.model:'—'} TOR · ${selSpine?selSpine.model:'—'} spine`;
+
   const legend = `
-    <div class="legend-item"><div class="legend-dot" style="background:#ffd000"></div>GPU Spine (eBGP ECMP)</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#ff8c00"></div>GPU TOR${hasPFC ? ' (PFC lossless)' : ''}</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Storage fabric (NVMe-oF)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffd000"></div>GPU Spine ×${totalSpines} (eBGP · ${cap.isNonBlocking?'non-blocking':'ECMP'})</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff8c00"></div>GPU TOR ×${totalTORs}${hasPFC?' (PFC lossless)':''}</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff6600"></div>GPU Servers — ${cap.servers} servers / ${cap.gpus} GPUs</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>Storage fabric (NVMe-oF · GPUDirect)</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ffd000;opacity:.5"></div>OOB Management</div>
-    <div class="legend-item" style="gap:.5rem"><div style="width:22px;height:12px;background:#060b18;border:1px solid #ff8c0099;border-radius:3px;font-size:5.5px;color:#ff8c00;text-align:center;line-height:12px;font-family:monospace">${fabricBadge}</div>Protocol badge on link</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ff8c00;box-shadow:0 0 6px #ff8c00"></div>Animated packet flow</div>`;
 
   return { svg: buildSVG({ nodes, links, bands, W, H: 460 }), title:'AI / GPU Cluster — High Level Design', meta, legend };

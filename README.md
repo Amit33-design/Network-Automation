@@ -1,12 +1,13 @@
 # 🌐 NetDesign AI — Intent-Driven Network Design & Deployment Platform
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-blue?style=flat-square&logo=github)](https://amit33-design.github.io/Network-Automation/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![License: NDAL v1.0](https://img.shields.io/badge/License-Source--Available%20(NDAL%20v1.0)-red?style=flat-square)](LICENSE)
 [![No Dependencies](https://img.shields.io/badge/frontend-zero%20dependencies-brightgreen?style=flat-square)](index.html)
-[![Python](https://img.shields.io/badge/backend-Python%203.12+-blue?style=flat-square&logo=python)](netdesign-backend/)
-[![Nornir](https://img.shields.io/badge/automation-Nornir%20%2B%20Netmiko-orange?style=flat-square)](netdesign-backend/requirements.txt)
+[![Python](https://img.shields.io/badge/backend-Python%203.11+-blue?style=flat-square&logo=python)](backend/)
+[![MCP Ready](https://img.shields.io/badge/MCP-AI--Native%20API-purple?style=flat-square)](backend/mcp_server.py)
+[![Nornir](https://img.shields.io/badge/automation-Nornir%20%2B%20Netmiko-orange?style=flat-square)](backend/requirements.txt)
 
-> **Express network intent. Get topology, configs, policy validation, and a gate-enforced deployment pipeline — entirely in your browser, with an optional Python backend for real device automation.**
+> **Express network intent in plain English. Get topology diagrams, production configs, policy validation, failure simulation, and a gate-enforced deployment pipeline — in your browser or via any AI assistant (Claude, ChatGPT, Gemini) through the MCP API.**
 
 ---
 
@@ -18,21 +19,263 @@ No login. No install. Click **⚡ Demo** for a pre-filled walkthrough in under 2
 
 ---
 
+## 🤖 NEW — MCP Layer: Use NetDesign AI from Claude, ChatGPT, or Any AI
+
+NetDesign AI now exposes a full **Model Context Protocol (MCP)** server — an open standard that lets AI assistants call tools directly, like a structured API for AI agents.
+
+Instead of clicking through a UI, just describe what you need in natural language and let your AI handle the rest:
+
+> *"Design a 2-spine 8-leaf Arista EOS DC fabric with EVPN/VXLAN, OSPF underlay, and three tenant VRFs: PROD, DEV, STORAGE. Validate all policies and generate configs."*
+
+The AI calls the MCP tools behind the scenes and returns a complete design with production configs attached.
+
+### What the MCP exposes
+
+| Category | Tools / Resources |
+|---|---|
+| **Design** | `design_network`, `get_ip_plan`, `get_vlan_plan`, `get_bgp_topology`, `get_topology_graph` |
+| **Configs** | `generate_configs` (NX-OS · EOS · SONiC · IOS-XE · JunOS) |
+| **Validation** | `validate_policies` (15 rules — BLOCK / FAIL / WARN / AUTO_FIX / INFO) |
+| **Simulation** | `simulate_failure`, `simulate_link_failure` (BFS partition + BGP impact) |
+| **Gate** | `check_deployment_gate` (0-100 confidence score, APPROVED / CONDITIONAL / BLOCKED) |
+| **Automation** | `full_automation_pipeline` (all of the above in one call) |
+| **Catalogue** | `list_products` (7 platforms, filterable by use-case / vendor / platform) |
+| **Resources** | `netdesign://products`, `netdesign://architectures/{uc}`, `netdesign://policy-rules`, `netdesign://community-scheme` |
+| **Prompts** | `design_campus_network`, `design_dc_fabric`, `design_gpu_cluster`, `validate_and_deploy` |
+
+---
+
 ## 🎯 Who This Is For
 
 | Audience | What they get |
 |---|---|
 | **Network Architects** | HLD + LLD + production configs in minutes, not days |
-| **Platform / SRE Teams** | Gate-enforced, staged deployments with 17 pre + 8 post validation checks |
+| **Platform / SRE Teams** | Gate-enforced deployments with 17 pre + 8 post validation checks |
 | **AI / GPU Infrastructure** | Correctly designed RoCEv2 lossless fabrics — PFC, ECN, DSCP, MTU 9216 |
 | **Network Automation Engineers** | Intent JSON → Nornir/Netmiko pipeline with delta deploy and granular rollback |
-| **Enterprise Architects** | Multi-vendor design across campus, DC, GPU, WAN, multi-site DCI |
+| **AI Builders** | Plug NetDesign into any LLM via MCP — no UI required |
+
+---
+
+## ⚡ Quick Start — 3 Ways to Use NetDesign AI
+
+### 1. Browser Only (zero install)
+```
+https://amit33-design.github.io/Network-Automation/
+```
+
+### 2. With Claude Desktop (MCP — recommended)
+```bash
+# Clone the repo
+git clone https://github.com/Amit33-design/Network-Automation.git
+cd Network-Automation/backend
+
+# Install dependencies (Python 3.10+ required for MCP)
+pip install -r requirements.txt
+
+# Add to your Claude Desktop config (see full instructions below)
+```
+
+### 3. Python Backend (for real device automation)
+```bash
+cd backend
+cp .env.example .env
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# Docs: http://localhost:8000/docs
+```
+
+---
+
+## 🔌 Using with Claude Desktop (MCP Setup)
+
+### Prerequisites
+- **Python 3.10 or higher** (check: `python3 --version`)
+- **Claude Desktop** installed ([download](https://claude.ai/download))
+- Repository cloned to your machine
+
+### Step 1 — Install dependencies
+```bash
+cd /path/to/Network-Automation/backend
+pip install -r requirements.txt
+# This installs the mcp[cli] package along with all other deps
+```
+
+### Step 2 — Add to Claude Desktop config
+
+Open (or create) the Claude Desktop configuration file:
+
+| OS | Path |
+|---|---|
+| **macOS** | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| **Windows** | `%APPDATA%\Claude\claude_desktop_config.json` |
+| **Linux** | `~/.config/Claude/claude_desktop_config.json` |
+
+Add this block (adjust the path to match where you cloned the repo):
+
+```json
+{
+  "mcpServers": {
+    "netdesign-ai": {
+      "command": "python3",
+      "args": [
+        "/FULL/PATH/TO/Network-Automation/backend/mcp_server.py",
+        "--transport", "stdio"
+      ],
+      "cwd": "/FULL/PATH/TO/Network-Automation/backend",
+      "env": {
+        "PYTHONPATH": "/FULL/PATH/TO/Network-Automation/backend",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+> **Replace `/FULL/PATH/TO/Network-Automation`** with the actual path where you cloned the repo.
+> On macOS this is typically `/Users/YOUR_NAME/...`
+
+### Step 3 — Restart Claude Desktop
+
+Fully quit and reopen Claude Desktop. You should see a **hammer icon 🔨** in the chat input area — click it to confirm **NetDesign AI** tools are listed.
+
+### Step 4 — Try it out
+
+Paste any of these into Claude Desktop chat:
+
+```
+Design a 3-tier campus network for a 500-person company with Cisco Catalyst 9k switches,
+3 floors, VoIP, guest WiFi, 802.1X, and full redundancy. Generate the configs.
+```
+
+```
+Design a GPU cluster fabric for 64× NVIDIA H100 GPUs across 8 racks.
+Use SONiC TOR switches, Arista spines, RoCEv2 lossless, PFC priority 3+4.
+Run failure simulation on spine-1 and give me the deployment gate decision.
+```
+
+```
+Use the full_automation_pipeline tool to design, validate, simulate, and gate
+a 2-spine 8-leaf Cisco NX-OS DC fabric with EVPN/VXLAN, OSPF underlay,
+tenant VRFs for PROD, DEV, and STORAGE.
+```
+
+---
+
+## 🤝 Using with ChatGPT (Custom GPT / GPT Actions)
+
+ChatGPT supports MCP-compatible tools via **GPT Actions** with SSE transport.
+
+### Step 1 — Run the MCP server in SSE mode
+
+```bash
+cd backend
+python3 mcp_server.py --transport sse --host 0.0.0.0 --port 8001
+```
+
+The server is now reachable at `http://YOUR_IP:8001/sse`
+
+> For public internet access, put this behind a reverse proxy (nginx/Caddy) with HTTPS.
+> The server must be reachable from OpenAI's servers if you use ChatGPT.com.
+
+### Step 2 — Create a Custom GPT
+
+1. Go to [chat.openai.com](https://chat.openai.com) → **Explore GPTs** → **Create**
+2. In the **Configure** tab, click **Add actions**
+3. Import the OpenAPI schema from:
+   ```
+   http://YOUR_IP:8001/openapi.json
+   ```
+   (FastMCP auto-generates this)
+4. Set authentication to **None** (or add an API key header if you configure one)
+5. Save and test
+
+### Step 3 — System prompt for your Custom GPT
+
+```
+You are a network design expert powered by NetDesign AI.
+When users describe a network, call design_network() first, then
+validate_policies(), simulate_failure(), and check_deployment_gate().
+Always show the confidence score and gate decision before generating configs.
+Use full_automation_pipeline() for end-to-end requests.
+```
+
+### Docker-based SSE server (recommended for production)
+
+```bash
+# Start MCP server in SSE mode via Docker
+docker run -d \
+  --name netdesign-mcp \
+  -p 8001:8001 \
+  -e PYTHONUNBUFFERED=1 \
+  netdesign-ai:latest \
+  python mcp_server.py --transport sse --host 0.0.0.0 --port 8001
+```
+
+---
+
+## 🐍 Using from Python / LangChain / Any AI Framework
+
+```python
+# Using the mcp Python SDK directly
+import asyncio
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def design_my_network():
+    server_params = StdioServerParameters(
+        command="python3",
+        args=["/path/to/backend/mcp_server.py"],
+        env={"PYTHONPATH": "/path/to/backend"}
+    )
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # List available tools
+            tools = await session.list_tools()
+            print([t.name for t in tools.tools])
+
+            # Design a network
+            result = await session.call_tool(
+                "design_network",
+                {"description": "2 Arista spines, 8 SONiC TOR switches, 64 H100 GPUs, RoCEv2 lossless"}
+            )
+            print(result.content[0].text)
+
+asyncio.run(design_my_network())
+```
+
+### With LangChain
+
+```python
+from langchain_mcp_adapters.tools import load_mcp_tools
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+from mcp import StdioServerParameters
+
+server_params = StdioServerParameters(
+    command="python3",
+    args=["/path/to/backend/mcp_server.py"],
+    env={"PYTHONPATH": "/path/to/backend"}
+)
+
+# Load all NetDesign AI tools into LangChain
+tools = load_mcp_tools(server_params)
+
+# Create an agent
+model = ChatAnthropic(model="claude-opus-4-5")
+agent = create_react_agent(model, tools)
+
+result = agent.invoke({
+    "messages": "Design a DC fabric for a fintech company with PCI-DSS compliance, 4 spines, 16 leaves."
+})
+```
 
 ---
 
 ## 🧩 The Intent Model
 
-Every design starts with a **structured intent object** — a declarative description of *what* you need, not *how* to configure it. The platform compiles this single object into every downstream artifact.
+Every design starts with a **structured intent object** — a declarative description of *what* you need, not *how* to configure it.
 
 ```json
 {
@@ -55,15 +298,18 @@ Every design starts with a **structured intent object** — a declarative descri
 }
 ```
 
-This intent object feeds the entire pipeline:
+This intent feeds the entire pipeline:
 
 ```
 Intent Object
-    ├── Policy Engine     → 9 rules → PASS / WARN / FAIL
+    ├── Policy Engine     → 15 rules → PASS / WARN / FAIL / AUTO_FIX
     ├── Product Scoring   → 40+ SKUs scored 0–100% across 8 signals → BOM
     ├── Topology Builder  → Animated SVG HLD + LLD tables
-    ├── Config Generator  → IOS-XE · NX-OS · EOS · SONiC · Junos (browser + Jinja2)
-    ├── Deployment Gate   → Simulation + Pre-checks + Policy → go / no-go
+    ├── Config Generator  → IOS-XE · NX-OS · EOS · SONiC · JunOS
+    ├── EVPN/VXLAN Policy → L2VNI / L3VNI / RT scheme / symmetric IRB
+    ├── BGP Policy        → Community colouring, RR, iBGP/eBGP, BFD
+    ├── Deployment Gate   → Sim + Pre-checks + Policy → go / no-go
+    ├── MCP Layer         → AI tools via Claude / ChatGPT / LangChain
     └── Real Deploy       → Nornir + Netmiko → delta push → post-checks
 ```
 
@@ -73,37 +319,193 @@ Intent Object
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
+│  AI Assistants (Claude Desktop · ChatGPT · LangChain · Any LLM)      │
+│                          │ MCP Protocol                              │
+│                    mcp_server.py (FastMCP)                           │
+│                    12 tools · 4 resources · 4 prompts                │
+└──────────────────────────┬───────────────────────────────────────────┘
+                           │
+┌──────────────────────────▼───────────────────────────────────────────┐
 │  Browser UI  (GitHub Pages — zero dependencies)                      │
 │                                                                      │
 │  Step 1: Use Case → Step 2: Requirements → Step 3: Products          │
 │  Step 4: Design   → Step 5: Configs      → Step 6: Deploy            │
-│                                                                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐  ┌───────────┐ │
-│  │Intent Model │  │Policy Engine│  │  Deploy Gate  │  │Confidence │ │
-│  │  (JSON)     │→ │  9 rules    │→ │ Sim·Pre·Policy│→ │  Score %  │ │
-│  └─────────────┘  └─────────────┘  └──────────────┘  └───────────┘ │
-└──────────────────────────────┬───────────────────────────────────────┘
-                               │ HTTPS + WebSocket (optional live mode)
-                               ▼
+└──────────────────────────┬───────────────────────────────────────────┘
+                           │ HTTPS + WebSocket
+                           ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  netdesign-backend/  (Python — runs on your jump host)               │
+│  backend/  (Python 3.11 — runs on your jump host or Docker)          │
 │                                                                      │
 │  FastAPI · Nornir 3.x · Netmiko 4.x · NAPALM 4.x · Jinja2          │
-│                                                                      │
-│  POST /api/precheck     → 17 checks  (ICMP, SSH, LLDP, BGP, IS-IS…) │
-│  POST /api/deploy/delta → LCS diff   → push only changed lines       │
-│  POST /api/postcheck    →  8 checks  (route propagation, EVPN, …)   │
-│  POST /api/rollback/{scope} → device | stage | full                 │
-│  WS   /ws/terminal/{id}     → real-time log stream to browser        │
-└──────────────────────────────┬───────────────────────────────────────┘
-                               │ SSH / NETCONF / eAPI / REST
-                               ▼
+│  nl_parser · design_engine · sim_engine · gate_engine · config_gen   │
+│  policies/ (EVPN · BGP · QoS · Firewall · AAA · ACL · …)            │
+└──────────────────────────┬───────────────────────────────────────────┘
+                           │ SSH / NETCONF / eAPI
+                           ▼
               ┌─────────────────────────────────┐
               │       Network Devices            │
               │  IOS-XE · NX-OS · EOS · SONiC   │
-              │  Junos                           │
+              │  JunOS · FortiOS · PAN-OS        │
               └─────────────────────────────────┘
 ```
+
+---
+
+## 🛡️ Policy Engine (15 Rules)
+
+| Rule ID | Name | Action | Triggered when |
+|---|---|---|---|
+| P001 | BGP_ASN_RANGE | BLOCK | ASN outside valid 16-bit or 32-bit range |
+| P002 | EVPN_REQUIRES_VRF | BLOCK | EVPN overlay with no tenant VRF defined |
+| P003 | REDUNDANCY_REQUIRED | FAIL | Spine count < 2 (single spine = SPOF) |
+| P004 | MTU_VXLAN_HEADROOM | FAIL | Host MTU < 9000 with VXLAN overlay |
+| P005 | PFC_LOSSLESS_CONFIG | FAIL | GPU/RDMA workload without PFC + DCQCN ECN |
+| P006 | VLAN_RANGE | BLOCK | VLAN ID outside 1–4094 |
+| P007 | SUBNET_OVERLAP | BLOCK | Overlapping IP prefixes in design |
+| P008 | BGP_TIMER_AGGRESSIVE | SUGGEST | Timers < 3/9 without BFD |
+| P009 | MGMT_OOB_ISOLATION | WARN | Management not in dedicated OOB VRF |
+| P010 | BFD_ENABLED | SUGGEST | BFD not enabled on BGP/OSPF adjacencies |
+| P011 | NTP_SERVERS | WARN | Fewer than 2 NTP servers configured |
+| P012 | LOGGING_CONFIGURED | INFO | No syslog server defined |
+| P013 | AAA_TACACS | SUGGEST | No TACACS+/RADIUS for device auth |
+| P014 | SPINE_RR_REQUIRED | FAIL | EVPN without RR on spines |
+| P015 | VNI_UNIQUENESS | BLOCK | Duplicate VNI assignments |
+
+---
+
+## 🚦 Deployment Gate + Confidence Score
+
+```
+Gate = {
+  policy:    PASS | WARN | FAIL | BLOCK   ← 15 codified rules
+  sim:       none | minor | major | critical ← worst failure simulation seen
+  precheck:  pass | warn | fail | skipped  ← live device pre-checks
+}
+
+Confidence = simulation(40) + precheck(30) + policy(20) + zero-warn bonus(10)
+
+canDeploy() → true only when no BLOCK or FAIL rules fired
+```
+
+| Score | Color | Meaning |
+|---|---|---|
+| 80–100 | 🟢 Green | High confidence — approved for deployment |
+| 50–79 | 🟡 Amber | Conditional — review warnings before proceeding |
+| 0–49 | 🔴 Red | Low confidence — fix blocking issues first |
+
+---
+
+## 🔬 EVPN / VXLAN — What Gets Generated
+
+For DC fabric designs the platform generates a complete EVPN/VXLAN overlay:
+
+| Component | Detail |
+|---|---|
+| **L2VNI** | `10000 + vlan_id` per VLAN, per leaf |
+| **L3VNI** | `19000 + vrf_index` per tenant VRF (symmetric IRB) |
+| **Route-Targets** | `ASN:VNI` format — per VNI import + export |
+| **Spine RR** | `retain route-target all` + `advertise-pip` + `route-reflector-client` |
+| **BGP communities** | `AS:100` primary LP=200, `AS:300` backup LP=100, `AS:1000` spine-orig, `AS:9999` RTBH |
+| **Extended ECL** | Per-VNI `ECL-VNI-10010 permit rt AS:10010` for leaf policy |
+| **NVE VTEP** | `suppress-arp` + `ingress-replication protocol bgp` per L2VNI |
+| **Anycast GW** | Per-SVI `ip anycast-gateway` with shared MAC |
+
+---
+
+## 🖥️ H100 GPU Server → TOR Switch Config
+
+For GPU cluster designs (`use_case: gpu_cluster`) the platform generates:
+
+| Feature | Value |
+|---|---|
+| **Host port speed** | 400GbE (Ethernet32–124) |
+| **MTU** | 9214 bytes |
+| **FEC** | RS-FEC enabled |
+| **DSCP marking** | DSCP 24/26 → TC3 (lossless), DSCP 46 → TC5 (strict priority) |
+| **PFC priorities** | 3 + 4 (no-drop queues) |
+| **DCQCN / ECN** | WRED Kmin=50KB, Kmax=100KB, drop probability=0 (mark-only) |
+| **PFC Watchdog** | detection=400ms, restoration=2000ms |
+| **BGP per-rack** | eBGP host sessions ASN 65300+, `maximum_prefix 64` |
+| **Route-maps** | `FROM-GPU-HOST` (in) / `TO-GPU-HOST` (out) per session |
+
+---
+
+## 🗂 Project Structure
+
+```
+Network-Automation/
+│
+├── index.html                     # App shell — 6-step design wizard
+├── preview.svg                    # Social preview image
+├── README.md
+│
+├── src/
+│   ├── css/main.css               # Design tokens, all UI components
+│   └── js/                        # All frontend modules
+│       ├── state.js               # STATE object, STEPS, UC_LABELS
+│       ├── products.js            # 40+ hardware SKUs
+│       ├── topology.js            # SVG HLD — campus, DC, GPU, WAN topologies
+│       ├── configgen.js           # Per-platform config generators
+│       ├── policyengine.js        # Policy rules engine (browser)
+│       ├── simulation.js          # Failure simulation, reachability matrix
+│       ├── gate.js                # Deployment gate + confidence score
+│       ├── diffengine.js          # Myers LCS config diff
+│       ├── deploy.js              # Pre-checks, delta deploy, post-checks, rollback
+│       └── ...                    # (scoring, export, observability, backend, etc.)
+│
+├── backend/                       # Python backend (real devices + MCP)
+│   ├── mcp_server.py              # ★ MCP server — 12 tools, 4 resources, 4 prompts
+│   ├── main.py                    # FastAPI REST API
+│   ├── nl_parser.py               # Natural language → design state
+│   ├── design_engine.py           # IP plan, VLAN, BGP, topology generation
+│   ├── sim_engine.py              # Failure simulation engine
+│   ├── gate_engine.py             # Policy gate + confidence scoring
+│   ├── config_gen.py              # Jinja2 config renderer
+│   ├── requirements.txt           # All Python dependencies (incl. mcp[cli])
+│   ├── Dockerfile                 # Python 3.11-slim (MCP-compatible)
+│   ├── claude_desktop_config.json # Ready-to-use Claude Desktop MCP config
+│   │
+│   ├── policies/                  # Policy generators (15 modules)
+│   │   ├── evpn_policy.py         # EVPN/VXLAN — L2VNI, L3VNI, RT, NVE
+│   │   ├── bgp_policy.py          # BGP communities, RR, iBGP/eBGP
+│   │   ├── firewall_policy.py     # FortiOS, PAN-OS, ASA, IOS-XE ZBF
+│   │   ├── qos_policy.py          # DSCP, PFC, DCQCN, queuing
+│   │   ├── security_hardening.py  # CIS-style hardening per platform
+│   │   ├── aaa_policy.py          # TACACS+, RADIUS, 802.1X
+│   │   └── ...
+│   │
+│   └── templates/                 # Jinja2 device templates
+│       ├── nxos/spine.j2          # NX-OS spine (BGP RR + EVPN)
+│       ├── nxos/leaf.j2           # NX-OS leaf (VTEP + VRFs + NVE)
+│       ├── eos/gpu_spine.j2       # Arista EOS GPU spine
+│       ├── sonic/gpu_tor.j2       # SONiC CONFIG_DB GPU TOR
+│       └── ios_xe/                # Campus access / distribution / core
+│
+└── docker-compose.yml             # API + MCP + frontend in one compose
+```
+
+---
+
+## 🐳 Docker Compose — Full Stack
+
+```bash
+# Clone
+git clone https://github.com/Amit33-design/Network-Automation.git
+cd Network-Automation
+
+# Build and start
+docker-compose up --build
+
+# Services:
+#   http://localhost:8080  — Web UI
+#   http://localhost:8000  — FastAPI REST  (docs: /docs)
+#   http://localhost:8001  — MCP SSE endpoint (for remote AI clients)
+```
+
+`docker-compose.yml` starts three containers:
+- `netdesign-api` — FastAPI backend (port 8000)
+- `netdesign-mcp` — MCP SSE server (port 8001)
+- `netdesign-frontend` — Nginx serving the browser UI (port 8080)
 
 ---
 
@@ -120,223 +522,55 @@ Intent Object
 
 ---
 
-## 🛡️ Policy Engine
-
-Before deployment is allowed, the **Policy Engine** evaluates 9 codified network best-practice rules against the live intent model. Results feed directly into the Deployment Gate.
-
-| Rule | Severity | Triggered when |
-|---|---|---|
-| GPU cluster without PFC/DCB | **FAIL** | `gpu=true` and PFC not in protocol features |
-| Single spine (< 2 nodes) | WARN | `spine_count < 2` |
-| Large deployment without HA | WARN | `scale=enterprise` and `redundant=false` |
-| GPU fabric without RoCEv2 | WARN | `gpu=true` and RoCEv2 not in overlay |
-| WAN without encryption | WARN | `use_case=wan` and no IPsec/MACsec |
-| Campus without NAC/802.1X | WARN | `use_case=campus` and no NAC in security |
-| Data center without BGP-EVPN | INFO | DC use case and no EVPN in overlay |
-| Multi-site without SR/TE | INFO | `site_count >= 3` and no SR in underlay |
-| No compliance framework | INFO | Production use case with empty compliance |
-
-Policy FAIL does not block deployment (advisory). Policy is one of three Gate signals.
-
----
-
-## 🚦 Deployment Gate + Confidence Score
-
-Three signals are evaluated before the Deploy button becomes active:
-
-```
-Gate = {
-  simulation: "PASS | WARN | FAIL"   ← set when you toggle device failures in Step 4
-  precheck:   "PASS | FAIL"          ← set after running pre-checks in Step 6
-  policy:     "PASS | WARN | FAIL"   ← set automatically when Step 6 opens
-}
-
-canDeploy() = simulation !== "FAIL" && precheck !== "FAIL"
-```
-
-The **Confidence Score** synthesises all three signals into a single 0–100% ring gauge:
-
-| Signal | Max points | Condition |
-|---|---|---|
-| Simulation | 40 | PASS=40, WARN=24, FAIL=0 |
-| Pre-checks | 30 | PASS=30, FAIL=0 |
-| Policy | 20 | PASS=20, WARN=10, FAIL=0 |
-| Zero-warning bonus | 10 | No policy warnings |
-
-A score ≥ 80 is green (High Confidence). Below 50 is red (Low Confidence).
-
----
-
-## 🔬 Network Simulation
-
-Before touching any real device, test failure scenarios in the browser:
-
-- Click any device in the **🧪 Simulate** panel to mark it as failed
-- The **Fabric Health** score drops based on layer severity (spine = critical, leaf = medium)
-- Impact cards show: blast radius, LLDP failover path, convergence time
-- A **Reachability Matrix** updates to show OK / PARTIAL / BLOCKED zones
-- A **Route Propagation Table** shows prefix paths and convergence timing
-- Simulating a critical device failure (spine, firewall, hub) sets Gate → **FAIL** and blocks deployment
-
----
-
 ## 🔀 Config Diff Engine
 
-Every time a config is regenerated (new vendor selection, protocol changes), the diff engine computes a **Myers LCS line-level diff**:
+Every config regeneration computes a Myers LCS line-level diff:
 
 ```
 +32 lines added  −12 lines removed  118 unchanged
 ```
 
-The `getDeltaSummary()` function aggregates this across all devices and shows the total before any deploy starts. The same diff algorithm powers the real **delta deploy** in the backend — only the `+` lines are pushed to the device.
+The backend uses the same algorithm for **delta deploy** — only `+` lines are pushed to devices.
 
 ---
 
 ## ♻️ Granular Rollback
 
-When post-checks fail, a **Rollback Options** modal appears with three scopes:
-
 | Scope | Behaviour | Platform mechanism |
 |---|---|---|
-| **Device** | Restore only selected devices (checkbox per device) | `configure replace` / `rollback running-config` |
-| **Stage** | Restore all devices touched in the deploy stage | EOS checkpoint / Junos `rollback 1` |
-| **Full** | Restore everything to pre-deploy state | Full config re-push from NAPALM backup |
-
----
-
-## 📊 Observability
-
-Every deploy run produces:
-- **Gantt timeline** — each pipeline stage (pre-check, backup, deploy, verify, post-check) as a proportional bar
-- **5 metric tiles** — devices, checks run, log events, errors, total time
-- **Event log** — every terminal line timestamped and level-tagged (info / success / warn / error)
-- **Pipeline resume** — if any stage fails, a `Resume from <stage>` button appears
+| **Device** | Restore only selected devices | `configure replace` / `rollback running-config` |
+| **Stage** | Restore all devices in the deploy stage | EOS checkpoint / Junos `rollback 1` |
+| **Full** | Restore everything to pre-deploy state | NAPALM full config re-push |
 
 ---
 
 ## 📤 Export Options
 
-From Step 4 and Step 6:
-
 | Export | Format | Contents |
 |---|---|---|
 | All Configs | `.txt` bundle | One file per device, all platforms |
-| HTML Report | Self-contained `.html` | Dark theme — intent JSON, SVG topology, BOM, all configs |
+| HTML Report | `.html` | Dark theme — intent JSON, SVG topology, BOM, all configs |
 | HLD Topology | `.svg` | Animated topology diagram |
 | LLD Tables | `.csv` | IP plan, VLAN, BGP, physical connectivity |
-| Print | Browser print | Formatted for A4/Letter |
 
 ---
 
-## 🐍 Backend — Real Device Automation
-
-The browser runs fully in simulation mode with zero backend. When you have real devices, connect the Python backend for live automation.
-
-### Prerequisites
-- Python 3.12 on your jump host (must have SSH reach to device management IPs)
-- `pip install -r requirements.txt`
-- A `.env` file with `BACKEND_API_KEY`
-
-### Start the backend
-
-```bash
-cd netdesign-backend
-cp .env.example .env           # set BACKEND_API_KEY=nd_live_yourkey
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-
-# Or with Docker:
-docker-compose up --build
-```
-
-API docs auto-generated at: **http://your-host:8000/docs**
-
-### Connect the browser
-
-1. Click the **Backend** button in the top-right header
-2. Enter your backend URL: `http://10.0.0.100:8000`
-3. Enter your API key (matches `BACKEND_API_KEY` in `.env`)
-4. Click **Test Connection** — should show `✅ Connected — backend v1.0.0`
-5. Toggle to **🔴 Live Deploy**
-6. Fill in device management IPs + credentials per device
-7. Click **Save** — the dot turns green
-
-From this point, **Run Pre-Checks**, **Deploy**, and **Run Post-Checks** hit real devices. The terminal streams every log line over WebSocket in real-time. Switching back to Simulation mode requires zero changes.
-
-### Full API reference
+## 🔬 Backend API Reference
 
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET`  | `/api/health` | Liveness check |
-| `POST` | `/api/session/create` | Create session, get `session_id` |
-| `POST` | `/api/config/generate` | Render Jinja2 configs from intent |
-| `POST` | `/api/precheck` | Run 17 pre-deployment checks |
-| `POST` | `/api/backup` | NAPALM `get_config()` from all devices |
-| `POST` | `/api/deploy/full` | Push complete config via `send_config_set()` |
+| `POST` | `/api/precheck` | 17 pre-deployment checks (ICMP, SSH, LLDP, BGP, IS-IS…) |
 | `POST` | `/api/deploy/delta` | LCS diff → push only changed lines |
-| `POST` | `/api/postcheck` | Run 8 post-deployment checks |
+| `POST` | `/api/postcheck` | 8 post-checks (route propagation, EVPN, LLDP…) |
 | `POST` | `/api/rollback/{scope}` | Rollback: `device` / `stage` / `full` |
-| `GET`  | `/api/session/{id}/status` | Poll session state |
-| `WS`   | `/ws/terminal/{session_id}` | Real-time log stream |
-
-### Pre-checks (17 checks on real devices)
-
-| Category | Checks |
-|---|---|
-| **Connectivity** | ICMP ping · SSH port (TCP) · Netmiko SSH auth |
-| **Health** | CPU / memory (NAPALM `get_environment`) · fans / PSU / temperature · NTP sync · OS version |
-| **Topology** | LLDP neighbor discovery and validation against intent (spine expects leaf neighbors) |
-| **Routing** | BGP peer states + ASN verification · IS-IS adjacency count · OSPF FULL neighbors · routing table size · default route |
-| **Interfaces** | Full state baseline (captured for post-check delta) · MTU 9216 (GPU) · err-disabled (campus) |
-| **Overlay** | VXLAN/NVE peer count · PFC/ECN enabled · STP topology change count |
-| **Safety** | Config syntax dry-run · platform rollback capability · maintenance window |
-
-### Post-checks (8 checks comparing against pre-check baseline)
-
-| Check | What is compared |
-|---|---|
-| **Interface recovery** | Anything UP before must be UP now — any regression is FAIL |
-| **Route propagation** | Count ≥ baseline · no withdrawals · default route still present |
-| **BGP re-establishment** | All peers Established · prefix count delta logged (`+14 prefixes`) |
-| **LLDP consistency** | Same neighbors as pre-check — any change flags a topology problem |
-| **IS-IS / OSPF recovery** | Adjacency count matches or exceeds baseline |
-| **VXLAN NVE recovery** | NVE peer count matches or exceeds baseline |
-| **EVPN route population** | Type-2 MAC-IP + Type-5 IP-prefix routes present in table |
-| **End-to-end reachability** | Ping from device to gateway and key subnets from intent |
-
-### Real delta deploy
-
-```
-1. NAPALM get_config()    →  running config (backup stored in session)
-2. Jinja2 generator       →  candidate config
-3. Myers LCS diff         →  +32 added / -12 removed / 118 unchanged
-4. Push only added lines  →  send_config_set(delta_lines)
-5. Remove deleted lines   →  "no <stanza>" for removed config blocks
-```
-
-Platform-specific push:
-- **IOS-XE / NX-OS** → `send_config_set()` with delta lines + `no` commands for removals
-- **EOS** → `configure session nd_deploy` + delta lines + `commit` (atomic, rollback-safe)
-- **Junos** → `load merge` + `commit confirmed 5` (5-minute auto-rollback window)
-- **SONiC** → REST `PATCH /restconf/data/` with delta JSON
-
----
-
-## ⚙️ Config Platforms — Jinja2 Templates
-
-| Platform | Template roles | Notable configs |
-|---|---|---|
-| **NX-OS** | dc-spine, dc-leaf | IS-IS underlay, BGP RR, EVPN, NVE VTEP, anycast GW, vPC, PFC, gRPC telemetry |
-| **IOS-XE** | campus-access, campus-dist, campus-core | VLANs, 802.1X, DHCP snooping, DAI, PortFast/BPDUguard, OSPF, HSRP, QoS |
-| **EOS** | dc-spine, gpu-spine | BGP EVPN, VXLAN, 64-way ECMP, PFC priority 3+4, DSCP marking, gNMI |
-| **Junos** | default | IS-IS, BGP EVPN, hierarchical stanzas, LLDP, NETCONF, commit confirmed |
-| **SONiC** | gpu-tor | config_db.json, PFC priority 3, WRED/ECN thresholds, MTU 9216, PFC watchdog |
+| `WS`   | `/ws/terminal/{id}` | Real-time log stream to browser |
 
 ---
 
 ## 🧠 Product Scoring Model
 
-40+ hardware SKUs scored against your requirements using a **weighted multi-signal model** — pure deterministic logic, no external AI API.
+40+ hardware SKUs scored against requirements using a **weighted multi-signal model**:
 
 ```
 score = baseline(60) + Σ signal_weights   →   capped 0–100
@@ -344,19 +578,13 @@ score = baseline(60) + Σ signal_weights   →   capped 0–100
 
 | Signal | Max pts | Logic |
 |---|---|---|
-| Use-case match | +20 | Product's `useCases[]` includes selected scenario |
-| Port speed match | +10 | Access speed matches bandwidth tier (1G/10G/25G/100G/400G) |
-| Uplink speed match | +5 | Uplink speed matches requirement |
-| Latency | +15/−20 | `<500ns` earns bonus; `>1000ns` on ultra-low SLA penalises |
-| Overlay protocol | +10 | VXLAN/MPLS flag matches selected overlay |
+| Use-case match | +20 | Product's use_cases[] includes scenario |
+| GPU / RoCEv2 | +15 | RoCEv2, PFC, SHARP for GPU use case |
+| Port speed match | +10 | Access speed matches bandwidth tier |
+| Latency | +15/−20 | <500ns bonus; >1000ns on ultra-low SLA penalises |
 | Compliance | +5/+8 | MACsec for PCI-DSS; FIPS-140 for FedRAMP |
-| GPU / RoCEv2 | +15/+10/+12 | RoCEv2, PFC, SHARP for GPU use case |
-| HA / ISSU | +5 | In-service software upgrade when `redundancy=full` |
 | Budget tier | +15/−7 | Price tier matches budget selection |
 | Vendor preference | +15/−5 | Preferred vendor earns bonus |
-| User density | ±10 | Host count vs product's `userScale[min,max]` |
-| Industry signals | +5 | Finance→MACsec, Healthcare→802.1X, Retail→FortiLink |
-| Size penalty | −8 | Large chassis penalised for small orgs |
 
 ---
 
@@ -364,168 +592,12 @@ score = baseline(60) + Σ signal_weights   →   capped 0–100
 
 | Tool | Primary Focus | NetDesign AI role |
 |---|---|---|
-| **Ansible / Nornir** | Config execution | NetDesign AI generates the configs + intent that Ansible/Nornir then execute |
-| **Cisco NSO** | Service orchestration | NetDesign AI is the design-and-generate layer upstream of NSO |
-| **Arista CloudVision** | Arista-specific ops | NetDesign AI is multi-vendor; can produce EOS configs for CloudVision |
-| **NetBox / Nautobot** | Source of truth | Complementary — NetBox integration planned (v2 roadmap) |
+| **Ansible / Nornir** | Config execution | NetDesign AI generates the configs + intent |
+| **Cisco NSO** | Service orchestration | NetDesign AI is the design layer upstream of NSO |
+| **Arista CloudVision** | Arista-specific ops | Multi-vendor; produces EOS configs for CloudVision |
+| **NetBox / Nautobot** | Source of truth | Complementary — NetBox integration planned |
 | **Batfish** | Config analysis | Complementary — NetDesign AI generates; Batfish validates |
-
----
-
-## 🗂 Project Structure
-
-```
-Network-Automation/
-│
-├── index.html                     # App shell — landing page + all 6 step panels
-├── preview.svg                    # OG social preview image
-├── .nojekyll                      # GitHub Pages — disable Jekyll
-├── README.md
-│
-├── src/
-│   ├── css/
-│   │   └── main.css               # 2,000+ lines — design tokens, all components
-│   └── js/                        # Loaded in dependency order
-│       ├── state.js               # STATE object, STEPS, UC_LABELS
-│       ├── products.js            # PRODUCTS — 40+ SKUs with full specs
-│       ├── app.js                 # Navigation, validation, toast, jump-step hooks
-│       ├── scoring.js             # scoreProduct(), estimateCounts()
-│       ├── recommendations.js     # generateRecommendations(), BOM, product modal
-│       ├── topology.js            # buildSVG(), animated packet flow, HLD/LLD
-│       ├── configgen.js           # Per-platform config generators, syntax highlight
-│       ├── intentmodel.js         # buildIntentObject(), renderIntentPanel()
-│       ├── diffengine.js          # Myers LCS diff, getDeltaSummary(), renderDiffView()
-│       ├── policyengine.js        # 9 policy rules, runPolicies(), renderPolicyPanel()
-│       ├── gate.js                # GATE state, canDeploy(), confidence score ring
-│       ├── simulation.js          # Failure sim, reachability matrix, route propagation
-│       ├── observability.js       # Gantt timeline, metrics tiles, event log
-│       ├── export.js              # exportAllConfigs(), exportHTMLReport(), renderDesignSummary()
-│       ├── deploy.js              # runPreChecks(), startDeploy(), runPostChecks(),
-│       │                          # granular rollback, device status table, platform logs
-│       ├── backend.js             # BackendClient — fetch() + WebSocket to Python backend
-│       ├── storage.js             # localStorage save/restore
-│       ├── demo.js                # loadDemo(), 5 demo scenarios
-│       ├── landing.js             # initLanding(), startDesigning(), animateCounters()
-│       └── init.js                # Keyboard nav, DOMContentLoaded, auto-save
-│
-└── netdesign-backend/             # Python backend — optional, for real devices
-    ├── main.py                    # FastAPI app, CORS, router mount
-    ├── requirements.txt           # fastapi, nornir, netmiko, napalm, jinja2, uvicorn
-    ├── .env.example               # BACKEND_API_KEY, LOG_LEVEL, SESSION_TTL_SECONDS
-    ├── Dockerfile
-    ├── docker-compose.yml
-    ├── api/
-    │   ├── models.py              # Pydantic: IntentModel, DeviceModel, CheckResult…
-    │   ├── router.py              # All REST endpoints (session, config, precheck, deploy…)
-    │   └── websocket.py          # WS /ws/terminal/{session_id} — log streaming
-    ├── core/
-    │   ├── inventory.py           # Dynamic Nornir inventory from intent JSON (no YAML files)
-    │   └── session.py             # In-memory session store, TTL, credential purge
-    ├── tasks/
-    │   ├── precheck.py            # 17 pre-checks (ICMP, SSH, LLDP, BGP, IS-IS, OSPF, NVE, PFC…)
-    │   ├── backup.py              # NAPALM get_config() + Netmiko fallback
-    │   ├── deploy.py              # Full push + Myers LCS delta push per platform
-    │   ├── postcheck.py           # 8 post-checks (route propagation, BGP delta, EVPN, LLDP…)
-    │   └── rollback.py            # Device / stage / full rollback with platform-native restore
-    └── configgen/
-        ├── generator.py           # Jinja2 renderer from intent context
-        └── templates/
-            ├── nxos/              # dc_spine.j2, dc_leaf.j2
-            ├── ios_xe/            # campus_access.j2, campus_dist.j2, campus_core.j2
-            ├── eos/               # dc_spine.j2, gpu_spine.j2
-            ├── sonic/             # gpu_tor.j2
-            └── junos/             # default.j2
-```
-
----
-
-## 🚀 Quick Start
-
-### Browser only (no install)
-```
-https://amit33-design.github.io/Network-Automation/
-```
-
-### Run locally
-```bash
-git clone https://github.com/Amit33-design/Network-Automation.git
-cd Network-Automation
-open index.html      # macOS
-start index.html     # Windows
-xdg-open index.html  # Linux
-```
-
-Zero npm. Zero build step. Zero server required.
-
-### Start the Python backend
-```bash
-cd netdesign-backend
-cp .env.example .env
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Then click **Backend** in the browser header → enter URL + API key → **Test Connection** → toggle **Live Deploy**.
-
-### Docker (backend)
-```bash
-cd netdesign-backend
-docker-compose up --build
-# API:  http://localhost:8000
-# Docs: http://localhost:8000/docs
-```
-
----
-
-## ⚠️ Known Limitations
-
-| Area | Status |
-|---|---|
-| SONiC deploy transport | REST API calls — SSH fallback only; full config_db push not yet wired |
-| NETCONF transport | Scaffolded in Junos tasks; Netmiko SSH used in practice |
-| NetBox / Nautobot sync | Planned — not built |
-| ServiceNow / Jira hooks | Planned — not built |
-| Automated CI/CD pipeline trigger | Planned — not built |
-| IPv6-only design mode | Planned — not built |
-| PDF export | Planned — HTML report available as workaround |
-
----
-
-## 🗺 Roadmap
-
-- [x] 6-step intent-driven design wizard
-- [x] AI product scoring — 40+ SKUs, 8-signal model
-- [x] Interactive SVG topology with animated packet flow
-- [x] LLD: IP plan, VLAN, BGP, physical tables
-- [x] Multi-platform config generator (5 OS families)
-- [x] Intent model JSON panel (live, collapsible, copy-to-clipboard)
-- [x] Myers LCS config diff engine
-- [x] Network failure simulation (fabric health score, reachability matrix)
-- [x] Pipeline state tracking + observability (Gantt, metrics, event log)
-- [x] Landing page with hero, stats, feature cards
-- [x] Design summary panel
-- [x] Export engine — configs bundle, HTML report, SVG, CSV
-- [x] Policy engine — 9 codified best-practice rules
-- [x] Deployment gate — 3-signal enforced go/no-go
-- [x] Deployment confidence score (0–100% ring gauge)
-- [x] Granular rollback — device / stage / full scope
-- [x] Delta deploy UI — diff stats before every deploy
-- [x] Python backend — FastAPI + Nornir + Netmiko + NAPALM
-- [x] Dynamic Nornir inventory (no static YAML — built from intent at runtime)
-- [x] 17 real pre-deployment checks (LLDP, BGP ASN, IS-IS, OSPF, NVE, PFC…)
-- [x] 8 real post-deployment checks (route propagation, EVPN routes, LLDP delta…)
-- [x] Real delta deploy — LCS diff → push only changed lines per platform
-- [x] Platform-native rollback (configure replace, EOS checkpoint, Junos rollback)
-- [x] WebSocket terminal streaming — real-time log from backend to browser
-- [x] BackendClient JS — live mode / simulation mode toggle, zero breaking changes
-- [ ] NetBox / Nautobot source-of-truth integration
-- [ ] ServiceNow / Jira change-control hooks
-- [ ] Batfish pre-deployment config analysis integration
-- [ ] gRPC / NETCONF full transport (Junos / NX-OS)
-- [ ] Arista CloudVision API integration
-- [ ] IPv6-only design mode
-- [ ] PDF design document export
-- [ ] TCO calculator (5-year total cost of ownership)
+| **ChatGPT / Claude** | General AI | NetDesign AI is domain-specific via MCP tools |
 
 ---
 
@@ -537,28 +609,84 @@ docker-compose up --build
 |---|---|
 | UI | HTML5 · CSS3 · Vanilla ES2020 JS |
 | Topology | SVG with `animateMotion` + `mpath` for live packet flow |
-| Styling | CSS custom properties, Grid, Flexbox, `@keyframes` |
-| Persistence | `localStorage` session state + `sessionStorage` for dismissals |
 | Diff | Myers LCS line-level algorithm (same as git) |
-| Export | `Blob` / `URL.createObjectURL` for file downloads |
+| Persistence | `localStorage` session state |
 
-**Backend** — Python, optional
+**Backend** — Python 3.11+
 
-| Library | Version | Role |
-|---|---|---|
-| FastAPI | 0.111 | REST API + WebSocket + auto Swagger docs |
-| Uvicorn | 0.29 | ASGI server |
-| Nornir | 3.4 | Parallel task runner (threaded, 10 workers) |
-| nornir-netmiko | 1.0 | Netmiko task wrappers for Nornir |
-| nornir-napalm | 0.5 | NAPALM getter tasks for Nornir |
-| Netmiko | 4.4 | SSH to IOS-XE / NX-OS / EOS / Junos / SONiC |
-| NAPALM | 4.1 | `get_config`, `get_bgp_neighbors`, `get_interfaces`, `get_environment`, `get_lldp_neighbors_detail` |
-| Jinja2 | 3.1 | Config templating per platform and role |
-| Pydantic v2 | 2.7 | Request/response model validation |
-| python-dotenv | 1.0 | `.env` credential management |
+| Library | Role |
+|---|---|
+| FastAPI 0.111 | REST API + WebSocket |
+| FastMCP (mcp[cli]) | MCP server — AI tool exposure |
+| Nornir 3.4 | Parallel task runner |
+| Netmiko 4.4 | SSH to IOS-XE / NX-OS / EOS / JunOS / SONiC |
+| NAPALM 4.x | `get_config`, `get_bgp_neighbors`, `get_interfaces` |
+| Jinja2 3.1 | Config templating |
+| Pydantic v2 | Request/response validation |
+
+---
+
+## 🗺 Roadmap
+
+- [x] 6-step intent-driven design wizard
+- [x] AI product scoring — 40+ SKUs, 8-signal model
+- [x] Interactive SVG topology (campus, DC, GPU, WAN HLD)
+- [x] LLD: IP plan, VLAN, BGP, physical tables
+- [x] Multi-platform config generator (NX-OS · EOS · SONiC · IOS-XE · JunOS)
+- [x] EVPN/VXLAN full overlay — L2VNI, L3VNI, symmetric IRB, RT scheme
+- [x] BGP community colouring — TE, RTBH, RR, per-VNI ECL
+- [x] H100 GPU server → TOR config (PFC, DCQCN, ECN, 400GbE)
+- [x] Myers LCS config diff engine
+- [x] Network failure simulation (BFS partition, BGP/EVPN impact)
+- [x] Policy engine — 15 codified rules (BLOCK / FAIL / WARN / AUTO_FIX / INFO)
+- [x] Deployment gate — confidence score + APPROVED / CONDITIONAL / BLOCKED
+- [x] Granular rollback — device / stage / full scope
+- [x] Delta deploy — LCS diff → push only changed lines
+- [x] Python backend — FastAPI + Nornir + Netmiko + NAPALM
+- [x] 17 real pre-deployment checks + 8 post-deployment checks
+- [x] **MCP server — 12 tools, 4 resources, 4 prompts (Claude / ChatGPT / LangChain)**
+- [x] Firewall policy (FortiOS, PAN-OS, ASA, IOS-XE ZBF)
+- [x] Security hardening, AAA, ACL, QoS, 802.1X policy generators
+- [ ] NetBox / Nautobot source-of-truth integration
+- [ ] ServiceNow / Jira change-control hooks
+- [ ] Batfish pre-deployment config analysis
+- [ ] gRPC / NETCONF full transport (JunOS / NX-OS)
+- [ ] Arista CloudVision API integration
+- [ ] IPv6-only design mode
+- [ ] PDF export
+- [ ] TCO calculator
+
+---
+
+## ⚠️ Known Limitations
+
+| Area | Status |
+|---|---|
+| MCP server | Requires Python 3.10+ (MCP SDK constraint) |
+| SONiC deploy | REST API; SSH fallback only |
+| NETCONF transport | Scaffolded; Netmiko SSH used in practice |
+| NetBox sync | Planned |
+| PDF export | HTML report available as workaround |
 
 ---
 
 ## 📄 License
 
 MIT © 2024 Amit Tiwari — contributions welcome.
+
+---
+
+## 🤝 Contributing
+
+```bash
+git clone https://github.com/Amit33-design/Network-Automation.git
+cd Network-Automation
+
+# Frontend: just open index.html in a browser — no build step
+# Backend:
+cd backend
+pip install -r requirements.txt
+python -m pytest tests/
+```
+
+PRs welcome for new platforms, policy rules, or topology types.

@@ -136,21 +136,20 @@ function scoreProduct(prod) {
   return Math.min(100, Math.max(10, score));
 }
 
-/* ── Estimate device counts ─────────────────────────────────────── */
+/* ── Estimate device counts (capacity-model driven) ─────────────── */
 function estimateCounts(layerKey) {
-  const hosts   = parseInt(STATE.totalHosts) || 100;
-  const sites   = parseInt(STATE.numSites)   || 1;
-  const red     = STATE.redundancy;
+  const red     = STATE.redundancy || 'ha';
   const redMult = (red === 'ha' || red === 'full') ? 2 : 1;
+  const cap     = capacityFromState(STATE);
 
-  if (layerKey === 'campus-access')   return Math.ceil(hosts / 40) * sites;
-  if (layerKey === 'campus-dist')     return Math.max(2, Math.ceil(hosts / 200)) * sites * redMult;
-  if (layerKey === 'campus-core')     return redMult * sites;
-  if (layerKey === 'dc-leaf')         return Math.max(2, Math.ceil(hosts / 40)) * redMult;
-  if (layerKey === 'dc-spine')        return Math.max(2, Math.ceil(hosts / 400) + 1) * redMult;
-  if (layerKey === 'gpu-tor')         return Math.max(2, Math.ceil(hosts / 8));
-  if (layerKey === 'gpu-spine')       return Math.max(2, Math.ceil(hosts / 64));
-  if (layerKey === 'fw')              return redMult;
+  if (layerKey === 'campus-access') return cap.campus ? cap.campus.access : 2;
+  if (layerKey === 'campus-dist')   return cap.campus ? cap.campus.dist   : 2;
+  if (layerKey === 'campus-core')   return cap.campus ? cap.campus.core   : 2;
+  if (layerKey === 'dc-leaf')       return cap.dc     ? cap.dc.leafs      : 2;
+  if (layerKey === 'dc-spine')      return cap.dc     ? cap.dc.spines     : 2;
+  if (layerKey === 'gpu-tor')       return cap.gpu    ? cap.gpu.tors      : 2;
+  if (layerKey === 'gpu-spine')     return cap.gpu    ? cap.gpu.spines    : 2;
+  if (layerKey === 'fw')            return redMult;
   return 1;
 }
 

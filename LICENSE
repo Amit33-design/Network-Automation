@@ -1,21 +1,95 @@
-MIT License
+NetDesign AI License (NDAL) v1.0
 
-Copyright (c) 2024 Amit Tiwari
+Copyright (c) 2026 Amit Tiwari
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+All rights reserved.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+---
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+1. DEFINITIONS
+
+"Software" refers to the NetDesign AI project, including all source code,
+binaries, documentation, and related assets.
+
+"Personal Use" means use by an individual for learning, evaluation, or
+non-commercial experimentation.
+
+"Commercial Use" means any use in a business, organization, or
+revenue-generating activity, including internal use by a company.
+
+---
+
+2. GRANT OF LICENSE
+
+You are granted a limited, non-exclusive, non-transferable license to:
+
+- Use the Software for personal and evaluation purposes.
+- Run the Software locally for testing and learning.
+- Share links to the official repository.
+
+---
+
+3. RESTRICTIONS
+
+You may NOT:
+
+- Copy, modify, or redistribute the Software (in whole or in part) without
+  explicit written permission.
+- Use the Software for any commercial purpose without a valid commercial license.
+- Sell, sublicense, or offer the Software as a service.
+- Reverse engineer, decompile, or attempt to extract proprietary logic from
+  distributed binaries.
+- Remove or alter copyright or license notices.
+
+---
+
+4. COMMERCIAL LICENSE
+
+Commercial use of this Software requires a separate paid license.
+
+To obtain a commercial license, contact:
+  amit.tiwari.dev@gmail.com
+
+---
+
+5. NO WARRANTY
+
+The Software is provided "AS IS", without warranty of any kind, express or
+implied, including but not limited to:
+
+- fitness for a particular purpose
+- non-infringement
+- accuracy of network configurations
+
+You are solely responsible for validating configurations before deploying to
+production systems.
+
+---
+
+6. LIMITATION OF LIABILITY
+
+In no event shall the author be liable for any damages, including but not
+limited to:
+
+- network outages
+- configuration errors
+- data loss
+- business interruption
+
+---
+
+7. TERMINATION
+
+This license is automatically terminated if you violate any of its terms.
+Upon termination, you must stop using the Software and delete all copies.
+
+---
+
+8. FUTURE CHANGES
+
+The author reserves the right to modify this license for future versions of
+the Software.
+
+---
+
+By using this Software, you agree to the terms of this license.
