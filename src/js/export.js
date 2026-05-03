@@ -189,21 +189,96 @@ function _todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
-/* ── Design Summary Data ────────────────────────────────────── */
+/* ── Design Summary Data (capacity-model driven) ─────────────── */
 function buildDesignSummaryData() {
-  const devs  = buildDeviceList();
-  const prods = Object.entries(STATE.selectedProducts || {});
   const uc    = STATE.uc;
+  const prods = Object.entries(STATE.selectedProducts || {});
+
+  // ── Real device totals from capacity model ──────────────────
+  const cap  = capacityFromState(STATE);
+  const ucLayers = getLayersForUC ? getLayersForUC() : [];
+
+  // Build per-layer rows using the same estimateCounts() used by BOM
+  const LAYER_META = {
+    'fw':             { icon:'🔒', role:'Security / Firewall',   label:'Security' },
+    'campus-core':    { icon:'⚙️', role:'Core Switch',           label:'Core Layer' },
+    'campus-dist':    { icon:'🔀', role:'Distribution Switch',   label:'Distribution' },
+    'campus-access':  { icon:'🔌', role:'Access Switch',         label:'Access Layer' },
+    'dc-spine':       { icon:'🦴', role:'DC Spine',              label:'DC Spine' },
+    'dc-leaf':        { icon:'🍃', role:'DC Leaf / ToR',         label:'DC Leaf' },
+    'gpu-spine':      { icon:'🧠', role:'GPU Spine',             label:'GPU Spine' },
+    'gpu-tor':        { icon:'⚡', role:'GPU TOR',               label:'GPU TOR' },
+    'campus-access_wan':{ icon:'📡', role:'Branch CPE',          label:'Branch CPE' },
+  };
+
+  let totalDevices = 0;
+  const layerBOM = [];    // [{ icon, role, prod, os, qty }]
+  const topVendors = {};
+
+  ucLayers.forEach(layer => {
+    const qty  = estimateCounts(layer.key);
+    const prod = PRODUCTS[STATE.selectedProducts[layer.key]];
+    const meta = LAYER_META[layer.key] || { icon:'🔌', role: layer.label, label: layer.label };
+    const os   = OS_LABELS ? OS_LABELS[getOS(layer.key)] : '—';
+
+    if (qty > 0) {
+      totalDevices += qty;
+      layerBOM.push({
+        icon:  meta.icon,
+        role:  meta.role,
+        label: layer.label,
+        key:   layer.key,
+        qty,
+        os,
+        prod:  prod ? `${prod.vendor} ${prod.model || prod.name}` : '—',
+        vendor: prod?.vendor || null,
+      });
+      if (prod?.vendor) topVendors[prod.vendor] = (topVendors[prod.vendor]||0) + qty;
+    }
+  });
+
+  // FW is not always in ucLayers — add separately
+  const hasFW = STATE.fwModel && STATE.fwModel !== 'none';
+  if (hasFW) {
+    const fwQty  = (STATE.redundancy === 'ha' || STATE.redundancy === 'full') ? 2 : 1;
+    const fwProd = PRODUCTS[STATE.selectedProducts['fw']];
+    const already = layerBOM.some(r => r.key === 'fw');
+    if (!already && fwQty) {
+      totalDevices += fwQty;
+      layerBOM.push({
+        icon:'🔒', role:'Security / Firewall', label:'Security', key:'fw',
+        qty: fwQty,
+        os: OS_LABELS ? OS_LABELS[getOS('fw')] : '—',
+        prod: fwProd ? `${fwProd.vendor} ${fwProd.model}` : '—',
+        vendor: fwProd?.vendor || null,
+      });
+      if (fwProd?.vendor) topVendors[fwProd.vendor] = (topVendors[fwProd.vendor]||0) + fwQty;
+    }
+  }
+
+  // Capacity narrative (for context cards)
+  let capacityNote = '';
+  if (cap.campus) {
+    const c = cap.campus;
+    capacityNote = `${c.endpoints.toLocaleString()} endpoints → ${c.effective.toLocaleString()} w/25% growth · ` +
+      `${c.access} access (${c.usable} ports/sw) · ${c.dist} dist (${c.distPairs} HA pairs) · ${c.core} core`;
+  } else if (cap.dc) {
+    const c = cap.dc;
+    capacityNote = `${c.servers.toLocaleString()} servers · ${c.leafs} leaf (${c.oversub}:1 oversub) · ${c.spines} spine · ` +
+      `${c.downlinkBW}G down / ${c.uplinkBW}G up per leaf`;
+  } else if (cap.gpu) {
+    const c = cap.gpu;
+    capacityNote = `${c.gpus} GPUs · ${c.servers} servers · ${c.tors} TOR · ${c.spines} spine · ` +
+      `${c.isNonBlocking?'✓ 1:1 non-blocking':'⚠ check uplinks'} (oversub ${c.oversub}:1)`;
+  }
 
   const stats = [
-    { val: devs.length || '—',              label: 'Total Devices' },
-    { val: prods.length || '—',             label: 'Product Lines' },
-    { val: STATE.totalHosts || '—',         label: 'Host Endpoints' },
-    { val: STATE.numSites || '1',           label: 'Sites' },
-    { val: STATE.redundancy?.toUpperCase() || '—', label: 'Redundancy' },
+    { val: totalDevices || '—',                        label: 'Total Devices'   },
+    { val: prods.filter(([,v])=>v).length || '—',      label: 'Product Lines'   },
+    { val: (parseInt(STATE.totalHosts)||0).toLocaleString() || '—', label: 'Host Endpoints' },
+    { val: STATE.numSites || '1',                      label: 'Sites'           },
+    { val: STATE.redundancy?.toUpperCase() || '—',     label: 'Redundancy'      },
   ];
-
-  const layers = [...new Set(devs.map(d => d.layer))];
 
   const protoStack = [
     ...(STATE.underlayProto  || []),
@@ -213,13 +288,7 @@ function buildDesignSummaryData() {
 
   const secFeats = [...(STATE.nac||[]), ...(STATE.compliance||[])];
 
-  const topVendors = {};
-  devs.forEach(d => {
-    const prod = PRODUCTS[STATE.selectedProducts[d.layer]];
-    if (prod?.vendor) topVendors[prod.vendor] = (topVendors[prod.vendor]||0)+1;
-  });
-
-  return { stats, layers, protoStack, secFeats, topVendors, devs, uc };
+  return { stats, layerBOM, protoStack, secFeats, topVendors, totalDevices, cap, capacityNote, uc };
 }
 
 /* ── Design Summary Tab Renderer ────────────────────────────── */
@@ -232,7 +301,7 @@ function renderDesignSummary() {
 
   const vendorList = Object.entries(data.topVendors)
     .sort((a,b) => b[1]-a[1])
-    .map(([v,n]) => `<span class="sum-chip">${v} (${n})</span>`).join('');
+    .map(([v,n]) => `<span class="sum-chip">${v} <strong style="color:var(--txt1)">${n}</strong> devices</span>`).join('');
 
   const protoChips = data.protoStack.length
     ? data.protoStack.map(p => `<span class="sum-chip sum-chip-proto">${p}</span>`).join('')
@@ -242,19 +311,14 @@ function renderDesignSummary() {
     ? data.secFeats.map(s => `<span class="sum-chip sum-chip-sec">${s.toUpperCase()}</span>`).join('')
     : '<span style="color:var(--txt3)">Standard</span>';
 
-  const layerRows = data.devs.reduce((acc, d) => {
-    const key = d.layer;
-    if (!acc[key]) acc[key] = { role: d.role, icon: d.icon, count: 0, os: OS_LABELS[getOS(d.layer)], prod: null };
-    acc[key].count++;
-    if (!acc[key].prod) {
-      const p = PRODUCTS[STATE.selectedProducts[d.layer]];
-      acc[key].prod = p ? `${p.vendor} ${p.model||p.name}` : '—';
-    }
-    return acc;
-  }, {});
-
-  const deviceRows = Object.values(layerRows).map(r =>
-    `<tr><td>${r.icon} ${r.role}</td><td><code>${r.prod}</code></td><td>${r.os}</td><td style="text-align:center;font-weight:700">${r.count}</td></tr>`
+  // BOM table from capacity model (same source as recommendations BOM)
+  const deviceRows = data.layerBOM.map(r =>
+    `<tr>
+      <td>${r.icon} ${r.role}</td>
+      <td><code style="font-size:.78rem">${r.prod}</code></td>
+      <td style="color:var(--txt2)">${r.os}</td>
+      <td style="text-align:center;font-weight:700;color:var(--green);font-size:1.05rem">${r.qty.toLocaleString()}</td>
+    </tr>`
   ).join('');
 
   el.innerHTML = `
@@ -277,6 +341,18 @@ function renderDesignSummary() {
         </div>
       </div>
 
+      <!-- Capacity model banner -->
+      ${data.capacityNote ? `
+      <div class="sum-card" style="background:linear-gradient(90deg,rgba(0,232,122,.06),rgba(0,212,255,.04));border-color:rgba(0,232,122,.25);padding:.75rem 1.1rem">
+        <div style="display:flex;align-items:center;gap:.6rem">
+          <span style="font-size:1.1rem">📐</span>
+          <div>
+            <div style="font-size:.7rem;color:var(--green);font-weight:700;letter-spacing:.05em;text-transform:uppercase;margin-bottom:.2rem">Capacity Model</div>
+            <div style="font-size:.8rem;color:var(--txt1);font-family:var(--mono)">${data.capacityNote}</div>
+          </div>
+        </div>
+      </div>` : ''}
+
       <!-- Stats row -->
       <div class="sum-stats-row">
         ${data.stats.map(s => `
@@ -289,16 +365,22 @@ function renderDesignSummary() {
       <!-- Two-column layout -->
       <div class="sum-two-col">
 
-        <!-- Left: Device table -->
+        <!-- Left: BOM from capacity model -->
         <div class="sum-card">
-          <div class="sum-card-hdr">📦 Bill of Materials</div>
+          <div class="sum-card-hdr" style="display:flex;justify-content:space-between;align-items:center">
+            <span>📦 Bill of Materials</span>
+            <span style="font-size:.75rem;color:var(--txt2);font-weight:400">Total: <strong style="color:var(--green)">${data.totalDevices.toLocaleString()}</strong> devices</span>
+          </div>
           <table class="sum-table">
-            <thead><tr><th>Layer / Role</th><th>Hardware</th><th>OS</th><th>Qty</th></tr></thead>
+            <thead><tr><th>Layer / Role</th><th>Hardware</th><th>OS</th><th style="text-align:center">Qty</th></tr></thead>
             <tbody>${deviceRows || '<tr><td colspan="4" style="color:var(--txt3);text-align:center">Complete Step 3 to see BOM</td></tr>'}</tbody>
           </table>
+          <div style="margin-top:.6rem;padding-top:.5rem;border-top:1px solid var(--bdr);font-size:.72rem;color:var(--txt3)">
+            Quantities calculated by capacity model · IP/VLAN plan shows addressing schema for all devices
+          </div>
         </div>
 
-        <!-- Right: Protocol + Security -->
+        <!-- Right: Protocol + Security + Capacity -->
         <div style="display:flex;flex-direction:column;gap:1rem">
           <div class="sum-card">
             <div class="sum-card-hdr">📡 Protocol Stack</div>
@@ -309,7 +391,7 @@ function renderDesignSummary() {
             <div class="sum-chips">${secChips}</div>
           </div>
           <div class="sum-card">
-            <div class="sum-card-hdr">🏭 Vendors</div>
+            <div class="sum-card-hdr">🏭 Vendors &amp; Device Count</div>
             <div class="sum-chips">${vendorList || '<span style="color:var(--txt3)">Not selected</span>'}</div>
           </div>
           <div class="sum-card">

@@ -1003,24 +1003,82 @@ function renderIPPlan() {
   const isDC = uc === 'dc' || uc === 'hybrid' || uc === 'multisite';
   const isGPU= uc === 'gpu';
 
-  // IP block summary cards
+  // Pull capacity model for accurate ranges
+  const cap = capacityFromState(STATE);
+  const cc  = cap.campus || {};
+  const dc  = cap.dc     || {};
+  const gpu = cap.gpu    || {};
+
+  // ── IP block summary (capacity-aware ranges) ─────────────────
+  // Loopback pool: first core/spine, then dist, then access/leaf
+  const totalInfraDevices = (cc.core||0) + (cc.dist||0) + (cc.access||0) +
+                            (dc.spines||0) + (dc.leafs||0) +
+                            (gpu.spines||0) + (gpu.tors||0) + 2; // +FW
+  const loopbackLast = Math.min(totalInfraDevices, 254);
+
+  // P2P links: one /31 per uplink · campus: access→dist + dist→core
+  const campusLinks = uc === 'campus' || uc === 'hybrid'
+    ? (cc.access||0) + (cc.dist||0) : 0;
+  const dcLinks = isDC ? (dc.leafs||0) * (dc.spines||4) : 0;
+  const p2pTotal = campusLinks + dcLinks;
+  // /23 = 512 IPs = 256 /31 links; scale up if needed
+  const p2pPrefix = p2pTotal <= 256 ? '/23' : '/21';
+  const p2pRange  = p2pTotal <= 256
+    ? '10.100.0.0 – 10.100.1.255 (256 /31 links)'
+    : '10.100.0.0 – 10.100.7.255 (2048 /31 links)';
+
   const blocks = [
-    { label:'MANAGEMENT',      subnet:'10.0.0.0/24',    detail:`VLAN 10 · ${site} site(s)`,       range:'10.0.0.1 – 10.0.0.254' },
-    { label:'LOOPBACKS',       subnet:'10.255.0.0/24',  detail:'Device loopback /32 addresses',   range:'10.255.0.1 – 10.255.0.254' },
-    { label:'P2P FABRIC LINKS',subnet:'10.100.0.0/23',  detail:'/31 per link pair',               range:'10.100.0.0 – 10.100.1.255' },
-    { label:'CORPORATE DATA',  subnet:'10.10.0.0/22',   detail:'VLAN 20 · End user devices',     range:'10.10.0.1 – 10.10.3.254' },
-    { label:'VOICE / UC',      subnet:'10.20.0.0/23',   detail:'VLAN 30 · IP Phones, UC',        range:'10.20.0.1 – 10.20.1.254' },
-    { label:'WIRELESS CORP',   subnet:'10.30.0.0/22',   detail:'VLAN 40 · Corp Wi-Fi',           range:'10.30.0.1 – 10.30.3.254' },
-    { label:'SERVER VLAN',     subnet:'10.50.0.0/22',   detail:'VLAN 50 · Physical servers',     range:'10.50.0.1 – 10.50.3.254' },
-    { label:'DMZ / PUBLIC',    subnet:'10.60.0.0/24',   detail:'VLAN 60 · Internet-facing',      range:'10.60.0.1 – 10.60.0.254' },
+    { label:'MANAGEMENT OOB',  subnet:'10.0.0.0/24',
+      detail:`VLAN 10 · ${totalInfraDevices} network devices across ${site} site(s)`,
+      range:'10.0.0.1 – 10.0.0.254' },
+    { label:'LOOPBACKS',       subnet:'10.255.0.0/24',
+      detail:`/32 per device · ${totalInfraDevices} addresses needed`,
+      range:`10.255.0.1 – 10.255.0.${loopbackLast}` },
+    { label:'P2P FABRIC LINKS',subnet:`10.100.0.0${p2pPrefix}`,
+      detail:`/31 per link · ${p2pTotal} links (${campusLinks} campus + ${dcLinks} DC)`,
+      range: p2pRange },
+    { label:'CORPORATE DATA',  subnet:'10.10.0.0/22',
+      detail:`VLAN 20 · ${cc.endpoints||parseInt(STATE.totalHosts)||0} endpoints`,
+      range:'10.10.0.1 – 10.10.3.254 (1022 hosts)' },
+    { label:'VOICE / UC',      subnet:'10.20.0.0/23',
+      detail:'VLAN 30 · IP Phones, UC, Jabber',
+      range:'10.20.0.1 – 10.20.1.254 (510 hosts)' },
+    { label:'WIRELESS CORP',   subnet:'10.30.0.0/22',
+      detail:'VLAN 40 · 802.1X Corp SSID',
+      range:'10.30.0.1 – 10.30.3.254 (1022 hosts)' },
+    { label:'SERVER / DMZ',    subnet:'10.50.0.0/22',
+      detail:'VLAN 50/60 · Physical & VM servers',
+      range:'10.50.0.1 – 10.50.3.254 (1022 hosts)' },
+    { label:'IoT / GUEST',     subnet:'10.60.0.0/23',
+      detail:'VLAN 61/21 · Isolated · internet-only ACL',
+      range:'10.60.0.1 – 10.60.1.254 (510 hosts)' },
   ];
   if (isDC) {
-    blocks.push({ label:'DC UNDERLAY /31',   subnet:'10.1.0.0/20',   detail:'Spine-Leaf P2P links',  range:'10.1.0.0 – 10.1.15.255' });
-    blocks.push({ label:'DC OVERLAY (VNI)',  subnet:'10.200.0.0/14', detail:'VXLAN tenant subnets',  range:'10.200.0.1 – 10.203.255.254' });
+    const leafLinks = (dc.leafs||4) * (dc.spines||4);
+    const underlayNeeded = leafLinks * 2;  // 2 IPs per /31
+    const underlayBlock  = underlayNeeded <= 4096 ? '10.1.0.0/20' : '10.1.0.0/18';
+    blocks.push({
+      label:`DC UNDERLAY /31 (${dc.leafs||4} leaf × ${dc.spines||4} spine = ${leafLinks} links)`,
+      subnet: underlayBlock,
+      detail:`P2P /31 links · ${leafLinks} leaf-spine pairs · ECMP`,
+      range:`10.1.0.0 – covers ${leafLinks} /31 pairs` });
+    blocks.push({
+      label:'DC OVERLAY — VXLAN tenant subnets',
+      subnet:'10.200.0.0/14',
+      detail:`VXLAN VNI space · PROD / STOR / DEV tenants · ${dc.leafs||4} VTEPs`,
+      range:'10.200.0.0 – 10.203.255.255 (262K hosts)' });
   }
   if (isGPU) {
-    blocks.push({ label:'GPU COMPUTE',   subnet:'192.168.100.0/22', detail:'RoCEv2 RDMA fabric',     range:'192.168.100.1 – 192.168.103.254' });
-    blocks.push({ label:'STORAGE FABRIC',subnet:'192.168.200.0/23', detail:'NVMe-oF / NFS access',  range:'192.168.200.1 – 192.168.201.254' });
+    blocks.push({
+      label:`GPU COMPUTE (${gpu.tors||4} TOR · ${gpu.servers||0} servers)`,
+      subnet:'192.168.100.0/22',
+      detail:`RoCEv2 RDMA fabric · ${gpu.totalNICs||0} NICs · ${gpu.speed||100}G`,
+      range:'192.168.100.1 – 192.168.103.254 (1022 hosts)' });
+    blocks.push({
+      label:'STORAGE FABRIC — NVMe-oF / GPUDirect',
+      subnet:'192.168.200.0/23',
+      detail:'NVMe-oF storage fabric · all-flash · GPUDirect RDMA',
+      range:'192.168.200.1 – 192.168.201.254 (510 hosts)' });
   }
 
   document.getElementById('ip-blocks').innerHTML = blocks.map(b => `
@@ -1038,35 +1096,105 @@ function renderIPPlan() {
       <td class="mono">${ip}</td><td class="mono">${subnet}</td><td>${purpose}</td></tr>`);
 
   if (uc === 'campus' || uc === 'hybrid') {
-    addRow('FW-01',   '<span class="pill-layer pl-fw">Security</span>',    'GigabitEthernet0/0', '10.0.0.1',    '/30', 'Outside / Internet uplink');
-    addRow('FW-01',   '<span class="pill-layer pl-fw">Security</span>',    'GigabitEthernet0/1', '10.0.0.2',    '/30', 'Inside / Core downlink');
-    addRow('FW-01',   '<span class="pill-layer pl-fw">Security</span>',    'Loopback0',          '10.255.0.1',  '/32', 'Router ID / BGP');
-    addRow('CORE-01', '<span class="pill-layer pl-core">Core</span>',      'Loopback0',          '10.255.0.10', '/32', 'Router ID / OSPF');
-    addRow('CORE-01', '<span class="pill-layer pl-core">Core</span>',      'Vlan10',             '10.0.0.10',   '/24', 'Management SVI gateway');
-    addRow('CORE-01', '<span class="pill-layer pl-core">Core</span>',      'Vlan20',             '10.10.0.1',   '/22', 'Corporate data gateway');
-    addRow('DIST-01', '<span class="pill-layer pl-dist">Dist</span>',      'Loopback0',          '10.255.0.20', '/32', 'Router ID');
-    addRow('DIST-01', '<span class="pill-layer pl-dist">Dist</span>',      'Et0/0 (P2P→CORE)',   '10.100.0.1',  '/31', 'Core uplink P2P');
-    addRow('DIST-02', '<span class="pill-layer pl-dist">Dist</span>',      'Loopback0',          '10.255.0.21', '/32', 'Router ID');
-    addRow('DIST-02', '<span class="pill-layer pl-dist">Dist</span>',      'Et0/0 (P2P→CORE)',   '10.100.0.3',  '/31', 'Core uplink P2P');
-    addRow('ACC-01',  '<span class="pill-layer pl-access">Access</span>',  'Vlan10',             '10.0.0.31',   '/24', 'Management');
-    addRow('ACC-02',  '<span class="pill-layer pl-access">Access</span>',  'Vlan10',             '10.0.0.32',   '/24', 'Management');
+    const nCore = cc.core  || 2;
+    const nDist = cc.dist  || 4;
+    const nAcc  = cc.access|| 6;
+    // FW
+    addRow('FW-01',  '<span class="pill-layer pl-fw">Security</span>',   'GigabitEthernet0/0', '10.0.0.1',  '/30', 'Outside / Internet uplink');
+    addRow('FW-01',  '<span class="pill-layer pl-fw">Security</span>',   'Loopback0',          '10.255.0.1','/32', 'Router-ID / BGP');
+    if (nCore > 1)
+      addRow('FW-02','<span class="pill-layer pl-fw">Security</span>',   'GigabitEthernet0/0', '10.0.0.2',  '/30', 'HA pair — Outside uplink');
+    // Core (show all)
+    for (let i = 0; i < nCore; i++) {
+      const name = `CORE-${String(i+1).padStart(2,'0')}`;
+      addRow(name, '<span class="pill-layer pl-core">Core</span>', 'Loopback0',
+        `10.255.0.${10 + i}`, '/32', `Router-ID / OSPF · device ${i+1} of ${nCore}`);
+      addRow(name, '<span class="pill-layer pl-core">Core</span>', 'Vlan20',
+        `10.10.${i}.1`, '/22', 'Corporate data SVI gateway');
+    }
+    // Distribution (show all — one loopback row per device)
+    for (let i = 0; i < nDist; i++) {
+      const name = `DIST-${String(i+1).padStart(2,'0')}`;
+      const p2p  = `10.100.${Math.floor(i/128)}.${(i*2)%256}`;
+      addRow(name, '<span class="pill-layer pl-dist">Dist</span>', 'Loopback0',
+        `10.255.0.${20 + i}`, '/32', `Router-ID · device ${i+1} of ${nDist}`);
+      addRow(name, '<span class="pill-layer pl-dist">Dist</span>', 'Et0/0 (P2P→CORE)',
+        p2p, '/31', `Core uplink P2P · link ${i+1}`);
+    }
+    // Access — show first 20, then summary row
+    const accShow = Math.min(nAcc, 20);
+    for (let i = 0; i < accShow; i++) {
+      const zone = ['FL1','FL2','SRV','IOT'][Math.floor(i / Math.ceil(accShow/4))];
+      addRow(`ACC-${zone}-${String(i+1).padStart(2,'0')}`,
+        '<span class="pill-layer pl-access">Access</span>', 'Vlan10',
+        `10.0.0.${31 + i}`, '/24', `OOB mgmt · device ${i+1} of ${nAcc}`);
+    }
+    if (nAcc > accShow) {
+      rows.push(`<tr style="color:var(--txt3);font-style:italic"><td colspan="6">
+        ✦ ${nAcc - accShow} more access switches follow same scheme:
+        Vlan10 management 10.0.0.${31+accShow}–${Math.min(30+nAcc,254)} · loopback 10.255.0.${20+nDist}–${Math.min(19+nDist+nAcc,254)}
+      </td></tr>`);
+    }
   }
   if (isDC) {
-    addRow('SPINE-01','<span class="pill-layer pl-spine">Spine</span>',    'Loopback0',          '10.255.1.1',  '/32', 'BGP Router-ID / VTEP');
-    addRow('SPINE-01','<span class="pill-layer pl-spine">Spine</span>',    'Et1/1 (→LEAF-01)',   '10.1.0.0',    '/31', 'Underlay P2P');
-    addRow('SPINE-01','<span class="pill-layer pl-spine">Spine</span>',    'Et1/2 (→LEAF-02)',   '10.1.0.2',    '/31', 'Underlay P2P');
-    addRow('SPINE-02','<span class="pill-layer pl-spine">Spine</span>',    'Loopback0',          '10.255.1.2',  '/32', 'BGP Router-ID / VTEP');
-    addRow('LEAF-01', '<span class="pill-layer pl-leaf">Leaf</span>',      'Loopback0',          '10.255.2.1',  '/32', 'BGP Router-ID');
-    addRow('LEAF-01', '<span class="pill-layer pl-leaf">Leaf</span>',      'Loopback1 (VTEP)',   '10.255.3.1',  '/32', 'VXLAN NVE source');
-    addRow('LEAF-01', '<span class="pill-layer pl-leaf">Leaf</span>',      'Et1/1 (→SPINE-01)',  '10.1.0.1',    '/31', 'Underlay P2P');
-    addRow('LEAF-02', '<span class="pill-layer pl-leaf">Leaf</span>',      'Loopback0',          '10.255.2.2',  '/32', 'BGP Router-ID');
-    addRow('LEAF-02', '<span class="pill-layer pl-leaf">Leaf</span>',      'Loopback1 (VTEP)',   '10.255.3.2',  '/32', 'VXLAN NVE source');
+    const nSpine = dc.spines || 4;
+    const nLeaf  = dc.leafs  || 4;
+    // All spines
+    for (let i = 0; i < nSpine; i++) {
+      const name = `SPINE-${String(i+1).padStart(2,'0')}`;
+      addRow(name, '<span class="pill-layer pl-spine">Spine</span>', 'Loopback0',
+        `10.255.1.${i+1}`, '/32', `BGP Router-ID · spine ${i+1} of ${nSpine}`);
+    }
+    // Leaves — show first 20, then summary
+    const leafShow = Math.min(nLeaf, 20);
+    const roles = [
+      ...Array(dc.prodLeafs||Math.ceil(nLeaf*.5)).fill('PROD'),
+      ...Array(dc.storLeafs||Math.ceil(nLeaf*.25)).fill('STOR'),
+      ...Array(dc.devLeafs||0).fill('DEV'),
+    ];
+    for (let i = 0; i < leafShow; i++) {
+      const fn   = roles[i] || 'PROD';
+      const name = `LEAF-${fn}-${String(i+1).padStart(2,'0')}`;
+      const p2pBase = i * nSpine * 2;
+      addRow(name, '<span class="pill-layer pl-leaf">Leaf</span>', 'Loopback0',
+        `10.255.2.${i+1}`, '/32', `BGP Router-ID · leaf ${i+1} of ${nLeaf} (${fn})`);
+      addRow(name, '<span class="pill-layer pl-leaf">Leaf</span>', 'Loopback1 (VTEP)',
+        `10.255.3.${i+1}`, '/32', 'VXLAN NVE source (anycast)');
+      addRow(name, '<span class="pill-layer pl-leaf">Leaf</span>',
+        `Et1/1–${nSpine} (→${nSpine} spines)`,
+        `10.1.${Math.floor(p2pBase/256)}.${p2pBase%256}`, '/31 ×N', `${nSpine} P2P uplinks (one per spine)`);
+    }
+    if (nLeaf > leafShow) {
+      rows.push(`<tr style="color:var(--txt3);font-style:italic"><td colspan="6">
+        ✦ ${nLeaf - leafShow} more leaf switches follow same scheme:
+        Loopback0 10.255.2.${leafShow+1}–${nLeaf} · VTEP 10.255.3.${leafShow+1}–${nLeaf} · P2P scheme continues
+      </td></tr>`);
+    }
   }
   if (isGPU) {
-    addRow('GPU-SPINE-01','<span class="pill-layer pl-tor">GPU Spine</span>', 'Loopback0',       '10.255.4.1',  '/32', 'BGP Router-ID');
-    addRow('GPU-TOR-01',  '<span class="pill-layer pl-tor">GPU TOR</span>',  'Loopback0',        '10.255.5.1',  '/32', 'BGP Router-ID');
-    addRow('GPU-TOR-01',  '<span class="pill-layer pl-tor">GPU TOR</span>',  'Et1/1 (RoCE)',     '192.168.100.1','/22','RoCEv2 compute fabric');
-    addRow('GPU-TOR-02',  '<span class="pill-layer pl-tor">GPU TOR</span>',  'Et1/1 (RoCE)',     '192.168.100.129','/22','RoCEv2 compute fabric');
+    const nSpine = gpu.spines || 2;
+    const nTOR   = gpu.tors   || 4;
+    for (let i = 0; i < nSpine; i++) {
+      addRow(`GPU-SPINE-${String(i+1).padStart(2,'0')}`,
+        '<span class="pill-layer pl-tor">GPU Spine</span>', 'Loopback0',
+        `10.255.4.${i+1}`, '/32', `BGP Router-ID · spine ${i+1} of ${nSpine}`);
+    }
+    const torShow = Math.min(nTOR, 20);
+    for (let i = 0; i < torShow; i++) {
+      addRow(`GPU-TOR-${String(i+1).padStart(2,'0')}`,
+        '<span class="pill-layer pl-tor">GPU TOR</span>', 'Loopback0',
+        `10.255.5.${i+1}`, '/32', `BGP Router-ID · TOR ${i+1} of ${nTOR}`);
+      addRow(`GPU-TOR-${String(i+1).padStart(2,'0')}`,
+        '<span class="pill-layer pl-tor">GPU TOR</span>',
+        `Et1/1–${gpu.portsPerTOR||32} (RoCEv2)`,
+        `192.168.${100+Math.floor(i*4/256)}.${(i*4)%256}`, '/26',
+        `RoCEv2 compute fabric · ${gpu.speed||100}G · ${gpu.gpusPerServer||8} GPU/server`);
+    }
+    if (nTOR > torShow) {
+      rows.push(`<tr style="color:var(--txt3);font-style:italic"><td colspan="6">
+        ✦ ${nTOR - torShow} more TOR switches · RoCEv2 fabric scheme continues in 192.168.100.0/22
+      </td></tr>`);
+    }
   }
 
   document.getElementById('ip-detail-tbody').innerHTML = rows.join('');
