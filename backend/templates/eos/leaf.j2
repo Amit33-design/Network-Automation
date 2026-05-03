@@ -1,0 +1,327 @@
+! ═══════════════════════════════════════════════════════════════════
+! NetDesign AI — Arista EOS  DC LEAF (VTEP) CONFIG
+! Device   : {{ hostname }}
+! Role     : Leaf / ToR — VXLAN BGP-EVPN VTEP, Anycast Gateway
+! Underlay : {{ underlay | upper }}  |  Overlay: BGP EVPN / VXLAN
+! L2VNI base: 10000 + vlan_id  |  L3VNI base: 19000 + vrf_idx
+! RT scheme : {{ bgp_asn }}:vni  (iBGP RR — spine AS {{ bgp_asn }})
+! ═══════════════════════════════════════════════════════════════════
+
+hostname {{ hostname }}
+
+spanning-tree mode mstp
+spanning-tree mst 0 priority 4096
+
+! ── Management ───────────────────────────────────────────────────────────────
+vrf instance MGMT
+
+ip route vrf MGMT 0.0.0.0/0 {{ mgmt_ip.rsplit('.', 1)[0] }}.1
+
+interface Management1
+   description OOB-MGMT
+   vrf MGMT
+   ip address {{ mgmt_ip }}/24
+   no shutdown
+
+! ── Anycast gateway MAC (shared across all VTEPs) ────────────────────────────
+ip virtual-router mac-address 00:1c:73:00:00:99
+
+! ── Tenant VRFs (L3VNI symmetric IRB) ───────────────────────────────────────
+vrf instance PROD
+   rd {{ bgp_asn }}:1
+   route-target import evpn {{ bgp_asn }}:19001
+   route-target export evpn {{ bgp_asn }}:19001
+
+vrf instance DEV
+   rd {{ bgp_asn }}:2
+   route-target import evpn {{ bgp_asn }}:19002
+   route-target export evpn {{ bgp_asn }}:19002
+
+vrf instance STORAGE
+   rd {{ bgp_asn }}:3
+   route-target import evpn {{ bgp_asn }}:19003
+   route-target export evpn {{ bgp_asn }}:19003
+
+! ── L3VNI transit VLANs (one per VRF) ───────────────────────────────────────
+vlan 3001
+   name L3VNI-PROD-TRANSIT
+vlan 3002
+   name L3VNI-DEV-TRANSIT
+vlan 3003
+   name L3VNI-STORAGE-TRANSIT
+
+! ── Tenant VLANs ─────────────────────────────────────────────────────────────
+vlan 10
+   name PROD-SERVERS
+vlan 11
+   name PROD-APPS
+vlan 20
+   name DEV-SERVERS
+vlan 30
+   name STORAGE-NFS
+vlan 31
+   name STORAGE-ISCSI
+
+! ── Loopbacks ────────────────────────────────────────────────────────────────
+interface Loopback0
+   description Router-ID — BGP EVPN peering
+   ip address {{ loopback_ip }}/32
+   {% if underlay == 'isis' %}
+   isis instance UNDERLAY area 49.0001
+   {% else %}
+   ip ospf area 0.0.0.0
+   {% endif %}
+
+interface Loopback1
+   description VTEP-NVE-source (anycast VTEP IP)
+   ip address 10.1.2.{{ index }}/32
+   {% if underlay == 'isis' %}
+   isis instance UNDERLAY area 49.0001
+   {% else %}
+   ip ospf area 0.0.0.0
+   {% endif %}
+
+! ── P2P uplinks to spines (/31, MTU 9214) ───────────────────────────────────
+interface Ethernet1
+   description P2P-UPLINK-TO-SPINE-01
+   mtu 9214
+   no switchport
+   ip address 10.2.1.{{ index * 2 }}/31
+   {% if underlay == 'isis' %}
+   isis instance UNDERLAY
+   isis network point-to-point
+   {% else %}
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+   {% endif %}
+   bfd interval 300 min_rx 300 multiplier 3
+   no shutdown
+
+interface Ethernet2
+   description P2P-UPLINK-TO-SPINE-02
+   mtu 9214
+   no switchport
+   ip address 10.2.2.{{ index * 2 }}/31
+   {% if underlay == 'isis' %}
+   isis instance UNDERLAY
+   isis network point-to-point
+   {% else %}
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+   {% endif %}
+   bfd interval 300 min_rx 300 multiplier 3
+   no shutdown
+
+! ── Server-facing ports (access mode, one port-channel per server) ────────────
+interface Ethernet3
+   description SERVER-ACCESS-01
+   switchport access vlan 10
+   spanning-tree portfast
+   spanning-tree bpduguard enable
+   no shutdown
+
+interface Ethernet4
+   description SERVER-ACCESS-02
+   switchport access vlan 10
+   spanning-tree portfast
+   spanning-tree bpduguard enable
+   no shutdown
+
+! ── SVIs — Anycast gateways per tenant VLAN ─────────────────────────────────
+interface Vlan10
+   description PROD-SERVERS gateway
+   vrf PROD
+   ip address virtual 10.10.0.1/24
+   no shutdown
+
+interface Vlan11
+   description PROD-APPS gateway
+   vrf PROD
+   ip address virtual 10.11.0.1/24
+   no shutdown
+
+interface Vlan20
+   description DEV-SERVERS gateway
+   vrf DEV
+   ip address virtual 10.20.0.1/24
+   no shutdown
+
+interface Vlan30
+   description STORAGE-NFS gateway
+   vrf STORAGE
+   ip address virtual 10.30.0.1/24
+   no shutdown
+
+interface Vlan31
+   description STORAGE-ISCSI gateway
+   vrf STORAGE
+   ip address virtual 10.31.0.1/24
+   no shutdown
+
+! L3VNI transit SVIs (IRB for routing between VRFs)
+interface Vlan3001
+   description L3VNI transit — VRF PROD
+   vrf PROD
+   ip address 10.255.1.{{ index }}/32
+   no shutdown
+
+interface Vlan3002
+   description L3VNI transit — VRF DEV
+   vrf DEV
+   ip address 10.255.2.{{ index }}/32
+   no shutdown
+
+interface Vlan3003
+   description L3VNI transit — VRF STORAGE
+   vrf STORAGE
+   ip address 10.255.3.{{ index }}/32
+   no shutdown
+
+! ── VXLAN VTEP (NVE interface) ───────────────────────────────────────────────
+interface Vxlan1
+   description VTEP — BGP EVPN VXLAN encap/decap
+   vxlan source-interface Loopback1
+   vxlan udp-port 4789
+   !
+   ! L2VNI mappings (VLAN → VNI)
+   vxlan vlan 10  vni 10010
+   vxlan vlan 11  vni 10011
+   vxlan vlan 20  vni 10020
+   vxlan vlan 30  vni 10030
+   vxlan vlan 31  vni 10031
+   !
+   ! L3VNI mappings (VRF → VNI)
+   vxlan vrf PROD    vni 19001
+   vxlan vrf DEV     vni 19002
+   vxlan vrf STORAGE vni 19003
+
+! ── Underlay routing ─────────────────────────────────────────────────────────
+{% if underlay == 'isis' %}
+router isis UNDERLAY
+   net 49.0001.{{ '%04x' % (index * 256) }}.0000.00
+   is-type level-2
+   address-family ipv4 unicast
+      maximum-paths 64
+      bfd all-interfaces
+{% else %}
+router ospf UNDERLAY
+   router-id {{ loopback_ip }}
+   bfd default
+   passive-interface default
+   no passive-interface Ethernet1
+   no passive-interface Ethernet2
+   max-lsa 12000
+{% endif %}
+
+! ── Prefix lists ─────────────────────────────────────────────────────────────
+ip prefix-list LOOPBACKS    seq 5  permit 10.0.0.0/16 le 32
+ip prefix-list VTEP-ANYCAST seq 5  permit 10.1.0.0/16 le 32
+ip prefix-list DENY-ALL     seq 5  deny   0.0.0.0/0 le 32
+
+! ── Route-maps ───────────────────────────────────────────────────────────────
+route-map RM-VTEP-TO-SPINE permit 10
+   match ip address prefix-list LOOPBACKS
+   set community {{ bgp_asn }}:100 additive
+route-map RM-VTEP-TO-SPINE permit 20
+   match ip address prefix-list VTEP-ANYCAST
+   set community {{ bgp_asn }}:100 additive
+route-map RM-VTEP-TO-SPINE deny 30
+
+route-map RM-SPINE-TO-VTEP permit 10
+   set local-preference 200
+route-map RM-SPINE-TO-VTEP permit 20
+
+! ── BGP EVPN — Leaf VTEP (iBGP RR-client) ───────────────────────────────────
+! Peer to both spine RRs (loopback0).
+! l2vpn evpn AF activated for EVPN route exchange.
+router bgp {{ bgp_asn }}
+   router-id {{ loopback_ip }}
+   no bgp default ipv4-unicast
+   bgp bestpath as-path multipath-relax
+   maximum-paths 64 ecmp 64
+   bgp log-neighbor-changes
+   !
+   address-family ipv4
+      redistribute connected route-map RM-VTEP-TO-SPINE
+      maximum-paths 64 ecmp 64
+   !
+   address-family evpn
+      bgp next-hop-unchanged
+   !
+   ! Tenant VRF address-families (type-5 IP prefix routes)
+   vrf PROD
+      rd {{ bgp_asn }}:{{ index }}1
+      route-target import evpn {{ bgp_asn }}:19001
+      route-target export evpn {{ bgp_asn }}:19001
+      address-family ipv4
+         maximum-paths 64
+         redistribute connected
+   !
+   vrf DEV
+      rd {{ bgp_asn }}:{{ index }}2
+      route-target import evpn {{ bgp_asn }}:19002
+      route-target export evpn {{ bgp_asn }}:19002
+      address-family ipv4
+         maximum-paths 64
+         redistribute connected
+   !
+   vrf STORAGE
+      rd {{ bgp_asn }}:{{ index }}3
+      route-target import evpn {{ bgp_asn }}:19003
+      route-target export evpn {{ bgp_asn }}:19003
+      address-family ipv4
+         maximum-paths 64
+         redistribute connected
+   !
+   ! ── Spine RR sessions ────────────────────────────────────────────────────
+   neighbor 10.0.1.1
+      remote-as {{ bgp_asn }}
+      description SPINE-01-RR
+      update-source Loopback0
+      timers 3 9
+      bfd
+      send-community
+      send-community extended
+   !
+   neighbor 10.0.2.2
+      remote-as {{ bgp_asn }}
+      description SPINE-02-RR
+      update-source Loopback0
+      timers 3 9
+      bfd
+      send-community
+      send-community extended
+   !
+   address-family evpn
+      neighbor 10.0.1.1 activate
+      neighbor 10.0.1.1 route-map RM-SPINE-TO-VTEP in
+      neighbor 10.0.2.2 activate
+      neighbor 10.0.2.2 route-map RM-SPINE-TO-VTEP in
+   !
+   address-family ipv4
+      neighbor 10.0.1.1 activate
+      neighbor 10.0.1.1 route-map RM-SPINE-TO-VTEP in
+      neighbor 10.0.1.1 maximum-routes 50000 warning-only
+      neighbor 10.0.2.2 activate
+      neighbor 10.0.2.2 route-map RM-SPINE-TO-VTEP in
+      neighbor 10.0.2.2 maximum-routes 50000 warning-only
+
+! ── gNMI / eAPI for CloudVision ──────────────────────────────────────────────
+management api gnmi
+   transport grpc default
+   provider eos-native
+   no shutdown
+
+management api http-commands
+   protocol https
+   no shutdown
+
+! ── NTP, Logging ─────────────────────────────────────────────────────────────
+ntp server vrf MGMT 10.100.0.1 prefer
+ntp server vrf MGMT 10.100.0.2
+
+logging vrf MGMT host 10.100.0.200
+logging level BGP informational
+logging level EVPN informational
+
+end

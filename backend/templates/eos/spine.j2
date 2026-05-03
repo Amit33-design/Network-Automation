@@ -1,0 +1,187 @@
+! ═══════════════════════════════════════════════════════════════════
+! NetDesign AI — Arista EOS  DC SPINE (BGP Route Reflector) CONFIG
+! Device   : {{ hostname }}
+! Role     : Spine — BGP EVPN Route Reflector, underlay {{ underlay | upper }}
+! Policy   : RM-RR-TO-LEAF (out) / RM-LEAF-TO-RR (in)
+! RT scheme: retain route-target all  (RR reflects unchanged)
+! ═══════════════════════════════════════════════════════════════════
+
+hostname {{ hostname }}
+
+spanning-tree mode none
+
+! ── Management ───────────────────────────────────────────────────────────────
+vrf instance MGMT
+
+ip route vrf MGMT 0.0.0.0/0 {{ mgmt_ip.rsplit('.', 1)[0] }}.1
+
+interface Management1
+   description OOB-MGMT
+   vrf MGMT
+   ip address {{ mgmt_ip }}/24
+   no shutdown
+
+! ── Loopbacks ────────────────────────────────────────────────────────────────
+interface Loopback0
+   description Router-ID — BGP EVPN RR
+   ip address {{ loopback_ip }}/32
+   {% if underlay == 'isis' %}
+   isis instance UNDERLAY area 49.0001
+   {% else %}
+   ip ospf area 0.0.0.0
+   {% endif %}
+
+interface Loopback1
+   description VTEP-NVE-source (spine anycast PIP for EVPN type-5)
+   ip address 10.1.{{ index }}.{{ index }}/32
+   {% if underlay == 'isis' %}
+   isis instance UNDERLAY area 49.0001
+   {% else %}
+   ip ospf area 0.0.0.0
+   {% endif %}
+
+! ── P2P links to leaves (/31, MTU 9214) ─────────────────────────────────────
+{% for i in range(1, 9) %}
+interface Ethernet{{ i }}
+   description P2P-TO-LEAF-{{ i }}
+   mtu 9214
+   no switchport
+   ip address 10.2.{{ index }}.{{ loop.index0 * 2 + 1 }}/31
+   {% if underlay == 'isis' %}
+   isis instance UNDERLAY
+   isis network point-to-point
+   {% else %}
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+   {% endif %}
+   bfd interval 300 min_rx 300 multiplier 3
+   no shutdown
+
+{% endfor %}
+
+! ── Underlay routing ─────────────────────────────────────────────────────────
+{% if underlay == 'isis' %}
+router isis UNDERLAY
+   net 49.0001.{{ '%04x' % (index * 256) }}.0000.00
+   is-type level-2
+   !
+   address-family ipv4 unicast
+      maximum-paths 64
+      bfd all-interfaces
+{% else %}
+router ospf UNDERLAY
+   router-id {{ loopback_ip }}
+   bfd default
+   passive-interface default
+   {% for i in range(1, 9) %}
+   no passive-interface Ethernet{{ i }}
+   {% endfor %}
+   max-lsa 12000
+{% endif %}
+
+! ── Prefix lists ─────────────────────────────────────────────────────────────
+ip prefix-list LOOPBACKS     seq 5  permit 10.0.0.0/16 le 32
+ip prefix-list VTEP-ANYCAST  seq 5  permit 10.1.0.0/16 le 32
+ip prefix-list DC-HOSTS      seq 5  permit 10.10.0.0/16 le 32
+ip prefix-list MGMT          seq 5  permit 10.100.0.0/16 le 32
+ip prefix-list DENY-ALL      seq 5  deny   0.0.0.0/0 le 32
+
+! ── Community lists (TE colouring) ──────────────────────────────────────────
+ip community-list standard CL-LP-PRIMARY permit {{ bgp_asn }}:100
+ip community-list standard CL-LP-BACKUP  permit {{ bgp_asn }}:300
+ip community-list standard CL-BLACKHOLE  permit {{ bgp_asn }}:9999
+ip community-list standard CL-SPINE-ORIG permit {{ bgp_asn }}:1000
+
+! ── Route-maps ───────────────────────────────────────────────────────────────
+route-map RM-LEAF-TO-RR permit 10
+   description Loopbacks — set LP=200 (primary underlay)
+   match ip address prefix-list LOOPBACKS
+   set local-preference 200
+route-map RM-LEAF-TO-RR permit 20
+   description All EVPN routes — LP=100 default
+   set local-preference 100
+
+route-map RM-RR-TO-LEAF permit 10
+   description Tag reflected routes as spine-originated
+   set community {{ bgp_asn }}:1000 additive
+route-map RM-RR-TO-LEAF permit 20
+
+route-map RM-BLACKHOLE permit 10
+   match community CL-BLACKHOLE
+   set ip next-hop 192.0.2.1
+   set local-preference 5000
+route-map RM-BLACKHOLE deny 20
+
+route-map RM-LOOPBACKS-EXPORT permit 10
+   match ip address prefix-list LOOPBACKS
+route-map RM-LOOPBACKS-EXPORT permit 20
+   match ip address prefix-list VTEP-ANYCAST
+route-map RM-LOOPBACKS-EXPORT deny 30
+
+route-map RM-EVPN-NH-UNCHANGED permit 10
+   set ip next-hop unchanged
+
+! ── BGP EVPN — Spine Route Reflector ─────────────────────────────────────────
+! Leaves peer iBGP to spine Loopback0.
+! retain route-target all — reflects ALL VNI routes (spine has no tenant VRFs).
+! send-community extended — required for EVPN RT extended communities.
+router bgp {{ bgp_asn }}
+   router-id {{ loopback_ip }}
+   no bgp default ipv4-unicast
+   bgp bestpath as-path multipath-relax
+   maximum-paths 64 ecmp 64
+   bgp log-neighbor-changes
+   !
+   address-family ipv4
+      redistribute connected route-map RM-LOOPBACKS-EXPORT
+      maximum-paths 64 ecmp 64
+   !
+   address-family evpn
+      bgp next-hop-unchanged
+      retain route-target all
+   !
+   ! ── Leaf iBGP RR-client sessions ────────────────────────────────────────
+   {% for i in range(1, 9) %}
+   ! Leaf-{{ '%02d' % i }}
+   neighbor 10.0.{{ i }}.{{ i }}
+      remote-as {{ bgp_asn }}
+      description LEAF-{{ '%02d' % i }}-EVPN-CLIENT
+      update-source Loopback0
+      timers 3 9
+      bfd
+      send-community
+      send-community extended
+      route-reflector-client
+   !
+   address-family evpn
+      neighbor 10.0.{{ i }}.{{ i }} activate
+      neighbor 10.0.{{ i }}.{{ i }} route-map RM-LEAF-TO-RR  in
+      neighbor 10.0.{{ i }}.{{ i }} route-map RM-RR-TO-LEAF out
+      neighbor 10.0.{{ i }}.{{ i }} next-hop-unchanged
+   !
+   address-family ipv4
+      neighbor 10.0.{{ i }}.{{ i }} activate
+      neighbor 10.0.{{ i }}.{{ i }} route-map RM-LEAF-TO-RR  in
+      neighbor 10.0.{{ i }}.{{ i }} route-map RM-RR-TO-LEAF out
+      neighbor 10.0.{{ i }}.{{ i }} maximum-routes 50000 warning-only
+   {% endfor %}
+
+! ── gNMI / eAPI for CloudVision ──────────────────────────────────────────────
+management api gnmi
+   transport grpc default
+   provider eos-native
+   no shutdown
+
+management api http-commands
+   protocol https
+   no shutdown
+
+! ── NTP, Logging ─────────────────────────────────────────────────────────────
+ntp server vrf MGMT 10.100.0.1 prefer
+ntp server vrf MGMT 10.100.0.2
+
+logging vrf MGMT host 10.100.0.200
+logging level BGP informational
+logging level EVPN informational
+
+end
