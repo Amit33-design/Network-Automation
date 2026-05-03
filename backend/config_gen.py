@@ -185,9 +185,51 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
         has_evpn   = any("evpn" in p for p in protos_lower)
         has_vxlan  = any("vxlan" in p for p in protos_lower)
         has_isis   = any("is-is" in p or "isis" in p for p in protos_lower)
-        # Derive spine IPs: loopback0 scheme is 10.0.<idx>.<idx>
-        # Spines are always index 1 and 2 in the LAYER_PLATFORM_MAP
-        spine_ips  = state.get("spineLoopbacks", ["10.0.1.1", "10.0.1.2"])
+
+        # Real device counts from state (set by nl_parser / capacity model)
+        spine_count = int(state.get("spine_count") or 2)
+        leaf_count  = int(state.get("leaf_count")  or 4)
+
+        # Spine loopback IPs: 10.0.<spine_idx>.<spine_idx>
+        spine_ips = state.get("spineLoopbacks") or [
+            f"10.0.{s}.{s}" for s in range(1, spine_count + 1)
+        ]
+
+        # ── P2P /31 addressing scheme ──────────────────────────────────────
+        # Subnet for spine S ↔ leaf L: 10.2.<S>.<(L-1)*2>/31
+        #   spine end (odd)  : 10.2.<S>.<(L-1)*2 + 1>
+        #   leaf  end (even) : 10.2.<S>.<(L-1)*2>
+        #
+        # For a SPINE device (index = S):
+        #   uplinks list has one entry per leaf, leaf index 1..leaf_count
+        if layer == "dc-spine":
+            spine_uplinks = [
+                {
+                    "name":      f"Ethernet1/{L}",
+                    "peer":      f"LEAF-{L:02d}",
+                    "ip":        f"10.2.{index}.{(L-1)*2 + 1}/31",
+                    "remote_ip": f"10.2.{index}.{(L-1)*2}",
+                }
+                for L in range(1, leaf_count + 1)
+            ]
+        else:
+            spine_uplinks = []
+
+        # For a LEAF device (index = L):
+        #   uplinks list has one entry per spine, spine index 1..spine_count
+        if layer == "dc-leaf":
+            leaf_uplinks = [
+                {
+                    "name":      f"Ethernet1/{S}",
+                    "peer":      f"SPINE-{S:02d}",
+                    "ip":        f"10.2.{S}.{(index-1)*2}/31",
+                    "remote_ip": f"10.2.{S}.{(index-1)*2 + 1}",
+                }
+                for S in range(1, spine_count + 1)
+            ]
+        else:
+            leaf_uplinks = []
+
         ctx.update({
             "vxlan_vni_base": 10_000,
             "l2vni_base":     10_000,   # L2VNI = l2vni_base + vlan_id
@@ -195,6 +237,9 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
             "bgp_evpn":       has_evpn or has_vxlan,
             "has_vxlan":      has_vxlan,
             "spine_ips":      spine_ips,
+            "spine_count":    spine_count,
+            "leaf_count":     leaf_count,
+            "uplinks":        spine_uplinks if layer == "dc-spine" else leaf_uplinks,
             "underlay":       "isis" if has_isis else "ospf",
             # Tenant VRFs for EVPN policy generator
             "tenant_vrfs": [

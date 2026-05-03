@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
 
-  # ── NetDesign AI API backend ────────────────────────────────
+  # ── NetDesign AI — FastAPI REST backend ────────────────────────────────────
   api:
     build:
       context: ./backend
@@ -27,7 +27,35 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # ── Static frontend (optional — or just open index.html) ────
+  # ── NetDesign AI — MCP SSE server (for ChatGPT / remote AI clients) ────────
+  # Connect from Claude Desktop or ChatGPT Custom GPT at:
+  #   http://localhost:8001/sse
+  mcp:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: netdesign-mcp
+    ports:
+      - "8001:8001"
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: >
+      python mcp_server.py
+        --transport sse
+        --host 0.0.0.0
+        --port 8001
+        --log-level INFO
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/sse')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ── Static frontend (optional — or just open index.html directly) ──────────
   frontend:
     image: nginx:alpine
     container_name: netdesign-frontend
@@ -36,6 +64,7 @@ services:
     volumes:
       - ./index.html:/usr/share/nginx/html/index.html:ro
       - ./preview.svg:/usr/share/nginx/html/preview.svg:ro
+      - ./src:/usr/share/nginx/html/src:ro
     depends_on:
       - api
     restart: unless-stopped

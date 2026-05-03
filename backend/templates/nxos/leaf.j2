@@ -1,15 +1,20 @@
-! ============================================================
-! NetDesign AI — Cisco NX-OS  DC LEAF CONFIG
-! Device  : {{ hostname }}
-! VXLAN BGP-EVPN leaf — anycast gateway
-! ============================================================
+! ═══════════════════════════════════════════════════════════════════
+! NetDesign AI — Cisco NX-OS  DC LEAF (VTEP) CONFIG
+! Device   : {{ hostname }}
+! Role     : Leaf / ToR — VXLAN BGP-EVPN VTEP, Anycast Gateway
+! Underlay : {{ underlay | upper }}  |  Overlay: BGP EVPN / VXLAN
+! L2VNI base: 10000 + vlan_id  |  L3VNI base: 19000 + vrf_idx
+! RT scheme : spine_asn:vni  (iBGP RR — spine AS {{ bgp_asn }})
+! ═══════════════════════════════════════════════════════════════════
 
 hostname {{ hostname }}
 
+! ── Feature set ─────────────────────────────────────────────────────────────
 feature bgp
 feature ospf
 feature isis
 feature bfd
+feature pim
 feature nv overlay
 feature vn-segment-vlan-based
 feature interface-vlan
@@ -17,116 +22,318 @@ feature vpc
 feature lacp
 feature lldp
 feature dhcp
+feature scp-server
+feature telnet disable
 
 no ip domain-lookup
-ip domain-name {{ org | lower | replace(' ', '.') }}.dc
+ip domain-name {{ org | lower | replace(' ', '.') }}.dc.local
+vrf context management
+  ip route 0.0.0.0/0 {{ mgmt_ip.rsplit('.', 1)[0] }}.1
 
+! ── Anycast gateway MAC (shared across all VTEPs) ────────────────────────────
 fabric forwarding anycast-gateway-mac 0000.2222.3333
 
-!-- Loopbacks
+! ── Tenant VRFs (L3VNI symmetric IRB) ───────────────────────────────────────
+! VRF PROD — production workloads
+vrf context PROD
+  description PROD tenant — L3VNI symmetric IRB
+  vni 19001
+  rd {{ bgp_asn }}:1
+  address-family ipv4 unicast
+    route-target import {{ bgp_asn }}:19001
+    route-target export {{ bgp_asn }}:19001
+    route-target import {{ bgp_asn }}:500
+  address-family ipv6 unicast
+    route-target both {{ bgp_asn }}:19001
+
+! VRF DEV — development / QA
+vrf context DEV
+  description DEV tenant — L3VNI symmetric IRB
+  vni 19002
+  rd {{ bgp_asn }}:2
+  address-family ipv4 unicast
+    route-target import {{ bgp_asn }}:19002
+    route-target export {{ bgp_asn }}:19002
+  address-family ipv6 unicast
+    route-target both {{ bgp_asn }}:19002
+
+! VRF STORAGE — storage fabric
+vrf context STORAGE
+  description STORAGE tenant — NVMe-oF / NFS / iSCSI
+  vni 19003
+  rd {{ bgp_asn }}:3
+  address-family ipv4 unicast
+    route-target import {{ bgp_asn }}:19003
+    route-target export {{ bgp_asn }}:19003
+
+! ── Loopbacks ────────────────────────────────────────────────────────────────
 interface loopback0
-  description Router-ID
+  description ROUTER-ID — underlay anchor
   ip address {{ loopback_ip }}/32
   {% if underlay == 'isis' %}
   ip router isis UNDERLAY
   {% else %}
   ip router ospf UNDERLAY area 0.0.0.0
+  ip ospf passive-interface
   {% endif %}
   no shutdown
 
 interface loopback1
-  description VTEP-NVE
+  description VTEP-NVE source — primary VTEP IP
   ip address 10.1.{{ index }}.{{ index }}/32
-  no shutdown
-
-!-- P2P uplinks to spines
-{% for sp in spine_ips %}
-interface Ethernet1/{{ loop.index }}
-  description UPLINK-TO-SPINE-{{ loop.index }}
-  no switchport
-  medium p2p
-  ip address 10.2.{{ loop.index }}.{{ index * 2 }}/31
   {% if underlay == 'isis' %}
   ip router isis UNDERLAY
+  {% else %}
+  ip router ospf UNDERLAY area 0.0.0.0
+  ip ospf passive-interface
+  {% endif %}
+  no shutdown
+
+interface loopback100
+  description MGMT — OOB management (VRF mgmt)
+  vrf member management
+  ip address {{ mgmt_ip }}/24
+  no shutdown
+
+! ── P2P uplinks to spines (/31 addressing) ───────────────────────────────────
+! Addressing: leaf end = 10.2.<spine_idx>.<(leaf_idx-1)*2>/31    (even)
+!             spine end= 10.2.<spine_idx>.<(leaf_idx-1)*2 + 1>/31 (odd)
+{% for ul in uplinks %}
+interface {{ ul.name }}
+  description UPLINK-TO-{{ ul.peer }}-P2P
+  no switchport
+  medium p2p
+  mtu 9216
+  ip address {{ ul.ip }}
+  {% if underlay == 'isis' %}
+  ip router isis UNDERLAY
+  isis circuit-type level-2
+  isis network point-to-point
   {% else %}
   ip ospf network point-to-point
   ip router ospf UNDERLAY area 0.0.0.0
   {% endif %}
+  ip ospf bfd
+  bfd interval 300 min_rx 300 multiplier 3
   no shutdown
 {% endfor %}
 
-!-- VLANs and VNI mapping
-{% set ns = namespace(vni=vxlan_vni_base) %}
+! ── VLAN → VNI mappings (L2VNI) ─────────────────────────────────────────────
+{% set ns = namespace(vni=10000) %}
 {% for vlan in vlans %}
 vlan {{ vlan.id }}
   name {{ vlan.name }}
-  vn-segment {{ ns.vni }}
-{% set ns.vni = ns.vni + 1 %}
+  vn-segment {{ 10000 + vlan.id }}
 {% endfor %}
 {% if not vlans %}
+! Default VLANs when none specified
 vlan 10
-  name PROD
+  name PROD-SERVERS
   vn-segment 10010
+vlan 11
+  name PROD-APPS
+  vn-segment 10011
 vlan 20
-  name DEV
+  name DEV-SERVERS
   vn-segment 10020
+vlan 21
+  name DEV-APPS
+  vn-segment 10021
+vlan 30
+  name STORAGE
+  vn-segment 10030
 {% endif %}
 
-!-- SVIs with anycast GW
+! L3VNI transit VLANs (symmetric IRB — no user traffic)
+vlan 3001
+  name L3VNI-PROD-TRANSIT
+  vn-segment 19001
+vlan 3002
+  name L3VNI-DEV-TRANSIT
+  vn-segment 19002
+vlan 3003
+  name L3VNI-STORAGE-TRANSIT
+  vn-segment 19003
+
+! ── SVIs — Anycast-gateway (L2VNI) ──────────────────────────────────────────
 {% for vlan in vlans %}
 interface Vlan{{ vlan.id }}
-  description {{ vlan.name }}
+  description {{ vlan.name }} anycast-GW
+  vrf member {% if 'STOR' in vlan.name | upper or 'SAN' in vlan.name | upper %}STORAGE{% elif 'DEV' in vlan.name | upper %}DEV{% else %}PROD{% endif %}
   no shutdown
   ip address {{ vlan.get('gw', '172.16.' + loop.index|string + '.1') }}/24
   fabric forwarding mode anycast-gateway
+  ip verify unicast source reachable-via rx
 {% endfor %}
+{% if not vlans %}
+interface Vlan10
+  description PROD-SERVERS anycast-GW
+  vrf member PROD
+  no shutdown
+  ip address 10.10.10.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan11
+  description PROD-APPS anycast-GW
+  vrf member PROD
+  no shutdown
+  ip address 10.10.11.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan20
+  description DEV-SERVERS anycast-GW
+  vrf member DEV
+  no shutdown
+  ip address 10.20.10.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan30
+  description STORAGE anycast-GW
+  vrf member STORAGE
+  no shutdown
+  ip address 10.30.10.1/24
+  fabric forwarding mode anycast-gateway
+{% endif %}
 
-!-- NVE (VTEP)
+! L3VNI transit SVIs (ip forward — no IP — VRF routing only)
+interface Vlan3001
+  description L3VNI-PROD transit
+  vrf member PROD
+  no shutdown
+  ip forward
+
+interface Vlan3002
+  description L3VNI-DEV transit
+  vrf member DEV
+  no shutdown
+  ip forward
+
+interface Vlan3003
+  description L3VNI-STORAGE transit
+  vrf member STORAGE
+  no shutdown
+  ip forward
+
+! ── NVE (VTEP) interface ─────────────────────────────────────────────────────
 interface nve1
   no shutdown
+  description VXLAN-VTEP — BGP-EVPN control plane
   source-interface loopback1
   host-reachability protocol bgp
+  ! L2VNI members (ingress replication via BGP EVPN type-3)
   {% for vlan in vlans %}
-  member vni {{ vxlan_vni_base + loop.index0 }}
-    mcast-group 239.1.1.{{ loop.index }}
+  member vni {{ 10000 + vlan.id }}
+    suppress-arp
+    ingress-replication protocol bgp
   {% endfor %}
+  {% if not vlans %}
+  member vni 10010
+    suppress-arp
+    ingress-replication protocol bgp
+  member vni 10011
+    suppress-arp
+    ingress-replication protocol bgp
+  member vni 10020
+    suppress-arp
+    ingress-replication protocol bgp
+  member vni 10030
+    suppress-arp
+    ingress-replication protocol bgp
+  {% endif %}
+  ! L3VNI associate-vrf (symmetric IRB routing)
+  member vni 19001 associate-vrf
+  member vni 19002 associate-vrf
+  member vni 19003 associate-vrf
 
-!-- Underlay routing
+! ── Underlay routing ─────────────────────────────────────────────────────────
 {% if underlay == 'isis' %}
 router isis UNDERLAY
   net 49.0002.{{ '%04x' % (index * 256) }}.00
   is-type level-2
   address-family ipv4 unicast
     metric-style wide
+    advertise passive-only
+  redistribute direct route-map CONNECTED-LOOPBACKS
 {% else %}
 router ospf UNDERLAY
   router-id {{ loopback_ip }}
+  log-adjacency-changes detail
+  bfd
 {% endif %}
 
-!-- BGP EVPN
+! ── BGP EVPN — Leaf VTEP ─────────────────────────────────────────────────────
+! Leaf participates as iBGP client to spine Route Reflectors.
+! Community-based import/export:
+!   Export  → RM-LEAF-EVPN-EXPORT  (tag LP=200 primary, RT=65000:vni)
+!   Import  → RM-SPINE-EVPN-IMPORT (LP based on community colour)
 router bgp {{ bgp_asn }}
   router-id {{ loopback_ip }}
   log-neighbor-changes
+  bestpath as-path multipath-relax
+  address-family ipv4 unicast
+    redistribute direct route-map LOOPBACK-EXPORT
+    maximum-paths ibgp 64
+  !
   address-family l2vpn evpn
+    advertise-pip
+  !
+  ! ── Spine route-reflector sessions ────────────────────────────────────────
   {% for sp in spine_ips %}
   neighbor {{ sp }}
     remote-as {{ bgp_asn }}
     description SPINE-{{ loop.index }}-RR
     update-source loopback0
+    timers 3 9
+    bfd
     address-family l2vpn evpn
       send-community extended
+      route-map RM-LEAF-EVPN-EXPORT  out
+      route-map RM-SPINE-EVPN-IMPORT in
+      soft-reconfiguration inbound
+      maximum-prefix 50000 80
   {% endfor %}
+  !
+  ! ── Per-VNI EVPN route-target import/export ───────────────────────────────
+  evpn
+    {% for vlan in vlans %}
+    vni {{ 10000 + vlan.id }} l2
+      rd {{ bgp_asn }}:{{ 10000 + vlan.id }}
+      route-target import {{ bgp_asn }}:{{ 10000 + vlan.id }}
+      route-target export {{ bgp_asn }}:{{ 10000 + vlan.id }}
+    {% endfor %}
+    {% if not vlans %}
+    vni 10010 l2
+      rd {{ bgp_asn }}:10010
+      route-target import {{ bgp_asn }}:10010
+      route-target export {{ bgp_asn }}:10010
+    vni 10011 l2
+      rd {{ bgp_asn }}:10011
+      route-target import {{ bgp_asn }}:10011
+      route-target export {{ bgp_asn }}:10011
+    vni 10020 l2
+      rd {{ bgp_asn }}:10020
+      route-target import {{ bgp_asn }}:10020
+      route-target export {{ bgp_asn }}:10020
+    vni 10030 l2
+      rd {{ bgp_asn }}:10030
+      route-target import {{ bgp_asn }}:10030
+      route-target export {{ bgp_asn }}:10030
+    {% endif %}
 
-!-- vPC keepalive (peer link — Eth1/51+52)
+! ── vPC domain (peer link — Eth1/51+52) ──────────────────────────────────────
 vpc domain {{ index }}
-  peer-keepalive destination 10.0.{{ index }}.{{ index + 1 }}
+  peer-keepalive destination 10.0.{{ index }}.{{ index + 1 }} source {{ mgmt_ip }} vrf management
+  peer-gateway
+  layer3 peer-router
+  ip arp synchronize
+  auto-recovery
+
 interface port-channel1
+  description vPC-PEER-LINK
   switchport
   switchport mode trunk
+  switchport trunk allowed vlan all
   spanning-tree port type network
   vpc peer-link
 
-!-- Telemetry (gRPC)
+! ── Telemetry (gRPC streaming) ────────────────────────────────────────────────
 telemetry
   destination-group 1
     ip address 10.100.0.200 port 50051 protocol gRPC encoding GPB
@@ -134,11 +341,16 @@ telemetry
     data-source NX-API
     path sys/bgp/inst/dom-default/peer depth 0
     path sys/intf depth 0
+    path sys/mac depth 0
+    path sys/arp depth 0
   subscription 1
     dst-grp 1
     snsr-grp 1 sample-interval 15000
 
-ntp server 10.0.0.1 use-vrf management
+ntp server 10.0.0.1 use-vrf management prefer
+ntp server 10.0.0.2 use-vrf management
 logging level bgp 5
+logging level evpn 5
+logging monitor 5
 
 end

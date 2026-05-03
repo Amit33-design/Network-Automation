@@ -1,94 +1,367 @@
 {
   "DEVICE_METADATA": {
     "localhost": {
-      "hostname": "{{ hostname }}",
-      "hwsku": "Mellanox-SN4600C-D112C8",
-      "mac": "aa:bb:cc:{{ '%02x' % index }}:00:01",
-      "platform": "x86_64-mlnx_msn4600-r0",
-      "type": "ToRRouter"
+      "hostname":    "{{ hostname }}",
+      "hwsku":       "Mellanox-SN4600C-D112C8",
+      "mac":         "aa:bb:cc:{{ '%02x' % index }}:00:01",
+      "platform":    "x86_64-mlnx_msn4600-r0",
+      "type":        "ToRRouter",
+      "docker_routing_config_mode": "unified",
+      "bgp_asn":     "{{ bgp_asn }}"
     }
   },
 
   "MGMT_INTERFACE": {
-    "eth0|{{ mgmt_ip }}/24": {
-      "gwaddr": "10.100.0.1"
-    }
+    "eth0|{{ mgmt_ip }}/24": { "gwaddr": "10.100.0.1" }
   },
 
   "LOOPBACK_INTERFACE": {
-    "Loopback0": {},
+    "Loopback0":                    {},
     "Loopback0|{{ loopback_ip }}/32": {}
   },
 
+  "! INTERFACE NOTES": {
+    "port_layout": [
+      "Ethernet0..Ethernet28    — 8 × 400GbE uplinks to GPU spines (2 per spine, ECMP)",
+      "Ethernet32..Ethernet124  — 24 × 400GbE downlinks to H100 GPU servers",
+      "Ethernet128..Ethernet156 — 8 × 100GbE storage / misc"
+    ]
+  },
+
   "INTERFACE": {
-    {% for i in range(0, 8) %}
+    "! Spine uplinks (400GbE P2P /31)": {},
+    {% for i in range(0, 4) %}
     "Ethernet{{ i * 4 }}": {
-      "description": "UPLINK-TO-GPU-SPINE-{{ (i % 2) + 1 }}"
+      "description": "UPLINK-TO-GPU-SPINE-{{ (i % 2) + 1 }}-P{{ (i // 2) + 1 }}"
     },
-    "Ethernet{{ i * 4 }}|10.3.{{ (i % 2) + 1 }}.{{ index * 2 }}/31": {}{% if not loop.last %},{% endif %}
+    "Ethernet{{ i * 4 }}|10.3.{{ (i % 2) + 1 }}.{{ index * 2 }}/31": {}{% if i < 3 %},{% endif %}
+
     {% endfor %}
   },
 
-  "PORTCHANNEL": {},
+  "! HOST-FACING PORT CONFIG": {
+    "description": [
+      "Ports Ethernet32-Ethernet124 face H100 GPU servers.",
+      "Each H100 node has 8 × ConnectX-7 400GbE NICs → 8 switch ports per server.",
+      "MTU 9214 (jumbo), DSCP trust, PFC priority 3+4 (lossless RoCEv2),",
+      "ECN marking on queue 3 (RoCEv2 CNP generation)."
+    ]
+  },
 
-  "BGP_NEIGHBOR": {
-    {% for j in range(1, 3) %}
-    "10.3.{{ j }}.{{ index * 2 - 1 }}": {
-      "rrclient": "0",
-      "name": "GPU-SPINE-{{ j }}",
-      "local_addr": "10.3.{{ j }}.{{ index * 2 }}",
-      "nhopself": "0",
-      "holdtime": "9",
-      "asn": "65000",
-      "keepalive": "3"
-    }{% if not loop.last %},{% endif %}
+  "PORT": {
+    "! Spine uplinks — 400GbE RS-FEC": {},
+    {% for p in range(0, 4) %}
+    "Ethernet{{ p * 4 }}": {
+      "alias":        "etp{{ p + 1 }}",
+      "lanes":        "{{ p * 4 + 1 }},{{ p * 4 + 2 }},{{ p * 4 + 3 }},{{ p * 4 + 4 }}",
+      "mtu":          "9214",
+      "speed":        "400000",
+      "admin_status": "up",
+      "fec":          "rs",
+      "autoneg":      "off"
+    },
+    {% endfor %}
+
+    "! H100 GPU host-facing ports — 400GbE, MTU 9214, DSCP trust, PFC lossy+lossless": {},
+    {% for p in range(8, 40) %}
+    "Ethernet{{ p * 4 }}": {
+      "alias":        "etp{{ p + 1 }}",
+      "lanes":        "{{ p * 4 + 1 }},{{ p * 4 + 2 }},{{ p * 4 + 3 }},{{ p * 4 + 4 }}",
+      "mtu":          "9214",
+      "speed":        "400000",
+      "admin_status": "up",
+      "fec":          "rs",
+      "autoneg":      "off"
+    }{% if p < 39 %},{% endif %}
+
     {% endfor %}
   },
 
-  "DEVICE_NEIGHBOR": {},
+  "! DSCP → TC → Queue mapping for RoCEv2 / DCQCN": {},
+
+  "DSCP_TO_TC_MAP": {
+    "RDMA_DSCP_TO_TC": {
+      "0":  "0",
+      "1":  "0",
+      "2":  "0",
+      "3":  "0",
+      "4":  "0",
+      "5":  "0",
+      "6":  "0",
+      "7":  "0",
+      "8":  "1",
+      "16": "2",
+      "24": "3",
+      "26": "3",
+      "46": "5",
+      "48": "6",
+      "56": "7"
+    }
+  },
+
+  "TC_TO_QUEUE_MAP": {
+    "RDMA_TC_TO_QUEUE": {
+      "0": "0",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5",
+      "6": "6",
+      "7": "7"
+    }
+  },
+
+  "MAP_PFC_PRIORITY_TO_QUEUE": {
+    "RDMA_PFC_TO_QUEUE": {
+      "3": "3",
+      "4": "4"
+    }
+  },
+
+  "TC_TO_PRIORITY_GROUP_MAP": {
+    "RDMA_TC_TO_PG": {
+      "0": "0",
+      "1": "0",
+      "2": "0",
+      "3": "3",
+      "4": "4",
+      "5": "0",
+      "6": "0",
+      "7": "7"
+    }
+  },
+
+  "PORT_QOS_MAP": {
+    "! Applied on all H100-facing ports (Ethernet32..Ethernet124)": {},
+    {% for p in range(8, 40) %}
+    "Ethernet{{ p * 4 }}": {
+      "dscp_to_tc_map":             "[DSCP_TO_TC_MAP|RDMA_DSCP_TO_TC]",
+      "tc_to_queue_map":            "[TC_TO_QUEUE_MAP|RDMA_TC_TO_QUEUE]",
+      "tc_to_pg_map":               "[TC_TO_PRIORITY_GROUP_MAP|RDMA_TC_TO_PG]",
+      "pfc_to_queue_map":           "[MAP_PFC_PRIORITY_TO_QUEUE|RDMA_PFC_TO_QUEUE]",
+      "pfc_enable":                 "3,4"
+    }{% if p < 39 %},{% endif %}
+
+    {% endfor %}
+  },
+
+  "BUFFER_PROFILE": {
+    "! Lossless profile — sized for PFC pause propagation delay": {},
+    "ingress_lossless_profile": {
+      "pool":            "[BUFFER_POOL|ingress_lossless_pool]",
+      "size":            "1518",
+      "dynamic_th":      "-1",
+      "xon":             "18432",
+      "xon_offset":      "2496",
+      "xoff":            "165888"
+    },
+    "egress_lossless_profile": {
+      "pool":            "[BUFFER_POOL|egress_lossless_pool]",
+      "size":            "0",
+      "dynamic_th":      "7"
+    },
+    "! Lossy profile (best-effort queues 0-2, 5-7)": {},
+    "ingress_lossy_profile": {
+      "pool":            "[BUFFER_POOL|ingress_lossy_pool]",
+      "size":            "0",
+      "dynamic_th":      "3"
+    },
+    "egress_lossy_profile": {
+      "pool":            "[BUFFER_POOL|egress_lossy_pool]",
+      "size":            "4096",
+      "dynamic_th":      "3"
+    }
+  },
+
+  "BUFFER_POOL": {
+    "ingress_lossless_pool": {
+      "mode": "dynamic",
+      "type": "ingress",
+      "size": "67108864"
+    },
+    "ingress_lossy_pool": {
+      "mode": "dynamic",
+      "type": "ingress",
+      "size": "67108864"
+    },
+    "egress_lossless_pool": {
+      "mode": "dynamic",
+      "type": "egress",
+      "size": "67108864"
+    },
+    "egress_lossy_pool": {
+      "mode": "dynamic",
+      "type": "egress",
+      "size": "67108864"
+    }
+  },
+
+  "BUFFER_PG": {
+    "! PG 3 and PG 4 are lossless (PFC-enabled) on all H100 host ports": {},
+    {% for p in range(8, 40) %}
+    "Ethernet{{ p * 4 }}|3": {
+      "profile": "[BUFFER_PROFILE|ingress_lossless_profile]"
+    },
+    "Ethernet{{ p * 4 }}|4": {
+      "profile": "[BUFFER_PROFILE|ingress_lossless_profile]"
+    },
+    "Ethernet{{ p * 4 }}|0": {
+      "profile": "[BUFFER_PROFILE|ingress_lossy_profile]"
+    }{% if p < 39 %},{% endif %}
+
+    {% endfor %}
+  },
+
+  "BUFFER_QUEUE": {
+    {% for p in range(8, 40) %}
+    "Ethernet{{ p * 4 }}|3": {
+      "profile": "[BUFFER_PROFILE|egress_lossless_profile]"
+    },
+    "Ethernet{{ p * 4 }}|4": {
+      "profile": "[BUFFER_PROFILE|egress_lossless_profile]"
+    },
+    "Ethernet{{ p * 4 }}|0-2": {
+      "profile": "[BUFFER_PROFILE|egress_lossy_profile]"
+    }{% if p < 39 %},{% endif %}
+
+    {% endfor %}
+  },
 
   "QUEUE": {
-    {% for q in pfc_queues %}
-    "Ethernet0|{{ q }}": {
-      "type": "lossy",
-      "wred_profile": "AZURE_LOSSLESS"
-    }{% if not loop.last %},{% endif %}
+    "! Queue 3 — lossless RoCEv2 (WRED/ECN enabled for DCQCN)": {},
+    {% for p in range(8, 40) %}
+    "Ethernet{{ p * 4 }}|3": {
+      "type":         "lossy",
+      "wred_profile": "[WRED_PROFILE|RDMA_LOSSLESS_Q3]"
+    },
+    "Ethernet{{ p * 4 }}|4": {
+      "type":         "lossy",
+      "wred_profile": "[WRED_PROFILE|RDMA_LOSSLESS_Q4]"
+    }{% if p < 39 %},{% endif %}
+
     {% endfor %}
   },
 
   "WRED_PROFILE": {
-    "AZURE_LOSSLESS": {
-      "wred_green_enable":  "true",
-      "green_max_threshold": "{{ ecn_threshold }}",
-      "green_min_threshold": "{{ (ecn_threshold * 0.7) | int }}",
-      "green_drop_probability": "5",
-      "ecn": "ecn_all"
+    "! DCQCN ECN marking thresholds for RoCEv2 queue (queue 3)": {},
+    "RDMA_LOSSLESS_Q3": {
+      "wred_green_enable":        "true",
+      "wred_yellow_enable":       "true",
+      "wred_red_enable":          "true",
+      "ecn":                      "ecn_all",
+      "green_min_threshold":      "{{ (ecn_threshold * 0.50) | int }}",
+      "green_max_threshold":      "{{ ecn_threshold }}",
+      "green_drop_probability":   "0",
+      "yellow_min_threshold":     "{{ (ecn_threshold * 0.50) | int }}",
+      "yellow_max_threshold":     "{{ ecn_threshold }}",
+      "yellow_drop_probability":  "0",
+      "red_min_threshold":        "{{ (ecn_threshold * 0.50) | int }}",
+      "red_max_threshold":        "{{ ecn_threshold }}",
+      "red_drop_probability":     "0"
+    },
+    "RDMA_LOSSLESS_Q4": {
+      "wred_green_enable":        "true",
+      "wred_yellow_enable":       "true",
+      "wred_red_enable":          "true",
+      "ecn":                      "ecn_all",
+      "green_min_threshold":      "{{ (ecn_threshold * 0.50) | int }}",
+      "green_max_threshold":      "{{ ecn_threshold }}",
+      "green_drop_probability":   "0",
+      "yellow_min_threshold":     "{{ (ecn_threshold * 0.50) | int }}",
+      "yellow_max_threshold":     "{{ ecn_threshold }}",
+      "yellow_drop_probability":  "0",
+      "red_min_threshold":        "{{ (ecn_threshold * 0.50) | int }}",
+      "red_max_threshold":        "{{ ecn_threshold }}",
+      "red_drop_probability":     "0"
     }
   },
 
   "PFC_WD": {
     "GLOBAL": {
-      "POLL_INTERVAL": "400"
+      "POLL_INTERVAL":  "400",
+      "ACTION":         "drop"
     },
-    {% for port_i in range(0, 32) %}
-    "Ethernet{{ port_i * 4 }}": {
-      "action": "drop",
-      "detection_time": "400",
+    "! PFC watchdog on every host-facing port (detect storm / deadlock)": {},
+    {% for p in range(8, 40) %}
+    "Ethernet{{ p * 4 }}": {
+      "action":           "drop",
+      "detection_time":   "400",
       "restoration_time": "2000"
-    }{% if not loop.last %},{% endif %}
+    }{% if p < 39 %},{% endif %}
+
     {% endfor %}
   },
 
-  "PORT": {
-    {% for p in range(0, 32) %}
-    "Ethernet{{ p * 4 }}": {
-      "alias": "etp{{ p + 1 }}",
-      "lanes": "{{ p * 4 + 1 }},{{ p * 4 + 2 }},{{ p * 4 + 3 }},{{ p * 4 + 4 }}",
-      "mtu": "9214",
-      "speed": "100000",
-      "admin_status": "up",
-      "fec": "rs"
-    }{% if not loop.last %},{% endif %}
+  "! BGP_NEIGHBOR — spine uplinks and H100 host BGP sessions": {},
+
+  "BGP_NEIGHBOR": {
+    "! Spine uplink BGP (eBGP unnumbered / numbered)": {},
+    {% for j in range(1, 3) %}
+    "10.3.{{ j }}.{{ index * 2 - 1 }}": {
+      "rrclient":    "0",
+      "name":        "GPU-SPINE-{{ j }}",
+      "local_addr":  "10.3.{{ j }}.{{ index * 2 }}",
+      "nhopself":    "0",
+      "holdtime":    "9",
+      "keepalive":   "3",
+      "asn":         "65200",
+      "admin_status": "up"
+    },
     {% endfor %}
+    "! H100 server BGP sessions (one per server, /32 host loopback advertisement)": {},
+    {% for srv in range(1, 9) %}
+    "10.220.{{ index }}.{{ srv }}": {
+      "rrclient":    "0",
+      "name":        "H100-RACK{{ index }}-GPU{{ srv }}",
+      "local_addr":  "10.220.{{ index }}.0",
+      "nhopself":    "0",
+      "holdtime":    "9",
+      "keepalive":   "3",
+      "asn":         "{{ 65300 + (index - 1) * 8 + srv }}",
+      "admin_status": "up",
+      "auth_password": ""
+    }{% if srv < 8 %},{% endif %}
+
+    {% endfor %}
+  },
+
+  "BGP_NEIGHBOR_AF": {
+    "! Activate IPv4 unicast for spine and host sessions": {},
+    {% for j in range(1, 3) %}
+    "10.3.{{ j }}.{{ index * 2 - 1 }}|ipv4": {
+      "admin_status": "true",
+      "route_map_in": "FROM-SPINE",
+      "route_map_out": "TO-SPINE",
+      "send_community": "true",
+      "maximum_prefix": "12000"
+    },
+    {% endfor %}
+    {% for srv in range(1, 9) %}
+    "10.220.{{ index }}.{{ srv }}|ipv4": {
+      "admin_status": "true",
+      "route_map_in": "FROM-GPU-HOST",
+      "route_map_out": "TO-GPU-HOST",
+      "send_community": "true",
+      "maximum_prefix": "64",
+      "maximum_prefix_warning_only": "true"
+    }{% if srv < 8 %},{% endif %}
+
+    {% endfor %}
+  },
+
+  "DEVICE_NEIGHBOR": {
+    "! LLDP neighbor records (auto-populated at runtime)": {}
+  },
+
+  "! NTP and SYSLOG": {},
+
+  "NTP_SERVER": {
+    "10.100.0.1": {},
+    "10.100.0.2": {}
+  },
+
+  "SYSLOG_SERVER": {
+    "10.100.0.200": {}
   }
 }

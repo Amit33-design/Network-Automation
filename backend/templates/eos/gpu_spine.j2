@@ -1,27 +1,36 @@
-! ============================================================
+! ═══════════════════════════════════════════════════════════════════
 ! NetDesign AI — Arista EOS  GPU SPINE CONFIG
-! Device  : {{ hostname }}
-! Role    : GPU Cluster Compute Fabric Spine
-! ============================================================
+! Device   : {{ hostname }}
+! Role     : GPU Cluster Compute Fabric Spine
+! Fabric   : BGP eBGP ECMP · RoCEv2 / RDMA lossless
+! Community: 65200:100 (GPU fabric tag) · 65200:200 (primary path)
+! ═══════════════════════════════════════════════════════════════════
 
 hostname {{ hostname }}
 
 spanning-tree mode mstp
 
-!-- Management
+! ── Management ───────────────────────────────────────────────────────────────
 interface Management1
    description OOB-MGMT
+   vrf MGMT
    ip address {{ mgmt_ip }}/24
    no shutdown
 
+vrf instance MGMT
+
 ip route vrf MGMT 0.0.0.0/0 10.100.0.1
 
-!-- Loopback
+! ── Loopbacks ────────────────────────────────────────────────────────────────
 interface Loopback0
-   description Router-ID
+   description Router-ID — GPU Spine BGP anchor
    ip address {{ loopback_ip }}/32
 
-!-- P2P to GPU TORs
+interface Loopback1
+   description Anycast RP / ECMP anchor
+   ip address 10.200.{{ index }}.{{ index }}/32
+
+! ── P2P to GPU TOR switches (400GbE, MTU 9214, PFC/ECN enabled) ──────────────
 {% for i in range(1, 9) %}
 interface Ethernet{{ i }}
    description P2P-TO-GPU-TOR-{{ i }}
@@ -29,39 +38,135 @@ interface Ethernet{{ i }}
    no switchport
    ip address 10.3.{{ index }}.{{ loop.index0 * 2 + 1 }}/31
    no shutdown
+   ! PFC and ECN on uplink (propagates lossless treatment)
+   {% if roce_enabled %}
+   priority-flow-control mode on
+   {% endif %}
 {% endfor %}
 
-!-- Underlay BGP
+! ── QoS: DSCP → TC → Queue mapping (RoCEv2 priority 3) ─────────────────────
+!
+! DSCP 24 (CS3) and DSCP 26 → TC 3 → Queue 3 (lossless, PFC priority 3)
+! DSCP 48 (CS6)              → TC 6 → Queue 6 (control plane)
+! All others                 → TC 0 → Queue 0 (best-effort)
+!
+qos map dscp 24 to traffic-class 3
+qos map dscp 26 to traffic-class 3
+qos map dscp 46 to traffic-class 5
+qos map dscp 48 to traffic-class 6
+qos map dscp 56 to traffic-class 7
+!
+{% if roce_enabled %}
+! PFC priority 3 (RoCEv2 lossless)
+priority-flow-control mode on
+priority-flow-control priority 3 no-drop
+{% if dcqcn %}
+! DCQCN / ECN marking on queue 3
+!   min_threshold: {{ (ecn_threshold * 0.5) | int }} bytes
+!   max_threshold: {{ ecn_threshold }} bytes
+!   DSCP ECN bits set at max to trigger CNP generation at receiver
+random-detect ecn minimum-threshold {{ (ecn_threshold * 0.5) | int }} maximum-threshold {{ ecn_threshold }} drop-probability 0
+{% endif %}
+{% endif %}
+
+! ── ECMP load-balancing (symmetric hashing for RoCEv2) ──────────────────────
+! Hash on src-ip + dst-ip + IP-proto + L4-src-port + L4-dst-port
+! Symmetric ensures forward and reverse flows hit same path (RDMA session affinity)
+ip load-sharing trident fields ip dst-ip src-ip ip-proto l4-dst-port l4-src-port
+
+! ── Prefix lists ─────────────────────────────────────────────────────────────
+ip prefix-list GPU-LOOPBACKS    seq 10 permit 10.200.0.0/16 le 32
+ip prefix-list GPU-HOST-ROUTES  seq 10 permit 10.220.0.0/16 le 32
+ip prefix-list GPU-TOR-ANYCAST  seq 10 permit 10.3.0.0/16   le 32
+ip prefix-list DENY-ALL         seq 10 deny   0.0.0.0/0 le 32
+
+! ── BGP community lists (TE colouring) ──────────────────────────────────────
+ip community-list standard CL-GPU-FABRIC  permit 65200:100
+ip community-list standard CL-LP-PRIMARY  permit 65200:200
+ip community-list standard CL-LP-BACKUP   permit 65200:300
+ip community-list standard CL-BLACKHOLE   permit 65200:9999
+
+! ── Route-maps ───────────────────────────────────────────────────────────────
+!
+! RM-TOR-TO-SPINE (inbound from TOR): tag GPU fabric community, accept loopbacks
+route-map RM-TOR-TO-SPINE permit 10
+   description Accept TOR loopbacks — tag as primary path
+   match ip address prefix-list GPU-LOOPBACKS
+   set community 65200:100 65200:200 additive
+route-map RM-TOR-TO-SPINE permit 20
+   description Accept GPU host routes — tag fabric community
+   match ip address prefix-list GPU-HOST-ROUTES
+   set community 65200:100 additive
+route-map RM-TOR-TO-SPINE deny 30
+   description Deny all other routes (no leaking)
+!
+! RM-SPINE-TO-TOR (outbound to TOR): prefer primary path via LP community
+route-map RM-SPINE-TO-TOR permit 10
+   description Primary path (LP=200) for GPU-fabric-tagged routes
+   match community CL-LP-PRIMARY
+   set local-preference 200
+route-map RM-SPINE-TO-TOR permit 20
+   description Backup path (LP=100)
+   match community CL-LP-BACKUP
+   set local-preference 100
+route-map RM-SPINE-TO-TOR permit 30
+   description Accept all other GPU fabric routes (LP default)
+!
+! RTBH blackhole trigger
+route-map RM-BLACKHOLE permit 10
+   match community CL-BLACKHOLE
+   set ip next-hop 192.0.2.1
+   set local-preference 5000
+route-map RM-BLACKHOLE deny 20
+!
+! Spine loopback export
+route-map RM-SPINE-LOOPBACK-EXPORT permit 10
+   match ip address prefix-list GPU-LOOPBACKS
+   set community 65200:100 65200:200 additive
+route-map RM-SPINE-LOOPBACK-EXPORT deny 20
+
+! ── BGP eBGP — GPU Spine ─────────────────────────────────────────────────────
+! Each TOR has its own private ASN (650xx range).
+! Spine uses ECMP with 64-way equal-cost for GPU all-to-all traffic patterns.
+! BFD for sub-second failure detection (GPU jobs are latency sensitive).
 router bgp {{ bgp_asn }}
    router-id {{ loopback_ip }}
    no bgp default ipv4-unicast
    maximum-paths 64 ecmp 64
+   bgp bestpath as-path multipath-relax
    !
    address-family ipv4
-      redistribute connected
+      redistribute connected route-map RM-SPINE-LOOPBACK-EXPORT
+      maximum-paths 64 ecmp 64
    !
    {% for i in range(1, 9) %}
-   neighbor 10.3.{{ index }}.{{ i * 2 }} remote-as 650{{ 10 + i }}
-   neighbor 10.3.{{ index }}.{{ i * 2 }} description GPU-TOR-{{ i }}
-   neighbor 10.3.{{ index }}.{{ i * 2 }} send-community
-   neighbor 10.3.{{ index }}.{{ i * 2 }} maximum-routes 12000
-   neighbor 10.3.{{ index }}.{{ i * 2 }} activate
+   ! TOR-{{ i }} — AS {{ 65010 + i }}
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        remote-as {{ 65010 + i }}
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        description GPU-TOR-{{ i:02d }}
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        send-community standard
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        maximum-routes 12000 warning-only
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        bfd
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        route-map RM-TOR-TO-SPINE in
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        route-map RM-SPINE-TO-TOR out
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        activate
    {% endfor %}
 
-!-- ECMP / load-balance for RoCEv2
-ip load-sharing trident fields ip dst-ip src-ip ip-proto l4-dst-port l4-src-port
-
-!-- QoS — PFC for RoCEv2 (priority 3)
-{% if roce_enabled %}
-qos map dscp 24 to traffic-class 3
-priority-flow-control mode on
-{% endif %}
-
-!-- gNMI / OpenConfig (for CloudVision)
+! ── gNMI / OpenConfig (for CloudVision / Prometheus streaming) ───────────────
 management api gnmi
    transport grpc default
    provider eos-native
+   no shutdown
 
-ntp server 10.0.0.1 vrf MGMT
+management api http-commands
+   protocol https
+   no shutdown
+
+! ── NTP, Logging, AAA ────────────────────────────────────────────────────────
+ntp server vrf MGMT 10.100.0.1 prefer
+ntp server vrf MGMT 10.100.0.2
+
+logging vrf MGMT host 10.100.0.200
+logging level BGP informational
+logging level PFC debugging
 
 end

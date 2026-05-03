@@ -239,13 +239,145 @@ _POST_CHECK_COMMANDS: dict[str, list[str]] = {
     ],
 }
 
+# Per-platform commands for the three previously-missing post-checks
+_ECN_COMMANDS: dict[str, str] = {
+    "cisco_nxos":    "show queuing interface ethernet1/1 | include ecn",
+    "arista_eos":    "show qos interface ethernet1 | include ecn",
+    "sonic":         "show ecn",
+}
+_PFC_COMMANDS: dict[str, str] = {
+    "cisco_nxos":    "show interface priority-flow-control",
+    "arista_eos":    "show pfc counters",
+    "sonic":         "show pfc counters",
+}
+# MTU probe: ping with DF-bit set at 9000-byte payload; parsed for success string
+_MTU_PING_COMMANDS: dict[str, str] = {
+    "cisco_nxos":    "ping {peer} count 3 packet-size 9000 df-bit",
+    "cisco_ios":     "ping {peer} repeat 3 size 9000 df-bit",
+    "arista_eos":    "ping {peer} size 9000 df-bit repeat 3",
+    "juniper_junos": "ping {peer} count 3 size 9000 do-not-fragment",
+}
+_MTU_SUCCESS_STRINGS = ("!!!", "3/3", "bytes from", "Success rate is 100")
+
+# LLDP: prefer JSON-structured output, fall back to text
+_LLDP_COMMANDS: dict[str, str] = {
+    "cisco_nxos":    "show lldp neighbors detail | json",
+    "arista_eos":    "show lldp neighbors detail | json",
+    "cisco_ios":     "show lldp neighbors detail",      # IOS has no JSON pipe
+    "juniper_junos": "show lldp neighbors detail",
+}
+
+
+def _parse_lldp_json(raw: str) -> list[dict[str, Any]]:
+    """Parse NX-OS / EOS 'show lldp neighbors detail | json' output."""
+    import json
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    neighbors: list[dict[str, Any]] = []
+    # NX-OS shape: { "TABLE_nbor_detail": { "ROW_nbor_detail": [...] } }
+    rows = (data.get("TABLE_nbor_detail", {}).get("ROW_nbor_detail") or
+            data.get("lldpNeighbors", []))
+    if isinstance(rows, dict):
+        rows = [rows]
+    for row in (rows or []):
+        neighbors.append({
+            "local_port":  row.get("l_port_id") or row.get("port") or "?",
+            "remote_host": row.get("sys_name")  or row.get("neighborDevice") or "?",
+            "remote_port": row.get("port_id")   or row.get("neighborPort") or "?",
+            "capability":  row.get("sys_cap")   or row.get("systemCapabilities") or "",
+        })
+    return neighbors
+
+
+def _parse_lldp_text(raw: str) -> list[dict[str, Any]]:
+    """
+    Robustly parse text 'show lldp neighbors' output.
+
+    NX-OS text format (may have long hostnames that wrap):
+      Device ID          Local Intf     Hold-time  Capability  Port ID
+      spine-01.dc.local  Eth1/1         120        BR          Eth1/3
+
+    We search for lines that contain a known interface pattern on EITHER
+    the local or remote port field, rather than relying on column position.
+    """
+    import re
+    neighbors: list[dict[str, Any]] = []
+    intf_re = re.compile(
+        r'\b(Eth(?:ernet)?[\d/]+|GigabitEthernet[\d/]+|TenGigE[\d/]+|'
+        r'HundredGig[\d/]+|Gi[\d/]+|Te[\d/]+|xe-\d+/\d+/\d+|et-\d+/\d+/\d+)\b',
+        re.IGNORECASE,
+    )
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        intfs = [p for p in parts if intf_re.match(p)]
+        if len(intfs) >= 2:
+            # Heuristic: first intf = local, last intf = remote
+            remote_host = parts[0] if not intf_re.match(parts[0]) else "?"
+            neighbors.append({
+                "local_port":  intfs[0],
+                "remote_host": remote_host,
+                "remote_port": intfs[-1],
+                "capability":  "",
+            })
+    return neighbors
+
+
+def collect_lldp(host_name: str, host_data: dict[str, Any],
+                 nr_instance: Any) -> dict[str, Any]:
+    """
+    Collect LLDP neighbor table from a live device.
+    Uses JSON output where supported to avoid fragile text parsing.
+    Returns {"host": ..., "check": "lldp_neighbors", "passed": bool,
+             "neighbors": [...], "detail": str}
+    """
+    platform = host_data.get("platform", "cisco_ios")
+    cmd = _LLDP_COMMANDS.get(platform, "show lldp neighbors detail")
+    use_json = cmd.endswith("| json")
+
+    try:
+        def _lldp_task(task: "Task", c: str = cmd) -> "Result":
+            return task.run(task=netmiko_send_command, command_string=c)
+
+        nr_result = nr_instance.run(task=_lldp_task)
+        host_result = nr_result[host_name]
+        if host_result.failed:
+            raise RuntimeError(str(host_result.exception))
+        raw = host_result[0].result
+
+        neighbors = _parse_lldp_json(raw) if use_json else _parse_lldp_text(raw)
+        return {
+            "host": host_name, "check": "lldp_neighbors",
+            "passed": True,
+            "neighbors": neighbors,
+            "detail": f"{len(neighbors)} neighbors found",
+        }
+    except Exception as exc:
+        return {"host": host_name, "check": "lldp_neighbors",
+                "passed": False, "neighbors": [], "detail": str(exc)}
+
 
 def run_post_checks(state: dict[str, Any], inventory: dict[str, Any]) -> list[dict[str, Any]]:
-    """Post-deployment validation checks."""
+    """
+    Post-deployment validation checks.
+
+    Runs for every host:
+      1. Standard commands (BGP/routing/interfaces)
+      2. LLDP neighbor collection (structured JSON where available)
+      3. ECN threshold check         — previously hardcoded as {}
+      4. PFC storm counter check     — previously hardcoded as {}
+      5. End-to-end jumbo MTU probe  — previously hardcoded as {}
+    """
     results: list[dict[str, Any]] = []
+    uc = state.get("uc", "campus")
 
     if not inventory:
-        for check in ["bgp_neighbors", "routing_table", "interface_errors", "end_to_end_ping"]:
+        for check in ["bgp_neighbors", "routing_table", "interface_errors",
+                      "end_to_end_ping", "lldp_neighbors",
+                      "ecn_thresholds", "pfc_counters", "mtu_ping_9000"]:
             results.append(_simulate_check("demo-device", check))
         return results
 
@@ -256,11 +388,16 @@ def run_post_checks(state: dict[str, Any], inventory: dict[str, Any]) -> list[di
         if not NORNIR_AVAILABLE or not _icmp_reachable(host_data.get("hostname", host_name)):
             for cmd in commands:
                 results.append(_simulate_check(host_name, cmd[:40], passed=False))
+            for check in ["lldp_neighbors", "ecn_thresholds", "pfc_counters", "mtu_ping_9000"]:
+                results.append(_simulate_check(host_name, check, passed=False))
             continue
 
         try:
             nr = _init_nornir({host_name: host_data})
+            if nr is None:
+                raise RuntimeError("Nornir init failed")
 
+            # ── 1. Standard post-check commands ───────────────────────────
             for cmd in commands:
                 def _run_cmd(task: "Task", c: str = cmd) -> "Result":
                     return task.run(task=netmiko_send_command, command_string=c)
@@ -272,9 +409,88 @@ def run_post_checks(state: dict[str, Any], inventory: dict[str, Any]) -> list[di
                 results.append({"host": host_name, "check": cmd[:40],
                                  "passed": passed, "detail": detail})
 
+            # ── 2. LLDP neighbors (structured JSON parser) ─────────────────
+            results.append(collect_lldp(host_name, host_data, nr))
+
+            # ── 3. ECN threshold check ─────────────────────────────────────
+            ecn_cmd = _ECN_COMMANDS.get(platform)
+            if ecn_cmd:
+                def _ecn_task(task: "Task", c: str = ecn_cmd) -> "Result":
+                    return task.run(task=netmiko_send_command, command_string=c)
+                ecn_result = nr.run(task=_ecn_task)
+                ecn_out = ecn_result[host_name]
+                if not ecn_out.failed:
+                    raw = ecn_out[0].result
+                    # Pass if ECN appears configured (any ecn keyword in output)
+                    passed = bool(raw.strip()) and "ecn" in raw.lower()
+                    results.append({"host": host_name, "check": "ecn_thresholds",
+                                     "passed": passed,
+                                     "detail": raw[:200] if raw.strip() else "no ECN output"})
+                else:
+                    results.append({"host": host_name, "check": "ecn_thresholds",
+                                     "passed": False, "detail": str(ecn_out.exception)})
+            else:
+                results.append(_simulate_check(host_name, "ecn_thresholds"))
+
+            # ── 4. PFC storm counter check ─────────────────────────────────
+            pfc_cmd = _PFC_COMMANDS.get(platform)
+            if pfc_cmd:
+                def _pfc_task(task: "Task", c: str = pfc_cmd) -> "Result":
+                    return task.run(task=netmiko_send_command, command_string=c)
+                pfc_result = nr.run(task=_pfc_task)
+                pfc_out = pfc_result[host_name]
+                if not pfc_out.failed:
+                    raw = pfc_out[0].result
+                    # Flag if any interface has non-zero PFC storm drops
+                    storm_drop = any(
+                        tok.isdigit() and int(tok) > 0
+                        for line in raw.splitlines()
+                        if "storm" in line.lower() or "drop" in line.lower()
+                        for tok in line.split()
+                    )
+                    results.append({"host": host_name, "check": "pfc_counters",
+                                     "passed": not storm_drop,
+                                     "detail": ("PFC storm drops detected" if storm_drop
+                                                else raw[:200] or "PFC counters OK")})
+                else:
+                    results.append({"host": host_name, "check": "pfc_counters",
+                                     "passed": False, "detail": str(pfc_out.exception)})
+            else:
+                results.append(_simulate_check(host_name, "pfc_counters"))
+
+            # ── 5. End-to-end jumbo MTU probe (/31 peer or first spine) ────
+            # Only run for DC/GPU UC; skip for campus (no jumbo requirement)
+            if uc in ("dc", "gpu"):
+                peer_ip = host_data.get("peer_ip") or host_data.get("loopback_peer")
+                mtu_tpl = _MTU_PING_COMMANDS.get(platform)
+                if peer_ip and mtu_tpl:
+                    mtu_cmd = mtu_tpl.format(peer=peer_ip)
+                    def _mtu_task(task: "Task", c: str = mtu_cmd) -> "Result":
+                        return task.run(task=netmiko_send_command, command_string=c)
+                    mtu_result = nr.run(task=_mtu_task)
+                    mtu_out = mtu_result[host_name]
+                    if not mtu_out.failed:
+                        raw = mtu_out[0].result
+                        passed = any(s in raw for s in _MTU_SUCCESS_STRINGS)
+                        results.append({"host": host_name, "check": "mtu_ping_9000",
+                                         "passed": passed,
+                                         "detail": raw[:200] if raw.strip() else "no ping output"})
+                    else:
+                        results.append({"host": host_name, "check": "mtu_ping_9000",
+                                         "passed": False, "detail": str(mtu_out.exception)})
+                else:
+                    results.append({"host": host_name, "check": "mtu_ping_9000",
+                                     "passed": False,
+                                     "detail": "peer_ip not set in inventory — add peer_ip field"})
+            else:
+                results.append(_simulate_check(host_name, "mtu_ping_9000"))
+
         except Exception as exc:
             for cmd in commands:
                 results.append({"host": host_name, "check": cmd[:40],
+                                 "passed": False, "detail": str(exc)})
+            for check in ["lldp_neighbors", "ecn_thresholds", "pfc_counters", "mtu_ping_9000"]:
+                results.append({"host": host_name, "check": check,
                                  "passed": False, "detail": str(exc)})
 
     return results

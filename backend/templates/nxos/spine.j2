@@ -1,54 +1,76 @@
-! ============================================================
-! NetDesign AI — Cisco NX-OS  DC SPINE CONFIG
-! Device  : {{ hostname }}
-! Underlay: {{ underlay | upper }}  Overlay: BGP EVPN / VXLAN
-! ============================================================
+! ═══════════════════════════════════════════════════════════════════
+! NetDesign AI — Cisco NX-OS  DC SPINE (BGP Route Reflector) CONFIG
+! Device   : {{ hostname }}
+! Role     : Spine — BGP EVPN Route Reflector, underlay {{ underlay | upper }}
+! Policy   : RM-RR-TO-LEAF (out) / RM-LEAF-TO-RR (in)
+! RT scheme: retain route-target all  (RR reflects unchanged)
+! ═══════════════════════════════════════════════════════════════════
 
 hostname {{ hostname }}
 
+! ── Feature set ─────────────────────────────────────────────────────────────
 feature bgp
 feature ospf
 feature isis
 feature bfd
+feature pim
 feature nv overlay
 feature vn-segment-vlan-based
-feature interface-vlan
 feature lacp
 feature lldp
 
 no ip domain-lookup
-ip domain-name {{ org | lower | replace(' ', '.') }}.dc
+ip domain-name {{ org | lower | replace(' ', '.') }}.dc.local
+vrf context management
+  ip route 0.0.0.0/0 {{ mgmt_ip.rsplit('.', 1)[0] }}.1
 
-!-- Loopback (Router-ID + VTEP)
+! ── Loopbacks ────────────────────────────────────────────────────────────────
 interface loopback0
+  description ROUTER-ID — BGP RR loopback
   ip address {{ loopback_ip }}/32
-  description Router-ID
+  {% if underlay == 'isis' %}
+  ip router isis UNDERLAY
+  ip ospf passive-interface
+  {% else %}
+  ip router ospf UNDERLAY area 0.0.0.0
+  ip ospf passive-interface
+  {% endif %}
   no shutdown
 
 interface loopback1
+  description VTEP-NVE-source (spine anycast for EVPN type-5 PIP)
   ip address 10.1.{{ index }}.{{ index }}/32
-  description VTEP-NVE-source
+  {% if underlay == 'isis' %}
+  ip router isis UNDERLAY
+  {% else %}
+  ip router ospf UNDERLAY area 0.0.0.0
+  {% endif %}
   no shutdown
 
-!-- P2P links to leaves (one per leaf, /31 addressing)
-{% for i in range(1, 9) %}
-interface Ethernet1/{{ i }}
-  description P2P-TO-LEAF-{{ i }}
+! ── P2P links to leaves (/31, one port per leaf) ─────────────────────────────
+! Addressing: spine end = 10.2.<spine_idx>.<(leaf_idx-1)*2 + 1>/31 (odd)
+!             leaf  end = 10.2.<spine_idx>.<(leaf_idx-1)*2>/31      (even)
+{% for ul in uplinks %}
+interface {{ ul.name }}
+  description P2P-TO-{{ ul.peer }}
   no switchport
   medium p2p
-  ip address 10.2.{{ index }}.{{ loop.index0 * 2 + 1 }}/31
+  mtu 9216
+  ip address {{ ul.ip }}
   {% if underlay == 'isis' %}
   isis circuit-type level-2
   ip router isis UNDERLAY
+  isis network point-to-point
   {% else %}
   ip ospf network point-to-point
   ip router ospf UNDERLAY area 0.0.0.0
   {% endif %}
   ip ospf bfd
+  bfd interval 300 min_rx 300 multiplier 3
   no shutdown
 {% endfor %}
 
-!-- Underlay routing
+! ── Underlay routing ─────────────────────────────────────────────────────────
 {% if underlay == 'isis' %}
 router isis UNDERLAY
   net 49.0001.{{ '%04x' % (index * 256) }}.00
@@ -56,38 +78,122 @@ router isis UNDERLAY
   address-family ipv4 unicast
     metric-style wide
     advertise passive-only
-  redistribute direct route-map CONNECTED
+  redistribute direct route-map CONNECTED-LOOPBACKS
 {% else %}
 router ospf UNDERLAY
   router-id {{ loopback_ip }}
+  log-adjacency-changes detail
+  bfd
   passive-interface default
   {% for i in range(1, 9) %}
   no passive-interface Ethernet1/{{ i }}
   {% endfor %}
 {% endif %}
 
-!-- BGP — spine is Route Reflector
+! ── Prefix lists ─────────────────────────────────────────────────────────────
+ip prefix-list LOOPBACKS     seq 5  permit 10.0.0.0/24 le 32
+ip prefix-list VTEP-ANYCAST  seq 5  permit 10.1.0.0/24 le 32
+ip prefix-list DC-HOST-ROUTES seq 5 permit 10.10.0.0/16 le 32
+ip prefix-list MGMT-PREFIX   seq 5  permit 10.100.0.0/24 le 32
+ip prefix-list DENY-ALL      seq 5  deny   0.0.0.0/0 le 32
+
+! ── Standard community lists (TE colouring) ──────────────────────────────────
+ip community-list standard CL-LP-PRIMARY permit {{ bgp_asn }}:100
+ip community-list standard CL-LP-BACKUP  permit {{ bgp_asn }}:300
+ip community-list standard CL-BLACKHOLE  permit {{ bgp_asn }}:9999
+ip community-list standard CL-L2VNI     permit {{ bgp_asn }}:200
+ip community-list standard CL-L3VNI     permit {{ bgp_asn }}:500
+
+! ── Extended community lists for EVPN RT inspection ──────────────────────────
+! Spine uses "retain route-target all" so no per-VNI filtering needed.
+! Extended community lists here are for optional spine-local policies.
+ip extcommunity-list standard ECL-L2VNI permit rt {{ bgp_asn }}:200
+ip extcommunity-list standard ECL-L3VNI permit rt {{ bgp_asn }}:500
+ip extcommunity-list standard ECL-ANY   permit rt {{ bgp_asn }}:0
+
+! ── Route-maps ───────────────────────────────────────────────────────────────
+!
+! RM-LEAF-TO-RR (applied INBOUND from leaf clients)
+!   seq 10 — loopback routes → LP=200 (primary underlay reachability)
+!   seq 20 — all EVPN routes  → LP=100 default
+route-map RM-LEAF-TO-RR permit 10
+  description Loopbacks — primary path LP=200
+  match ip address prefix-list LOOPBACKS
+  set local-preference 200
+route-map RM-LEAF-TO-RR permit 20
+  description All EVPN overlay routes — LP=100
+  set local-preference 100
+!
+! RM-RR-TO-LEAF (applied OUTBOUND toward leaf clients)
+!   Spine tags reflected routes with spine-originated community 65000:1000
+!   so leaves can preference spine routes at LP=200.
+route-map RM-RR-TO-LEAF permit 10
+  description Tag reflected routes as spine-originated
+  set community {{ bgp_asn }}:1000 additive
+route-map RM-RR-TO-LEAF permit 20
+!
+! RTBH: blackhole community trigger (locally or propagated from leaves)
+route-map BLACKHOLE-TRIGGER permit 10
+  match community CL-BLACKHOLE
+  set ip next-hop null0
+  set local-preference 5000
+route-map BLACKHOLE-TRIGGER deny 20
+!
+! EVPN NH unchanged — spine reflects with original VTEP NH (RFC 4456 §9)
+route-map EVPN-NH-UNCHANGED permit 10
+  set ip next-hop unchanged
+!
+! Connected loopback export (for underlay reachability)
+route-map CONNECTED-LOOPBACKS permit 10
+  match ip address prefix-list LOOPBACKS
+route-map CONNECTED-LOOPBACKS permit 20
+  match ip address prefix-list VTEP-ANYCAST
+route-map CONNECTED-LOOPBACKS deny 30
+
+! ── BGP EVPN — Spine Route Reflector ─────────────────────────────────────────
+! All leaves peer iBGP to spine loopback0.
+! Spine is Route Reflector: route-reflector-client on all leaf sessions.
+! retain route-target all ensures ALL VNI routes are reflected regardless of
+! local VRF import policies (spine has no tenant VRFs).
 router bgp {{ bgp_asn }}
   router-id {{ loopback_ip }}
   log-neighbor-changes
+  bestpath as-path multipath-relax
+  !
+  address-family ipv4 unicast
+    redistribute direct route-map CONNECTED-LOOPBACKS
+    maximum-paths ibgp 64
+  !
   address-family l2vpn evpn
     retain route-target all
+    advertise-pip
+  !
+  ! ── Leaf client sessions (iBGP RR clients) ───────────────────────────────
   {% for i in range(1, 9) %}
   neighbor 10.0.{{ i }}.{{ i }}
     remote-as {{ bgp_asn }}
-    description LEAF-{{ i }}-EVPN-client
+    description LEAF-{{ '%02d' % i }}-EVPN-CLIENT
     update-source loopback0
+    timers 3 9
+    bfd
     address-family l2vpn evpn
       send-community extended
       route-reflector-client
+      route-map RM-LEAF-TO-RR  in
+      route-map RM-RR-TO-LEAF out
+      soft-reconfiguration inbound
+      maximum-prefix 50000 80
   {% endfor %}
 
-!-- BFD global
+! ── BFD global ───────────────────────────────────────────────────────────────
 bfd interval 300 min_rx 300 multiplier 3
+bfd slow-timers 2000
 
-!-- NTP, Logging
-ntp server 10.0.0.1 use-vrf management
+! ── NTP, Logging ─────────────────────────────────────────────────────────────
+ntp server 10.0.0.1 use-vrf management prefer
+ntp server 10.0.0.2 use-vrf management
 logging level bgp 5
+logging level evpn 5
 logging monitor 5
 
 end
