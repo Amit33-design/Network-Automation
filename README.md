@@ -672,7 +672,15 @@ score = baseline(60) + Σ signal_weights   →   capped 0–100
 
 ## 📄 License
 
-MIT © 2024 Amit Tiwari — contributions welcome.
+**NetDesign AI License (NDAL) v1.0** © 2026 Amit Tiwari
+
+This software is **source-available, not open source.**
+
+- ✅ Free for personal use, evaluation, and learning
+- ❌ Commercial use requires a paid license — contact **amit.tiwari.dev@gmail.com**
+- ❌ Redistribution, resale, or offering as a service is prohibited without written permission
+
+See [`LICENSE`](LICENSE) for full terms.
 
 ---
 
