@@ -73,6 +73,7 @@ from monitor_engine import (
 )
 from troubleshoot_engine import quick_triage as _quick_triage
 from static_analysis import run_analysis as _run_static_analysis
+from nornir_tasks import run_post_checks as _run_post_checks
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -280,6 +281,7 @@ Then call generate_configs(state) if gate.can_deploy is True.
 | get_issue_detail | Full drill-down on a specific issue ID (all platforms) |
 | troubleshoot | Multi-symptom RCA → root cause + runbook + fault-tree diagram |
 | run_static_analysis | 26 deterministic design checks across 6 domains — score + findings |
+| run_post_checks | Post-deploy: BGP + LLDP JSON + ECN thresholds + PFC storm + MTU-9000 ping |
 
 ## Response formatting guidance
 
@@ -1216,6 +1218,68 @@ def run_static_analysis(state: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         log.exception("run_static_analysis error")
         return {"ok": False, "error": str(exc)}
+
+
+# ===========================================================================
+# ── TOOL 18 — run_post_checks ────────────────────────────────────────────────
+# ===========================================================================
+@mcp.tool()
+def run_post_checks(
+    state: dict[str, Any],
+    inventory: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Run post-deployment validation checks against live devices (or simulation).
+
+    When inventory is provided, connects via SSH (Nornir + Netmiko) and runs:
+      1. BGP summary / routing table / interface error counters
+      2. LLDP neighbor collection (JSON-structured; regex fallback for IOS)
+      3. ECN threshold check — verifies WRED/ECN is configured per interface
+      4. PFC storm counter check — flags non-zero PFC storm drops
+      5. End-to-end jumbo MTU probe — DF-bit ping at 9000 bytes to peer_ip
+
+    When inventory is empty/None, returns simulated pass results (demo mode).
+
+    Args:
+        state:     Network state dict (used for UC — DC/GPU get MTU checks).
+        inventory: Dict of host_name → {hostname, platform, username, password,
+                   peer_ip (optional, required for MTU probe)}.
+                   Example:
+                     {
+                       "SPINE-01": {
+                         "hostname": "10.0.1.1",
+                         "platform": "cisco_nxos",
+                         "username": "admin",
+                         "password": "...",
+                         "peer_ip":  "10.2.1.0"
+                       }
+                     }
+
+    Returns:
+        ok:      True if all checks passed
+        results: List of check result dicts — each has:
+                   host, check, passed, detail
+                   neighbors (LLDP only): [{local_port, remote_host, remote_port}]
+        summary: Pass/fail counts and any failed check names
+    """
+    log.info("run_post_checks called — inventory hosts=%d", len(inventory or {}))
+    try:
+        results = _run_post_checks(state, inventory or {})
+        passed  = [r for r in results if r.get("passed")]
+        failed  = [r for r in results if not r.get("passed")]
+        return {
+            "ok":      len(failed) == 0,
+            "results": results,
+            "summary": {
+                "total":  len(results),
+                "passed": len(passed),
+                "failed": len(failed),
+                "failed_checks": [f"{r['host']}/{r['check']}" for r in failed],
+            },
+        }
+    except Exception as exc:
+        log.exception("run_post_checks error")
+        return {"ok": False, "error": str(exc), "results": []}
 
 
 # ===========================================================================

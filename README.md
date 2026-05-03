@@ -29,19 +29,25 @@ Instead of clicking through a UI, just describe what you need in natural languag
 
 The AI calls the MCP tools behind the scenes and returns a complete design with production configs attached.
 
-### What the MCP exposes
+### What the MCP exposes — 18 tools
 
-| Category | Tools / Resources |
+| Category | Tools |
 |---|---|
-| **Design** | `design_network`, `get_ip_plan`, `get_vlan_plan`, `get_bgp_topology`, `get_topology_graph` |
-| **Configs** | `generate_configs` (NX-OS · EOS · SONiC · IOS-XE · JunOS) |
-| **Validation** | `validate_policies` (15 rules — BLOCK / FAIL / WARN / AUTO_FIX / INFO) |
-| **Simulation** | `simulate_failure`, `simulate_link_failure` (BFS partition + BGP impact) |
-| **Gate** | `check_deployment_gate` (0-100 confidence score, APPROVED / CONDITIONAL / BLOCKED) |
-| **Automation** | `full_automation_pipeline` (all of the above in one call) |
-| **Catalogue** | `list_products` (7 platforms, filterable by use-case / vendor / platform) |
+| **Design** | `design_network` ¹, `get_ip_plan`, `get_vlan_plan`, `get_bgp_topology`, `get_topology_graph` |
+| **Explain** | `explain_design` — plain-English narrative of any design state |
+| **Configs** | `generate_configs` (NX-OS · EOS · SONiC · IOS-XE · JunOS + 9 policy domains appended) |
+| **Validation** | `validate_policies` (15 rules — BLOCK / FAIL / WARN / AUTO\_FIX / INFO) |
+| **Simulation** | `simulate_failure`, `simulate_link_failure_tool` (BFS partition + BGP/EVPN impact) |
+| **Gate** | `check_deployment_gate` (0–100 confidence score, APPROVED / CONDITIONAL / BLOCKED) |
+| **Monitoring** | `run_health_check`, `diagnose_network`, `get_issue_detail`, `troubleshoot` |
+| **Quality** | `run_static_analysis` (26 deterministic checks across 5 domains, scored 0–100) |
+| **Post-deploy** | `run_post_checks` (BGP · LLDP JSON · ECN thresholds · PFC storm · MTU-9000 ping) |
+| **Automation** | `full_automation_pipeline` — single call: parse → validate → simulate → gate → configs |
+| **Catalogue** | `list_products` (40+ SKUs, filterable by use-case / vendor / platform) |
 | **Resources** | `netdesign://products`, `netdesign://architectures/{uc}`, `netdesign://policy-rules`, `netdesign://community-scheme` |
 | **Prompts** | `design_campus_network`, `design_dc_fabric`, `design_gpu_cluster`, `validate_and_deploy` |
+
+¹ `design_network` auto-chains: NL parse → design → validate → simulate → gate → rationale in one call.
 
 ---
 
@@ -302,15 +308,19 @@ This intent feeds the entire pipeline:
 
 ```
 Intent Object
+    ├── Capacity Engine   → Campus/DC/GPU exact device counts (growth + reserve formulas)
     ├── Policy Engine     → 15 rules → PASS / WARN / FAIL / AUTO_FIX
+    ├── Policy Blocks     → 9 domains (AAA·BGP·iACL·802.1X·QoS·VLAN·Static·Trunk·WiFi)
     ├── Product Scoring   → 40+ SKUs scored 0–100% across 8 signals → BOM
-    ├── Topology Builder  → Animated SVG HLD + LLD tables
-    ├── Config Generator  → IOS-XE · NX-OS · EOS · SONiC · JunOS
+    ├── Topology Builder  → Animated SVG HLD + LLD tables (capacity-aware ×N badges)
+    ├── Config Generator  → IOS-XE · NX-OS · EOS · SONiC · JunOS + per-OS policy blocks
     ├── EVPN/VXLAN Policy → L2VNI / L3VNI / RT scheme / symmetric IRB
     ├── BGP Policy        → Community colouring, RR, iBGP/eBGP, BFD
+    ├── Static Analysis   → 26 checks · 5 domains · 0–100 quality score
+    ├── Monitoring        → Health check · diagnostics · AI-guided troubleshoot
     ├── Deployment Gate   → Sim + Pre-checks + Policy → go / no-go
-    ├── MCP Layer         → AI tools via Claude / ChatGPT / LangChain
-    └── Real Deploy       → Nornir + Netmiko → delta push → post-checks
+    ├── MCP Layer         → 18 AI tools via Claude / ChatGPT / LangChain
+    └── Real Deploy       → Nornir + Netmiko → delta push → post-checks (ECN/PFC/MTU)
 ```
 
 ---
@@ -322,7 +332,7 @@ Intent Object
 │  AI Assistants (Claude Desktop · ChatGPT · LangChain · Any LLM)      │
 │                          │ MCP Protocol                              │
 │                    mcp_server.py (FastMCP)                           │
-│                    12 tools · 4 resources · 4 prompts                │
+│                    18 tools · 4 resources · 4 prompts                │
 └──────────────────────────┬───────────────────────────────────────────┘
                            │
 ┌──────────────────────────▼───────────────────────────────────────────┐
@@ -444,8 +454,10 @@ Network-Automation/
 │   └── js/                        # All frontend modules
 │       ├── state.js               # STATE object, STEPS, UC_LABELS
 │       ├── products.js            # 40+ hardware SKUs
+│       ├── capacity.js            # ★ Capacity model — campus/DC/GPU exact counts
+│       ├── policy_blocks.js       # ★ 9-domain policy config generator (all 5 OS)
 │       ├── topology.js            # SVG HLD — campus, DC, GPU, WAN topologies
-│       ├── configgen.js           # Per-platform config generators
+│       ├── configgen.js           # Per-platform config generators + policy append
 │       ├── policyengine.js        # Policy rules engine (browser)
 │       ├── simulation.js          # Failure simulation, reachability matrix
 │       ├── gate.js                # Deployment gate + confidence score
@@ -454,20 +466,25 @@ Network-Automation/
 │       └── ...                    # (scoring, export, observability, backend, etc.)
 │
 ├── backend/                       # Python backend (real devices + MCP)
-│   ├── mcp_server.py              # ★ MCP server — 12 tools, 4 resources, 4 prompts
+│   ├── mcp_server.py              # ★ MCP server — 18 tools, 4 resources, 4 prompts
 │   ├── main.py                    # FastAPI REST API
 │   ├── nl_parser.py               # Natural language → design state
-│   ├── design_engine.py           # IP plan, VLAN, BGP, topology generation
-│   ├── sim_engine.py              # Failure simulation engine
+│   ├── design_engine.py           # IP plan, VLAN, BGP, topology + rationale
+│   ├── sim_engine.py              # Failure simulation engine (BFS partition)
 │   ├── gate_engine.py             # Policy gate + confidence scoring
-│   ├── config_gen.py              # Jinja2 config renderer
+│   ├── config_gen.py              # ★ Jinja2 renderer + uplinks context (/31 pairs)
+│   ├── monitor_engine.py          # Health checks + diagnostic pattern matching
+│   ├── troubleshoot_engine.py     # AI-guided troubleshooting steps
+│   ├── static_analysis.py         # 26-check static quality analyser
+│   ├── nornir_tasks.py            # ★ Nornir tasks + LLDP JSON + ECN/PFC/MTU checks
 │   ├── requirements.txt           # All Python dependencies (incl. mcp[cli])
 │   ├── Dockerfile                 # Python 3.11-slim (MCP-compatible)
 │   ├── claude_desktop_config.json # Ready-to-use Claude Desktop MCP config
 │   │
-│   ├── policies/                  # Policy generators (15 modules)
+│   ├── policies/                  # Policy generators (13 modules)
 │   │   ├── evpn_policy.py         # EVPN/VXLAN — L2VNI, L3VNI, RT, NVE
-│   │   ├── bgp_policy.py          # BGP communities, RR, iBGP/eBGP
+│   │   ├── bgp_policy.py          # BGP communities, RR, iBGP/eBGP, EVPN RT
+│   │   ├── control_plane.py       # CoPP 8-class, routing proto auth, uRPF, GTSM
 │   │   ├── firewall_policy.py     # FortiOS, PAN-OS, ASA, IOS-XE ZBF
 │   │   ├── qos_policy.py          # DSCP, PFC, DCQCN, queuing
 │   │   ├── security_hardening.py  # CIS-style hardening per platform
@@ -475,10 +492,12 @@ Network-Automation/
 │   │   └── ...
 │   │
 │   └── templates/                 # Jinja2 device templates
-│       ├── nxos/spine.j2          # NX-OS spine (BGP RR + EVPN)
-│       ├── nxos/leaf.j2           # NX-OS leaf (VTEP + VRFs + NVE)
-│       ├── eos/gpu_spine.j2       # Arista EOS GPU spine
-│       ├── sonic/gpu_tor.j2       # SONiC CONFIG_DB GPU TOR
+│       ├── nxos/spine.j2          # ★ NX-OS spine — uplinks loop, /31 IPs fixed
+│       ├── nxos/leaf.j2           # ★ NX-OS leaf — uplinks loop, /31 IPs fixed
+│       ├── eos/spine.j2           # Arista EOS DC spine
+│       ├── eos/leaf.j2            # Arista EOS DC leaf
+│       ├── eos/gpu_spine.j2       # Arista EOS GPU spine (RoCEv2)
+│       ├── sonic/gpu_tor.j2       # SONiC CONFIG_DB GPU TOR (PFC/ECN)
 │       └── ios_xe/                # Campus access / distribution / core
 │
 └── docker-compose.yml             # API + MCP + frontend in one compose
@@ -644,9 +663,19 @@ score = baseline(60) + Σ signal_weights   →   capped 0–100
 - [x] Delta deploy — LCS diff → push only changed lines
 - [x] Python backend — FastAPI + Nornir + Netmiko + NAPALM
 - [x] 17 real pre-deployment checks + 8 post-deployment checks
-- [x] **MCP server — 12 tools, 4 resources, 4 prompts (Claude / ChatGPT / LangChain)**
+- [x] **MCP server — 18 tools, 4 resources, 4 prompts (Claude / ChatGPT / LangChain)**
 - [x] Firewall policy (FortiOS, PAN-OS, ASA, IOS-XE ZBF)
 - [x] Security hardening, AAA, ACL, QoS, 802.1X policy generators
+- [x] **Capacity Model Engine** — campus/DC/GPU exact formulas (growth + reserve + redundancy)
+- [x] **Policy Block Generator** — 9 domains × 5 OS, appended to every device config
+- [x] **Static Analysis** — 26 checks · 5 domains · quality score 0–100
+- [x] **Health Check + Diagnostics + Troubleshoot** — AI-guided issue resolution
+- [x] **Monitoring Engine** — pattern matching, symptom → root cause → remediation
+- [x] **EVPN policy generator** — full L2VNI / L3VNI / symmetric IRB / per-VNI RT
+- [x] **NX-OS template bugs fixed** — /31 uplink IPs now symmetric spine ↔ leaf
+- [x] **LLDP JSON collection** — `show lldp neighbors detail | json` replaces fragile text parse
+- [x] **Live ECN / PFC / MTU post-checks** — no longer silently empty on real devices
+- [x] **NDAL v1.0 license** — source-available; commercial use requires paid license
 - [ ] NetBox / Nautobot source-of-truth integration
 - [ ] ServiceNow / Jira change-control hooks
 - [ ] Batfish pre-deployment config analysis
@@ -665,6 +694,8 @@ score = baseline(60) + Σ signal_weights   →   capped 0–100
 | MCP server | Requires Python 3.10+ (MCP SDK constraint) |
 | SONiC deploy | REST API; SSH fallback only |
 | NETCONF transport | Scaffolded; Netmiko SSH used in practice |
+| MTU post-check | Requires `peer_ip` field in inventory host entry |
+| ECN/PFC checks | NX-OS and EOS only; IOS-XE and JunOS run simulated |
 | NetBox sync | Planned |
 | PDF export | HTML report available as workaround |
 
