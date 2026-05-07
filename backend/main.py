@@ -19,11 +19,12 @@ Without JWT_SECRET the server runs in open dev mode (all requests allowed).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,7 @@ from pydantic import BaseModel
 
 from auth import Role, create_token, require_permission
 from audit import record, record_config_gen, record_deploy, record_login
+from db import create_all_tables, dispose_engine, get_db
 from config_gen import generate_all_configs
 from nornir_tasks import (
     deploy_configs,
@@ -40,6 +42,9 @@ from nornir_tasks import (
     run_post_checks,
     run_pre_checks,
 )
+from routers.designs import router as designs_router
+from routers.deployments import router as deployments_router
+from routers.devices import router as devices_router
 from ztp.router import ztp_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -69,10 +74,21 @@ else:
 _ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 _ADMIN_PASS = os.environ.get("ADMIN_PASS", "netdesign-dev")
 
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    # Startup: create tables in dev mode (Alembic handles prod)
+    if os.environ.get("AUTO_CREATE_TABLES", "").lower() == "true":
+        await create_all_tables()
+    yield
+    # Shutdown: close DB connections cleanly
+    await dispose_engine()
+
+
 app = FastAPI(
     title="NetDesign AI Backend",
     description="Config generation, policy injection, ZTP, and device deployment API",
-    version="2.1.0",
+    version="2.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -83,8 +99,11 @@ app.add_middleware(
     allow_credentials=True,
 )
 
-# Mount ZTP router (unauthenticated — devices call it during boot)
-app.include_router(ztp_router)
+# Mount routers
+app.include_router(ztp_router)          # unauthenticated — devices call during boot
+app.include_router(designs_router)
+app.include_router(deployments_router)
+app.include_router(devices_router)
 
 
 # ---------------------------------------------------------------------------
@@ -339,10 +358,35 @@ async def api_deploy(
             deployment_id,
         )
         outcome = "success" if results.get("success", False) else "failed"
+        duration = round(time.time() - t0, 2)
+
+        # Persist deployment record to DB (best-effort — don't fail the response)
+        try:
+            from sqlalchemy.ext.asyncio import AsyncSession
+            from models import Deployment as DeploymentModel
+            from db import _SessionLocal
+            if _SessionLocal is not None:
+                async with _SessionLocal() as db_session:
+                    dep = DeploymentModel(
+                        id=deployment_id,
+                        design_id=request.state.orgName,   # placeholder — Phase 3 passes real design_id
+                        environment="staging" if not request.dry_run else "dry_run",
+                        triggered_by=user.get("sub", "unknown"),
+                        status=outcome,
+                        config_snapshot={"device_count": len(configs), "dry_run": request.dry_run},
+                        confidence_score=None,
+                        started_at=datetime.fromtimestamp(t0, tz=timezone.utc),
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    db_session.add(dep)
+                    await db_session.commit()
+        except Exception as db_exc:
+            log.warning("Could not persist deployment record: %s", db_exc)
+
         return DeployResponse(
             results=results,
             dry_run=request.dry_run,
-            duration_s=round(time.time() - t0, 2),
+            duration_s=duration,
             deployment_id=deployment_id,
         )
     except Exception as exc:
