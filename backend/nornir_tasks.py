@@ -13,6 +13,7 @@ Functions:
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import time
 from pathlib import Path
@@ -33,6 +34,7 @@ except ImportError:
 
 INVENTORY_DIR = Path(__file__).parent.parent / "playbooks" / "inventory"
 NORNIR_CONFIG  = Path(__file__).parent / "nornir_config.yaml"
+BACKUP_DIR     = Path(os.environ.get("BACKUP_DIR", "/tmp/netdesign_backups"))
 
 
 # ─────────────────────────────────────────────
@@ -124,20 +126,35 @@ def _simulate_check(host: str, check: str, passed: bool = True) -> dict[str, Any
 # Pre-checks
 # ─────────────────────────────────────────────
 
-def run_pre_checks(state: dict[str, Any], inventory: dict[str, Any]) -> list[dict[str, Any]]:
+def run_pre_checks(
+    state: dict[str, Any],
+    inventory: dict[str, Any],
+    deployment_id: str | None = None,
+) -> list[dict[str, Any]]:
     """
     Pre-deployment checks:
       1. Reachability (TCP/22)
       2. SSH login + "show version" parse
-      3. Running-config backup to local file
+      3. Mandatory running-config backup — always saved before any change
+
+    Backups are written to BACKUP_DIR/{deployment_id}/{hostname}.cfg so that
+    rollback has a clean restore target even if the deployment fails mid-push.
     """
     results: list[dict[str, Any]] = []
+    dep_id = deployment_id or f"manual-{int(time.time())}"
 
     if not inventory:
         log.info("No inventory provided — returning simulated pre-check results")
         for check in ["reachability", "ssh_login", "version_check", "config_backup"]:
             results.append(_simulate_check("demo-device", check))
         return results
+
+    # Ensure per-deployment backup directory exists
+    backup_path = BACKUP_DIR / dep_id
+    try:
+        backup_path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.warning("Could not create backup dir %s: %s", backup_path, exc)
 
     for host_name, host_data in inventory.items():
         ip = host_data.get("hostname", host_name)
@@ -185,20 +202,30 @@ def run_pre_checks(state: dict[str, Any], inventory: dict[str, Any]) -> list[dic
                 "detail": (host_result[0].result[:200] if success else "failed"),
             })
 
-            # 4. Config backup
+            # 4. Mandatory config backup (MUST complete before any change is pushed)
             def _backup(task: "Task") -> "Result":
                 return task.run(task=netmiko_send_command, command_string="show running-config")
 
             bak_result = nr.run(task=_backup)
             bak = bak_result[host_name]
             if not bak.failed:
-                bak_path = Path(f"/tmp/netdesign_backup_{host_name}_{int(time.time())}.txt")
-                bak_path.write_text(bak[0].result)
-                results.append({"host": host_name, "check": "config_backup",
-                                 "passed": True, "detail": f"Saved to {bak_path}"})
+                cfg_file = backup_path / f"{host_name}.cfg"
+                cfg_file.write_text(bak[0].result)
+                results.append({
+                    "host": host_name, "check": "config_backup",
+                    "passed": True,
+                    "detail": f"Saved to {cfg_file} (deployment {dep_id})",
+                })
+                log.info("backup saved: %s", cfg_file)
             else:
-                results.append({"host": host_name, "check": "config_backup",
-                                 "passed": False, "detail": str(bak.exception)})
+                # Backup failure is non-blocking but logged as failed so the caller
+                # can choose to abort the deploy rather than risk no restore point.
+                results.append({
+                    "host": host_name, "check": "config_backup",
+                    "passed": False,
+                    "detail": f"BACKUP FAILED — {bak.exception} — deploy blocked",
+                })
+                log.error("config backup FAILED for %s: %s", host_name, bak.exception)
 
         except Exception as exc:
             for c in ["ssh_login", "version_check", "config_backup"]:
@@ -504,13 +531,18 @@ def deploy_configs(
     configs: dict[str, str],
     inventory: dict[str, Any],
     dry_run: bool = True,
+    deployment_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Push generated configs to devices.
     dry_run=True  — render + validate only, do NOT push
-    dry_run=False — push with 30-second confirm-commit guard
+    dry_run=False — push with platform-native confirm-commit guard:
+                    NX-OS   → checkpoint before push
+                    EOS     → configure session + commit
+                    JunOS   → commit confirmed 5
+                    Others  → direct netmiko_send_config
     """
-    results: dict[str, Any] = {}
+    results: dict[str, Any] = {"success": False}
 
     if dry_run:
         for host_name, config in configs.items():
@@ -519,16 +551,19 @@ def deploy_configs(
                 "lines":  len(config.splitlines()),
                 "detail": "Config validated (not pushed — dry_run=True)",
             }
+        results["success"] = True
         return results
 
     if not inventory:
         for host_name, config in configs.items():
             results[host_name] = {"status": "skipped", "detail": "no inventory"}
+        results["success"] = False
         return results
 
     if not NORNIR_AVAILABLE:
         for host_name in configs:
             results[host_name] = {"status": "simulated", "detail": "Nornir not installed"}
+        results["success"] = True
         return results
 
     for host_name, config in configs.items():

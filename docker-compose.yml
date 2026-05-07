@@ -13,23 +13,39 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - NORNIR_WORKERS=${NORNIR_WORKERS:-10}
-      - BACKUP_DIR=/tmp/netdesign_backups
-      - CORS_ORIGINS=${CORS_ORIGINS:-*}
-    env_file:
-      - ./backend/.env          # create from backend/.env.example
+      - BACKUP_DIR=/app/backups
+      - AUDIT_LOG_PATH=/app/backups/audit.jsonl
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS}
+      - DATABASE_URL=postgresql+asyncpg://netdesign:${POSTGRES_PASSWORD}@postgres/netdesign
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=${VAULT_TOKEN}
+      - DEVICE_DEFAULT_USER=${DEVICE_DEFAULT_USER:-admin}
+      - DEVICE_DEFAULT_PASS=${DEVICE_DEFAULT_PASS:-}
     volumes:
       - ./playbooks/inventory:/app/../playbooks/inventory:ro
-      - backups:/tmp/netdesign_backups
+      - backups:/app/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/').raise_for_status()"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2"
 
-  # ── NetDesign AI — MCP SSE server (for ChatGPT / remote AI clients) ────────
-  # Connect from Claude Desktop or ChatGPT Custom GPT at:
-  #   http://localhost:8001/sse
+  # ── NetDesign AI — MCP SSE server ──────────────────────────────────────────
   mcp:
     build:
       context: ./backend
@@ -55,7 +71,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # ── Static frontend (optional — or just open index.html directly) ──────────
+  # ── Static frontend (Nginx) ─────────────────────────────────────────────────
   frontend:
     image: nginx:alpine
     container_name: netdesign-frontend
@@ -69,5 +85,76 @@ services:
       - api
     restart: unless-stopped
 
+  # ── PostgreSQL — design/deployment/device persistence ──────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: netdesign-postgres
+    environment:
+      POSTGRES_DB:       netdesign
+      POSTGRES_USER:     netdesign
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "netdesign"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Redis — job queue + WebSocket pub/sub (Phase 3) ────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: netdesign-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+  # ── HashiCorp Vault — device credential store ──────────────────────────────
+  vault:
+    image: hashicorp/vault:1.17
+    container_name: netdesign-vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID:  ${VAULT_TOKEN}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    restart: unless-stopped
+
+  # ── Prometheus — metrics scraping (Phase 4) ─────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: netdesign-prometheus
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    profiles:
+      - observability
+
+  # ── Grafana — dashboards (Phase 4) ──────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: netdesign-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-netdesign}
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./ops/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    profiles:
+      - observability
+
 volumes:
+  pgdata:
+  redisdata:
+  grafanadata:
   backups:

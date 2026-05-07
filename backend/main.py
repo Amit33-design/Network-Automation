@@ -2,29 +2,18 @@
 NetDesign AI — FastAPI Backend
 ================================
 Provides REST endpoints for:
+  POST /api/auth/token         — issue JWT (dev login)
   POST /api/generate-configs   — Jinja2 config generation per device (with policies)
   POST /api/deploy             — Nornir/Netmiko parallel config push
   POST /api/pre-checks         — Pre-deployment validation
   POST /api/post-checks        — Post-deployment validation
   GET  /api/inventory          — Return current Nornir inventory
+  GET  /api/policy-rules       — Policy rule definitions (YAML → JSON)
+  GET  /health                 — Health probe (used by docker-compose healthcheck)
   GET  /ztp/*                  — Zero Touch Provisioning server
 
-Policy blocks appended to every generated config:
-  BGP route-maps · prefix-lists · community strings (per use case)
-  Infrastructure ACL (iACL) · VLAN ACLs · VTY ACL
-  802.1X / IBNS 2.0 (campus only) · MAB fallback · CoA
-  QoS class-maps · priority queuing · PFC/ECN (GPU)
-  AAA/TACACS+ · SNMPv3 · Syslog · NTP authentication
-
-ZTP endpoints:
-  GET  /ztp/bootstrap/{serial}   — serve Day 0 config to booting device
-  GET  /ztp/script/{platform}    — POAP/EOS-ZTP Python script
-  POST /ztp/checkin/{serial}     — device reports provisioning result
-  POST /ztp/register             — pre-register device
-  GET  /ztp/status               — onboarding dashboard
-
-Run with:
-  uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+Authentication: Bearer JWT. Set JWT_SECRET env var to enforce auth.
+Without JWT_SECRET the server runs in open dev mode (all requests allowed).
 """
 
 from __future__ import annotations
@@ -32,51 +21,79 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from auth import Role, create_token, require_permission
+from audit import record, record_config_gen, record_deploy, record_login
 from config_gen import generate_all_configs
 from nornir_tasks import (
-    run_pre_checks,
-    run_post_checks,
     deploy_configs,
     get_inventory_hosts,
+    run_post_checks,
+    run_pre_checks,
 )
 from ztp.router import ztp_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# CORS — read allowed origins from environment (no wildcard default in prod)
+# ---------------------------------------------------------------------------
+_raw_origins = os.environ.get("CORS_ORIGINS", "")
+if _raw_origins and _raw_origins != "*":
+    _cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+elif not os.environ.get("JWT_SECRET"):
+    # Dev mode: no JWT_SECRET → open CORS for local development convenience
+    _cors_origins = ["*"]
+    log.warning("CORS_ORIGINS not set and JWT_SECRET unset — allowing all origins (dev mode)")
+else:
+    # JWT_SECRET is set but no CORS_ORIGINS — refuse to start with wildcard
+    raise RuntimeError(
+        "CORS_ORIGINS must be set when JWT_SECRET is configured. "
+        "Example: CORS_ORIGINS=http://localhost:8080,https://yourdomain.com"
+    )
+
+# ---------------------------------------------------------------------------
+# Dev-mode static credentials (for /api/auth/token dev login only)
+# Override with: ADMIN_USER / ADMIN_PASS env vars
+# ---------------------------------------------------------------------------
+_ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+_ADMIN_PASS = os.environ.get("ADMIN_PASS", "netdesign-dev")
+
 app = FastAPI(
     title="NetDesign AI Backend",
     description="Config generation, policy injection, ZTP, and device deployment API",
-    version="2.0.0",
+    version="2.1.0",
 )
 
-# Allow calls from the static frontend (GitHub Pages or local file://)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=True,
 )
 
-# Mount ZTP router
+# Mount ZTP router (unauthenticated — devices call it during boot)
 app.include_router(ztp_router)
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # Request / Response models
-# ─────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 class DesignState(BaseModel):
     """Mirrors the frontend STATE object serialised to JSON."""
-    uc: str                           # campus | dc | gpu | wan | hybrid
+    uc: str
     orgName: str = "My Network"
     orgSize: str = "medium"
     redundancy: str = "ha"
@@ -87,7 +104,6 @@ class DesignState(BaseModel):
     compliance: list[str] = []
     vlans: list[dict[str, Any]] = []
     appFlows: list[dict[str, Any]] = []
-    # Policy generation options (all default True)
     include_bgp_policy: bool = True
     include_acl:        bool = True
     include_dot1x:      bool = True
@@ -96,47 +112,104 @@ class DesignState(BaseModel):
 
 
 class DeployRequest(BaseModel):
-    state: DesignState
-    inventory: dict[str, Any]         # Nornir-format hosts dict
-    dry_run: bool = True              # safety: default to dry-run
+    state:      DesignState
+    inventory:  dict[str, Any]
+    dry_run:    bool = True
 
 
 class ConfigResponse(BaseModel):
-    configs: dict[str, str]           # { device_id: config_text }
+    configs:      dict[str, str]
     generated_at: float
 
 
 class CheckResult(BaseModel):
-    host: str
-    check: str
+    host:   str
+    check:  str
     passed: bool
     detail: str
 
 
 class CheckResponse(BaseModel):
-    results: list[CheckResult]
+    results:    list[CheckResult]
     all_passed: bool
     duration_s: float
 
 
 class DeployResponse(BaseModel):
-    results: dict[str, Any]
-    dry_run: bool
-    duration_s: float
+    results:      dict[str, Any]
+    dry_run:      bool
+    duration_s:   float
+    deployment_id: str
 
 
-# ─────────────────────────────────────────────
-# Endpoints
-# ─────────────────────────────────────────────
+class TokenRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type:   str = "bearer"
+    role:         str
+
+
+# ---------------------------------------------------------------------------
+# Health / root
+# ---------------------------------------------------------------------------
 
 @app.get("/")
 def root():
-    return {"service": "NetDesign AI Backend", "status": "ok"}
+    return {"service": "NetDesign AI Backend", "version": "2.1.0", "status": "ok"}
 
+
+@app.get("/health")
+def health():
+    """Docker healthcheck endpoint."""
+    return {"status": "ok", "timestamp": time.time()}
+
+
+# ---------------------------------------------------------------------------
+# Auth — token issuance (dev login; replace with real user store in Phase 2)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/token", response_model=TokenResponse)
+async def auth_token(req: TokenRequest, request: Request):
+    """
+    Issue a JWT for API access.
+
+    In dev mode (JWT_SECRET unset) all credentials are accepted and an admin
+    token is returned — this is intentional for local development only.
+
+    In production (JWT_SECRET set) only the admin account configured via
+    ADMIN_USER / ADMIN_PASS env vars is accepted here. Phase 2 will replace
+    this with a real user table lookup.
+    """
+    ip = getattr(request.client, "host", "unknown")
+
+    if not os.environ.get("JWT_SECRET"):
+        # Dev mode — return a mock token
+        await record_login("dev-user", "success", ip_address=ip)
+        return TokenResponse(
+            access_token="dev-mode-no-secret-set",
+            token_type="bearer",
+            role=Role.ADMIN.value,
+        )
+
+    if req.username != _ADMIN_USER or req.password != _ADMIN_PASS:
+        await record_login(req.username, "denied", ip_address=ip)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = create_token(req.username, Role.ADMIN)
+    await record_login(req.username, "success", ip_address=ip)
+    return TokenResponse(access_token=token, token_type="bearer", role=Role.ADMIN.value)
+
+
+# ---------------------------------------------------------------------------
+# Inventory
+# ---------------------------------------------------------------------------
 
 @app.get("/api/inventory")
-def api_inventory():
-    """Return the current Nornir inventory host list."""
+def api_inventory(user=Depends(require_permission("designs:read"))):
     try:
         hosts = get_inventory_hosts()
         return {"hosts": hosts}
@@ -144,37 +217,91 @@ def api_inventory():
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ---------------------------------------------------------------------------
+# Policy rules (single source of truth → YAML → JSON for frontend)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/policy-rules")
+def api_policy_rules():
+    """
+    Serve policy rules as JSON. The frontend policyengine.js fetches this
+    instead of hardcoding its own copy — eliminates Python/JS rule drift.
+    """
+    rules_file = Path(__file__).parent / "policies" / "rules.yaml"
+    if rules_file.exists():
+        try:
+            import yaml
+            data = yaml.safe_load(rules_file.read_text())
+            return {"rules": data.get("rules", [])}
+        except Exception as exc:
+            log.warning("Could not load rules.yaml: %s", exc)
+    # Fallback: import from gate_engine if YAML not yet created
+    try:
+        from gate_engine import run_policies  # noqa: F401
+        return {"rules": [], "note": "rules.yaml not found — create backend/policies/rules.yaml"}
+    except Exception:
+        return {"rules": []}
+
+
+# ---------------------------------------------------------------------------
+# Config generation
+# ---------------------------------------------------------------------------
+
 @app.post("/api/generate-configs", response_model=ConfigResponse)
-def api_generate_configs(state: DesignState):
+async def api_generate_configs(
+    state: DesignState,
+    user: dict = Depends(require_permission("configs:generate")),
+):
     """
     Generate Jinja2-rendered configs for all selected devices.
     Does NOT touch real devices — purely template rendering.
     """
     try:
         configs = generate_all_configs(state.model_dump())
+        await record_config_gen(
+            user_id=user.get("sub", "unknown"),
+            design_id=state.orgName,
+            device_count=len(configs),
+        )
         return ConfigResponse(configs=configs, generated_at=time.time())
     except Exception as exc:
         log.exception("Config generation failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ---------------------------------------------------------------------------
+# Pre-checks
+# ---------------------------------------------------------------------------
+
 @app.post("/api/pre-checks", response_model=CheckResponse)
-async def api_pre_checks(request: DeployRequest):
+async def api_pre_checks(
+    request: DeployRequest,
+    user: dict = Depends(require_permission("deploy:staging")),
+):
     """
     Run pre-deployment checks against real devices via Nornir/Netmiko:
       - ICMP reachability
-      - SSH connectivity
-      - Software version validation
-      - Running-config backup
+      - SSH connectivity + version check
+      - Mandatory running-config backup (saved before any change)
     """
     t0 = time.time()
+    deployment_id = str(uuid.uuid4())
     try:
         results = await asyncio.to_thread(
             run_pre_checks,
             request.state.model_dump(),
             request.inventory,
+            deployment_id,
         )
         all_ok = all(r["passed"] for r in results)
+        await record(
+            user_id=user.get("sub", "unknown"),
+            action="pre_checks.run",
+            resource_id=deployment_id,
+            resource_type="deployment",
+            outcome="passed" if all_ok else "failed",
+            detail={"host_count": len(request.inventory), "all_passed": all_ok},
+        )
         return CheckResponse(
             results=[CheckResult(**r) for r in results],
             all_passed=all_ok,
@@ -185,38 +312,65 @@ async def api_pre_checks(request: DeployRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ---------------------------------------------------------------------------
+# Deploy
+# ---------------------------------------------------------------------------
+
 @app.post("/api/deploy", response_model=DeployResponse)
-async def api_deploy(request: DeployRequest):
+async def api_deploy(
+    request: DeployRequest,
+    user: dict = Depends(require_permission("deploy:staging")),
+):
     """
     Push generated configs to devices via Nornir/Netmiko.
-    With dry_run=True (default) configs are rendered but NOT pushed.
-    With dry_run=False configs are pushed with a 30-second confirm-commit guard.
+    dry_run=True (default) → configs rendered but NOT pushed.
+    dry_run=False → configs pushed with platform-native confirm-commit guard.
     """
     t0 = time.time()
+    deployment_id = str(uuid.uuid4())
+    outcome = "unknown"
     try:
-        # Generate configs first
         configs = generate_all_configs(request.state.model_dump())
         results = await asyncio.to_thread(
             deploy_configs,
             configs,
             request.inventory,
             request.dry_run,
+            deployment_id,
         )
+        outcome = "success" if results.get("success", False) else "failed"
         return DeployResponse(
             results=results,
             dry_run=request.dry_run,
             duration_s=round(time.time() - t0, 2),
+            deployment_id=deployment_id,
         )
     except Exception as exc:
+        outcome = "failed"
         log.exception("Deployment failed")
         raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        await record_deploy(
+            user_id=user.get("sub", "unknown"),
+            deployment_id=deployment_id,
+            outcome=outcome,
+            dry_run=request.dry_run,
+            device_count=len(request.inventory),
+        )
 
+
+# ---------------------------------------------------------------------------
+# Post-checks
+# ---------------------------------------------------------------------------
 
 @app.post("/api/post-checks", response_model=CheckResponse)
-async def api_post_checks(request: DeployRequest):
+async def api_post_checks(
+    request: DeployRequest,
+    user: dict = Depends(require_permission("deploy:staging")),
+):
     """
     Run post-deployment validation:
-      - BGP neighbor state (Established)
+      - BGP neighbor state
       - OSPF/IS-IS adjacency
       - Interface error counters
       - Ping to gateway / loopbacks
