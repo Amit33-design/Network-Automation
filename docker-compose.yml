@@ -111,6 +111,43 @@ services:
       - redisdata:/data
     restart: unless-stopped
 
+  # ── NetDesign AI — Celery async deploy worker (Phase 3) ───────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: netdesign-worker
+    command: >
+      celery -A jobs.deploy_job.celery_app worker
+        --loglevel=info
+        --concurrency=4
+        --queues=celery
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - DATABASE_URL=postgresql+asyncpg://netdesign:${POSTGRES_PASSWORD}@postgres/netdesign
+      - BACKUP_DIR=/app/backups
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=${VAULT_TOKEN}
+      - DEVICE_DEFAULT_USER=${DEVICE_DEFAULT_USER:-admin}
+      - DEVICE_DEFAULT_PASS=${DEVICE_DEFAULT_PASS:-}
+    volumes:
+      - ./playbooks/inventory:/app/../playbooks/inventory:ro
+      - backups:/app/backups
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2"
+
   # ── HashiCorp Vault — device credential store ──────────────────────────────
   vault:
     image: hashicorp/vault:1.17

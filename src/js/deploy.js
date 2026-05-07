@@ -788,3 +788,158 @@ function resetDeploy() {
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ═══════════════════════════════════════════════════════════════
+   Phase 3 — Live Deploy WebSocket Feed
+   Connects to /ws/deploy/{deploymentId} and streams stage events
+   into the existing terminal log.
+═══════════════════════════════════════════════════════════════ */
+
+/**
+ * Stage icon map: maps stage name to display icon.
+ * @type {Object.<string,string>}
+ */
+const _STAGE_ICONS = {
+  pre_checks:  '🔍',   // 🔍
+  deploy:      '🚀',   // 🚀
+  post_checks: '✅',         // ✅
+  rollback:    '↩',         // ↩
+  error:       '❌',         // ❌
+};
+
+/** Terminal stages that signal the WebSocket stream is complete. */
+const _TERMINAL_STATUSES = new Set(['terminal']);
+const _TERMINAL_STAGES   = new Set(['post_checks', 'error', 'rollback']);
+
+/**
+ * LiveDeployFeed — open a WebSocket to the deploy event stream.
+ *
+ * Appends each incoming stage event as a formatted line to the
+ * existing terminal log (via termLog).  Closes the socket when
+ * a terminal stage is received.
+ *
+ * @param {string}   deploymentId  - UUID of the Deployment record
+ * @param {Object}   [opts]
+ * @param {Function} [opts.onStage]    - callback(stage, status, detail, raw)
+ * @param {Function} [opts.onClose]    - callback() when stream ends
+ * @param {Function} [opts.onError]    - callback(err) on connection error
+ * @returns {WebSocket} The underlying WebSocket instance
+ */
+function LiveDeployFeed(deploymentId, opts) {
+  opts = opts || {};
+
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${protocol}//${location.host}/ws/deploy/${deploymentId}`;
+
+  termLog(`📡 Connecting to live stream for deployment ${deploymentId}…`, 't-dim');
+
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (err) {
+    termLog(`❌ WebSocket creation failed: ${err.message}`, 't-err');
+    if (opts.onError) opts.onError(err);
+    return null;
+  }
+
+  ws.onopen = function () {
+    termLog('🟢 Live deploy feed connected', 't-ok');
+  };
+
+  ws.onmessage = function (event) {
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch (_) {
+      // Non-JSON frame (e.g. keepalive ping) — ignore silently
+      return;
+    }
+
+    // Ignore internal keepalive pings
+    if (payload.type === 'ping') return;
+
+    const stage  = payload.stage  || '';
+    const status = payload.status || '';
+    const detail = payload.detail || '';
+
+    const icon = _STAGE_ICONS[stage] || 'ℹ️';  // ℹ️ fallback
+    const cls  = _termClass(stage, status);
+
+    termLog(`${icon} [${stage}] ${status}: ${detail}`, cls);
+
+    // Forward to caller hook
+    if (typeof opts.onStage === 'function') {
+      opts.onStage(stage, status, detail, payload);
+    }
+
+    // Update pipeline status cards if the stage maps to a known pipeline step
+    _updatePipelineFromEvent(stage, status);
+
+    // Close on terminal stage
+    if (_TERMINAL_STAGES.has(stage) && _TERMINAL_STATUSES.has(status)) {
+      termLog('📡 Live deploy feed closed (stream complete)', 't-dim');
+      ws.close();
+      if (typeof opts.onClose === 'function') opts.onClose();
+    }
+  };
+
+  ws.onerror = function (err) {
+    termLog('❌ Live deploy stream error — see console for details', 't-err');
+    console.error('[LiveDeployFeed] WebSocket error:', err);
+    if (typeof opts.onError === 'function') opts.onError(err);
+  };
+
+  ws.onclose = function () {
+    termLog('📡 Live deploy feed disconnected', 't-dim');
+    if (typeof opts.onClose === 'function') opts.onClose();
+  };
+
+  return ws;
+}
+
+/** Map stage+status to a terminal CSS class. */
+function _termClass(stage, status) {
+  if (stage === 'error' || status === 'error' || status === 'failed') return 't-err';
+  if (stage === 'rollback') return 't-warn';
+  if (status === 'passed' || status === 'success' || status === 'terminal') return 't-ok';
+  if (status === 'running') return 't-info';
+  return 't-dim';
+}
+
+/** Update pipeline step cards based on incoming stream events. */
+function _updatePipelineFromEvent(stage, status) {
+  const stageMap = {
+    pre_checks:  'precheck',
+    deploy:      'deploy',
+    post_checks: 'postcheck',
+    rollback:    'deploy',
+  };
+  const pipelineStage = stageMap[stage];
+  if (!pipelineStage) return;
+
+  if (status === 'running') {
+    setStepStatus(`ds-${pipelineStage}-status`, 'running');
+  } else if (status === 'passed' || status === 'success' || status === 'terminal') {
+    setStepStatus(`ds-${pipelineStage}-status`, 'done');
+  } else if (status === 'failed' || status === 'error') {
+    setStepStatus(`ds-${pipelineStage}-status`, 'failed');
+  } else if (stage === 'rollback' && (status === 'terminal')) {
+    setStepStatus('ds-deploy-status', 'rolled_back');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wire LiveDeployFeed into BackendClient if it exists, or export standalone
+// ---------------------------------------------------------------------------
+if (typeof BackendClient !== 'undefined') {
+  /**
+   * BackendClient.connectDeployStream(deploymentId, opts)
+   * Opens a live WebSocket deploy feed for the given deploymentId.
+   * @param {string} deploymentId
+   * @param {Object} [opts] - passed through to LiveDeployFeed
+   * @returns {WebSocket|null}
+   */
+  BackendClient.connectDeployStream = function (deploymentId, opts) {
+    return LiveDeployFeed(deploymentId, opts);
+  };
+}
