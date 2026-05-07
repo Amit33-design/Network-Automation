@@ -282,6 +282,7 @@ Then call generate_configs(state) if gate.can_deploy is True.
 | troubleshoot | Multi-symptom RCA → root cause + runbook + fault-tree diagram |
 | run_static_analysis | 26 deterministic design checks across 6 domains — score + findings |
 | run_post_checks | Post-deploy: BGP + LLDP JSON + ECN thresholds + PFC storm + MTU-9000 ping |
+| monitor_network | **Unified monitor**: health_check + static_analysis + optional diagnose + RCA in one call |
 
 ## Response formatting guidance
 
@@ -1280,6 +1281,258 @@ def run_post_checks(
     except Exception as exc:
         log.exception("run_post_checks error")
         return {"ok": False, "error": str(exc), "results": []}
+
+
+# ===========================================================================
+# ── TOOL 20 — monitor_network ────────────────────────────────────────────────
+# ===========================================================================
+@mcp.tool()
+def monitor_network(
+    state: dict[str, Any],
+    symptoms: list[str] | None = None,
+    include_troubleshoot: bool = True,
+    top_n: int = 5,
+) -> dict[str, Any]:
+    """
+    Unified network monitoring tool — always runs health_check + static_analysis,
+    then optionally adds diagnose and RCA troubleshoot when symptoms are provided.
+
+    This replaces calling run_health_check(), run_static_analysis(),
+    diagnose_network(), and troubleshoot() as separate tool calls.
+
+    Args:
+        state:                Design state dict (from design_network).
+        symptoms:             Optional list of observed symptom strings.
+                              When provided, diagnose_network() is run automatically.
+                              When 2+ symptoms, troubleshoot() RCA is also run
+                              (unless include_troubleshoot=False).
+                              Examples:
+                                ["bgp neighbor down", "vtep unreachable"]
+                                ["pfc storm", "rdma drops", "gpu training stuck"]
+        include_troubleshoot: Set False to skip the RCA step even when 2+ symptoms
+                              are given (faster, returns diagnosis only).
+        top_n:                Max diagnosis matches to return (default 5).
+
+    Returns:
+        monitor_status:   "healthy" | "degraded" | "critical"
+        monitor_score:    0-100 combined health+quality score
+        health:           run_health_check() result — per-check items, score, overall
+        analysis:         run_static_analysis() result — 26 checks, domain scores
+        diagnosis:        diagnose_network() result (only when symptoms provided)
+        rca:              troubleshoot() result (only when 2+ symptoms and include_troubleshoot)
+        action_items:     Deduplicated priority list of recommended fixes across all checks
+        summary:          Single plain-English paragraph combining all findings
+    """
+    log.info(
+        "monitor_network called — uc=%s symptoms=%d include_ts=%s",
+        state.get("uc"), len(symptoms or []), include_troubleshoot,
+    )
+
+    result: dict[str, Any] = {"ok": True}
+    errors: list[str] = []
+
+    # ── Phase 1: Health check (always) ──────────────────────────────────────
+    health_result: dict[str, Any] = {}
+    try:
+        report = _monitor_health_check(state)
+        health_result = {
+            "overall":        report.overall,
+            "score":          report.score,
+            "summary":        report.summary,
+            "items": [
+                {
+                    "check":    item.check,
+                    "status":   item.status,
+                    "message":  item.message,
+                    "issue_id": item.issue_id,
+                }
+                for item in report.items
+            ],
+            "failed_checks":  [i.check for i in report.items if i.status == "fail"],
+            "warning_checks": [i.check for i in report.items if i.status == "warn"],
+        }
+        log.info("Health check: %s score=%d", report.overall, report.score)
+    except Exception as exc:
+        log.warning("monitor_network health_check failed: %s", exc)
+        errors.append(f"health_check: {exc}")
+        health_result = {"overall": "unknown", "score": 0, "error": str(exc)}
+
+    # ── Phase 2: Static analysis (always) ───────────────────────────────────
+    analysis_result: dict[str, Any] = {}
+    try:
+        sa = _run_static_analysis(state)
+        analysis_result = {
+            "overall":      sa.overall,
+            "score":        sa.score,
+            "summary":      sa.summary,
+            "check_count":  sa.check_count,
+            "fail_count":   sa.fail_count,
+            "warn_count":   sa.warn_count,
+            "pass_count":   sa.pass_count,
+            "domain_scores": sa.domain_scores,
+            "findings": [
+                {
+                    "check_id": f.check_id,
+                    "domain":   f.domain,
+                    "severity": f.severity,
+                    "status":   f.status,
+                    "title":    f.title,
+                    "detail":   f.detail,
+                    "fix":      f.fix,
+                    "affected": f.affected,
+                }
+                for f in sa.findings
+            ],
+        }
+        log.info("Static analysis: %s score=%d", sa.overall, sa.score)
+    except Exception as exc:
+        log.warning("monitor_network static_analysis failed: %s", exc)
+        errors.append(f"static_analysis: {exc}")
+        analysis_result = {"overall": "unknown", "score": 0, "error": str(exc)}
+
+    # ── Phase 3: Diagnose (when symptoms provided) ───────────────────────────
+    diagnosis_result: dict[str, Any] = {}
+    if symptoms:
+        try:
+            matches = _monitor_diagnose(state, symptoms, top_n=top_n)
+
+            def _match_to_dict(m: DiagnosticMatch) -> dict:
+                return {
+                    "issue_id":             m.issue_id,
+                    "name":                 m.name,
+                    "category":             m.category,
+                    "severity":             m.severity,
+                    "confidence":           round(m.score * 100),
+                    "root_causes":          m.root_causes,
+                    "diagnostic_commands":  m.commands,
+                    "remediation_steps":    m.remediation,
+                    "verification_commands": m.verification,
+                    "tags":                 m.tags,
+                }
+
+            result_dicts = [_match_to_dict(m) for m in matches]
+            categories   = list({m.category for m in matches})
+            top_match    = matches[0] if matches else None
+            diag_summary = (
+                f"Top match: {top_match.name} ({top_match.category}, "
+                f"{top_match.severity} severity, {round(top_match.score*100)}% confidence). "
+                f"{len(matches)} issue(s) across: {', '.join(categories)}."
+                if top_match else "No matching issues found for the provided symptoms."
+            )
+            diagnosis_result = {
+                "match_count": len(matches),
+                "matches":     result_dicts,
+                "categories":  categories,
+                "summary":     diag_summary,
+            }
+            log.info("Diagnosis: %d matches top=%s", len(matches),
+                     top_match.issue_id if top_match else "none")
+        except Exception as exc:
+            log.warning("monitor_network diagnose failed: %s", exc)
+            errors.append(f"diagnose: {exc}")
+            diagnosis_result = {"match_count": 0, "error": str(exc)}
+
+    # ── Phase 4: RCA troubleshoot (when 2+ symptoms and enabled) ────────────
+    rca_result: dict[str, Any] = {}
+    if symptoms and len(symptoms) >= 2 and include_troubleshoot:
+        try:
+            rca_result = _quick_triage(state, symptoms)
+            log.info("RCA complete — root_cause=%s",
+                     rca_result.get("root_cause", {}).get("root_cause_id", "?"))
+        except Exception as exc:
+            log.warning("monitor_network troubleshoot failed: %s", exc)
+            errors.append(f"troubleshoot: {exc}")
+            rca_result = {"error": str(exc)}
+
+    # ── Phase 5: Compute unified monitor_status and monitor_score ────────────
+    h_score = health_result.get("score", 0)
+    a_score = analysis_result.get("score", 0)
+
+    # Diagnosis penalty: critical=−20, high=−10, medium=−5 (top match only)
+    diag_penalty = 0
+    if diagnosis_result.get("matches"):
+        top_sev = diagnosis_result["matches"][0].get("severity", "")
+        diag_penalty = {"critical": 20, "high": 10, "medium": 5}.get(top_sev, 0)
+
+    # Weighted combined score: 45% health, 45% analysis, −diag_penalty
+    monitor_score = max(0, round(h_score * 0.45 + a_score * 0.45 - diag_penalty))
+
+    # Status is worst of health + analysis overall (plus diagnosis bump if critical)
+    _status_rank = {"healthy": 0, "pass": 0, "warn": 1, "degraded": 1, "fail": 2, "critical": 2, "unknown": 1}
+    h_rank = _status_rank.get(health_result.get("overall", "unknown"), 1)
+    a_rank = _status_rank.get(analysis_result.get("overall", "unknown"), 1)
+    worst  = max(h_rank, a_rank)
+    if diag_penalty >= 20:
+        worst = max(worst, 2)
+    monitor_status = {0: "healthy", 1: "degraded", 2: "critical"}[worst]
+
+    # ── Phase 6: Build deduplicated action_items list ────────────────────────
+    action_items: list[dict[str, str]] = []
+
+    # From health failed/warn checks
+    for item in health_result.get("items", []):
+        if item["status"] in ("fail", "warn"):
+            action_items.append({
+                "source":   "health_check",
+                "priority": "high" if item["status"] == "fail" else "medium",
+                "check":    item["check"],
+                "message":  item["message"],
+                "issue_id": item.get("issue_id", ""),
+            })
+
+    # From static analysis findings (fail/warn only)
+    for f in analysis_result.get("findings", []):
+        if f["status"] in ("fail", "warn"):
+            action_items.append({
+                "source":   "static_analysis",
+                "priority": "high" if f["status"] == "fail" else "medium",
+                "check":    f["check_id"],
+                "message":  f["title"],
+                "fix":      f.get("fix", ""),
+            })
+
+    # From top diagnosis match remediation
+    if diagnosis_result.get("matches"):
+        top_diag = diagnosis_result["matches"][0]
+        for step in top_diag.get("remediation_steps", [])[:3]:
+            action_items.append({
+                "source":   "diagnosis",
+                "priority": "high" if top_diag.get("severity") in ("critical", "high") else "medium",
+                "check":    top_diag["issue_id"],
+                "message":  step,
+            })
+
+    # Sort: high priority first
+    action_items.sort(key=lambda x: 0 if x["priority"] == "high" else 1)
+
+    # ── Phase 7: Combined summary ────────────────────────────────────────────
+    parts = [
+        f"Monitor status: {monitor_status.upper()} (score {monitor_score}/100). ",
+        f"Health: {health_result.get('overall', '?')} ({h_score}/100) — "
+        f"{len(health_result.get('failed_checks', []))} failed, "
+        f"{len(health_result.get('warning_checks', []))} warnings. ",
+        f"Static analysis: {analysis_result.get('overall', '?')} ({a_score}/100) — "
+        f"{analysis_result.get('fail_count', 0)} fail, "
+        f"{analysis_result.get('warn_count', 0)} warn across "
+        f"{analysis_result.get('check_count', 0)} checks.",
+    ]
+    if diagnosis_result.get("summary"):
+        parts.append(f" Diagnosis: {diagnosis_result['summary']}")
+    if rca_result.get("confidence_summary"):
+        parts.append(f" RCA: {rca_result['confidence_summary']}")
+
+    result.update({
+        "monitor_status": monitor_status,
+        "monitor_score":  monitor_score,
+        "health":         health_result,
+        "analysis":       analysis_result,
+        "diagnosis":      diagnosis_result if symptoms else {},
+        "rca":            rca_result if (symptoms and len(symptoms) >= 2 and include_troubleshoot) else {},
+        "action_items":   action_items,
+        "summary":        "".join(parts),
+        "errors":         errors,
+    })
+    return result
 
 
 # ===========================================================================
