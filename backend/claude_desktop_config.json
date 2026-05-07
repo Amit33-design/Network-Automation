@@ -1,0 +1,60 @@
+{
+  "_comment": "NetDesign AI — Claude Desktop MCP configuration",
+  "_instructions": [
+    "1. Copy the 'mcpServers' block into your Claude Desktop config file:",
+    "   macOS  : ~/Library/Application Support/Claude/claude_desktop_config.json",
+    "   Windows: %APPDATA%\\Claude\\claude_desktop_config.json",
+    "2. Replace /FULL/PATH/TO/Network-Automation with your actual clone path.",
+    "3. Restart Claude Desktop after saving.",
+    "4. You should see 'NetDesign AI' appear in the MCP tools panel (hammer icon).",
+    "",
+    "Requirements:",
+    "  • Python 3.10+ on your PATH",
+    "  • pip install -r requirements.txt  (includes mcp[cli]>=1.0.0)"
+  ],
+
+  "mcpServers": {
+    "netdesign-ai": {
+      "command": "python3",
+      "args": [
+        "/FULL/PATH/TO/Network-Automation/backend/mcp_server.py",
+        "--transport", "stdio",
+        "--log-level", "INFO"
+      ],
+      "cwd": "/FULL/PATH/TO/Network-Automation/backend",
+      "env": {
+        "PYTHONPATH": "/FULL/PATH/TO/Network-Automation/backend",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  },
+
+  "_alternative_docker": {
+    "_comment": "Run via Docker if you prefer containerised execution",
+    "mcpServers": {
+      "netdesign-ai-docker": {
+        "command": "docker",
+        "args": [
+          "run", "--rm", "-i",
+          "--name", "netdesign-mcp",
+          "-e", "PYTHONUNBUFFERED=1",
+          "netdesign-ai:latest",
+          "python", "mcp_server.py", "--transport", "stdio"
+        ]
+      }
+    }
+  },
+
+  "_sse_remote": {
+    "_comment": "SSE transport for remote / team-shared MCP server",
+    "_instructions": [
+      "Start the server: python mcp_server.py --transport sse --port 8001",
+      "Then point Claude Desktop at the SSE endpoint:"
+    ],
+    "mcpServers": {
+      "netdesign-ai-remote": {
+        "url": "http://localhost:8001/sse"
+      }
+    }
+  }
+}
