@@ -1,0 +1,17 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: netdesign-api
+    static_configs:
+      - targets: ["api:8000"]
+    metrics_path: /metrics
+    scheme: http
+
+  - job_name: netdesign-worker
+    static_configs:
+      - targets: ["worker:9090"]
+    metrics_path: /metrics
+    scheme: http
+    honor_labels: true

@@ -59,6 +59,25 @@ except ImportError:
     _celery_run_deployment = None
     _CELERY_AVAILABLE = False
 
+# Phase 4: Telemetry + RCA (graceful imports — optional packages)
+try:
+    from prometheus_client import make_asgi_app as _make_metrics_app
+    from telemetry.gnmi_collector import TelemetryCollector, DeviceTarget
+    from telemetry.alerting import evaluate as _evaluate_alerts
+    _TELEMETRY_AVAILABLE = True
+except ImportError:
+    _make_metrics_app = None
+    TelemetryCollector = None
+    _evaluate_alerts = None
+    _TELEMETRY_AVAILABLE = False
+
+try:
+    from rca.engine import RCAEngine as _RCAEngine
+    _RCA_AVAILABLE = True
+except ImportError:
+    _RCAEngine = None
+    _RCA_AVAILABLE = False
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -86,20 +105,57 @@ else:
 _ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 _ADMIN_PASS = os.environ.get("ADMIN_PASS", "netdesign-dev")
 
+def _load_telemetry_devices() -> list:
+    """
+    Build DeviceTarget list from GNMI_DEVICES env var.
+    Format: comma-separated "hostname:mgmt_ip[:port[:platform]]"
+    """
+    if not _TELEMETRY_AVAILABLE:
+        return []
+    raw = os.environ.get("GNMI_DEVICES", "")
+    targets = []
+    for entry in raw.split(","):
+        parts = entry.strip().split(":")
+        if len(parts) >= 2:
+            targets.append(DeviceTarget(
+                hostname=parts[0],
+                mgmt_ip=parts[1],
+                port=int(parts[2]) if len(parts) > 2 else 6030,
+                platform=parts[3] if len(parts) > 3 else "eos",
+                username=os.environ.get("DEVICE_DEFAULT_USER", "admin"),
+                password=os.environ.get("DEVICE_DEFAULT_PASS", ""),
+            ))
+    return targets
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     # Startup: create tables in dev mode (Alembic handles prod)
     if os.environ.get("AUTO_CREATE_TABLES", "").lower() == "true":
         await create_all_tables()
+
+    # Phase 4: Start gNMI telemetry collector
+    _collector = None
+    if _TELEMETRY_AVAILABLE and os.environ.get("ENABLE_TELEMETRY", "").lower() == "true":
+        try:
+            devices = _load_telemetry_devices()
+            _collector = TelemetryCollector(devices)
+            await _collector.start()
+            log.info("TelemetryCollector started for %d device(s)", len(devices))
+        except Exception as exc:
+            log.warning("TelemetryCollector failed to start: %s", exc)
+
     yield
-    # Shutdown: close DB connections cleanly
+
+    if _collector:
+        await _collector.stop()
     await dispose_engine()
 
 
 app = FastAPI(
     title="NetDesign AI Backend",
     description="Config generation, policy injection, ZTP, and device deployment API",
-    version="2.2.0",
+    version="2.4.0",
     lifespan=lifespan,
 )
 
@@ -110,6 +166,10 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
     allow_credentials=True,
 )
+
+# Phase 4: Prometheus /metrics endpoint
+if _TELEMETRY_AVAILABLE and _make_metrics_app:
+    app.mount("/metrics", _make_metrics_app())
 
 # Mount routers
 app.include_router(ztp_router)          # unauthenticated — devices call during boot
@@ -583,3 +643,108 @@ async def api_ztp_dhcp_config(
     except Exception as exc:
         log.exception("DHCP config generation failed")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Live alerts
+# ---------------------------------------------------------------------------
+
+class AlertResponse(BaseModel):
+    hostname:     str
+    check:        str
+    severity:     str
+    message:      str
+    metric_value: float
+    fired_at:     float
+
+
+@app.get("/api/alerts", response_model=list[AlertResponse])
+def api_alerts(user: dict = Depends(require_permission("designs:read"))):
+    """
+    Return active alerts evaluated against live in-process telemetry metrics.
+    Returns an empty list when ENABLE_TELEMETRY is not set (no error).
+    """
+    if not _TELEMETRY_AVAILABLE or _evaluate_alerts is None:
+        return []
+    try:
+        alerts = _evaluate_alerts()
+        return [AlertResponse(**a.to_dict()) for a in alerts]
+    except Exception as exc:
+        log.exception("Alert evaluation failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: RCA analysis
+# ---------------------------------------------------------------------------
+
+class RCARequest(BaseModel):
+    symptom:          str
+    affected_devices: list[str] = []
+    design_id:        str | None = None
+
+
+class HypothesisResponse(BaseModel):
+    root_cause:           str
+    confidence:           float
+    evidence:             list[str]
+    blast_radius:         list[str]
+    remediation_steps:    list[str]
+    automation_available: bool
+    automation_playbook:  str | None
+
+
+@app.post("/api/rca/analyze", response_model=list[HypothesisResponse])
+async def api_rca_analyze(
+    req: RCARequest,
+    db=Depends(get_db),
+    user: dict = Depends(require_permission("designs:read")),
+):
+    """
+    Run hypothesis-based RCA given a symptom and affected devices.
+    Correlates live telemetry, recent deployments (last 2h), and topology.
+    """
+    if not _RCA_AVAILABLE or _RCAEngine is None:
+        raise HTTPException(status_code=503, detail="RCA engine not available (import error)")
+
+    design_state: dict | None = None
+    recent_deploys: list[dict] = []
+
+    if req.design_id:
+        try:
+            from sqlalchemy import select, desc
+            from models import Design as _Design, Deployment as _Deployment
+            from datetime import timedelta
+
+            design = await db.get(_Design, req.design_id)
+            if design:
+                design_state = design.state
+
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            result = await db.execute(
+                select(_Deployment)
+                .where(_Deployment.design_id == req.design_id)
+                .where(_Deployment.started_at >= cutoff)
+                .order_by(desc(_Deployment.started_at))
+                .limit(10)
+            )
+            recent_deploys = [
+                {
+                    "id":           str(d.id),
+                    "status":       d.status,
+                    "started_at":   d.started_at.isoformat() if d.started_at else "",
+                    "triggered_by": getattr(d, "triggered_by", ""),
+                }
+                for d in result.scalars().all()
+            ]
+        except Exception as exc:
+            log.warning("RCA: could not load design %s: %s", req.design_id, exc)
+
+    engine = _RCAEngine()
+    hypotheses = engine.analyze(
+        symptom=req.symptom,
+        affected_devices=req.affected_devices,
+        design_state=design_state,
+        recent_deploys=recent_deploys,
+    )
+    return [HypothesisResponse(**h.to_dict()) for h in hypotheses]

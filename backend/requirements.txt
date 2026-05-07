@@ -29,6 +29,11 @@ sqlalchemy[asyncio]==2.0.30
 asyncpg==0.29.0
 alembic==1.13.1
 redis[hiredis]==5.0.4
+# ── Phase 3: Async deploy (Celery) ───────────────────────────────────────────
+celery==5.4.0
+# ── Phase 4: Telemetry, metrics, RCA ─────────────────────────────────────────
+pygnmi==0.8.13
+prometheus-client==0.20.0
 # ── Phase 6: Testing & security scanning ─────────────────────────────────────
 pytest==8.2.0
 pytest-asyncio==0.23.6

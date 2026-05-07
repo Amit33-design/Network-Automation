@@ -15,8 +15,14 @@ All functions are pure (no I/O).  The MCP server calls this directly.
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
+
+log = logging.getLogger(__name__)
+
+_RULES_YAML = Path(__file__).parent / "policies" / "rules.yaml"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +57,117 @@ class PolicyResults:
 # Rule definitions
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _make_rules() -> list[PolicyRule]:
+# ─────────────────────────────────────────────────────────────────────────────
+# YAML-driven rule loader with DSL compiler
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_field(state: dict, field_path: str) -> Any:
+    """Navigate dotted field path; returns None if not found."""
+    parts = field_path.split(".")
+    obj: Any = state
+    for p in parts:
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(p)
+    return obj
+
+
+def _eval_leaf(state: dict, node: dict) -> bool:
+    field_path = node["field"]
+    op         = node["op"]
+    value      = node.get("value")
+    actual     = _get_field(state, field_path)
+
+    if op == "eq":
+        return actual == value
+    if op == "neq":
+        return actual != value
+    if op == "contains":
+        return isinstance(actual, (list, str)) and value in actual
+    if op == "not_contains":
+        return not (isinstance(actual, (list, str)) and value in actual)
+    if op == "in":
+        return actual in (value or [])
+    if op == "not_in":
+        return actual not in (value or [])
+    if op == "gt":
+        return isinstance(actual, (int, float)) and actual > value
+    if op == "lt":
+        return isinstance(actual, (int, float)) and actual < value
+    if op == "is_empty":
+        return not actual  # None, [], {}, "" all falsy
+    if op == "is_not_empty":
+        return bool(actual)
+    return False
+
+
+def _compile_condition(node: dict) -> Callable[[dict], bool]:
+    if "all" in node:
+        children = [_compile_condition(c) for c in node["all"]]
+        return lambda s, ch=children: all(c(s) for c in ch)
+    if "any" in node:
+        children = [_compile_condition(c) for c in node["any"]]
+        return lambda s, ch=children: any(c(s) for c in ch)
+    if "not" in node:
+        child = _compile_condition(node["not"])
+        return lambda s, c=child: not c(s)
+    # leaf node
+    captured = dict(node)
+    return lambda s, n=captured: _eval_leaf(s, n)
+
+
+def _compile_auto_fix(fix_spec: dict) -> Callable[[dict], None] | None:
+    if not fix_spec:
+        return None
+    field_path = fix_spec["field"]
+    op         = fix_spec["op"]
+    value      = fix_spec.get("value")
+
+    if op == "append":
+        def _append(s: dict, fp=field_path, v=value) -> None:
+            parts = fp.split(".")
+            obj: Any = s
+            for p in parts[:-1]:
+                obj = obj.setdefault(p, {})
+            lst = obj.setdefault(parts[-1], [])
+            if v not in lst:
+                lst.append(v)
+        return _append
+    if op == "set":
+        def _set(s: dict, fp=field_path, v=value) -> None:
+            parts = fp.split(".")
+            obj: Any = s
+            for p in parts[:-1]:
+                obj = obj.setdefault(p, {})
+            obj[parts[-1]] = v
+        return _set
+    return None
+
+
+def _load_rules_from_yaml(path: Path) -> list[PolicyRule]:
+    import yaml
+    data  = yaml.safe_load(path.read_text())
+    rules = []
+    for r in data.get("rules", []):
+        try:
+            condition = _compile_condition(r["condition"])
+            apply_fn  = _compile_auto_fix(r.get("auto_fix"))
+            rules.append(PolicyRule(
+                id=r["id"],
+                name=r["name"],
+                description=r["description"],
+                severity=r["severity"],
+                action_type=r["action_type"],
+                priority=r["priority"],
+                condition=condition,
+                apply=apply_fn,
+            ))
+        except Exception as exc:
+            log.warning("Skipping rule %s: %s", r.get("id", "?"), exc)
+    return rules
+
+
+def _make_hardcoded_rules() -> list[PolicyRule]:
     return [
         # ── BLOCK: no products selected ──────────────────────────────────────
         PolicyRule(
@@ -233,6 +349,18 @@ def _make_rules() -> list[PolicyRule]:
             ),
         ),
     ]
+
+
+def _make_rules() -> list[PolicyRule]:
+    if _RULES_YAML.exists():
+        try:
+            rules = _load_rules_from_yaml(_RULES_YAML)
+            if rules:
+                log.debug("Loaded %d rules from %s", len(rules), _RULES_YAML)
+                return rules
+        except Exception as exc:
+            log.warning("Failed to load rules.yaml: %s — using built-in rules", exc)
+    return _make_hardcoded_rules()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

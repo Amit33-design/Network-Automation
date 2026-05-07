@@ -1520,6 +1520,36 @@
           <div class="obs-placeholder">Events will be logged here as the pipeline runs.</div>
         </div>
       </div>
+
+      <!-- Phase 4: Live Alerts -->
+      <div class="obs-block">
+        <div class="obs-block-hdr" style="display:flex;align-items:center;justify-content:space-between">
+          <span>🔔 Live Alerts</span>
+          <button class="btn-cfg-action" onclick="startAlertPolling()" style="font-size:.72rem">Refresh</button>
+        </div>
+        <div id="obs-alerts" class="obs-alerts-container">
+          <div class="obs-placeholder">No active alerts. Requires ENABLE_TELEMETRY=true on the backend.</div>
+        </div>
+      </div>
+
+      <!-- Phase 4: Root Cause Analysis -->
+      <div class="obs-block">
+        <div class="obs-block-hdr">🔬 Root Cause Analysis</div>
+        <div class="obs-rca-controls" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem">
+          <input id="obs-rca-symptom" type="text"
+            placeholder="Describe the symptom (e.g. BGP session down on spine)…"
+            style="flex:2;min-width:200px;padding:.45rem .6rem;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--txt1);font-size:.82rem" />
+          <input id="obs-rca-devices" type="text"
+            placeholder="Affected devices (comma-separated)"
+            style="flex:1;min-width:140px;padding:.45rem .6rem;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--txt1);font-size:.82rem" />
+          <button class="btn-cfg-action" style="white-space:nowrap" onclick="runRCAAnalysis({
+            symptom: document.getElementById('obs-rca-symptom').value,
+            affectedDevices: document.getElementById('obs-rca-devices').value.split(',').map(s=>s.trim()).filter(Boolean),
+            designId: window.STATE && window.STATE.designId ? window.STATE.designId : null
+          })">Analyze</button>
+        </div>
+        <div id="obs-rca-results"></div>
+      </div>
     </div>
 
     <!-- ══ ZTP — Zero Touch Provisioning Panel ══ -->
