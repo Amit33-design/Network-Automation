@@ -149,16 +149,24 @@ class TestGenerateAllConfigs:
         assert isinstance(result, dict)
 
     def test_ha_generates_two_devices_per_layer(self, dc_state):
-        """redundancy=ha should produce 2 devices for each selected layer."""
+        """redundancy=ha should produce at least 2 devices per selected layer."""
         result = generate_all_configs(dc_state)
-        # spine×2 + leaf×2 = 4 total
-        assert len(result) == 4
+        # spine×2 + leaf×2 minimum; fwModel=perimeter may add FW devices
+        assert len(result) >= 4
+        spine_count = sum(1 for h in result if "SPINE" in h.upper())
+        leaf_count   = sum(1 for h in result if "LEAF"  in h.upper())
+        assert spine_count >= 2, "HA should produce ≥2 spine devices"
+        assert leaf_count  >= 2, "HA should produce ≥2 leaf devices"
 
     def test_single_redundancy_generates_one_device(self, dc_state):
         dc_state["redundancy"] = "single"
         result = generate_all_configs(dc_state)
-        # spine×1 + leaf×1 = 2 total
-        assert len(result) == 2
+        # spine×1 + leaf×1 minimum; fwModel may add 1 FW device
+        assert len(result) >= 2
+        spine_count = sum(1 for h in result if "SPINE" in h.upper())
+        leaf_count   = sum(1 for h in result if "LEAF"  in h.upper())
+        assert spine_count >= 1, "Single should produce ≥1 spine device"
+        assert leaf_count  >= 1, "Single should produce ≥1 leaf device"
 
     def test_config_is_non_empty_string(self, dc_state):
         result = generate_all_configs(dc_state)

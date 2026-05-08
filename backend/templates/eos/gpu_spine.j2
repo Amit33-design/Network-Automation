@@ -142,7 +142,7 @@ router bgp {{ bgp_asn }}
    {% for i in range(1, 9) %}
    ! TOR-{{ i }} — AS {{ 65010 + i }}
    neighbor 10.3.{{ index }}.{{ i * 2 }}        remote-as {{ 65010 + i }}
-   neighbor 10.3.{{ index }}.{{ i * 2 }}        description GPU-TOR-{{ i:02d }}
+   neighbor 10.3.{{ index }}.{{ i * 2 }}        description GPU-TOR-{{ '%02d' % i }}
    neighbor 10.3.{{ index }}.{{ i * 2 }}        send-community standard
    neighbor 10.3.{{ index }}.{{ i * 2 }}        maximum-routes 12000 warning-only
    neighbor 10.3.{{ index }}.{{ i * 2 }}        bfd

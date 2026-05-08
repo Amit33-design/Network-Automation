@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>netdesign-ai</id>
+    <version>2.4.0</version>
+    <packageSourceUrl>https://github.com/Amit33-design/Network-Automation</packageSourceUrl>
+    <owners>Amit Tiwari</owners>
+    <title>NetDesign AI</title>
+    <authors>Amit Tiwari</authors>
+    <projectUrl>https://github.com/Amit33-design/Network-Automation</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/Amit33-design/Network-Automation/main/preview.svg</iconUrl>
+    <licenseUrl>https://github.com/Amit33-design/Network-Automation/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/Amit33-design/Network-Automation</projectSourceUrl>
+    <bugTrackerUrl>https://github.com/Amit33-design/Network-Automation/issues</bugTrackerUrl>
+    <tags>network automation ai networking cisco arista juniper config-gen devnetops</tags>
+    <summary>AI-powered network design, config generation and automation platform</summary>
+    <description><![CDATA[
+NetDesign AI is an open-source platform for AI-assisted network design and automation.
+
+## Features
+- Generate production-ready configs for Cisco IOS/NX-OS, Arista EOS, Juniper JunOS, and SONiC
+- Design campus, DC, WAN, SD-WAN, and GPU fabric networks with AI guidance
+- Simulate failure scenarios before touching live devices
+- Deploy configs via Nornir/Netmiko with real-time progress
+- Zero Touch Provisioning (ZTP)
+- Native Claude AI integration via MCP server
+- RBAC, audit trail, policy engine, and RCA analysis
+
+## Requirements
+- Docker Desktop must be installed and running
+- 4 GB RAM minimum (8 GB recommended)
+- Windows 10/11 64-bit
+    ]]></description>
+    <releaseNotes>https://github.com/Amit33-design/Network-Automation/releases/tag/v2.4.0</releaseNotes>
+    <dependencies>
+      <dependency id="docker-desktop" version="4.0.0" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

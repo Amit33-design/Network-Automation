@@ -5,15 +5,14 @@ LABEL description="NetDesign AI — FastAPI backend + MCP server"
 
 WORKDIR /app
 
-# Install system deps for Netmiko/paramiko
+# Install system deps (gcc needed to build cryptography wheel on some platforms)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssh-client \
-    iputils-ping \
+    openssh-client iputils-ping gcc libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (layer-cached)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 
 # Copy source
 COPY . .
