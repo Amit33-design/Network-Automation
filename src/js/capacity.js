@@ -196,12 +196,12 @@ function capacityFromState(st) {
 
   // GPU specifics
   const gpuSpecs   = Array.isArray(st.gpuSpecifics) ? st.gpuSpecifics : [];
+  const gpuPerSrv  = parseInt(st.gpusPerServer) || 8;
   // gpuCount: use explicit GPU count if provided (e.g. "64 H100 GPUs" from NL parser),
   // otherwise totalHosts means GPU *servers* → multiply by GPUs-per-server.
   const gpuCount   = (parseInt(st.gpuCount) > 0)
     ? parseInt(st.gpuCount)
     : endpoints * gpuPerSrv;
-  const gpuPerSrv  = parseInt(st.gpusPerServer) || 8;
   const portSpeed  = parseInt(st.portSpeed) || 100;
 
   // Prefer explicit counts if already set (from NL parser or backend)
