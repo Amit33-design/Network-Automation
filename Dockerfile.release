@@ -68,8 +68,8 @@ EXPOSE 8000
 EXPOSE 8001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -sf http://localhost:8000/health || exit 1
+    CMD curl -sf http://localhost:${PORT:-8000}/health || exit 1
 
 # Default: FastAPI backend. Override CMD in docker-compose to run MCP or Celery worker.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "1", "--log-level", "info"]
+# Railway injects $PORT; fall back to 8000 for local / docker-compose use.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --log-level info"]
