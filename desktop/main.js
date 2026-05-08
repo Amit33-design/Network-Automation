@@ -105,11 +105,11 @@ function composeCmd() {
 }
 
 function ensureFiles() {
-    if (!fs.existsSync(COMPOSE_FILE)) {
-        const src = DEV ? DEV_COMPOSE : RESOURCE_COMPOSE;
-        fs.copyFileSync(src, COMPOSE_FILE);
-        log("Copied docker-compose.yml to " + COMPOSE_FILE);
-    }
+    // Always overwrite compose so stale versions from old installs never get stuck
+    const composeSrc = DEV ? DEV_COMPOSE : RESOURCE_COMPOSE;
+    fs.copyFileSync(composeSrc, COMPOSE_FILE);
+    log("Updated docker-compose.yml at " + COMPOSE_FILE);
+
     if (!fs.existsSync(ENV_FILE)) {
         const src = DEV ? DEV_ENV_EX : RESOURCE_ENV_EX;
         fs.copyFileSync(src, ENV_FILE);
@@ -256,7 +256,11 @@ function createMainWindow() {
 
     // Load setup page first; waitForUI() will redirect once backend is ready
     mainWindow.loadURL(SETUP_URL);
-    mainWindow.webContents.on("did-fail-load", () => mainWindow.loadURL(SETUP_URL));
+    // errorCode -3 = ERR_ABORTED (navigation cancelled by a subsequent loadURL call) — ignore it
+    mainWindow.webContents.on("did-fail-load", (_e, errorCode) => {
+        if (errorCode === -3) return;
+        if (!servicesUp) mainWindow.loadURL(SETUP_URL);
+    });
 }
 
 // ── App lifecycle ──────────────────────────────────────────────────────────────
