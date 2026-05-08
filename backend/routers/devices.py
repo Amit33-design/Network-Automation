@@ -117,7 +117,7 @@ async def update_device(
     return device
 
 
-@router.delete("/{device_id}", status_code=204)
+@router.delete("/{device_id}", status_code=204, response_model=None)
 async def delete_device(
     device_id: str,
     db: AsyncSession = Depends(get_db),

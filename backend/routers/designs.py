@@ -164,7 +164,7 @@ async def update_design(
 # Soft-delete
 # ---------------------------------------------------------------------------
 
-@router.delete("/{design_id}", status_code=204)
+@router.delete("/{design_id}", status_code=204, response_model=None)
 async def delete_design(
     design_id: str,
     db: AsyncSession = Depends(get_db),

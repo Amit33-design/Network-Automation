@@ -37,7 +37,7 @@
     ],
     "extraResources": [
       {
-        "from": "../docker-compose.dist.yml",
+        "from": "../docker-compose.local.yml",
         "to":   "docker-compose.yml"
       },
       {

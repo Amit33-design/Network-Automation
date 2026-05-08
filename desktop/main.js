@@ -17,8 +17,8 @@ const RESOURCE_ENV_EX  = path.join(process.resourcesPath, ".env.example");
 
 // In dev mode, resolve relative to repo root
 const DEV = process.env.NODE_ENV === "development";
-const DEV_COMPOSE = DEV ? path.join(__dirname, "..", "docker-compose.dist.yml") : null;
-const DEV_ENV_EX  = DEV ? path.join(__dirname, "..", ".env.example")            : null;
+const DEV_COMPOSE = DEV ? path.join(__dirname, "..", "docker-compose.local.yml") : null;
+const DEV_ENV_EX  = DEV ? path.join(__dirname, "..", ".env")                     : null;
 
 const WEB_URL     = "http://localhost:8080";
 const SETUP_URL   = `file://${path.join(__dirname, "renderer", "setup.html")}`;

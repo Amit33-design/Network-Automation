@@ -1,0 +1,134 @@
+# NetDesign AI — Local build compose (no registry auth needed)
+# Builds API and frontend from source instead of pulling private GHCR images.
+# Usage:  docker compose -f docker-compose.local.yml --env-file .env up -d
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.release
+    image: netdesign-api:local
+    container_name: netdesign-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      LOG_LEVEL:          ${LOG_LEVEL:-INFO}
+      NORNIR_WORKERS:     ${NORNIR_WORKERS:-10}
+      BACKUP_DIR:         /app/backups
+      AUDIT_LOG_PATH:     /app/backups/audit.jsonl
+      CORS_ORIGINS:       ${CORS_ORIGINS:-http://localhost:8080}
+      JWT_SECRET:         ${JWT_SECRET}
+      ADMIN_USER:         ${ADMIN_USER:-admin}
+      ADMIN_PASS:         ${ADMIN_PASS}
+      LICENSE_KEY:        ${LICENSE_KEY:-}
+      DATABASE_URL:       postgresql+asyncpg://netdesign:${POSTGRES_PASSWORD}@postgres/netdesign
+      REDIS_URL:          redis://:${REDIS_PASSWORD}@redis:6379
+      VAULT_ADDR:         http://vault:8200
+      VAULT_TOKEN:        ${VAULT_TOKEN}
+      DEVICE_DEFAULT_USER: ${DEVICE_DEFAULT_USER:-admin}
+      DEVICE_DEFAULT_PASS: ${DEVICE_DEFAULT_PASS:-}
+      AUTO_CREATE_TABLES: "true"
+    volumes:
+      - backups:/app/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  mcp:
+    image: netdesign-api:local
+    container_name: netdesign-mcp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8001:8001"
+    command: >
+      python mcp_server.py --transport sse --host 0.0.0.0 --port 8001 --log-level INFO
+    environment:
+      PYTHONPATH:       /app
+      PYTHONUNBUFFERED: "1"
+      LICENSE_KEY:      ${LICENSE_KEY:-}
+    depends_on:
+      - api
+
+  worker:
+    image: netdesign-api:local
+    container_name: netdesign-worker
+    restart: unless-stopped
+    command: >
+      celery -A jobs.deploy_job.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      PYTHONPATH:          /app
+      PYTHONUNBUFFERED:    "1"
+      REDIS_URL:           redis://:${REDIS_PASSWORD}@redis:6379
+      DATABASE_URL:        postgresql+asyncpg://netdesign:${POSTGRES_PASSWORD}@postgres/netdesign
+      BACKUP_DIR:          /app/backups
+      VAULT_ADDR:          http://vault:8200
+      VAULT_TOKEN:         ${VAULT_TOKEN}
+      DEVICE_DEFAULT_USER: ${DEVICE_DEFAULT_USER:-admin}
+      DEVICE_DEFAULT_PASS: ${DEVICE_DEFAULT_PASS:-}
+      LICENSE_KEY:         ${LICENSE_KEY:-}
+    volumes:
+      - backups:/app/backups
+    depends_on:
+      - redis
+      - postgres
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: netdesign-frontend:local
+    container_name: netdesign-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: netdesign-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       netdesign
+      POSTGRES_USER:     netdesign
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "netdesign"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: netdesign-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --save 60 1 --loglevel warning
+    volumes:
+      - redisdata:/data
+
+  vault:
+    image: hashicorp/vault:1.17
+    container_name: netdesign-vault
+    restart: unless-stopped
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID:  ${VAULT_TOKEN}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "127.0.0.1:8200:8200"
+
+volumes:
+  pgdata:
+  redisdata:
+  backups:

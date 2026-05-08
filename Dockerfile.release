@@ -7,8 +7,8 @@ COPY backend/requirements.txt .
 
 # Install in groups (each layer cached; failure visible per group)
 RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
-    fastapi==0.111.0 "uvicorn[standard]==0.29.0" \
-    jinja2==3.1.4 pydantic==2.7.1 pydantic-settings==2.2.1 \
+    "fastapi==0.115.5" "starlette==0.41.3" "uvicorn[standard]==0.32.1" \
+    jinja2==3.1.4 "pydantic==2.7.1" "pydantic-settings==2.2.1" \
     python-multipart==0.0.9 httpx==0.27.0 rich==13.7.1 \
     pyyaml==6.0.1 python-dotenv
 
@@ -19,11 +19,12 @@ RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
 
 RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
     nornir==3.4.1 nornir-netmiko==1.0.1 nornir-utils==0.2.0 \
-    nornir-napalm==0.4.0 netmiko==4.3.0 napalm==5.0.0 \
+    nornir-napalm==0.4.0 netmiko==4.3.0 napalm==4.1.0 \
     ncclient==0.6.15 textfsm==1.1.3 ntc-templates==5.1.0 paramiko==3.4.0
 
 RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
-    "mcp>=1.0.0" cryptography prometheus-client==0.20.0
+    "mcp>=1.0.0" cryptography prometheus-client==0.20.0 \
+    && pip install --no-cache-dir --prefer-binary --prefix=/install "starlette==0.41.3"
 
 RUN pip install --no-cache-dir --prefer-binary --prefix=/install pygnmi==0.8.13 || \
     echo "WARNING: pygnmi optional — skipping"
