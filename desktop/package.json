@@ -49,10 +49,10 @@
       "icon":         "assets/icon.icns",
       "category":     "public.app-category.developer-tools",
       "artifactName": "NetDesign-AI-${version}-${arch}.${ext}",
+      "identity":     null,
       "target": [
         { "target": "dmg", "arch": ["x64", "arm64"] }
-      ],
-      "notarize": false
+      ]
     },
     "win": {
       "icon":         "assets/icon.ico",
