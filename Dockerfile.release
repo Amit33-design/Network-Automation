@@ -1,14 +1,30 @@
 # ── Stage 1: dependency builder ───────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.11 AS builder
 
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc g++ libssl-dev libffi-dev libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir --prefer-binary --prefix=/install -r requirements.txt
+
+# Install in groups (each layer cached; failure visible per group)
+RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
+    fastapi==0.111.0 "uvicorn[standard]==0.29.0" \
+    jinja2==3.1.4 pydantic==2.7.1 pydantic-settings==2.2.1 \
+    python-multipart==0.0.9 httpx==0.27.0 rich==13.7.1 \
+    pyyaml==6.0.1 python-dotenv
+
+RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
+    pyjwt==2.8.0 structlog==24.2.0 hvac==2.1.0 \
+    "sqlalchemy[asyncio]==2.0.30" asyncpg==0.29.0 alembic==1.13.1 \
+    "redis[hiredis]==5.0.4" celery==5.4.0
+
+RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
+    nornir==3.4.1 nornir-netmiko==1.0.1 nornir-utils==0.2.0 \
+    nornir-napalm==0.4.0 netmiko==4.3.0 napalm==5.0.0 \
+    ncclient==0.6.15 textfsm==1.1.3 ntc-templates==5.2.0 paramiko==3.4.0
+
+RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
+    "mcp>=1.0.0" cryptography prometheus-client==0.20.0
+
 RUN pip install --no-cache-dir --prefer-binary --prefix=/install pygnmi==0.8.13 || \
     echo "WARNING: pygnmi optional — skipping"
 
