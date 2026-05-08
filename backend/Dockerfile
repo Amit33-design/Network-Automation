@@ -5,12 +5,13 @@ LABEL description="NetDesign AI — FastAPI backend + MCP server"
 
 WORKDIR /app
 
-# Install system deps (gcc needed to build cryptography wheel on some platforms)
+# System libs: ssh/ping tools + build deps for grpcio/cryptography/asyncpg
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssh-client iputils-ping gcc libssl-dev \
+    openssh-client iputils-ping curl \
+    gcc g++ libssl-dev libffi-dev libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps first (layer-cached)
+# Install Python deps (--prefer-binary avoids source compilation where possible)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 

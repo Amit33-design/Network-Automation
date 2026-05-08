@@ -1,5 +1,33 @@
+# ── Core API ──────────────────────────────────────────────────────────────────
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
+jinja2==3.1.4
+pydantic==2.7.1
+pydantic-settings==2.2.1
+python-multipart==0.0.9
+httpx==0.27.0
+rich==13.7.1
+pyyaml==6.0.1
+python-dotenv>=1.0.0
+
+# ── MCP layer (requires Python >= 3.10) ───────────────────────────────────────
+mcp>=1.0.0
+
+# ── Auth, audit, credentials ──────────────────────────────────────────────────
+pyjwt==2.8.0
+structlog==24.2.0
+hvac==2.1.0
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+redis[hiredis]==5.0.4
+
+# ── Async deploy (Celery) ─────────────────────────────────────────────────────
+celery==5.4.0
+
+# ── Network automation ────────────────────────────────────────────────────────
 nornir==3.4.1
 nornir-netmiko==1.0.1
 nornir-napalm==0.4.0
@@ -7,38 +35,13 @@ nornir-utils==0.2.0
 netmiko==4.3.0
 napalm==5.0.0
 ncclient==0.6.15
-jinja2==3.1.4
-pydantic==2.7.1
-pydantic-settings==2.2.1
 textfsm==1.1.3
 ntc-templates==5.2.0
 paramiko==3.4.0
-python-multipart==0.0.9
-httpx==0.27.0
-rich==13.7.1
-pyyaml==6.0.1
-# ── MCP layer (requires Python >= 3.10) ──────────────────────────────────────
-mcp[cli]>=1.0.0
-python-dotenv>=1.0.0
-# ── Phase 1: Auth, audit, credentials ────────────────────────────────────────
-pyjwt==2.8.0
-structlog==24.2.0
-hvac==2.1.0
-# ── Phase 2: Database (install now; DB migration wired in Phase 2) ────────────
-sqlalchemy[asyncio]==2.0.30
-asyncpg==0.29.0
-alembic==1.13.1
-redis[hiredis]==5.0.4
-# ── Phase 3: Async deploy (Celery) ───────────────────────────────────────────
-celery==5.4.0
-# ── Phase 4: Telemetry, metrics, RCA ─────────────────────────────────────────
+
+# ── Telemetry & metrics ───────────────────────────────────────────────────────
 pygnmi==0.8.13
 prometheus-client==0.20.0
-# ── Phase 6: Testing & security scanning ─────────────────────────────────────
-pytest==8.2.0
-pytest-asyncio==0.23.6
-pytest-cov==5.0.0
-bandit==1.7.9
 
-# ── License ──────────────────────────────────────────────────────────────────
+# ── License ───────────────────────────────────────────────────────────────────
 cryptography>=42.0.0

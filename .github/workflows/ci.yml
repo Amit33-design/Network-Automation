@@ -29,9 +29,9 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install --prefer-binary jinja2 pytest pytest-cov
-          # Install only what's needed for tests (skip heavy network libs)
-          pip install fastapi pydantic pydantic-settings cryptography
+          pip install --prefer-binary jinja2 pytest pytest-cov pytest-asyncio
+          # Minimal subset needed for tests (skip heavy network/grpc libs)
+          pip install fastapi pydantic pydantic-settings cryptography pyyaml
 
       - name: Run tests with coverage
         run: |
