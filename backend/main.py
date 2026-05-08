@@ -47,6 +47,7 @@ from nornir_tasks import (
 from routers.designs import router as designs_router
 from routers.deployments import router as deployments_router
 from routers.devices import router as devices_router
+from routers.custom_policy import router as custom_policy_router
 from ztp.router import ztp_router
 from api.ws import deployment_stream
 from ztp.dhcp_gen import generate_dhcp_config
@@ -217,6 +218,7 @@ app.include_router(ztp_router)          # unauthenticated — devices call durin
 app.include_router(designs_router)
 app.include_router(deployments_router)
 app.include_router(devices_router)
+app.include_router(custom_policy_router)
 
 
 # ---------------------------------------------------------------------------

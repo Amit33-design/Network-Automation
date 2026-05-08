@@ -2,6 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <link rel="manifest" href="/manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="NetDesign AI">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NetDesign AI — Intelligent Network Design Platform</title>
 
@@ -515,6 +519,11 @@
       title="Configure live backend connection">
       <span id="backend-status-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);display:inline-block"></span>
       Backend
+    </button>
+    <button class="btn btn-ghost" onclick="openCPModal()"
+      style="padding:.35rem .85rem;font-size:.75rem;display:flex;align-items:center;gap:.35rem"
+      title="Custom Policy Config Generator">
+      ⚙️ Custom Policy
     </button>
     <button class="btn btn-ghost" onclick="showKeyboardHelp()"
       style="padding:.35rem .6rem;font-size:.8rem" title="Keyboard shortcuts (?)">⌨</button>
@@ -1737,6 +1746,148 @@
     </div>
   </div>
 
+  <!-- ══════════════════════════════════════════════════════════════
+       CUSTOM POLICY MODAL
+  ══════════════════════════════════════════════════════════════════ -->
+  <div id="custom-policy-modal" class="modal-overlay" style="display:none"
+    onclick="if(event.target===this)closeCPModal()">
+    <div class="modal-box" style="max-width:860px;max-height:90vh;overflow-y:auto">
+
+      <!-- Header -->
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0">⚙️ Custom Policy Config Generator</h3>
+          <div style="font-size:.78rem;color:var(--txt3);margin-top:.2rem">
+            Define VLANs, BGP, prefix lists, and interfaces — generate copy-paste device configs
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeCPModal()">✕</button>
+      </div>
+
+      <div style="padding:1.25rem 1.5rem;display:flex;flex-direction:column;gap:1.25rem">
+
+        <!-- Policy name + device type -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+          <div>
+            <label class="cp-label">Policy Name *</label>
+            <input id="cp-policy-name" class="cp-input" type="text"
+              placeholder="e.g. DC-CORE-01-POLICY" style="width:100%">
+          </div>
+          <div>
+            <label class="cp-label">Device Platform *</label>
+            <select id="cp-device-type" class="cp-select" style="width:100%">
+              <option value="cisco_ios">Cisco IOS / IOS-XE</option>
+              <option value="cisco_nxos">Cisco NX-OS</option>
+              <option value="juniper_junos">Juniper Junos</option>
+              <option value="arista_eos">Arista EOS</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- VLANs -->
+        <details open>
+          <summary class="cp-section-title">🔵 VLANs</summary>
+          <div style="margin-top:.75rem">
+            <div id="cp-vlan-rows" style="display:flex;flex-direction:column;gap:.4rem"></div>
+            <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+              onclick="CustomPolicy._addVlan()">+ Add VLAN</button>
+          </div>
+        </details>
+
+        <!-- BGP -->
+        <details>
+          <summary class="cp-section-title">🟢 BGP</summary>
+          <div style="margin-top:.75rem;display:flex;flex-direction:column;gap:.75rem">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+              <div>
+                <label class="cp-label">ASN</label>
+                <input id="cp-bgp-asn" class="cp-input" type="number" placeholder="e.g. 65001" style="width:100%">
+              </div>
+              <div>
+                <label class="cp-label">Router ID</label>
+                <input id="cp-bgp-rid" class="cp-input" type="text" placeholder="e.g. 10.0.0.1" style="width:100%">
+              </div>
+            </div>
+            <div>
+              <div class="cp-label" style="margin-bottom:.4rem">Peer Groups</div>
+              <div id="cp-pg-rows" style="display:flex;flex-direction:column;gap:.6rem"></div>
+              <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+                onclick="CustomPolicy._addPeerGroup()">+ Add Peer Group</button>
+            </div>
+          </div>
+        </details>
+
+        <!-- Prefix Lists -->
+        <details>
+          <summary class="cp-section-title">🟡 Prefix Lists</summary>
+          <div style="margin-top:.75rem">
+            <div id="cp-pl-rows" style="display:flex;flex-direction:column;gap:.6rem"></div>
+            <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+              onclick="CustomPolicy._addPrefixList()">+ Add Prefix List</button>
+          </div>
+        </details>
+
+        <!-- Interfaces -->
+        <details>
+          <summary class="cp-section-title">🔷 Interfaces</summary>
+          <div style="margin-top:.75rem">
+            <div style="font-size:.72rem;color:var(--txt3);margin-bottom:.5rem">
+              Name · IP/Prefix · Description · VLAN ID (leave VLAN blank for routed ports)
+            </div>
+            <div id="cp-iface-rows" style="display:flex;flex-direction:column;gap:.4rem"></div>
+            <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+              onclick="CustomPolicy._addInterface()">+ Add Interface</button>
+          </div>
+        </details>
+
+        <!-- NTP / DNS -->
+        <details>
+          <summary class="cp-section-title">🕐 NTP &amp; DNS</summary>
+          <div style="margin-top:.75rem;display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+            <div>
+              <label class="cp-label">NTP Servers (one per line)</label>
+              <textarea id="cp-ntp" class="cp-textarea" rows="3"
+                placeholder="216.239.35.0&#10;216.239.35.4"></textarea>
+            </div>
+            <div>
+              <label class="cp-label">DNS Servers (one per line)</label>
+              <textarea id="cp-dns" class="cp-textarea" rows="3"
+                placeholder="8.8.8.8&#10;8.8.4.4"></textarea>
+            </div>
+          </div>
+        </details>
+
+        <!-- Banner -->
+        <details>
+          <summary class="cp-section-title">📢 MOTD Banner</summary>
+          <div style="margin-top:.75rem">
+            <textarea id="cp-banner" class="cp-textarea" rows="4"
+              placeholder="Authorised access only. All sessions are logged."></textarea>
+          </div>
+        </details>
+
+        <!-- Validation warnings -->
+        <div id="cp-warnings" style="display:none;flex-direction:column;gap:.3rem"></div>
+
+        <!-- Action buttons -->
+        <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;margin-top:.25rem">
+          <button id="cp-generate-btn" class="btn btn-primary"
+            onclick="CustomPolicy.generate()">⚙️ Generate Config</button>
+          <button class="btn btn-ghost" onclick="CustomPolicy.validate()">
+            🔍 Validate
+          </button>
+          <span style="font-size:.72rem;color:var(--txt3)">
+            Config is generated client-side when backend is unavailable
+          </span>
+        </div>
+
+        <!-- Output -->
+        <div id="cp-output"></div>
+
+      </div><!-- /padding -->
+    </div><!-- /modal-box -->
+  </div><!-- /custom-policy-modal -->
+
 </main><!-- /app -->
 
 <!-- ── Bottom Navigation ───────────────────────────────────────────── -->
@@ -1781,6 +1932,7 @@
 <script src="src/js/storage.js"></script>
 <script src="src/js/demo.js"></script>
 <script src="src/js/landing.js"></script>
+<script src="src/js/custom_policy.js"></script>
 <script src="src/js/init.js"></script>
 <script>
 /* ── Policy options global helper ──────────────────────────── */
@@ -1795,6 +1947,15 @@ function updatePolicyOptions() {
   STATE.include_static_routing= document.getElementById('pol-static')?.checked  !== false;
   STATE.include_trunk_policy  = document.getElementById('pol-trunk')?.checked   !== false;
   STATE.include_wireless      = document.getElementById('pol-wireless')?.checked !== false;
+}
+/* ── Custom Policy modal helpers ──────────────────────────── */
+function openCPModal() {
+  const m = document.getElementById('custom-policy-modal');
+  if (m) { m.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+}
+function closeCPModal() {
+  const m = document.getElementById('custom-policy-modal');
+  if (m) { m.style.display = 'none'; document.body.style.overflow = ''; }
 }
 /* ── Global bake toggle (pre-checks all new row Bake checkboxes) ── */
 function toggleGlobalBake(checked) {
@@ -1818,5 +1979,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
 </body>
 </html>

@@ -58,15 +58,28 @@ function dockerEnv(bin) {
     // If the binary works without a special socket, no override needed
     try { execSync(`"${bin}" info`, { stdio: "ignore", timeout: 3000, env: process.env }); return {}; }
     catch {}
-    // Try Colima sockets
+    // Try known Colima sockets
     for (const sock of COLIMA_SOCKETS) {
         if (fs.existsSync(sock)) {
             try {
                 execSync(`"${bin}" info`, { stdio: "ignore", timeout: 3000, env: { ...process.env, DOCKER_HOST: `unix://${sock}` } });
+                log(`Docker socket found: unix://${sock}`);
                 return { DOCKER_HOST: `unix://${sock}` };
             } catch {}
         }
     }
+    // Fallback: ask docker context inspect for the active socket
+    try {
+        const out = execSync(`"${bin}" context inspect --format '{{.Endpoints.docker.Host}}'`, { timeout: 5000, env: process.env }).toString().trim();
+        if (out.startsWith("unix://")) {
+            const sock = out.replace("unix://", "");
+            if (fs.existsSync(sock)) {
+                execSync(`"${bin}" info`, { stdio: "ignore", timeout: 3000, env: { ...process.env, DOCKER_HOST: out } });
+                log(`Docker socket found via context inspect: ${out}`);
+                return { DOCKER_HOST: out };
+            }
+        }
+    } catch {}
     return null; // null = nothing worked
 }
 
@@ -117,9 +130,22 @@ function ensureFiles() {
     }
 }
 
-function startServices() {
-    log("Starting Docker services...");
+// checkRunning — if frontend already answers 200, skip docker compose entirely
+function checkRunning() {
+    return new Promise(resolve => {
+        const http = require("http");
+        const req = http.get(WEB_URL, res => {
+            resolve(res.statusCode < 500);
+        });
+        req.on("error", () => resolve(false));
+        req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+    });
+}
+
+function startServices(isRetry = false) {
+    log("Starting Docker services" + (isRetry ? " (retry)" : "") + "...");
     const [bin, subargs, extraEnv] = composeCmd();
+    log(`Using docker binary: ${bin}, socket: ${extraEnv.DOCKER_HOST || "default"}`);
     composeProc = spawn(bin, [...subargs, "-f", COMPOSE_FILE, "--env-file", ENV_FILE, "up", "-d"], {
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, ...extraEnv },
@@ -132,6 +158,9 @@ function startServices() {
             servicesUp = true;
             updateTray();
             waitForUI();
+        } else if (!isRetry) {
+            log("docker compose up failed — retrying once in 5s...");
+            setTimeout(() => startServices(true), 5000);
         } else {
             dialog.showErrorBox("NetDesign AI", "Failed to start services. Check the log at:\n" + LOG_FILE);
         }
@@ -155,8 +184,12 @@ function waitForUI(attempt = 0) {
     const http = require("http");
     http.get(WEB_URL, res => {
         if (res.statusCode < 500) {
-            log("UI reachable — loading in window");
-            if (mainWindow) mainWindow.loadURL(WEB_URL);
+            log("UI reachable — loading in window after 2s stabilisation delay");
+            // 2-second delay prevents ERR_ABORTED race where nginx is responding
+            // but hasn't fully initialised JS/CSS serving yet
+            setTimeout(() => {
+                if (mainWindow) mainWindow.loadURL(WEB_URL);
+            }, 2000);
         } else {
             retry(attempt);
         }
@@ -271,16 +304,26 @@ app.whenReady().then(() => {
 
     ensureFiles();
 
-    // If local backend already running on 8000, skip Docker entirely
-    const http = require("http");
-    http.get(DEV_BACKEND + "/health", res => {
-        if (res.statusCode < 500) {
-            log("Local backend detected on port 8000 — skipping Docker, loading web UI");
+    // Fast path: if the full stack (port 8080) is already up, skip everything
+    checkRunning().then(alreadyUp => {
+        if (alreadyUp) {
+            log("Services already running on port 8080 — skipping docker compose, loading UI");
             servicesUp = true;
             updateTray();
             waitForUI();
+            return;
         }
-    }).on("error", () => {
+
+        // If local backend already running on 8000, skip Docker entirely
+        const http = require("http");
+        http.get(DEV_BACKEND + "/health", res => {
+            if (res.statusCode < 500) {
+                log("Local backend detected on port 8000 — skipping Docker, loading web UI");
+                servicesUp = true;
+                updateTray();
+                waitForUI();
+            }
+        }).on("error", () => {
         // No local backend — wait up to 60s for Docker to become ready
         log("No local backend — waiting for Docker Desktop to be ready...");
 
@@ -306,7 +349,8 @@ app.whenReady().then(() => {
             const configured = env.ADMIN_PASS && env.ADMIN_PASS !== "change_me_admin_password_here";
             if (configured) startServices();
         });
-    });
+        }); // end http.get error handler
+    }); // end checkRunning().then
 
 app.on("window-all-closed", () => {
     // Keep app running in tray (do not quit)
