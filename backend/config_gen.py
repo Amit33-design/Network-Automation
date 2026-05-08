@@ -40,11 +40,14 @@ Policy flags (state dict keys, all default True):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateSyntaxError, UndefinedError
 
 # Policy generators — full suite
 from policies.bgp_policy            import generate_bgp_policy
@@ -134,14 +137,64 @@ def _get_jinja_env(platform_dir: str) -> Environment:
 
 
 def _render(platform_dir: str, template_file: str, ctx: dict[str, Any]) -> str:
-    """Render a single Jinja2 template. Returns empty string on missing template."""
+    """Render a single Jinja2 template. Returns a descriptive error comment on failure."""
     tpl_path = TEMPLATE_DIR / platform_dir / template_file
     if not tpl_path.exists():
         log.warning("Template not found: %s/%s — skipping", platform_dir, template_file)
         return f"! Template {platform_dir}/{template_file} not found\n"
-    env = _get_jinja_env(platform_dir)
-    tpl = env.get_template(template_file)
-    return tpl.render(**ctx)
+    try:
+        env = _get_jinja_env(platform_dir)
+        tpl = env.get_template(template_file)
+        return tpl.render(**ctx)
+    except UndefinedError as exc:
+        msg = f"! CONFIG GENERATION ERROR — undefined variable in {platform_dir}/{template_file}: {exc}\n"
+        log.error(msg.strip())
+        return msg
+    except TemplateSyntaxError as exc:
+        msg = f"! CONFIG GENERATION ERROR — template syntax error in {platform_dir}/{template_file} line {exc.lineno}: {exc.message}\n"
+        log.error(msg.strip())
+        return msg
+    except Exception as exc:
+        msg = f"! CONFIG GENERATION ERROR — {platform_dir}/{template_file}: {exc}\n"
+        log.error(msg.strip())
+        return msg
+
+
+def _build_config_header(ctx: dict[str, Any], state: dict[str, Any]) -> str:
+    """
+    Prepend an auditable metadata block to every generated config.
+    Contains: hostname, role, platform, generator version, timestamp, intent hash.
+    Uses vendor-appropriate comment syntax.
+    """
+    platform = ctx.get("platform", "nxos")
+    # Junos uses /* */ comments; others use !
+    c = "#" if platform in ("sonic", "eos") else "!"
+
+    # Short hash of the intent state for change-detection / audit trail
+    try:
+        intent_bytes = json.dumps(state, sort_keys=True, default=str).encode()
+        intent_hash  = hashlib.sha256(intent_bytes).hexdigest()[:12]
+    except Exception:
+        intent_hash = "unknown"
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    lines = [
+        f"{c}",
+        f"{c} ╔══════════════════════════════════════════════════════════════╗",
+        f"{c}   NetDesign AI — Generated Configuration",
+        f"{c}   Hostname  : {ctx.get('hostname', 'unknown')}",
+        f"{c}   Role      : {ctx.get('layer', 'unknown')}",
+        f"{c}   Platform  : {platform}",
+        f"{c}   Use-case  : {ctx.get('uc', 'unknown')}",
+        f"{c}   Generated : {ts}",
+        f"{c}   Version   : 2.4.0",
+        f"{c}   Intent    : sha256:{intent_hash}",
+        f"{c} ╚══════════════════════════════════════════════════════════════╝",
+        f"{c}",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict[str, Any]:
@@ -313,8 +366,21 @@ def _append_policies(base_config: str, ctx: dict[str, Any], platform: str,
                         flag_key, ctx.get("hostname"), exc)
 
     if len(blocks) > 1:
-        return blocks[0] + sep + "\n".join(blocks[1:])
-    return base_config
+        result = blocks[0] + sep + "\n".join(blocks[1:])
+    else:
+        result = base_config
+
+    # custom_structured_config: per-hostname raw CLI override, appended last (AVD pattern)
+    hostname = ctx.get("hostname", "")
+    custom_block = (
+        state.get("custom_configs", {}).get(hostname)
+        or state.get("custom_configs", {}).get("*")  # wildcard applies to all devices
+    )
+    if custom_block and custom_block.strip():
+        custom_sep = "\n!\n!-- ═══════════════ CUSTOM CONFIG (user-defined) ═══════════════\n!\n"
+        result += custom_sep + custom_block.strip() + "\n"
+
+    return result
 
 
 def generate_device_config(state: dict[str, Any], layer: str, index: int,
@@ -327,9 +393,10 @@ def generate_device_config(state: dict[str, Any], layer: str, index: int,
     platform_dir, tpl_file = LAYER_PLATFORM_MAP.get(layer, ("ios_xe", "generic.j2"))
     platform_key = platform_override or _platform_from_dir(platform_dir)
     ctx = _build_device_context(state, layer, index)
+    header   = _build_config_header(ctx, state)
     rendered = _render(platform_dir, tpl_file, ctx)
-    full = _append_policies(rendered, ctx, platform_key, state)
-    return ctx["hostname"], full
+    full     = _append_policies(rendered, ctx, platform_key, state)
+    return ctx["hostname"], header + full
 
 
 def generate_all_configs(state: dict[str, Any]) -> dict[str, str]:
@@ -391,11 +458,10 @@ def generate_all_configs(state: dict[str, Any]) -> dict[str, str]:
 
         for i in range(1, count + 1):
             ctx = _build_device_context(state, layer, i)
-            # Render base template
-            rendered = _render(platform_dir, tpl_file, ctx)
-            # Append policy blocks
+            header      = _build_config_header(ctx, state)
+            rendered    = _render(platform_dir, tpl_file, ctx)
             full_config = _append_policies(rendered, ctx, platform_key, state)
-            configs[ctx["hostname"]] = full_config
+            configs[ctx["hostname"]] = header + full_config
             log.info(
                 "Generated config+policies for %s (%s/%s, vendor=%s)",
                 ctx["hostname"], platform_dir, tpl_file, detected_vendor or "default",
