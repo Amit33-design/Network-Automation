@@ -1,0 +1,57 @@
+# ── Stage 1: dependency builder ───────────────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+
+# ── Stage 2: production runtime ───────────────────────────────────────────────
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="NetDesign AI"
+LABEL org.opencontainers.image.description="AI-powered network design, config generation & deployment platform"
+LABEL org.opencontainers.image.url="https://github.com/Amit33-design/Network-Automation"
+LABEL org.opencontainers.image.source="https://github.com/Amit33-design/Network-Automation"
+LABEL org.opencontainers.image.vendor="NetDesign AI"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+# Runtime system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openssh-client iputils-ping curl libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user for security
+RUN groupadd -r netdesign && useradd -r -g netdesign -d /app -s /sbin/nologin netdesign
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy application source
+COPY backend/ .
+
+# Persistent storage directories
+RUN mkdir -p /app/backups /app/logs \
+    && chown -R netdesign:netdesign /app
+
+USER netdesign
+
+# FastAPI REST port
+EXPOSE 8000
+
+# MCP SSE port
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:8000/health || exit 1
+
+# Default: FastAPI backend. Override CMD in docker-compose to run MCP or Celery worker.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "1", "--log-level", "info"]

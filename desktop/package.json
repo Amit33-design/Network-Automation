@@ -1,0 +1,90 @@
+{
+  "name": "netdesign-ai",
+  "version": "2.4.0",
+  "description": "NetDesign AI — AI-powered network design & automation platform",
+  "main": "main.js",
+  "author": "Amit Tiwari <atiwari824@gmail.com>",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/Amit33-design/Network-Automation",
+  "scripts": {
+    "start":   "electron .",
+    "dev":     "NODE_ENV=development electron .",
+    "pack":    "electron-builder --dir",
+    "dist":    "electron-builder",
+    "dist:mac":   "electron-builder --mac",
+    "dist:win":   "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "electron":         "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "ai.netdesign.app",
+    "productName": "NetDesign AI",
+    "copyright": "Copyright © 2026 NetDesign AI",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../docker-compose.dist.yml",
+        "to":   "docker-compose.yml"
+      },
+      {
+        "from": "../.env.example",
+        "to":   ".env.example"
+      }
+    ],
+    "mac": {
+      "icon":     "assets/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] }
+      ],
+      "notarize": false
+    },
+    "win": {
+      "icon":   "assets/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "linux": {
+      "icon":     "assets/icon.png",
+      "category": "Development",
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb",      "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick":               false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon":          "assets/icon.ico",
+      "installerHeaderIcon":    "assets/icon.ico",
+      "createDesktopShortcut":  true,
+      "createStartMenuShortcut": true
+    },
+    "dmg": {
+      "title": "NetDesign AI ${version}",
+      "background": "assets/dmg-background.png"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner":    "Amit33-design",
+        "repo":     "Network-Automation"
+      }
+    ]
+  }
+}

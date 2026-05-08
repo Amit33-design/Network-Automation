@@ -1,0 +1,111 @@
+name: Build Desktop App
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create as draft release"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            artifact: "*.dmg"
+          - os: windows-latest
+            platform: win
+            artifact: "*.exe"
+          - os: ubuntu-latest
+            platform: linux
+            artifact: "*.AppImage"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: desktop/package.json
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+
+      # macOS: code signing (optional — skip if no certs)
+      - name: Import macOS certificates
+        if: matrix.os == 'macos-latest' && env.APPLE_CERT_DATA != ''
+        env:
+          APPLE_CERT_DATA:     ${{ secrets.APPLE_CERT_DATA }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          echo "$APPLE_CERT_DATA" | base64 --decode > certificate.p12
+          security create-keychain -p "" build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          security default-keychain -s build.keychain
+
+      - name: Build — macOS
+        if: matrix.os == 'macos-latest'
+        working-directory: desktop
+        run: npm run dist:mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build — Windows
+        if: matrix.os == 'windows-latest'
+        working-directory: desktop
+        run: npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build — Linux
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: desktop
+        run: |
+          sudo apt-get install -y rpm
+          npm run dist:linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: netdesign-${{ matrix.platform }}
+          path: |
+            desktop/dist-electron/${{ matrix.artifact }}
+          retention-days: 30
+
+  release:
+    name: Attach to GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: ${{ github.event.inputs.draft == 'true' }}
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
