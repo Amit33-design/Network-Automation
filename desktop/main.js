@@ -20,10 +20,9 @@ const DEV = process.env.NODE_ENV === "development";
 const DEV_COMPOSE = DEV ? path.join(__dirname, "..", "docker-compose.dist.yml") : null;
 const DEV_ENV_EX  = DEV ? path.join(__dirname, "..", ".env.example")            : null;
 
-const WEB_URL      = "http://localhost:8080";
-const LOCAL_UI_URL = `file://${path.join(__dirname, "..", "index.html")}`;
-const SETUP_URL    = `file://${path.join(__dirname, "renderer", "setup.html")}`;
-const DEV_BACKEND  = "http://localhost:8000";
+const WEB_URL     = "http://localhost:8080";
+const SETUP_URL   = `file://${path.join(__dirname, "renderer", "setup.html")}`;
+const DEV_BACKEND = "http://localhost:8000";
 
 let mainWindow = null;
 let tray       = null;
@@ -42,12 +41,34 @@ function log(msg) {
 // ── Docker helpers ─────────────────────────────────────────────────────────────
 // Electron doesn't inherit shell PATH — search known Docker locations explicitly
 const DOCKER_PATHS = [
-    "/usr/local/bin/docker",
+    "/opt/homebrew/bin/docker",       // Colima / Homebrew (Mac Silicon)
+    "/usr/local/bin/docker",           // Colima / Homebrew (Mac Intel)
     "/usr/bin/docker",
-    "/opt/homebrew/bin/docker",
     "/Applications/Docker.app/Contents/Resources/bin/docker",
     "docker",
 ];
+
+// Colima socket locations (checked in order)
+const COLIMA_SOCKETS = [
+    `${os.homedir()}/.colima/default/docker.sock`,
+    `${os.homedir()}/.colima/docker.sock`,
+];
+
+function dockerEnv(bin) {
+    // If the binary works without a special socket, no override needed
+    try { execSync(`"${bin}" info`, { stdio: "ignore", timeout: 3000, env: process.env }); return {}; }
+    catch {}
+    // Try Colima sockets
+    for (const sock of COLIMA_SOCKETS) {
+        if (fs.existsSync(sock)) {
+            try {
+                execSync(`"${bin}" info`, { stdio: "ignore", timeout: 3000, env: { ...process.env, DOCKER_HOST: `unix://${sock}` } });
+                return { DOCKER_HOST: `unix://${sock}` };
+            } catch {}
+        }
+    }
+    return null; // null = nothing worked
+}
 
 function findDocker() {
     for (const p of DOCKER_PATHS) {
@@ -60,8 +81,7 @@ function findDocker() {
 function dockerAvailable() {
     const bin = findDocker();
     if (!bin) return false;
-    try { execSync(`"${bin}" info`, { stdio: "ignore", timeout: 8000 }); return true; }
-    catch { return false; }
+    return dockerEnv(bin) !== null;
 }
 
 // Wait up to maxWait ms for Docker to become ready, checking every interval ms
@@ -79,8 +99,9 @@ function waitForDocker(maxWait = 60000, interval = 3000) {
 
 function composeCmd() {
     const bin = findDocker() || "docker";
-    try { execSync(`"${bin}" compose version`, { stdio: "ignore" }); return [bin, "compose"]; }
-    catch { return ["docker-compose"]; }
+    const env = dockerEnv(bin) || {};
+    try { execSync(`"${bin}" compose version`, { stdio: "ignore", env: { ...process.env, ...env } }); return [bin, "compose", env]; }
+    catch { return ["docker-compose", [], {}]; }
 }
 
 function ensureFiles() {
@@ -98,9 +119,10 @@ function ensureFiles() {
 
 function startServices() {
     log("Starting Docker services...");
-    const [bin, ...args] = composeCmd();
-    composeProc = spawn(bin, [...args, "-f", COMPOSE_FILE, "--env-file", ENV_FILE, "up", "-d"], {
+    const [bin, subargs, extraEnv] = composeCmd();
+    composeProc = spawn(bin, [...subargs, "-f", COMPOSE_FILE, "--env-file", ENV_FILE, "up", "-d"], {
         stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, ...extraEnv },
     });
     composeProc.stdout.on("data", d => log("[compose] " + d.toString().trim()));
     composeProc.stderr.on("data", d => log("[compose-err] " + d.toString().trim()));
@@ -118,8 +140,11 @@ function startServices() {
 
 function stopServices() {
     log("Stopping Docker services...");
-    const [bin, ...args] = composeCmd();
-    execSync([bin, ...args, "-f", COMPOSE_FILE, "--env-file", ENV_FILE, "down"].join(" "), { stdio: "inherit" });
+    const [bin, subargs, extraEnv] = composeCmd();
+    execSync([bin, ...subargs, "-f", COMPOSE_FILE, "--env-file", ENV_FILE, "down"].join(" "), {
+        stdio: "inherit",
+        env: { ...process.env, ...extraEnv },
+    });
     servicesUp = false;
     updateTray();
     log("Services stopped.");
@@ -246,18 +271,10 @@ app.whenReady().then(() => {
     const http = require("http");
     http.get(DEV_BACKEND + "/health", res => {
         if (res.statusCode < 500) {
-            log("Local backend detected on port 8000 — skipping Docker");
+            log("Local backend detected on port 8000 — skipping Docker, loading web UI");
             servicesUp = true;
             updateTray();
-            mainWindow.webContents.on("did-finish-load", () => {
-                mainWindow.webContents.executeJavaScript(`
-                    localStorage.setItem('nd_backend_settings', JSON.stringify({
-                        backendUrl: '${DEV_BACKEND}',
-                        liveMode: true
-                    }));
-                `);
-            });
-            mainWindow.loadURL(LOCAL_UI_URL);
+            waitForUI();
         }
     }).on("error", () => {
         // No local backend — wait up to 60s for Docker to become ready
