@@ -194,6 +194,18 @@ def _build_config_header(ctx: dict[str, Any], state: dict[str, Any]) -> str:
         f"{c}",
         "",
     ]
+
+    # Community-tier watermark — deployed configs require a Professional license
+    try:
+        import os as _os
+        from licensing.validator import validate_license_key as _vlk
+        from licensing.models import LicenseTier as _LT
+        _lic = _vlk(_os.environ.get("LICENSE_KEY", ""))
+        if not _lic.valid or _lic.tier == _LT.COMMUNITY:
+            lines.insert(3, f"{c}   *** COMMUNITY EDITION — Deploy features require a license ***")
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 

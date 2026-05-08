@@ -78,6 +78,20 @@ except ImportError:
     _RCAEngine = None
     _RCA_AVAILABLE = False
 
+# Phase 5: License system (graceful — Community tier used if package missing)
+try:
+    from licensing.validator import validate_license_key
+    from licensing.models import COMMUNITY_LICENSE, LicenseInfo
+    _LICENSE_AVAILABLE = True
+except ImportError:
+    validate_license_key = None  # type: ignore[assignment]
+    COMMUNITY_LICENSE = None     # type: ignore[assignment]
+    LicenseInfo = None           # type: ignore[assignment]
+    _LICENSE_AVAILABLE = False
+
+# Active license — loaded at startup from LICENSE_KEY env var
+_active_license = None
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -128,11 +142,38 @@ def _load_telemetry_devices() -> list:
     return targets
 
 
+def get_active_license():
+    """Return the currently loaded license (Community if none loaded)."""
+    if _active_license is not None:
+        return _active_license
+    if _LICENSE_AVAILABLE and COMMUNITY_LICENSE is not None:
+        return COMMUNITY_LICENSE
+    return None
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    global _active_license
+
     # Startup: create tables in dev mode (Alembic handles prod)
     if os.environ.get("AUTO_CREATE_TABLES", "").lower() == "true":
         await create_all_tables()
+
+    # Phase 5: Load license from environment
+    if _LICENSE_AVAILABLE:
+        license_key = os.environ.get("LICENSE_KEY", "").strip()
+        _active_license = validate_license_key(license_key)
+        if _active_license.valid:
+            log.info(
+                "License loaded: tier=%s licensee=%s expires=%s",
+                _active_license.tier.value,
+                _active_license.licensee,
+                _active_license.expires_at or "never",
+            )
+            if _active_license.expiry_warning:
+                log.warning("License expires soon: %s", _active_license.expires_at)
+        else:
+            log.warning("Invalid license (%s) — running as Community tier", _active_license.error)
 
     # Phase 4: Start gNMI telemetry collector
     _collector = None
@@ -288,6 +329,15 @@ def root():
 def health():
     """Docker healthcheck endpoint."""
     return {"status": "ok", "timestamp": time.time()}
+
+
+@app.get("/api/license")
+def api_license(user: dict = Depends(require_permission("designs:read"))):
+    """Return current license info (tier, features, expiry)."""
+    lic = get_active_license()
+    if lic is None:
+        return {"tier": "community", "valid": True, "features": [], "error": None}
+    return lic.to_dict()
 
 
 # ---------------------------------------------------------------------------
