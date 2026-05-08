@@ -117,5 +117,34 @@ jobs:
         with:
           draft: ${{ github.event.inputs.draft == 'true' }}
           files: artifacts/**/*
+          body: |
+            ## NetDesign AI Desktop App
+
+            ### Download for your platform
+
+            | Platform | File | Notes |
+            |----------|------|-------|
+            | **macOS (Apple Silicon M1/M2/M3)** | `NetDesign-AI-*-arm64.dmg` | Recommended for M-series Macs |
+            | **macOS (Intel)** | `NetDesign-AI-*-x64.dmg` | For Intel-based Macs |
+            | **Windows 10/11** | `NetDesign-AI-Setup-*.exe` | Run the installer |
+            | **Linux (AppImage)** | `NetDesign-AI-*.AppImage` | Works on most distros |
+            | **Linux (Debian/Ubuntu)** | `NetDesign-AI-*.deb` | `sudo dpkg -i *.deb` |
+
+            ### Requirements
+            - **Docker Desktop** must be installed and running ([download here](https://www.docker.com/products/docker-desktop/))
+            - macOS 12+, Windows 10+, or Ubuntu 20.04+
+            - 4 GB RAM minimum, 8 GB recommended
+
+            ### Quick Start
+            1. Download the installer for your platform
+            2. Install and launch **NetDesign AI**
+            3. On first run, set your admin username and password
+            4. Click **Start Services** — the app will pull Docker images (~2 min on first run)
+            5. Your browser will open automatically to the NetDesign AI interface
+
+            ### Docker-only install (no desktop app)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/Amit33-design/Network-Automation/main/install.sh | bash
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
