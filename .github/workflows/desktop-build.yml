@@ -42,6 +42,18 @@ jobs:
         working-directory: desktop
         run: npm install
 
+      # macOS: generate .icns from PNG using built-in sips tool
+      - name: Generate macOS icon (.icns)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p desktop/assets/icon.iconset
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size desktop/assets/icon.png --out desktop/assets/icon.iconset/icon_${size}x${size}.png
+            sips -z $((size*2)) $((size*2)) desktop/assets/icon.png --out desktop/assets/icon.iconset/icon_${size}x${size}@2x.png
+          done
+          iconutil -c icns desktop/assets/icon.iconset -o desktop/assets/icon.icns
+          echo "Generated icon.icns"
+
       # macOS: code signing (optional — skip if no certs)
       - name: Import macOS certificates
         if: matrix.os == 'macos-latest' && env.APPLE_CERT_DATA != ''

@@ -40,7 +40,7 @@ ntc-templates==5.2.0
 paramiko==3.4.0
 
 # ── Telemetry & metrics ───────────────────────────────────────────────────────
-pygnmi==0.8.13
+# pygnmi==0.8.13  # installed separately in Dockerfile (grpcio optional)
 prometheus-client==0.20.0
 
 # ── License ───────────────────────────────────────────────────────────────────

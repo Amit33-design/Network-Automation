@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --prefer-binary --prefix=/install -r requirements.txt
+RUN pip install --no-cache-dir --prefer-binary --prefix=/install pygnmi==0.8.13 || \
+    echo "WARNING: pygnmi optional — skipping"
 
 
 # ── Stage 2: production runtime ───────────────────────────────────────────────

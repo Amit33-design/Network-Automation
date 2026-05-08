@@ -11,9 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libssl-dev libffi-dev libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps (--prefer-binary avoids source compilation where possible)
-COPY requirements.txt .
+# Install Python deps in two passes:
+# Pass 1: core packages (always succeed)
+# Pass 2: heavy optional packages (telemetry/gnmi — gracefully imported, ok to skip)
+COPY requirements.txt requirements-optional.txt* ./
 RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
+RUN pip install --no-cache-dir --prefer-binary pygnmi==0.8.13 || \
+    echo "WARNING: pygnmi optional telemetry package failed to install — continuing"
 
 # Copy source
 COPY . .
