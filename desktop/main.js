@@ -20,8 +20,10 @@ const DEV = process.env.NODE_ENV === "development";
 const DEV_COMPOSE = DEV ? path.join(__dirname, "..", "docker-compose.dist.yml") : null;
 const DEV_ENV_EX  = DEV ? path.join(__dirname, "..", ".env.example")            : null;
 
-const WEB_URL   = "http://localhost:8080";
-const SETUP_URL = `file://${path.join(__dirname, "renderer", "setup.html")}`;
+const WEB_URL      = "http://localhost:8080";
+const LOCAL_UI_URL = `file://${path.join(__dirname, "..", "index.html")}`;
+const SETUP_URL    = `file://${path.join(__dirname, "renderer", "setup.html")}`;
+const DEV_BACKEND  = "http://localhost:8000";
 
 let mainWindow = null;
 let tray       = null;
@@ -38,13 +40,46 @@ function log(msg) {
 }
 
 // ── Docker helpers ─────────────────────────────────────────────────────────────
+// Electron doesn't inherit shell PATH — search known Docker locations explicitly
+const DOCKER_PATHS = [
+    "/usr/local/bin/docker",
+    "/usr/bin/docker",
+    "/opt/homebrew/bin/docker",
+    "/Applications/Docker.app/Contents/Resources/bin/docker",
+    "docker",
+];
+
+function findDocker() {
+    for (const p of DOCKER_PATHS) {
+        try { execSync(`"${p}" --version`, { stdio: "ignore", timeout: 3000 }); return p; }
+        catch {}
+    }
+    return null;
+}
+
 function dockerAvailable() {
-    try { execSync("docker info", { stdio: "ignore", timeout: 5000 }); return true; }
+    const bin = findDocker();
+    if (!bin) return false;
+    try { execSync(`"${bin}" info`, { stdio: "ignore", timeout: 8000 }); return true; }
     catch { return false; }
 }
 
+// Wait up to maxWait ms for Docker to become ready, checking every interval ms
+function waitForDocker(maxWait = 60000, interval = 3000) {
+    return new Promise(resolve => {
+        const start = Date.now();
+        function check() {
+            if (dockerAvailable()) { resolve(true); return; }
+            if (Date.now() - start >= maxWait) { resolve(false); return; }
+            setTimeout(check, interval);
+        }
+        check();
+    });
+}
+
 function composeCmd() {
-    try { execSync("docker compose version", { stdio: "ignore" }); return ["docker", "compose"]; }
+    const bin = findDocker() || "docker";
+    try { execSync(`"${bin}" compose version`, { stdio: "ignore" }); return [bin, "compose"]; }
     catch { return ["docker-compose"]; }
 }
 
@@ -207,23 +242,50 @@ app.whenReady().then(() => {
 
     ensureFiles();
 
-    if (!dockerAvailable()) {
-        dialog.showMessageBox(mainWindow, {
-            type:    "warning",
-            title:   "Docker not running",
-            message: "Docker Desktop is not running.\n\nStart Docker Desktop, then use the tray icon to start services.",
-            buttons: ["OK"],
-        });
-        return;
-    }
+    // If local backend already running on 8000, skip Docker entirely
+    const http = require("http");
+    http.get(DEV_BACKEND + "/health", res => {
+        if (res.statusCode < 500) {
+            log("Local backend detected on port 8000 — skipping Docker");
+            servicesUp = true;
+            updateTray();
+            mainWindow.webContents.on("did-finish-load", () => {
+                mainWindow.webContents.executeJavaScript(`
+                    localStorage.setItem('nd_backend_settings', JSON.stringify({
+                        backendUrl: '${DEV_BACKEND}',
+                        liveMode: true
+                    }));
+                `);
+            });
+            mainWindow.loadURL(LOCAL_UI_URL);
+        }
+    }).on("error", () => {
+        // No local backend — wait up to 60s for Docker to become ready
+        log("No local backend — waiting for Docker Desktop to be ready...");
 
-    // Auto-start if .env is already configured (not first run)
-    const env = readEnv();
-    const configured = env.ADMIN_PASS && env.ADMIN_PASS !== "change_me_admin_password_here";
-    if (configured) {
-        startServices();
-    }
-});
+        // Tell the setup page Docker is initialising
+        mainWindow.webContents.executeJavaScript(`
+            const w = document.getElementById('dockerWarning');
+            if (w) { w.textContent = '⏳ Waiting for Docker Desktop to start…'; w.style.display = 'block'; }
+        `).catch(() => {});
+
+        waitForDocker(60000, 3000).then(ready => {
+            if (!ready) {
+                dialog.showMessageBox(mainWindow, {
+                    type:    "warning",
+                    title:   "Docker not responding",
+                    message: "Docker Desktop isn't responding after 60 seconds.\n\nMake sure Docker Desktop is fully started (whale icon steady in menu bar), then restart NetDesign AI.",
+                    buttons: ["OK"],
+                });
+                return;
+            }
+            log("Docker is ready");
+            // Auto-start if .env is already configured (not first run)
+            const env = readEnv();
+            const configured = env.ADMIN_PASS && env.ADMIN_PASS !== "change_me_admin_password_here";
+            if (configured) startServices();
+        });
+    });
 
 app.on("window-all-closed", () => {
     // Keep app running in tray (do not quit)
@@ -238,3 +300,4 @@ app.on("before-quit", () => {
 app.on("activate", () => {
     if (mainWindow) mainWindow.show();
 });
+}); // end app.whenReady()
