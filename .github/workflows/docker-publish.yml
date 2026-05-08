@@ -13,8 +13,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  API_IMAGE: ghcr.io/${{ github.repository_owner }}/network-automation/api
-  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/network-automation/frontend
+  # GHCR requires lowercase — use built-in toLower
+  API_IMAGE: ghcr.io/amit33-design/network-automation/api
+  FRONTEND_IMAGE: ghcr.io/amit33-design/network-automation/frontend
 
 jobs:
   build-and-push:
