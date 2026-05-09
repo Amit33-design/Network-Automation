@@ -80,7 +80,13 @@
     },
     "dmg": {
       "title": "NetDesign AI ${version}",
-      "background": "assets/dmg-background.png"
+      "background": "assets/dmg-background.png",
+      "contents": [
+        { "x": 180, "y": 170, "type": "file" },
+        { "x": 480, "y": 170, "type": "link", "path": "/Applications" },
+        { "x": 330, "y": 330, "type": "file", "path": "assets/Install NetDesign AI.command" }
+      ],
+      "window": { "width": 660, "height": 440 }
     },
     "publish": [
       {
