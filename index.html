@@ -1984,5 +1984,75 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 </script>
+
+<script>
+/* ── Electron scroll fix ──────────────────────────────────────────
+   In Electron's embedded Chromium, scroll events on inner overflow
+   containers (cfg-code-area, terminal-output) don't bubble to the
+   page after the container reaches its limit. This listener forces
+   the document to scroll when the inner container is already at top
+   or bottom, giving users a single seamless scroll experience.
+───────────────────────────────────────────────────────────────── */
+(function() {
+  if (!/Electron/i.test(navigator.userAgent)) return;
+  const INNER = '#cfg-code-area, #terminal-output, .obs-event-log';
+  document.addEventListener('wheel', function(e) {
+    const inner = e.target.closest(INNER);
+    if (!inner) return;
+    const atBottom = inner.scrollTop + inner.clientHeight >= inner.scrollHeight - 2;
+    const atTop    = inner.scrollTop <= 0;
+    if ((e.deltaY > 0 && atBottom) || (e.deltaY < 0 && atTop)) {
+      document.documentElement.scrollTop += e.deltaY;
+    }
+  }, { passive: true });
+})();
+
+/* ── Android / iOS "Add to Home Screen" prompt ───────────────────
+   Shows a subtle banner when the user is on mobile and hasn't
+   already installed the PWA.
+───────────────────────────────────────────────────────────────── */
+(function() {
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+  if (!isMobile || isStandalone) return;
+  if (sessionStorage.getItem('pwa-banner-dismissed')) return;
+
+  let deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredPrompt = e;
+    showBanner();
+  });
+
+  // iOS Safari doesn't fire beforeinstallprompt — show manual instructions
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (isIOS) setTimeout(showBanner, 2500);
+
+  function showBanner() {
+    if (document.getElementById('pwa-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'pwa-banner';
+    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:9999;' +
+      'background:#1a2744;border-top:1px solid #1a7fff;padding:.85rem 1rem;' +
+      'display:flex;align-items:center;gap:.75rem;font-size:.85rem;color:#e2e8f0;' +
+      'box-shadow:0 -4px 20px rgba(0,0,0,.4)';
+    const msg = isIOS
+      ? '📱 Tap <strong>Share → Add to Home Screen</strong> for the full app experience'
+      : '📱 <strong>Install NetDesign AI</strong> — works offline, full-screen experience';
+    banner.innerHTML = `<span style="flex:1">${msg}</span>` +
+      (deferredPrompt ? `<button id="pwa-install-btn" style="background:#1a7fff;color:#fff;border:none;border-radius:6px;padding:.4rem .85rem;font-size:.82rem;font-weight:600;cursor:pointer">Install</button>` : '') +
+      `<button onclick="this.closest('#pwa-banner').remove();sessionStorage.setItem('pwa-banner-dismissed','1')" ` +
+      `style="background:none;border:none;color:#94a3b8;font-size:1.1rem;cursor:pointer;padding:.2rem .4rem">✕</button>`;
+    document.body.appendChild(banner);
+    if (deferredPrompt) {
+      document.getElementById('pwa-install-btn')?.addEventListener('click', () => {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(() => { banner.remove(); deferredPrompt = null; });
+      });
+    }
+  }
+})();
+</script>
 </body>
 </html>
