@@ -36,13 +36,14 @@
 
     /* ─── Reset & Base ──────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { font-size: 15px; scroll-behavior: smooth; }
+    html { font-size: 15px; scroll-behavior: smooth; height: 100%; overflow-y: auto; }
     body {
       background: var(--bg0);
       color: var(--txt0);
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      min-height: 100vh;
+      min-height: 100%;
       line-height: 1.55;
+      overflow-y: auto;
     }
     input, select, textarea, button { font-family: inherit; }
     ::selection { background: var(--blue-dim); color: var(--txt0); }
@@ -731,7 +732,8 @@
     /* The actual code area */
     #cfg-code-area {
       padding: 0; overflow: auto;
-      max-height: 68vh; min-height: 300px;
+      max-height: calc(100vh - 280px); min-height: 300px;
+      -webkit-overflow-scrolling: touch;
     }
     .cfg-code {
       margin: 0; padding: 1.25rem 1.5rem;
@@ -781,7 +783,8 @@
       padding: 1rem 1.25rem;
       font-family: 'Courier New', monospace; font-size: .78rem;
       line-height: 1.7; color: #c8ffb0;
-      min-height: 320px; max-height: 420px; overflow-y: auto;
+      min-height: 320px; max-height: calc(100vh - 300px); overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
     .t-info    { color: #5af; }
     .t-ok      { color: #5f5; }
@@ -2416,3 +2419,171 @@
   accent-color: var(--blue);
   cursor: pointer;
 }
+
+/* ════════════════════════════════════════════════════════
+   CUSTOM POLICY STYLES
+════════════════════════════════════════════════════════ */
+
+.cp-label {
+  display: block;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--txt2);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: .3rem;
+}
+
+.cp-input {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--txt0);
+  font-size: .82rem;
+  padding: .4rem .65rem;
+  outline: none;
+  transition: border-color .15s;
+  min-width: 0;
+}
+.cp-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(26,127,255,.18);
+}
+.cp-input.cp-vlan-id   { width: 90px; }
+.cp-input.cp-vlan-name { flex: 1; }
+.cp-input.cp-vlan-desc { flex: 2; }
+
+.cp-select {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--txt0);
+  font-size: .82rem;
+  padding: .4rem .65rem;
+  outline: none;
+  cursor: pointer;
+}
+.cp-select:focus { border-color: var(--blue); }
+
+.cp-textarea {
+  width: 100%;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--txt0);
+  font-size: .8rem;
+  padding: .5rem .65rem;
+  outline: none;
+  resize: vertical;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  line-height: 1.5;
+}
+.cp-textarea:focus { border-color: var(--blue); }
+
+/* Row layout: horizontal flex for compact field groups */
+.cp-row {
+  display: flex;
+  gap: .5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cp-row .cp-input { flex: 1; min-width: 100px; }
+
+/* Card for sub-objects (peer group, prefix list) */
+.cp-card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius2);
+  padding: .85rem 1rem;
+}
+.cp-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--txt1);
+  margin-bottom: .6rem;
+}
+
+/* Remove button */
+.cp-rm-btn {
+  background: none;
+  border: 1px solid var(--red-dim);
+  border-radius: 6px;
+  color: var(--red);
+  font-size: .72rem;
+  padding: .18rem .42rem;
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background .15s;
+}
+.cp-rm-btn:hover { background: rgba(255,51,85,.12); }
+
+/* Section titles (inside <details>) */
+.cp-section-title {
+  font-size: .88rem;
+  font-weight: 700;
+  color: var(--txt0);
+  cursor: pointer;
+  padding: .45rem 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.cp-section-title::-webkit-details-marker { display: none; }
+details[open] > .cp-section-title::after  { content: ' ▲'; font-size: .65rem; color: var(--txt3); margin-left: auto; }
+details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65rem; color: var(--txt3); margin-left: auto; }
+
+/* Validation messages */
+.cp-msg {
+  font-size: .8rem;
+  padding: .4rem .7rem;
+  border-radius: var(--radius);
+  border-left: 3px solid;
+}
+.cp-msg-error  { background: rgba(255,51,85,.1);  border-color: var(--red);    color: var(--txt0); }
+.cp-msg-warn   { background: rgba(255,140,0,.1);  border-color: var(--orange); color: var(--txt0); }
+.cp-msg-ok     { background: rgba(0,232,122,.1);  border-color: var(--green);  color: var(--txt0); }
+
+/* Generated config output */
+.cp-config-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius2);
+  overflow: hidden;
+  margin-bottom: .75rem;
+}
+.cp-config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg3);
+  padding: .5rem .85rem;
+  border-bottom: 1px solid var(--border);
+}
+.cp-config-device {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--cyan);
+}
+.cp-pre {
+  background: var(--bg0);
+  padding: .85rem 1rem;
+  overflow-x: auto;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: .78rem;
+  line-height: 1.55;
+  color: var(--txt0);
+  white-space: pre;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+/* Spinner / error within output area */
+.cp-spinner { color: var(--txt2); font-size: .85rem; padding: 1rem 0; }
+.cp-error   { color: var(--red);  font-size: .85rem; padding: .5rem 0; }
+
