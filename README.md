@@ -1,6 +1,7 @@
 # NetDesign AI — Intent-Driven Network Design & Deployment
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-blue?style=flat-square&logo=github)](https://amit33-design.github.io/Network-Automation/)
+[![Download](https://img.shields.io/badge/Download-v2.4.0-brightgreen?style=flat-square&logo=apple)](https://github.com/Amit33-design/Network-Automation/releases/latest)
 [![License: NDAL v1.0](https://img.shields.io/badge/License-Source--Available%20(NDAL%20v1.0)-red?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/backend-Python%203.11+-blue?style=flat-square&logo=python)](backend/)
 [![MCP Ready](https://img.shields.io/badge/MCP-20%20tools-purple?style=flat-square)](docs/mcp-setup.md)
@@ -8,6 +9,56 @@
 Express network intent in plain English. Get topology diagrams, production configs, policy validation, failure simulation, and a gate-enforced deployment pipeline — in your browser or via any AI assistant through the MCP API.
 
 **[Live Demo →](https://amit33-design.github.io/Network-Automation/)** — No login. Click **⚡ Demo** for a 2-minute walkthrough.
+
+---
+
+## Download & Install (Mac Desktop App)
+
+> The desktop app runs the full stack locally — no cloud, no account required.
+
+### Step 1 — Install Colima (one-time, ~2 minutes)
+
+Colima is a free, lightweight Docker runtime. You only need to do this once.
+
+```bash
+# Install Homebrew if you don't have it
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install Colima + Docker CLI
+brew install colima docker
+
+# Start Colima (runs in background, auto-starts on reboot after this)
+colima start
+```
+
+### Step 2 — Download NetDesign AI
+
+| Mac | Download |
+|---|---|
+| **Apple Silicon** (M1 / M2 / M3 / M4) | [NetDesign-AI-2.4.0-arm64.dmg](https://github.com/Amit33-design/Network-Automation/releases/download/v2.4.0/NetDesign-AI-2.4.0-arm64.dmg) |
+| **Intel Mac** | [NetDesign-AI-2.4.0-x64.dmg](https://github.com/Amit33-design/Network-Automation/releases/download/v2.4.0/NetDesign-AI-2.4.0-x64.dmg) |
+
+### Step 3 — Open the app
+
+1. Open the `.dmg` and drag **NetDesign AI** to `/Applications`
+2. **Right-click → Open** (first launch only — macOS security prompt)
+3. The app starts Docker services automatically and opens the UI
+
+That's it. No config files, no passwords to set, no terminal needed after this.
+
+> **Already have Docker Desktop?** It works too — just make sure it's running before opening the app.
+
+---
+
+## Mobile / Browser (No Install)
+
+Open on any device — phone, tablet, laptop:
+
+```
+https://amit33-design.github.io/Network-Automation/
+```
+
+On iPhone/Android: tap **Share → Add to Home Screen** for a full-screen app experience.
 
 ---
 
@@ -30,15 +81,9 @@ Intent (natural language)
 
 ---
 
-## Quick Start
+## MCP with Claude Desktop (AI Integration)
 
-### Browser only (zero install)
-
-```
-https://amit33-design.github.io/Network-Automation/
-```
-
-### MCP with Claude Desktop (recommended)
+Connect NetDesign AI as a tool inside Claude Desktop, ChatGPT, or any LLM:
 
 ```bash
 git clone https://github.com/Amit33-design/Network-Automation.git
@@ -46,11 +91,13 @@ cd Network-Automation/backend
 pip install -r requirements.txt
 ```
 
-Add `backend/claude_desktop_config.json` to your Claude Desktop config (adjust the path), restart Claude Desktop, and you'll see the **🔨** hammer icon confirming the 20 NetDesign tools are loaded.
+Add `backend/claude_desktop_config.json` to your Claude Desktop config, restart Claude Desktop, and the **🔨** hammer icon confirms all 20 NetDesign tools are loaded.
 
-**[Full MCP setup — Claude Desktop, ChatGPT, Python SDK, LangChain →](docs/mcp-setup.md)**
+**[Full MCP setup guide →](docs/mcp-setup.md)**
 
-### Docker Compose (full stack)
+---
+
+## Docker Compose (Self-Host / Dev)
 
 ```bash
 cp .env.example .env   # fill in JWT_SECRET, POSTGRES_PASSWORD, REDIS_PASSWORD, VAULT_TOKEN
@@ -258,6 +305,8 @@ Network-Automation/
 │   ├── routers/                 # designs, deployments, devices REST routers
 │   ├── policies/                # EVPN, BGP, QoS, AAA, firewall, hardening
 │   └── templates/               # Jinja2 device templates (NX-OS, EOS, SONiC, IOS-XE)
+├── desktop/                     # Electron desktop app (Mac)
+│   └── dist-electron/           # Built DMGs
 ├── alembic/                     # Async database migrations
 ├── ops/                         # prometheus.yml, Grafana dashboards
 ├── docs/
@@ -281,13 +330,13 @@ Network-Automation/
 
 | Library | Role |
 |---|---|
-| FastAPI 0.111 | REST API + WebSocket |
+| FastAPI 0.115 | REST API + WebSocket |
 | FastMCP (mcp[cli]) | MCP server |
 | SQLAlchemy 2.0 + asyncpg | Async ORM (PostgreSQL) |
 | Alembic | Database migrations |
 | Celery + Redis | Async job queue |
-| Nornir 3.4 + Netmiko 4.4 | Parallel SSH to network devices |
-| NAPALM 4.x | `get_config`, `get_bgp_neighbors` |
+| Nornir 3.4 + Netmiko 4.3 | Parallel SSH to network devices |
+| NAPALM 4.1 | `get_config`, `get_bgp_neighbors` |
 | Jinja2 3.1 | Config templating |
 | HashiCorp Vault (hvac) | Device credential store |
 | PyJWT + structlog | Auth + audit logging |
@@ -318,6 +367,8 @@ Network-Automation/
 - [x] ZTP — Cisco POAP, Arista EOS-ZTP, SONiC
 - [x] PostgreSQL persistence (designs, deployments, devices)
 - [x] HashiCorp Vault device credential store
+- [x] Mac desktop app (Electron) — one-click install, auto-starts on login
+- [x] PWA support — Add to Home Screen on iOS/Android
 - [ ] gNMI streaming telemetry + Prometheus metrics
 - [ ] Intelligent RCA engine (topology-aware hypothesis ranking)
 - [ ] Grafana network health dashboard
