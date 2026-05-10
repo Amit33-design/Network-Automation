@@ -25,9 +25,7 @@ function getOS(layerKey) {
 
 const OS_LABELS = { 'ios-xe':'IOS-XE', 'nxos':'NX-OS', 'eos':'EOS', 'junos':'Junos', 'sonic':'SONiC' };
 
-/* ── Device list builder ────────────────────────────────────────── */
-/* ── Config preview cap (UI shows up to N devices; note shown for remainder) ── */
-const CONFIG_PREVIEW_MAX = 20;
+/* ── Device list builder — generates ALL devices, no cap ─────────── */
 
 function buildDeviceList() {
   const uc   = STATE.uc;
@@ -35,11 +33,8 @@ function buildDeviceList() {
   const dual = red === 'ha' || red === 'full';
   const haFW = STATE.fwModel && STATE.fwModel !== 'none';
   const sz   = STATE.orgSize;
-  const haCore = sz === 'large' || sz === 'enterprise' ||
-                 uc === 'campus';   // always show core for campus
 
-  // Pull capacity model counts
-  const cap = capacityFromState(STATE);
+  const cap  = capacityFromState(STATE);
   const devs = [];
 
   // ── Firewall ──────────────────────────────────────────────────
@@ -52,34 +47,23 @@ function buildDeviceList() {
   if (uc === 'campus' || uc === 'hybrid') {
     const c = cap.campus || { core:2, dist:4, access:6 };
 
-    // Core (always show actual count, capped at CONFIG_PREVIEW_MAX)
-    const coreCount = Math.min(c.core, CONFIG_PREVIEW_MAX);
-    for (let i = 0; i < coreCount; i++) {
+    for (let i = 0; i < c.core; i++) {
       devs.push({ id:`core-${String(i+1).padStart(2,'0')}`, name:`CORE-${String(i+1).padStart(2,'0')}`,
-        layer:'campus-core', role:'Core Switch', icon:'⚙️', idx:i });
+        layer:'campus-core', role:'Core Switch', icon:'⚙️', idx:i, _totalInLayer:c.core });
     }
 
-    // Distribution
-    const distCount = Math.min(c.dist, CONFIG_PREVIEW_MAX - devs.length);
-    for (let i = 0; i < distCount; i++) {
+    for (let i = 0; i < c.dist; i++) {
       devs.push({ id:`dist-${String(i+1).padStart(2,'0')}`, name:`DIST-${String(i+1).padStart(2,'0')}`,
         layer:'campus-dist', role:`Distribution ${dual?'HA':''}`, icon:'🔀', idx:i,
-        _totalInLayer: c.dist });
+        _totalInLayer:c.dist });
     }
 
-    // Access — show up to remaining budget, flag total
-    const accAvail  = Math.max(0, CONFIG_PREVIEW_MAX - devs.length);
-    const accPreview = Math.min(c.access, accAvail);
-    for (let i = 0; i < accPreview; i++) {
-      const zone = ['FL1','FL2','SRV','IOT'][Math.floor(i / Math.ceil(accPreview/4))];
+    const zones = ['FL1','FL2','SRV','IOT'];
+    for (let i = 0; i < c.access; i++) {
+      const zone = zones[Math.floor(i / Math.ceil(c.access / 4))];
       devs.push({ id:`acc-${String(i+1).padStart(2,'0')}`, name:`ACC-${zone}-${String(i+1).padStart(2,'0')}`,
         layer:'campus-access', role:`Access Switch (${zone})`, icon:'🔌', idx:i,
-        _totalInLayer: c.access });
-    }
-    if (c.access > accPreview) {
-      devs.push({ id:'acc-overflow', name:`+ ${c.access - accPreview} more access switches`,
-        layer:'campus-access', role:'_overflow', icon:'📋', idx:accPreview,
-        _overflow:true, _total:c.access });
+        _totalInLayer:c.access });
     }
   }
 
@@ -95,29 +79,19 @@ function buildDeviceList() {
         devs.push({ id:`${sid.toLowerCase()}-lf2`, name:`${sid}-LEAF-02`,  layer:'dc-leaf',  role:`${sid} Leaf`,  icon:'🍃', idx:si*2+1 });
       });
     } else {
-      const spinePreview = Math.min(c.spines, CONFIG_PREVIEW_MAX - devs.length);
-      for (let i = 0; i < spinePreview; i++) {
+      for (let i = 0; i < c.spines; i++) {
         devs.push({ id:`spine-${String(i+1).padStart(2,'0')}`, name:`SPINE-${String(i+1).padStart(2,'0')}`,
-          layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:i,
-          _totalInLayer: c.spines });
+          layer:'dc-spine', role:'DC Spine', icon:'🦴', idx:i, _totalInLayer:c.spines });
       }
-      const leafAvail   = Math.max(0, CONFIG_PREVIEW_MAX - devs.length);
-      const leafPreview = Math.min(c.leafs, leafAvail);
       const roles = [
-        ...Array(c.prodLeafs||Math.ceil(c.leafs*.5)).fill('PROD'),
-        ...Array(c.storLeafs||Math.ceil(c.leafs*.25)).fill('STOR'),
-        ...Array(c.devLeafs||0).fill('DEV'),
+        ...Array(c.prodLeafs || Math.ceil(c.leafs * .5)).fill('PROD'),
+        ...Array(c.storLeafs || Math.ceil(c.leafs * .25)).fill('STOR'),
+        ...Array(c.devLeafs  || 0).fill('DEV'),
       ];
-      for (let i = 0; i < leafPreview; i++) {
+      for (let i = 0; i < c.leafs; i++) {
         const fn = roles[i] || 'PROD';
         devs.push({ id:`leaf-${String(i+1).padStart(2,'0')}`, name:`LEAF-${fn}-${String(i+1).padStart(2,'0')}`,
-          layer:'dc-leaf', role:`DC Leaf (${fn})`, icon:'🍃', idx:i,
-          _totalInLayer: c.leafs });
-      }
-      if (c.leafs > leafPreview) {
-        devs.push({ id:'leaf-overflow', name:`+ ${c.leafs - leafPreview} more leaf switches`,
-          layer:'dc-leaf', role:'_overflow', icon:'📋', idx:leafPreview,
-          _overflow:true, _total:c.leafs });
+          layer:'dc-leaf', role:`DC Leaf (${fn})`, icon:'🍃', idx:i, _totalInLayer:c.leafs });
       }
     }
   }
@@ -125,43 +99,26 @@ function buildDeviceList() {
   // ── GPU ───────────────────────────────────────────────────────
   if (uc === 'gpu') {
     const c = cap.gpu || { spines:2, tors:4 };
-    const spinePreview = Math.min(c.spines, CONFIG_PREVIEW_MAX - devs.length);
-    for (let i = 0; i < spinePreview; i++) {
+    for (let i = 0; i < c.spines; i++) {
       devs.push({ id:`gspine-${String(i+1).padStart(2,'0')}`, name:`GPU-SPINE-${String(i+1).padStart(2,'0')}`,
-        layer:'gpu-spine', role:'GPU Spine', icon:'🧠', idx:i,
-        _totalInLayer: c.spines });
+        layer:'gpu-spine', role:'GPU Spine', icon:'🧠', idx:i, _totalInLayer:c.spines });
     }
-    const torAvail   = Math.max(0, CONFIG_PREVIEW_MAX - devs.length);
-    const torPreview = Math.min(c.tors, torAvail);
-    for (let i = 0; i < torPreview; i++) {
+    for (let i = 0; i < c.tors; i++) {
       devs.push({ id:`tor-${String(i+1).padStart(2,'0')}`, name:`GPU-TOR-${String(i+1).padStart(2,'0')}`,
-        layer:'gpu-tor', role:'GPU TOR', icon:'⚡', idx:i,
-        _totalInLayer: c.tors });
-    }
-    if (c.tors > torPreview) {
-      devs.push({ id:'tor-overflow', name:`+ ${c.tors - torPreview} more TOR switches`,
-        layer:'gpu-tor', role:'_overflow', icon:'📋', idx:torPreview,
-        _overflow:true, _total:c.tors });
+        layer:'gpu-tor', role:'GPU TOR', icon:'⚡', idx:i, _totalInLayer:c.tors });
     }
   }
 
   // ── WAN ───────────────────────────────────────────────────────
   if (uc === 'wan') {
     const c = cap.wan || { hubRouters:2, cpe:4 };
-    for (let i = 0; i < Math.min(c.hubRouters, 4); i++) {
+    for (let i = 0; i < c.hubRouters; i++) {
       devs.push({ id:`hq-rtr-${i+1}`, name:`HQ-RTR-${String(i+1).padStart(2,'0')}`,
-        layer:'campus-core', role:'HQ Core Router', icon:'🌐', idx:i });
+        layer:'campus-core', role:'HQ Core Router', icon:'🌐', idx:i, _totalInLayer:c.hubRouters });
     }
-    const cpePreview = Math.min(c.cpe, CONFIG_PREVIEW_MAX - devs.length);
-    for (let i = 0; i < cpePreview; i++) {
+    for (let i = 0; i < c.cpe; i++) {
       devs.push({ id:`br-${String(i+1).padStart(2,'0')}`, name:`BRANCH-${String(i+1).padStart(2,'0')}`,
-        layer:'campus-access', role:'Branch CPE', icon:'📡', idx:i,
-        _totalInLayer: c.cpe });
-    }
-    if (c.cpe > cpePreview) {
-      devs.push({ id:'br-overflow', name:`+ ${c.cpe - cpePreview} more branch CPEs`,
-        layer:'campus-access', role:'_overflow', icon:'📋', idx:cpePreview,
-        _overflow:true, _total:c.cpe });
+        layer:'campus-access', role:'Branch CPE', icon:'📡', idx:i, _totalInLayer:c.cpe });
     }
   }
 
@@ -171,77 +128,98 @@ function buildDeviceList() {
 /* ── Render device list sidebar ─────────────────────────────────── */
 let DEVICE_LIST = [];
 let ACTIVE_DEV  = null;
+let _devFilter  = '';
+
+const _GROUP_LABELS = {
+  'fw':            '🔒 Security / Firewall',
+  'campus-core':   '⚙️ Core Layer',
+  'campus-dist':   '🔀 Distribution Layer',
+  'campus-access': '🔌 Access Layer',
+  'dc-spine':      '🦴 DC Spine',
+  'dc-leaf':       '🍃 DC Leaf / ToR',
+  'gpu-spine':     '🧠 GPU Spine',
+  'gpu-tor':       '⚡ GPU TOR',
+};
 
 function renderDeviceList() {
   DEVICE_LIST = buildDeviceList();
-  const allDevs = DEVICE_LIST;
-  const realDevs = allDevs.filter(d => !d._overflow);
+  _devFilter  = '';
 
-  const body  = document.getElementById('dev-list-body');
   const badge = document.getElementById('dev-count-badge');
+  badge.textContent = DEVICE_LIST.length;
 
-  // Badge shows real total (from capacity model), not just preview count
-  const cap = capacityFromState(STATE);
-  let totalDevices = realDevs.length;
-  if (cap.campus) totalDevices = cap.campus.access + cap.campus.dist + cap.campus.core;
-  if (cap.dc)     totalDevices = cap.dc.leafs + cap.dc.spines;
-  if (cap.gpu)    totalDevices = cap.gpu.tors + cap.gpu.spines;
-  if (cap.wan)    totalDevices = cap.wan.cpe + cap.wan.hubRouters;
-  badge.textContent = totalDevices;
+  // Inject search box + list body — replaces inner content of dev-list-body's parent
+  const body = document.getElementById('dev-list-body');
+
+  // Build search input once (inserted before the list)
+  let searchEl = document.getElementById('dev-search-input');
+  if (!searchEl) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'padding:.5rem .6rem .3rem;position:sticky;top:0;background:var(--bg2);z-index:2';
+    wrap.innerHTML = `<input id="dev-search-input" type="search" placeholder="Filter devices…"
+      style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--txt);border-radius:6px;padding:.35rem .6rem;font-size:.78rem;outline:none"
+      oninput="_filterDevList(this.value)">`;
+    body.parentElement.insertBefore(wrap, body);
+    searchEl = wrap.querySelector('input');
+  }
+
+  _renderDevItems(DEVICE_LIST);
+
+  // Auto-select first device
+  if (DEVICE_LIST.length) selectDevice(DEVICE_LIST[0].id);
+}
+
+function _filterDevList(query) {
+  _devFilter = query.trim().toLowerCase();
+  const filtered = _devFilter
+    ? DEVICE_LIST.filter(d => d.name.toLowerCase().includes(_devFilter) || d.role.toLowerCase().includes(_devFilter))
+    : DEVICE_LIST;
+
+  const badge = document.getElementById('dev-count-badge');
+  badge.textContent = _devFilter ? `${filtered.length}/${DEVICE_LIST.length}` : DEVICE_LIST.length;
+
+  _renderDevItems(filtered);
+}
+
+function _renderDevItems(devs) {
+  const body = document.getElementById('dev-list-body');
 
   // Group by layer
   const groups = {};
-  allDevs.forEach(d => {
-    if (!groups[d.layer]) groups[d.layer] = [];
-    groups[d.layer].push(d);
-  });
-  const groupLabels = {
-    'fw':'🔒 Security / Firewall',
-    'campus-core':'⚙️ Core Layer',
-    'campus-dist':'🔀 Distribution Layer',
-    'campus-access':'🔌 Access Layer',
-    'dc-spine':'🦴 DC Spine',
-    'dc-leaf':'🍃 DC Leaf / ToR',
-    'gpu-spine':'🧠 GPU Spine',
-    'gpu-tor':'⚡ GPU TOR',
-  };
+  devs.forEach(d => { (groups[d.layer] = groups[d.layer] || []).push(d); });
 
-  let html = '';
+  // Build HTML in chunks for large lists (avoids single long string concat)
+  const parts = [];
   Object.entries(groups).forEach(([layer, layerDevs]) => {
-    // Count total in this layer (from capacity model, not just preview)
-    const firstReal = layerDevs.find(d => !d._overflow);
-    const layerTotal = firstReal?._totalInLayer || layerDevs.filter(d=>!d._overflow).length;
-    html += `<div class="dev-group-label">${groupLabels[layer] || layer}
+    const layerTotal = layerDevs[0]?._totalInLayer || layerDevs.length;
+    parts.push(`<div class="dev-group-label">${_GROUP_LABELS[layer] || layer}
       <span style="opacity:.5;font-size:.75em;margin-left:.4rem">×${layerTotal}</span>
-    </div>`;
+    </div>`);
     layerDevs.forEach(d => {
-      if (d._overflow) {
-        // Show "overflow" pill — not clickable for config
-        html += `<div class="dev-item" style="opacity:.55;cursor:default;border-style:dashed">
-          <span class="di-icon">${d.icon}</span>
-          <div class="di-info">
-            <div class="di-name" style="font-style:italic">${d.name}</div>
-            <div class="di-role">Config preview limited to ${CONFIG_PREVIEW_MAX} devices</div>
-          </div>
-        </div>`;
-        return;
-      }
       const os = getOS(d.layer);
-      html += `<div class="dev-item" id="di-${d.id}" onclick="selectDevice('${d.id}')">
+      parts.push(`<div class="dev-item" id="di-${d.id}" onclick="selectDevice('${d.id}')">
         <span class="di-icon">${d.icon}</span>
         <div class="di-info">
           <div class="di-name">${d.name}</div>
           <div class="di-role">${d.role}</div>
         </div>
         <span class="di-os">${OS_LABELS[os]}</span>
-      </div>`;
+      </div>`);
     });
   });
-  body.innerHTML = html;
 
-  // Auto-select first real (non-overflow) device
-  const firstReal = DEVICE_LIST.find(d => !d._overflow);
-  if (firstReal) selectDevice(firstReal.id);
+  if (!parts.length) {
+    body.innerHTML = `<div style="padding:1rem;text-align:center;color:var(--txt3);font-size:.82rem">No devices match "${_devFilter}"</div>`;
+    return;
+  }
+
+  body.innerHTML = parts.join('');
+
+  // Re-highlight active device if still visible
+  if (ACTIVE_DEV) {
+    const el = document.getElementById(`di-${ACTIVE_DEV.id}`);
+    if (el) el.classList.add('active');
+  }
 }
 
 /* ── Select & render a device config ───────────────────────────── */

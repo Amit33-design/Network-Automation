@@ -893,6 +893,14 @@
       background: var(--bg2); border: 1px solid var(--border);
       border-radius: var(--radius2); overflow: hidden;
       position: sticky; top: 76px;
+      max-height: calc(100vh - 120px);
+      display: flex; flex-direction: column;
+    }
+    #dev-list-body {
+      overflow-y: auto; flex: 1;
+    }
+    #dev-search-input:focus {
+      border-color: var(--blue) !important; box-shadow: 0 0 0 2px rgba(26,127,255,.18);
     }
     .dev-list-head {
       padding: .75rem 1rem; background: var(--bg1);
