@@ -2207,9 +2207,14 @@
     </div>
     <div class="ts-grid-2">
       <div>
-        <div class="ts-label" style="margin-bottom:.3rem">Paste <code>show cdp neighbors detail</code> or <code>show lldp neighbors detail</code> output</div>
+        <div class="ts-label" style="margin-bottom:.3rem">
+          Paste CDP/LLDP neighbor output — supports multiple formats:
+          <span style="color:var(--txt3);font-size:.78rem">
+            Cisco <code>show cdp neighbors detail</code> · Cisco/Arista <code>show lldp neighbors detail</code> · Juniper <code>show lldp neighbors</code>
+          </span>
+        </div>
         <textarea id="ts-neighbor-input" class="ts-input" rows="10"
-          placeholder="Device ID: spine-01&#10;  IP address: 10.0.0.1&#10;  Platform:  N9K-C9332PQ&#10;  Interface: Ethernet1/1&#10;  Port ID (outgoing port): Ethernet1/1&#10;  ..."></textarea>
+          placeholder="── Cisco CDP detail ──&#10;Device ID: spine-01&#10;  IP address: 10.0.0.1&#10;  Platform: N9K-C9332PQ&#10;  Interface: Ethernet1/1, Port ID (outgoing port): Ethernet1/1&#10;&#10;── Juniper LLDP table ──&#10;builder@router> show lldp neighbors&#10;Local Interface    Parent Interface    Chassis Id          Port info          System Name&#10;et-0/0/0           -                   aa:bb:cc:dd:ee:ff   et-0/0/1           spine-01&#10;et-0/0/2           -                   aa:bb:cc:dd:ee:ff   et-0/0/3           spine-01"></textarea>
       </div>
       <div>
         <div class="ts-label" style="margin-bottom:.3rem">Parsed Topology Preview</div>

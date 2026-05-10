@@ -381,33 +381,58 @@ const CustomPolicy = (() => {
   function _renderSecRules() {
     const c = document.getElementById('cp-secrule-rows');
     if (!c) return;
-    c.innerHTML = _secRules.map((r, i) => `
+    const hdr = `<div class="cp-field-hdr" style="display:flex;flex-wrap:wrap;gap:.4rem;padding:.2rem .5rem;font-size:.72rem;color:var(--txt3);font-weight:600;letter-spacing:.04em">
+      <span style="flex:2;min-width:140px">RULE NAME</span>
+      <span style="flex:1;min-width:90px" title="Source security zone (e.g. trust, DMZ, untrust)">FROM ZONE</span>
+      <span style="flex:1;min-width:90px" title="Destination security zone">TO ZONE</span>
+      <span style="flex:1;min-width:100px" title="PAN-OS app-id: any, web-browsing, ssl, dns, ssh, rdp, msrpc, … or custom">APPLICATION</span>
+      <span style="flex:1;min-width:120px" title="application-default = ports defined by the app-id; or specify: tcp/443, udp/53, any">SERVICE / PORT</span>
+      <span style="flex:1;min-width:100px">ACTION</span>
+    </div>`;
+    const hint = `<div style="font-size:.74rem;color:var(--txt3);padding:.1rem .5rem .6rem;line-height:1.5">
+      ℹ️ Rules are evaluated <strong>top-down, first match</strong>. Use <code>any</code> as a wildcard for zone/app/service.
+      Common apps: <code>web-browsing</code> · <code>ssl</code> · <code>dns</code> · <code>ssh</code> · <code>rdp</code> · <code>ping</code>.
+      Service <code>application-default</code> = ports defined by the app-id (recommended).
+    </div>`;
+    c.innerHTML = (c.children.length === 0 ? hint + hdr : '') + _secRules.map((r, i) => `
       <div class="cp-card" data-idx="${i}">
         <div class="cp-card-header">
           <span>Rule ${i+1}: ${_esc(r.name||'unnamed')}</span>
           <button class="cp-rm-btn" onclick="CustomPolicy._removeSecRule(${i})">✕</button>
         </div>
         <div class="cp-row" style="flex-wrap:wrap;gap:.4rem">
-          <input class="cp-input" type="text" placeholder="Rule name"
+          <input class="cp-input" type="text"
+            placeholder="Rule name (e.g. allow-web-outbound)"
+            title="Unique rule name — shown in logs and audit trails"
             value="${_esc(r.name)}" oninput="CustomPolicy._updateSecRule(${i},'name',this.value)" style="flex:2;min-width:140px">
-          <input class="cp-input" type="text" placeholder="From zone"
+          <input class="cp-input" type="text"
+            placeholder="trust  /  DMZ  /  any"
+            title="Source zone — must match a defined Security Zone (or 'any'). E.g. trust, DMZ, vpn-zone"
             value="${_esc(r.from)}" oninput="CustomPolicy._updateSecRule(${i},'from',this.value)" style="flex:1;min-width:90px">
-          <input class="cp-input" type="text" placeholder="To zone"
+          <input class="cp-input" type="text"
+            placeholder="untrust  /  any"
+            title="Destination zone — where the traffic is headed. E.g. untrust (internet), DMZ, internal"
             value="${_esc(r.to)}" oninput="CustomPolicy._updateSecRule(${i},'to',this.value)" style="flex:1;min-width:90px">
-          <input class="cp-input" type="text" placeholder="Application (any)"
+          <input class="cp-input" type="text"
+            placeholder="any · web-browsing · ssl · dns"
+            title="PAN-OS App-ID or 'any'. Examples: web-browsing, ssl, dns, ssh, rdp, ping, msrpc, ms-ds-replication"
             value="${_esc(r.app)}" oninput="CustomPolicy._updateSecRule(${i},'app',this.value)" style="flex:1;min-width:100px">
-          <input class="cp-input" type="text" placeholder="Service (application-default)"
+          <input class="cp-input" type="text"
+            placeholder="application-default · tcp/443 · any"
+            title="'application-default' = ports defined by App-ID (recommended). Or use tcp/PORT, udp/PORT, or 'any'"
             value="${_esc(r.service)}" oninput="CustomPolicy._updateSecRule(${i},'service',this.value)" style="flex:1;min-width:120px">
-          <select class="cp-select" onchange="CustomPolicy._updateSecRule(${i},'action',this.value)" style="width:100px">
+          <select class="cp-select" title="Rule action — allow permits traffic; deny sends TCP RST/ICMP unreach; drop silently discards"
+            onchange="CustomPolicy._updateSecRule(${i},'action',this.value)" style="width:100px">
             <option value="allow" ${r.action==='allow'?'selected':''}>allow</option>
             <option value="deny"  ${r.action==='deny' ?'selected':''}>deny</option>
             <option value="drop"  ${r.action==='drop' ?'selected':''}>drop</option>
           </select>
-          <label style="font-size:.78rem;display:flex;align-items:center;gap:.3rem">
+          <label style="font-size:.78rem;display:flex;align-items:center;gap:.3rem" title="Log traffic matched by this rule to the syslog/Panorama">
             <input type="checkbox" ${r.log?'checked':''} onchange="CustomPolicy._updateSecRule(${i},'log',this.checked)"> Log
           </label>
         </div>
       </div>`).join('');
+    if (_secRules.length && !c.querySelector('.cp-field-hdr')) c.insertAdjacentHTML('afterbegin', hint + hdr);
   }
   function _addSecRule()          { _secRules.push({ name:'', from:'any', to:'any', app:'any', service:'application-default', action:'allow', log:true }); _renderSecRules(); }
   function _removeSecRule(i)      { _secRules.splice(i,1); _renderSecRules(); }
@@ -451,34 +476,62 @@ const CustomPolicy = (() => {
   function _renderFwPolicies() {
     const c = document.getElementById('cp-fwpol-rows');
     if (!c) return;
-    c.innerHTML = _fwPolicies.map((p, i) => `
+    const hdr = `<div class="cp-field-hdr" style="display:flex;flex-wrap:wrap;gap:.4rem;padding:.2rem .5rem;font-size:.72rem;color:var(--txt3);font-weight:600;letter-spacing:.04em">
+      <span style="flex:2;min-width:130px">POLICY NAME</span>
+      <span style="flex:1;min-width:80px" title="Ingress interface — e.g. port1, internal, wan1">SRC INTF</span>
+      <span style="flex:1;min-width:80px" title="Egress interface — e.g. port2, wan1, dmz">DST INTF</span>
+      <span style="flex:1;min-width:90px" title="Source address object or 'all'. Create address objects first in FortiOS GUI or CLI">SRC ADDR</span>
+      <span style="flex:1;min-width:90px" title="Destination address object or 'all'">DST ADDR</span>
+      <span style="flex:1;min-width:80px" title="Service group: ALL, HTTP, HTTPS, DNS, SSH, RDP, or custom service name">SERVICE</span>
+      <span style="flex:1;min-width:90px">ACTION / NAT</span>
+    </div>`;
+    const hint = `<div style="font-size:.74rem;color:var(--txt3);padding:.1rem .5rem .6rem;line-height:1.5">
+      ℹ️ FortiOS policies match on <strong>srcintf → dstintf → srcaddr → dstaddr → service</strong> (top-down, first match).
+      Built-in services: <code>ALL</code> · <code>HTTP</code> · <code>HTTPS</code> · <code>DNS</code> · <code>SSH</code> · <code>RDP</code> · <code>PING</code>.
+      Enable <strong>NAT</strong> for outbound SNAT using the egress interface IP.
+    </div>`;
+    c.innerHTML = (c.children.length === 0 ? hint + hdr : '') + _fwPolicies.map((p, i) => `
       <div class="cp-card" data-idx="${i}">
         <div class="cp-card-header">
           <span>Policy ${i+1}: ${_esc(p.name||'unnamed')}</span>
           <button class="cp-rm-btn" onclick="CustomPolicy._removeFwPolicy(${i})">✕</button>
         </div>
         <div class="cp-row" style="flex-wrap:wrap;gap:.4rem">
-          <input class="cp-input" type="text" placeholder="Policy name"
+          <input class="cp-input" type="text"
+            placeholder="allow-lan-to-internet"
+            title="Policy name — unique identifier used in logs"
             value="${_esc(p.name)}" oninput="CustomPolicy._updateFwPolicy(${i},'name',this.value)" style="flex:2;min-width:130px">
-          <input class="cp-input" type="text" placeholder="Src intf"
+          <input class="cp-input" type="text"
+            placeholder="port1 · internal · lan"
+            title="Source interface (ingress). Use the FortiOS interface name: port1, internal, dmz, etc."
             value="${_esc(p.srcintf)}" oninput="CustomPolicy._updateFwPolicy(${i},'srcintf',this.value)" style="flex:1;min-width:80px">
-          <input class="cp-input" type="text" placeholder="Dst intf"
+          <input class="cp-input" type="text"
+            placeholder="wan1 · port2 · dmz"
+            title="Destination interface (egress). E.g. wan1 for internet, dmz for DMZ segment"
             value="${_esc(p.dstintf)}" oninput="CustomPolicy._updateFwPolicy(${i},'dstintf',this.value)" style="flex:1;min-width:80px">
-          <input class="cp-input" type="text" placeholder="Src addr (all)"
+          <input class="cp-input" type="text"
+            placeholder="all · LAN_subnet · 10.0.0.0/8"
+            title="Source address object. Use 'all' or a defined address/group name"
             value="${_esc(p.srcaddr)}" oninput="CustomPolicy._updateFwPolicy(${i},'srcaddr',this.value)" style="flex:1;min-width:90px">
-          <input class="cp-input" type="text" placeholder="Dst addr (all)"
+          <input class="cp-input" type="text"
+            placeholder="all · DMZ_server · 1.1.1.1"
+            title="Destination address object. Use 'all', a VIP name (for DNAT), or address group"
             value="${_esc(p.dstaddr)}" oninput="CustomPolicy._updateFwPolicy(${i},'dstaddr',this.value)" style="flex:1;min-width:90px">
-          <input class="cp-input" type="text" placeholder="Service (ALL)"
+          <input class="cp-input" type="text"
+            placeholder="ALL · HTTPS · DNS · SSH"
+            title="Service name: ALL, HTTP, HTTPS, DNS, SSH, RDP, PING — or a custom service object"
             value="${_esc(p.service)}" oninput="CustomPolicy._updateFwPolicy(${i},'service',this.value)" style="flex:1;min-width:80px">
-          <select class="cp-select" onchange="CustomPolicy._updateFwPolicy(${i},'action',this.value)" style="width:90px">
+          <select class="cp-select" title="accept = allow; deny = block and log"
+            onchange="CustomPolicy._updateFwPolicy(${i},'action',this.value)" style="width:90px">
             <option value="accept" ${p.action==='accept'?'selected':''}>accept</option>
             <option value="deny"   ${p.action==='deny'  ?'selected':''}>deny</option>
           </select>
-          <label style="font-size:.78rem;display:flex;align-items:center;gap:.3rem">
+          <label style="font-size:.78rem;display:flex;align-items:center;gap:.3rem" title="Enable NAT (SNAT) — translates source IP to egress interface IP for outbound traffic">
             <input type="checkbox" ${p.nat?'checked':''} onchange="CustomPolicy._updateFwPolicy(${i},'nat',this.checked)"> NAT
           </label>
         </div>
       </div>`).join('');
+    if (_fwPolicies.length && !c.querySelector('.cp-field-hdr')) c.insertAdjacentHTML('afterbegin', hint + hdr);
   }
   function _addFwPolicy()          { _fwPolicies.push({ name:'', srcintf:'port1', dstintf:'port2', srcaddr:'all', dstaddr:'all', service:'ALL', action:'accept', nat:true }); _renderFwPolicies(); }
   function _removeFwPolicy(i)      { _fwPolicies.splice(i,1); _renderFwPolicies(); }

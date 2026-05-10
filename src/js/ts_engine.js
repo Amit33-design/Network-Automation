@@ -111,52 +111,87 @@ const TsEngine = (() => {
 
     const newDevices = new Map();
     const newLinks   = [];
-    let current = {};
 
-    // Regex patterns for CDP detail / LLDP detail
-    const patterns = {
-      deviceId:    /Device ID[:\s]+([^\n,]+)/i,
-      ip:          /IP address[:\s]+(\d+\.\d+\.\d+\.\d+)/i,
-      platform:    /Platform[:\s]+([^,\n]+)/i,
-      localIface:  /Interface[:\s]+([^,\n]+),?\s*Port ID/i,
-      remoteIface: /Port ID[^:]*[:\s]+([^\n]+)/i,
-      // LLDP variants
-      sysName:     /System Name[:\s]+([^\n]+)/i,
-      portDescr:   /Port Description[:\s]+([^\n]+)/i,
-    };
+    // ── Extract local hostname from CLI prompt (user@hostname> or hostname#) ──
+    const promptMatch = raw.match(/^(\S+?)[@>](\S+?)(?:[>#])/m) ||
+                        raw.match(/^(\S+)[>#]/m);
+    const localHost = promptMatch ? (promptMatch[2] || promptMatch[1]) : '(local)';
 
-    // Split on blank line or "---" separators
-    const blocks = raw.split(/\n(?=Device ID|System Name|\-{3,})/gi).filter(b => b.trim());
+    // ── Detect Juniper / tabular LLDP format ──────────────────────────
+    // Header: "Local Interface  Parent Interface  Chassis Id  Port info  System Name"
+    const juniperHdr = /Local Interface\s+Parent Interface\s+Chassis Id\s+Port info\s+System Name/i;
+    if (juniperHdr.test(raw)) {
+      const lines = raw.split('\n');
+      // Find the header line to establish column offsets
+      const hdrLineIdx = lines.findIndex(l => juniperHdr.test(l));
+      const hdrLine    = lines[hdrLineIdx] || '';
+      const colLocal   = hdrLine.search(/Local Interface/i);
+      const colChassis = hdrLine.search(/Chassis Id/i);
+      const colPort    = hdrLine.search(/Port info/i);
+      const colSysName = hdrLine.search(/System Name/i);
 
-    blocks.forEach(block => {
-      const devId   = (block.match(patterns.deviceId)  || block.match(patterns.sysName))?.[1]?.trim();
-      const ip      = block.match(patterns.ip)?.[1]?.trim()      || '';
-      const plat    = block.match(patterns.platform)?.[1]?.trim() || 'Unknown';
-      const lIface  = block.match(patterns.localIface)?.[1]?.trim() || '';
-      const rIface  = (block.match(patterns.remoteIface)?.[1] || block.match(patterns.portDescr)?.[1] || '').trim();
+      lines.slice(hdrLineIdx + 1).forEach(line => {
+        if (!line.trim() || /^[-=\s]*$/.test(line)) return;
+        // Tabular: extract by character position (columns are fixed-width padded)
+        const localIface = line.substring(colLocal,   colChassis).trim();
+        const chassis    = line.substring(colChassis, colPort).trim();
+        const portInfo   = line.substring(colPort,    colSysName).trim();
+        const sysName    = line.substring(colSysName).trim();
 
-      if (!devId) return;
+        if (!sysName || !localIface) return;
 
-      if (!newDevices.has(devId)) {
-        newDevices.set(devId, { hostname: devId, ip, platform: plat.replace(/\s+/g,' '), status: 'up' });
-      }
+        if (!newDevices.has(sysName)) {
+          newDevices.set(sysName, { hostname: sysName, ip: '', platform: chassis || 'Unknown', status: 'up' });
+        }
+        newLinks.push({ localDev: localHost, localPort: localIface, remoteDev: sysName, remotePort: portInfo, status: 'up' });
+      });
 
-      if (lIface && rIface) {
-        newLinks.push({ localDev: '(local)', localPort: lIface, remoteDev: devId, remotePort: rIface, status: 'up' });
-      }
-    });
+    } else {
+      // ── Cisco CDP detail / LLDP detail block format ──────────────────
+      const patterns = {
+        deviceId:    /Device ID[:\s]+([^\n,]+)/i,
+        ip:          /IP address[:\s]+(\d+\.\d+\.\d+\.\d+)/i,
+        platform:    /Platform[:\s]+([^,\n]+)/i,
+        localIface:  /Interface[:\s]+([^,\n]+),?\s*Port ID/i,
+        remoteIface: /Port ID[^:]*[:\s]+([^\n]+)/i,
+        sysName:     /System Name[:\s]+([^\n]+)/i,
+        portDescr:   /Port Description[:\s]+([^\n]+)/i,
+        mgmtAddr:    /Management Address[^:]*:\s*\n\s*IP[:\s]+(\d+\.\d+\.\d+\.\d+)/i,
+      };
 
-    // Merge into _devices / _links
+      const blocks = raw.split(/\n(?=Device ID|System Name|\-{3,})/gi).filter(b => b.trim());
+      blocks.forEach(block => {
+        const devId  = (block.match(patterns.deviceId) || block.match(patterns.sysName))?.[1]?.trim();
+        const ip     = (block.match(patterns.ip) || block.match(patterns.mgmtAddr))?.[1]?.trim() || '';
+        const plat   = block.match(patterns.platform)?.[1]?.trim() || 'Unknown';
+        const lIface = block.match(patterns.localIface)?.[1]?.trim() || '';
+        const rIface = (block.match(patterns.remoteIface)?.[1] || block.match(patterns.portDescr)?.[1] || '').trim();
+
+        if (!devId) return;
+        if (!newDevices.has(devId)) {
+          newDevices.set(devId, { hostname: devId, ip, platform: plat.replace(/\s+/g,' '), status: 'up' });
+        }
+        if (lIface && rIface) {
+          newLinks.push({ localDev: localHost, localPort: lIface, remoteDev: devId, remotePort: rIface, status: 'up' });
+        }
+      });
+    }
+
+    // ── Merge into _devices / _links ──────────────────────────────────
     newDevices.forEach(d => { if (!_devices.find(x => x.hostname === d.hostname)) _devices.push(d); });
+    // Add local device itself if it has links
+    if (newLinks.length && !_devices.find(x => x.hostname === localHost)) {
+      _devices.push({ hostname: localHost, ip: '', platform: 'local', status: 'up' });
+    }
     newLinks.forEach(l => _links.push(l));
 
     const preview = [...newDevices.values()].map(d =>
-      `${d.hostname.padEnd(24)} ${d.ip.padEnd(16)} ${d.platform}`
+      `${d.hostname.padEnd(30)} ${d.ip.padEnd(16)} ${d.platform}`
     ).join('\n');
 
     document.getElementById('ts-topo-preview').textContent = preview || 'No devices parsed — check input format';
     _renderTopology();
-    _showStatus(`✅ Parsed ${newDevices.size} neighbors, ${newLinks.length} links`, 'ok');
+    _showStatus(`✅ Parsed ${newDevices.size} neighbors, ${newLinks.length} links (local: ${localHost})`, 'ok');
   }
 
   /* ── Topology Render ─────────────────────────────────────────── */
