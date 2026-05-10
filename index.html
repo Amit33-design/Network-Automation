@@ -552,10 +552,31 @@
       <!-- Group: Deploy -->
       <div class="sb-group">
         <div class="sb-group-label">Deploy &amp; Validate</div>
-        <button class="sb-item" data-step="6" onclick="jumpStep(6);closeSidebar()">
+        <button class="sb-item" data-step="6" data-sub="deploy" onclick="jumpSubStep(6,'deploy');closeSidebar()">
           <span class="sb-icon">🚀</span>
           <span class="sb-label">Deploy &amp; Validate</span>
           <span class="sb-badge">6</span>
+        </button>
+        <button class="sb-item sb-sub-item" data-step="6" data-sub="ztp" onclick="jumpSubStep(6,'ztp');closeSidebar()">
+          <span class="sb-icon">📡</span>
+          <span class="sb-label">Zero Touch Provisioning</span>
+        </button>
+        <button class="sb-item sb-sub-item" data-step="6" data-sub="monitoring" onclick="jumpSubStep(6,'monitoring');closeSidebar()">
+          <span class="sb-icon">📊</span>
+          <span class="sb-label">Monitoring &amp; Alerts</span>
+        </button>
+        <button class="sb-item sb-sub-item" data-step="6" data-sub="troubleshoot" onclick="jumpSubStep(6,'troubleshoot');closeSidebar()">
+          <span class="sb-icon">🔬</span>
+          <span class="sb-label">RCA &amp; Troubleshoot</span>
+        </button>
+      </div>
+
+      <!-- Group: Tools -->
+      <div class="sb-group">
+        <div class="sb-group-label">Tools</div>
+        <button class="sb-item" id="sb-ts-btn" onclick="showTsEngine();closeSidebar()">
+          <span class="sb-icon">🛠️</span>
+          <span class="sb-label">Troubleshooting Engine</span>
         </button>
       </div>
 
@@ -1387,6 +1408,18 @@
           <span>Devices</span>
           <span id="dev-count-badge" class="badge badge-blue">0</span>
         </div>
+        <!-- Layer filter chips -->
+        <div class="layer-filter-bar" id="layer-filter-bar">
+          <button class="layer-filter-btn active" data-layer="all"          onclick="filterDevLayer('all',this)">All</button>
+          <button class="layer-filter-btn" data-layer="fw"                  onclick="filterDevLayer('fw',this)">🔒 FW</button>
+          <button class="layer-filter-btn" data-layer="campus-core"         onclick="filterDevLayer('campus-core',this)">⚙️ Core</button>
+          <button class="layer-filter-btn" data-layer="campus-dist"         onclick="filterDevLayer('campus-dist',this)">🔀 Dist</button>
+          <button class="layer-filter-btn" data-layer="campus-access"       onclick="filterDevLayer('campus-access',this)">🔌 Access</button>
+          <button class="layer-filter-btn" data-layer="dc-spine"            onclick="filterDevLayer('dc-spine',this)">🦴 Spine</button>
+          <button class="layer-filter-btn" data-layer="dc-leaf"             onclick="filterDevLayer('dc-leaf',this)">🍃 Leaf</button>
+          <button class="layer-filter-btn" data-layer="gpu-spine"           onclick="filterDevLayer('gpu-spine',this)">🧠 GPU Sp</button>
+          <button class="layer-filter-btn" data-layer="gpu-tor"             onclick="filterDevLayer('gpu-tor',this)">⚡ TOR</button>
+        </div>
         <div id="dev-list-body"></div>
       </div>
 
@@ -2109,6 +2142,194 @@
 
 </main><!-- /app -->
 
+<!-- ══════════════════════════════════════════════════════════════════
+     TROUBLESHOOTING ENGINE — standalone panel (outside step flow)
+════════════════════════════════════════════════════════════════════ -->
+<div id="panel-ts">
+
+  <div class="section-head" style="padding:0 0 .5rem">
+    <h2>🛠️ Troubleshooting Engine</h2>
+    <p>Analyze and troubleshoot existing networks independent of any design. Discover topology via CDP/LLDP, poll SNMP events, and run guided diagnostic playbooks.</p>
+  </div>
+
+  <!-- Stats bar -->
+  <div class="ts-stat-bar">
+    <div class="ts-stat"><span class="ts-stat-num" id="ts-stat-devices">0</span><span class="ts-stat-lbl">Devices</span></div>
+    <div class="ts-stat"><span class="ts-stat-num" id="ts-stat-links">0</span><span class="ts-stat-lbl">Links</span></div>
+    <div class="ts-stat"><span class="ts-stat-num" id="ts-stat-issues">0</span><span class="ts-stat-lbl">Issues</span></div>
+    <div class="ts-stat"><span class="ts-stat-num" id="ts-stat-events">0</span><span class="ts-stat-lbl">SNMP Events</span></div>
+  </div>
+
+  <!-- Network Discovery -->
+  <div class="ts-section">
+    <div class="ts-section-hdr">
+      🔍 Network Discovery
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-primary" style="font-size:.78rem;padding:.3rem .8rem" onclick="TsEngine.discover()">Discover</button>
+        <button class="btn btn-ghost"   style="font-size:.78rem;padding:.3rem .7rem" onclick="TsEngine.clearAll()">Clear</button>
+      </div>
+    </div>
+    <div class="ts-grid-3">
+      <div>
+        <div class="ts-label">Seed Hosts / IP Ranges</div>
+        <textarea id="ts-seed-hosts" class="ts-input" rows="4"
+          placeholder="192.168.1.1&#10;10.0.0.0/24&#10;172.16.0.1"></textarea>
+      </div>
+      <div>
+        <div class="ts-label">SNMP</div>
+        <input id="ts-snmp-community" class="ts-input" type="text" placeholder="Community string (e.g. public)" style="margin-bottom:.4rem">
+        <select id="ts-snmp-ver" class="ts-input" style="margin-bottom:.4rem">
+          <option value="v2c">SNMPv2c</option>
+          <option value="v3">SNMPv3</option>
+        </select>
+        <input id="ts-snmp-v3-user" class="ts-input" type="text" placeholder="SNMPv3 username (v3 only)">
+      </div>
+      <div>
+        <div class="ts-label">SSH / CLI</div>
+        <input id="ts-ssh-user" class="ts-input" type="text"     placeholder="SSH username" style="margin-bottom:.4rem">
+        <input id="ts-ssh-pass" class="ts-input" type="password" placeholder="SSH password" style="margin-bottom:.4rem">
+        <select id="ts-cli-proto" class="ts-input">
+          <option value="ssh">SSH (port 22)</option>
+          <option value="telnet">Telnet (port 23)</option>
+        </select>
+      </div>
+    </div>
+    <div id="ts-discover-status" style="margin-top:.75rem;font-size:.8rem;color:var(--txt3)">
+      Discovery will query reachable devices via SNMP sysDescr + CDP/LLDP MIBs. Requires backend connectivity.
+    </div>
+  </div>
+
+  <!-- CDP / LLDP Paste & Parse -->
+  <div class="ts-section">
+    <div class="ts-section-hdr">
+      📋 Paste CDP / LLDP Neighbors
+      <button class="btn btn-primary" style="font-size:.78rem;padding:.3rem .8rem" onclick="TsEngine.parseNeighbors()">Build Topology</button>
+    </div>
+    <div class="ts-grid-2">
+      <div>
+        <div class="ts-label" style="margin-bottom:.3rem">Paste <code>show cdp neighbors detail</code> or <code>show lldp neighbors detail</code> output</div>
+        <textarea id="ts-neighbor-input" class="ts-input" rows="10"
+          placeholder="Device ID: spine-01&#10;  IP address: 10.0.0.1&#10;  Platform:  N9K-C9332PQ&#10;  Interface: Ethernet1/1&#10;  Port ID (outgoing port): Ethernet1/1&#10;  ..."></textarea>
+      </div>
+      <div>
+        <div class="ts-label" style="margin-bottom:.3rem">Parsed Topology Preview</div>
+        <div id="ts-topo-preview" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:.6rem;min-height:240px;font-size:.76rem;font-family:monospace;overflow-y:auto;color:var(--txt2)">
+          Paste neighbor output and click "Build Topology"
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Discovered Topology Table -->
+  <div class="ts-section">
+    <div class="ts-section-hdr">🗺️ Discovered Topology</div>
+    <div id="ts-topo-empty" style="color:var(--txt3);font-size:.82rem;text-align:center;padding:1.5rem 0">
+      No topology discovered yet. Use Discovery or paste CDP/LLDP output above.
+    </div>
+    <div id="ts-topo-content" style="display:none">
+      <div class="ts-grid-2" style="margin-bottom:1rem">
+        <div>
+          <div class="ts-label" style="margin-bottom:.5rem">Devices</div>
+          <table class="ts-topo-table" id="ts-device-table">
+            <thead><tr><th>Hostname</th><th>IP</th><th>Platform</th><th>Status</th></tr></thead>
+            <tbody id="ts-device-tbody"></tbody>
+          </table>
+        </div>
+        <div>
+          <div class="ts-label" style="margin-bottom:.5rem">Links</div>
+          <table class="ts-topo-table" id="ts-link-table">
+            <thead><tr><th>Local</th><th>Local Port</th><th>Remote</th><th>Remote Port</th><th>Status</th></tr></thead>
+            <tbody id="ts-link-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SNMP Event Monitor -->
+  <div class="ts-section">
+    <div class="ts-section-hdr">
+      📡 SNMP Event Monitor
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <span id="ts-snmp-status" style="font-size:.72rem;color:var(--txt3)">Stopped</span>
+        <button class="btn btn-primary"  style="font-size:.78rem;padding:.3rem .7rem" id="ts-snmp-start-btn" onclick="TsEngine.startSnmpPoll()">▶ Start</button>
+        <button class="btn btn-ghost"    style="font-size:.78rem;padding:.3rem .7rem" onclick="TsEngine.stopSnmpPoll()">■ Stop</button>
+        <button class="btn btn-ghost"    style="font-size:.78rem;padding:.3rem .7rem" onclick="TsEngine.clearSnmpLog()">Clear</button>
+      </div>
+    </div>
+    <div class="ts-grid-2" style="margin-bottom:.75rem">
+      <div>
+        <div class="ts-label">Poll Target(s) (one per line)</div>
+        <textarea id="ts-snmp-targets" class="ts-input" rows="3" placeholder="10.0.0.1&#10;10.0.0.2"></textarea>
+      </div>
+      <div>
+        <div class="ts-label">Poll Interval</div>
+        <select id="ts-snmp-interval" class="ts-input" style="margin-bottom:.4rem">
+          <option value="10">Every 10 s</option>
+          <option value="30" selected>Every 30 s</option>
+          <option value="60">Every 60 s</option>
+          <option value="300">Every 5 min</option>
+        </select>
+        <div class="ts-label" style="margin-top:.4rem">OIDs to monitor</div>
+        <input id="ts-snmp-oids" class="ts-input" type="text"
+          value="ifOperStatus, bgpPeerState, sysUpTime"
+          placeholder="ifOperStatus, bgpPeerState, …">
+      </div>
+    </div>
+    <div class="ts-event-log" id="ts-snmp-log">
+      <div style="color:var(--txt3);text-align:center;padding-top:2rem">SNMP event log will appear here</div>
+    </div>
+  </div>
+
+  <!-- Diagnostic Playbooks -->
+  <div class="ts-section">
+    <div class="ts-section-hdr">🔬 Diagnostic Playbooks</div>
+    <div class="ts-playbook-grid">
+      <button class="ts-playbook-btn" onclick="TsEngine.runPlaybook('bgp-down')">
+        🔴 BGP Neighbor Down<br><span style="font-size:.68rem;color:var(--txt3)">Check peering, timers, policies</span>
+      </button>
+      <button class="ts-playbook-btn" onclick="TsEngine.runPlaybook('interface-flap')">
+        🟡 Interface Flapping<br><span style="font-size:.68rem;color:var(--txt3)">CRC, duplex, SFP, cable</span>
+      </button>
+      <button class="ts-playbook-btn" onclick="TsEngine.runPlaybook('high-cpu')">
+        🔴 High CPU / Memory<br><span style="font-size:.68rem;color:var(--txt3)">Process analysis, storm control</span>
+      </button>
+      <button class="ts-playbook-btn" onclick="TsEngine.runPlaybook('packet-loss')">
+        🟡 Packet Loss / Latency<br><span style="font-size:.68rem;color:var(--txt3)">QoS drops, buffer, ECMP</span>
+      </button>
+      <button class="ts-playbook-btn" onclick="TsEngine.runPlaybook('stp-issue')">
+        🟡 Spanning Tree Loop<br><span style="font-size:.68rem;color:var(--txt3)">BPDU, topology change, ports</span>
+      </button>
+      <button class="ts-playbook-btn" onclick="TsEngine.runPlaybook('vlan-missing')">
+        ⚪ VLAN / L2 Reachability<br><span style="font-size:.68rem;color:var(--txt3)">VLAN table, trunk, MAC</span>
+      </button>
+      <button class="ts-playbook-btn" onclick="TsEngine.runPlaybook('evpn-vxlan')">
+        🔵 EVPN / VXLAN Issue<br><span style="font-size:.68rem;color:var(--txt3)">NVE peers, VNI, BGP EVPN</span>
+      </button>
+      <button class="ts-playbook-btn" onclick="TsEngine.runPlaybook('rdma-pfc')">
+        🧠 RoCEv2 / PFC Issue<br><span style="font-size:.68rem;color:var(--txt3)">PFC storms, ECN, buffer drops</span>
+      </button>
+    </div>
+    <div id="ts-playbook-output" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:1rem;font-size:.82rem;line-height:1.7"></div>
+  </div>
+
+  <!-- RCA within TS Engine -->
+  <div class="ts-section">
+    <div class="ts-section-hdr">🔬 AI Root Cause Analysis</div>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem">
+      <input id="ts-rca-symptom" class="ts-input" type="text"
+        placeholder="Describe the symptom (e.g. intermittent packet drops on spine-01 Eth1/1)…"
+        style="flex:2;min-width:200px">
+      <input id="ts-rca-devices" class="ts-input" type="text"
+        placeholder="Affected device(s) comma-sep"
+        style="flex:1;min-width:140px">
+      <button class="btn btn-primary" style="font-size:.82rem" onclick="TsEngine.runRca()">Analyze</button>
+    </div>
+    <div id="ts-rca-output" style="display:none"></div>
+  </div>
+
+</div><!-- /panel-ts -->
+
 <!-- ── Bottom Navigation ───────────────────────────────────────────── -->
 <nav id="bottom-nav">
   <div class="left">
@@ -2155,6 +2376,7 @@
 <script src="src/js/demo.js"></script>
 <script src="src/js/landing.js"></script>
 <script src="src/js/custom_policy.js"></script>
+<script src="src/js/ts_engine.js"></script>
 <script src="src/js/init.js"></script>
 <script>
 /* ── Policy options global helper ──────────────────────────── */

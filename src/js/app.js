@@ -35,8 +35,11 @@ function goStep(dir) {
   jumpStep(next);
 }
 
+let _activeSubStep = 'deploy';   // sub-section active within step 6
+let _tsEngineOpen  = false;      // whether TS engine panel is showing
+
 function jumpStep(n) {
-  // hide current
+  hideTsEngine();
   document.getElementById(`step-${STATE.step}`).classList.remove('active');
   STATE.step = n;
   document.getElementById(`step-${n}`).classList.add('active');
@@ -45,13 +48,50 @@ function jumpStep(n) {
   updateBottomNav();
   updateSummary();
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  // Keep intent panel in sync
   if (typeof renderIntentPanel === 'function') renderIntentPanel();
-  // Initialize gate + policy when step 6 is reached
   if (n === 6) {
     if (typeof initGate === 'function')         initGate();
     if (typeof renderPolicyPanel === 'function') renderPolicyPanel();
   }
+}
+
+/* Jump to step N then scroll to a sub-section anchor */
+function jumpSubStep(n, subId) {
+  _activeSubStep = subId;
+  if (STATE.step !== n || _tsEngineOpen) jumpStep(n);
+  renderSidebar();
+  const anchors = { deploy:'step-6', ztp:'ztp-section', monitoring:'obs-section', troubleshoot:'obs-section' };
+  const targetId = anchors[subId] || `step-${n}`;
+  const el = document.getElementById(targetId);
+  if (el) setTimeout(() => el.scrollIntoView({ behavior:'smooth', block:'start' }), 120);
+
+  // For troubleshoot sub-step, scroll to RCA section within obs-section
+  if (subId === 'troubleshoot') {
+    const rca = document.getElementById('obs-rca-results');
+    if (rca) setTimeout(() => rca.closest('.obs-block')?.scrollIntoView({ behavior:'smooth', block:'start' }), 200);
+  }
+}
+
+/* Troubleshooting Engine panel toggle */
+function showTsEngine() {
+  _tsEngineOpen = true;
+  document.getElementById(`step-${STATE.step}`)?.classList.remove('active');
+  document.getElementById('panel-ts').classList.add('visible');
+  document.getElementById('bottom-nav').style.display = 'none';
+  renderSidebar();
+  const bcGroup = document.getElementById('bc-group-name');
+  const bcStep  = document.getElementById('bc-step-name');
+  if (bcGroup) bcGroup.textContent = 'Tools';
+  if (bcStep)  bcStep.textContent  = 'Troubleshooting Engine';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function hideTsEngine() {
+  if (!_tsEngineOpen) return;
+  _tsEngineOpen = false;
+  document.getElementById('panel-ts').classList.remove('visible');
+  document.getElementById(`step-${STATE.step}`)?.classList.add('active');
+  document.getElementById('bottom-nav').style.display = '';
 }
 
 /* ── Sidebar ─────────────────────────────────────────────────────── */
@@ -61,22 +101,42 @@ const _SB_GROUPS = [
   { label: 'Deploy & Validate', steps: [6]       },
 ];
 
+const _SUB_LABELS = { deploy:'Deploy & Validate', ztp:'Zero Touch Provisioning', monitoring:'Monitoring & Alerts', troubleshoot:'RCA & Troubleshoot' };
+
 function renderSidebar() {
   const s = STATE.step;
-  // Update active state on all sb-items that have data-step
+
+  // TS Engine button
+  const tsBtn = document.getElementById('sb-ts-btn');
+  if (tsBtn) tsBtn.classList.toggle('active', _tsEngineOpen);
+
+  // Regular step items
   document.querySelectorAll('#sidebar .sb-item[data-step]').forEach(btn => {
-    const n = parseInt(btn.dataset.step, 10);
-    btn.classList.toggle('active', n === s);
-    btn.classList.toggle('done',   n < s);
+    const n   = parseInt(btn.dataset.step, 10);
+    const sub = btn.dataset.sub;
+    if (_tsEngineOpen) {
+      btn.classList.remove('active', 'done');
+      return;
+    }
+    if (sub) {
+      // sub-items: active only when on step 6 + matching sub
+      btn.classList.toggle('active', n === s && sub === _activeSubStep);
+      btn.classList.remove('done');
+    } else {
+      btn.classList.toggle('active', n === s && !sub);
+      btn.classList.toggle('done',   n < s);
+    }
   });
 
-  // Update header breadcrumb
-  const step = STEPS[s - 1];
+  if (_tsEngineOpen) return;
+
+  // Header breadcrumb
+  const step  = STEPS[s - 1];
   const group = _SB_GROUPS.find(g => g.steps.includes(s));
   const bcGroup = document.getElementById('bc-group-name');
   const bcStep  = document.getElementById('bc-step-name');
   if (bcGroup) bcGroup.textContent = group ? group.label : '';
-  if (bcStep)  bcStep.textContent  = step  ? step.label  : '';
+  if (bcStep)  bcStep.textContent  = (s === 6 && _SUB_LABELS[_activeSubStep]) ? _SUB_LABELS[_activeSubStep] : (step ? step.label : '');
 }
 
 function toggleSidebar() {

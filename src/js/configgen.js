@@ -142,8 +142,10 @@ const _GROUP_LABELS = {
 };
 
 function renderDeviceList() {
-  DEVICE_LIST = buildDeviceList();
-  _devFilter  = '';
+  DEVICE_LIST  = buildDeviceList();
+  _devFilter   = '';
+  _layerFilter = 'all';
+  document.querySelectorAll('.layer-filter-btn').forEach(b => b.classList.toggle('active', b.dataset.layer === 'all'));
 
   const badge = document.getElementById('dev-count-badge');
   badge.textContent = DEVICE_LIST.length;
@@ -171,14 +173,30 @@ function renderDeviceList() {
 
 function _filterDevList(query) {
   _devFilter = query.trim().toLowerCase();
-  const filtered = _devFilter
-    ? DEVICE_LIST.filter(d => d.name.toLowerCase().includes(_devFilter) || d.role.toLowerCase().includes(_devFilter))
-    : DEVICE_LIST;
+  _applyDevFilters();
+}
 
+let _layerFilter = 'all';
+
+function filterDevLayer(layer, btn) {
+  _layerFilter = layer;
+  // Update chip active state
+  document.querySelectorAll('.layer-filter-btn').forEach(b => b.classList.toggle('active', b.dataset.layer === layer));
+  _applyDevFilters();
+}
+
+function _applyDevFilters() {
+  let list = DEVICE_LIST;
+  if (_layerFilter && _layerFilter !== 'all') {
+    list = list.filter(d => d.layer === _layerFilter);
+  }
+  if (_devFilter) {
+    list = list.filter(d => d.name.toLowerCase().includes(_devFilter) || d.role.toLowerCase().includes(_devFilter));
+  }
   const badge = document.getElementById('dev-count-badge');
-  badge.textContent = _devFilter ? `${filtered.length}/${DEVICE_LIST.length}` : DEVICE_LIST.length;
-
-  _renderDevItems(filtered);
+  const total = DEVICE_LIST.length;
+  badge.textContent = list.length < total ? `${list.length}/${total}` : total;
+  _renderDevItems(list);
 }
 
 function _renderDevItems(devs) {
