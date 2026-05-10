@@ -1338,6 +1338,32 @@
       box-shadow: var(--shadow);
       animation: fadeUp .25s ease;
     }
+
+    /* ── Generic modal overlay class (custom-policy, ZTP, etc.) ── */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,.8); backdrop-filter: blur(6px);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 1.5rem 1rem;
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
+    }
+    .modal-box {
+      background: var(--bg2); border: 1px solid var(--border-hi);
+      border-radius: var(--radius2); width: 100%;
+      box-shadow: var(--shadow);
+      animation: fadeUp .25s ease;
+      margin: auto 0;
+    }
+    /* Mobile: full-width cards, stack grids */
+    .cp-grid-2 {
+      display: grid; grid-template-columns: 1fr 1fr; gap: .75rem;
+    }
+    @media (max-width: 600px) {
+      .modal-overlay { padding: .75rem .5rem; }
+      .cp-grid-2 { grid-template-columns: 1fr; }
+      .cp-row { flex-direction: column; align-items: stretch; }
+      .cp-input.cp-vlan-id { width: 100%; }
+    }
     .modal-head {
       padding: 1.25rem 1.5rem;
       border-bottom: 1px solid var(--border);

@@ -1767,7 +1767,7 @@
       <div style="padding:1.25rem 1.5rem;display:flex;flex-direction:column;gap:1.25rem">
 
         <!-- Policy name + device type -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+        <div class="cp-grid-2">
           <div>
             <label class="cp-label">Policy Name *</label>
             <input id="cp-policy-name" class="cp-input" type="text"
@@ -1798,7 +1798,7 @@
         <details>
           <summary class="cp-section-title">🟢 BGP</summary>
           <div style="margin-top:.75rem;display:flex;flex-direction:column;gap:.75rem">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+            <div class="cp-grid-2">
               <div>
                 <label class="cp-label">ASN</label>
                 <input id="cp-bgp-asn" class="cp-input" type="number" placeholder="e.g. 65001" style="width:100%">
@@ -1843,7 +1843,7 @@
         <!-- NTP / DNS -->
         <details>
           <summary class="cp-section-title">🕐 NTP &amp; DNS</summary>
-          <div style="margin-top:.75rem;display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+          <div class="cp-grid-2" style="margin-top:.75rem">
             <div>
               <label class="cp-label">NTP Servers (one per line)</label>
               <textarea id="cp-ntp" class="cp-textarea" rows="3"
@@ -1951,11 +1951,24 @@ function updatePolicyOptions() {
 /* ── Custom Policy modal helpers ──────────────────────────── */
 function openCPModal() {
   const m = document.getElementById('custom-policy-modal');
-  if (m) { m.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+  if (!m) return;
+  // iOS Safari: lock body scroll without overflow:hidden (avoids select-freeze bug)
+  const scrollY = window.scrollY;
+  document.body.dataset.scrollY = scrollY;
+  document.body.style.cssText += `;position:fixed;top:-${scrollY}px;left:0;right:0;`;
+  m.style.display = 'flex';
 }
 function closeCPModal() {
   const m = document.getElementById('custom-policy-modal');
-  if (m) { m.style.display = 'none'; document.body.style.overflow = ''; }
+  if (!m) return;
+  m.style.display = 'none';
+  // Restore body scroll
+  const scrollY = parseInt(document.body.dataset.scrollY || '0', 10);
+  document.body.style.position = '';
+  document.body.style.top = '';
+  document.body.style.left = '';
+  document.body.style.right = '';
+  window.scrollTo(0, scrollY);
 }
 /* ── Global bake toggle (pre-checks all new row Bake checkboxes) ── */
 function toggleGlobalBake(checked) {

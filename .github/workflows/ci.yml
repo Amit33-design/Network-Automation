@@ -31,21 +31,49 @@ jobs:
           pip install --upgrade pip
           pip install --prefer-binary jinja2 pytest pytest-cov pytest-asyncio
           # Minimal subset needed for tests (skip heavy network/grpc libs)
-          pip install fastapi pydantic pydantic-settings cryptography pyyaml
+          pip install fastapi pydantic pydantic-settings cryptography pyyaml pyjwt
 
       - name: Run tests with coverage
+        working-directory: backend
+        env:
+          JWT_SECRET: ci-test-secret-not-for-prod
+          AUTO_CREATE_TABLES: "false"
         run: |
-          cd backend
           pytest tests/ -v --tb=short \
-            --cov=config_gen \
+            --cov=. \
+            --cov-omit="tests/*,.venv/*,alembic/*" \
             --cov-report=term-missing \
-            --cov-report=xml:coverage.xml
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=60
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
           name: coverage-py${{ matrix.python-version }}
           path: backend/coverage.xml
+
+  # ── Frontend TypeScript typecheck ────────────────────────────
+  frontend-typecheck:
+    name: Frontend TypeScript
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: TypeScript typecheck
+        working-directory: frontend
+        run: npm run typecheck
 
   # ── Ansible playbook syntax check ────────────────────────────
   ansible-lint:

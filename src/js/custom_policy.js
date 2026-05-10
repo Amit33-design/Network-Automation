@@ -505,11 +505,12 @@ const CustomPolicy = (() => {
     try {
       let data;
       const base = _backendUrl();
-      if (base || window.location.protocol !== 'file:') {
+      if (base) {
+        // Only call backend when an explicit URL is configured (avoids unnecessary
+        // network round-trips on GitHub Pages / offline, which freeze mobile browsers)
         try {
           data = await _post('/api/custom-policy/generate', payload);
         } catch (_) {
-          // backend unavailable — generate client-side
           data = _generateClientSide(payload);
         }
       } else {
@@ -533,9 +534,14 @@ const CustomPolicy = (() => {
 
     try {
       let data;
-      try {
-        data = await _post('/api/custom-policy/validate', payload);
-      } catch (_) {
+      const base = _backendUrl();
+      if (base) {
+        try {
+          data = await _post('/api/custom-policy/validate', payload);
+        } catch (_) {
+          data = _validateClientSide(payload);
+        }
+      } else {
         data = _validateClientSide(payload);
       }
       let html = '';

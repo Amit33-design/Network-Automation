@@ -107,16 +107,8 @@ const BackendClient = (() => {
   }
 
   /* ── Payload builders ───────────────────────────────────────── */
-  function buildDeployPayload(sessionId) {
-    return {
-      session_id: sessionId,
-      intent:     typeof buildIntentObject === 'function' ? buildIntentObject() : {},
-      devices:    _getDeviceInventory(),
-    };
-  }
 
   function _getDeviceInventory() {
-    // Read devices from the backend settings inventory panel
     const rows = document.querySelectorAll('#backend-device-rows .backend-device-row');
     if (rows.length === 0) return [];
     return [...rows].map(row => ({
@@ -130,6 +122,84 @@ const BackendClient = (() => {
       enable_secret:row.querySelector('.bdr-enable')?.value || '',
       port:         parseInt(row.querySelector('.bdr-port')?.value || '22'),
     })).filter(d => d.hostname);
+  }
+
+  function _buildDesignPayload(dryRun) {
+    // Build a keyed inventory map for the backend DeployRequest schema
+    const inventory = {};
+    for (const d of _getDeviceInventory()) {
+      inventory[d.id || d.hostname] = d;
+    }
+
+    // Map frontend STATE → backend DesignState schema
+    const st = (typeof STATE !== 'undefined') ? STATE : {};
+    return {
+      state: {
+        uc:               st.uc               || 'enterprise',
+        orgName:          st.orgName          || 'My Network',
+        orgSize:          st.orgSize          || 'medium',
+        redundancy:       st.redundancy       || 'ha',
+        fwModel:          st.fwModel          || null,
+        selectedProducts: st.selectedProducts || {},
+        protocols:        st.protocols        || [],
+        security:         st.security         || [],
+        compliance:       st.compliance       || [],
+        vlans:            st.vlans            || [],
+        appFlows:         st.appFlows         || [],
+        include_bgp_policy: st.include_bgp_policy !== false,
+        include_acl:        st.include_acl        !== false,
+        include_dot1x:      st.include_dot1x      !== false,
+        include_qos:        st.include_qos         !== false,
+        include_aaa:        st.include_aaa         !== false,
+      },
+      inventory,
+      dry_run: dryRun,
+    };
+  }
+
+  // Kept for callers that still pass sessionId — returns a compatible shape
+  function buildDeployPayload(sessionId) {
+    return Object.assign(_buildDesignPayload(true), { session_id: sessionId });
+  }
+
+  /* ── Async deploy dispatcher ────────────────────────────────── */
+
+  /**
+   * POST /api/deploy and handle both sync + async (Celery) responses.
+   *
+   * Sync response  → { results, dry_run, duration_s, deployment_id }
+   * Async response → { deployment_id, status:'queued', message }
+   *
+   * When async, opens a WebSocket via LiveDeployFeed/connectDeployStream and
+   * resolves the promise only when the stream reaches a terminal stage.
+   */
+  async function _dispatchDeploy(payload) {
+    const result = await _post('/api/deploy', payload);
+
+    if (result.status === 'queued' && result.deployment_id) {
+      // Async Celery path — subscribe to WebSocket stream
+      return new Promise((resolve, reject) => {
+        if (typeof BackendClient.connectDeployStream === 'function') {
+          BackendClient.connectDeployStream(result.deployment_id, {
+            onClose: () => resolve({ deployment_id: result.deployment_id, async: true, devices: [] }),
+            onError: (err) => reject(new Error(`Deploy stream error: ${err}`)),
+          });
+        } else {
+          resolve(result);
+        }
+      });
+    }
+
+    // Sync path — normalise to the shape deploy.js expects
+    if (!result.devices) {
+      result.devices = Object.entries(result.results || {}).map(([id, r]) => ({
+        device_id:   id,
+        status:      r.success ? 'success' : 'failed',
+        lines_pushed: r.lines_pushed || 0,
+        error:        r.error || '',
+      }));
+    }
+    return result;
   }
 
   /* ── Session ────────────────────────────────────────────────── */
@@ -241,43 +311,57 @@ const BackendClient = (() => {
   }
 
   async function generateConfig() {
-    if (!_sessionId) await createSession();
-    return _post('/api/config/generate', buildDeployPayload(_sessionId));
+    const payload = _buildDesignPayload(true);
+    return _post('/api/generate-configs', payload.state);
   }
 
   async function runPrecheck() {
-    if (!_sessionId) await createSession();
-    connectTerminal(_sessionId);
-    return _post('/api/precheck', buildDeployPayload(_sessionId));
+    const result = await _post('/api/pre-checks', _buildDesignPayload(true));
+    // Normalise CheckResult {host,check,passed,detail} → UI format {name,status,detail}
+    if (result.results) {
+      result.results = result.results.map(r => ({
+        name:   `${r.host}: ${r.check}`,
+        status: r.passed ? 'pass' : 'fail',
+        detail: r.detail || '',
+      }));
+    }
+    return result;
   }
 
   async function backup() {
-    if (!_sessionId) throw new Error('No session — run pre-checks first');
-    return _post('/api/backup', buildDeployPayload(_sessionId));
+    // Backup now runs automatically inside /api/deploy before any push.
+    // This no-op keeps the deploy.js call sequence intact.
+    return { ok: true };
   }
 
-  async function deployFull() {
-    if (!_sessionId) throw new Error('No session — run pre-checks first');
-    return _post('/api/deploy/full', buildDeployPayload(_sessionId));
+  async function deployFull(dryRun = false) {
+    return _dispatchDeploy(_buildDesignPayload(dryRun));
   }
 
-  async function deployDelta() {
-    if (!_sessionId) throw new Error('No session — run pre-checks first');
-    return _post('/api/deploy/delta', buildDeployPayload(_sessionId));
+  async function deployDelta(dryRun = false) {
+    const payload = _buildDesignPayload(dryRun);
+    payload.delta_mode = true;
+    return _dispatchDeploy(payload);
   }
 
   async function runPostcheck() {
-    if (!_sessionId) throw new Error('No session — run deploy first');
-    return _post('/api/postcheck', buildDeployPayload(_sessionId));
+    const result = await _post('/api/post-checks', _buildDesignPayload(true));
+    if (result.results) {
+      result.results = result.results.map(r => ({
+        name:   `${r.host}: ${r.check}`,
+        status: r.passed ? 'pass' : 'fail',
+        detail: r.detail || '',
+      }));
+    }
+    return result;
   }
 
   async function rollback(scope, deviceIds = []) {
-    if (!_sessionId) throw new Error('No session');
-    return _post(`/api/rollback/${scope}`, {
-      session_id: _sessionId,
-      scope,
-      device_ids: deviceIds,
-    });
+    // Phase 2 rollback uses deployment-scoped endpoint; scope maps to last deployment
+    const depList = await listDeployments(null).catch(() => ({ deployments: [] }));
+    const lastDep = (depList.deployments || [])[0];
+    if (lastDep) return rollbackDeployment(lastDep.id);
+    throw new Error('No deployment found to roll back');
   }
 
   /* ── Result → UI mappers ────────────────────────────────────── */
@@ -348,5 +432,8 @@ const BackendClient = (() => {
     deleteDesign,
     listDeployments,
     rollbackDeployment,
+    // Internals exposed for deploy.js wiring
+    _authHeader,
+    _buildDesignPayload,
   };
 })();
