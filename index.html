@@ -1860,7 +1860,8 @@
           </div>
           <div>
             <label class="cp-label">Device Platform *</label>
-            <select id="cp-device-type" class="cp-select" style="width:100%">
+            <select id="cp-device-type" class="cp-select" style="width:100%"
+              onchange="CustomPolicy._onPlatformChange()">
               <optgroup label="Cisco">
                 <option value="cisco_ios">Cisco IOS / IOS-XE</option>
                 <option value="cisco_nxos">Cisco NX-OS</option>
@@ -1938,6 +1939,123 @@
             <div id="cp-iface-rows" style="display:flex;flex-direction:column;gap:.4rem"></div>
             <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
               onclick="CustomPolicy._addInterface()">+ Add Interface</button>
+          </div>
+        </details>
+
+        <!-- QoS / PFC / AI Fabric — shown for NX-OS, EOS, Cumulus, SONiC -->
+        <details id="cp-qos-section" style="display:none">
+          <summary class="cp-section-title">⚡ QoS / PFC &amp; AI Fabric</summary>
+          <div style="margin-top:.75rem;display:flex;flex-direction:column;gap:.75rem">
+            <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.82rem">
+                <input type="checkbox" id="cp-qos-enable" onchange="CustomPolicy._onQosToggle()">
+                Enable QoS / PFC lossless (RoCEv2 AI fabric)
+              </label>
+              <button class="btn btn-ghost" style="font-size:.72rem;padding:.2rem .6rem"
+                onclick="CustomPolicy._applyQosPreset('rdma')">📋 RoCEv2 Preset</button>
+              <button class="btn btn-ghost" style="font-size:.72rem;padding:.2rem .6rem"
+                onclick="CustomPolicy._applyQosPreset('storage')">📋 Storage Preset</button>
+            </div>
+            <div id="cp-qos-fields" style="display:none;flex-direction:column;gap:.75rem">
+              <div class="cp-grid-2">
+                <div>
+                  <label class="cp-label">PFC Lossless Priorities (comma-sep, e.g. 3,4)</label>
+                  <input id="cp-pfc-prios" class="cp-input" type="text" placeholder="3,4"
+                    value="3,4" style="width:100%">
+                </div>
+                <div>
+                  <label class="cp-label">Scheduler Type</label>
+                  <select id="cp-sched-type" class="cp-select" style="width:100%">
+                    <option value="dwrr">DWRR (Deficit WRR)</option>
+                    <option value="strict">Strict Priority</option>
+                    <option value="mixed">Mixed (SP high + DWRR rest)</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="cp-label">DSCP → Traffic Class Map (one per line: &lt;dscp&gt;:&lt;tc&gt;)</label>
+                <textarea id="cp-dscp-map" class="cp-textarea" rows="5"
+                  placeholder="26:4  (RoCEv2/RDMA — lossless)&#10;46:5  (EF/Voice — low latency)&#10;34:4  (AF41 — storage)&#10;18:3  (AF21)&#10;0:0   (default BE)"></textarea>
+              </div>
+              <div>
+                <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.82rem;margin-bottom:.5rem">
+                  <input type="checkbox" id="cp-ecn-enable" checked>
+                  Enable ECN (Explicit Congestion Notification on lossless queues)
+                </label>
+                <div class="cp-grid-2">
+                  <div>
+                    <label class="cp-label">ECN Min Threshold (KB)</label>
+                    <input id="cp-ecn-min" class="cp-input" type="number" value="150" style="width:100%">
+                  </div>
+                  <div>
+                    <label class="cp-label">ECN Max Threshold (KB)</label>
+                    <input id="cp-ecn-max" class="cp-input" type="number" value="1500" style="width:100%">
+                  </div>
+                </div>
+              </div>
+              <div class="cp-grid-2">
+                <div>
+                  <label class="cp-label">Lossless Buffer Pool (KB)</label>
+                  <input id="cp-buf-pool" class="cp-input" type="number" value="16384" style="width:100%">
+                </div>
+                <div>
+                  <label class="cp-label">Jumbo MTU (bytes)</label>
+                  <input id="cp-qos-mtu" class="cp-input" type="number" value="9216" style="width:100%">
+                </div>
+              </div>
+              <div>
+                <label class="cp-label">Queue Weights Q0–Q7 (comma-sep, 0 = strict priority)</label>
+                <input id="cp-q-weights" class="cp-input" type="text"
+                  value="5,5,5,15,50,15,5,0" style="width:100%">
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Security Zones & Policies — Palo Alto PAN-OS only -->
+        <details id="cp-secpol-section" style="display:none">
+          <summary class="cp-section-title">🛡️ Security Zones &amp; Policies</summary>
+          <div style="margin-top:.75rem;display:flex;flex-direction:column;gap:1.1rem">
+            <div>
+              <div class="cp-label" style="margin-bottom:.4rem">Security Zones</div>
+              <div style="font-size:.72rem;color:var(--txt3);margin-bottom:.5rem">Name · Type · Interfaces (comma-sep)</div>
+              <div id="cp-zone-rows" style="display:flex;flex-direction:column;gap:.4rem"></div>
+              <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+                onclick="CustomPolicy._addZone()">+ Add Zone</button>
+            </div>
+            <div>
+              <div class="cp-label" style="margin-bottom:.4rem">Security Rules <span style="font-weight:400;color:var(--txt3)">(top-down, first match)</span></div>
+              <div id="cp-secrule-rows" style="display:flex;flex-direction:column;gap:.5rem"></div>
+              <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+                onclick="CustomPolicy._addSecRule()">+ Add Security Rule</button>
+            </div>
+            <div>
+              <div class="cp-label" style="margin-bottom:.4rem">NAT Rules</div>
+              <div id="cp-natrule-rows" style="display:flex;flex-direction:column;gap:.5rem"></div>
+              <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+                onclick="CustomPolicy._addNatRule()">+ Add NAT Rule</button>
+            </div>
+          </div>
+        </details>
+
+        <!-- Firewall Policies — Fortinet FortiOS only -->
+        <details id="cp-fwpol-section" style="display:none">
+          <summary class="cp-section-title">🔐 Firewall Policies &amp; VIPs</summary>
+          <div style="margin-top:.75rem;display:flex;flex-direction:column;gap:1.1rem">
+            <div>
+              <div class="cp-label" style="margin-bottom:.4rem">Firewall Policies</div>
+              <div style="font-size:.72rem;color:var(--txt3);margin-bottom:.5rem">Name · Src-intf · Dst-intf · Src-addr · Dst-addr · Service · Action</div>
+              <div id="cp-fwpol-rows" style="display:flex;flex-direction:column;gap:.5rem"></div>
+              <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+                onclick="CustomPolicy._addFwPolicy()">+ Add Policy</button>
+            </div>
+            <div>
+              <div class="cp-label" style="margin-bottom:.4rem">VIP Objects <span style="font-weight:400;color:var(--txt3)">(DNAT / port-forward)</span></div>
+              <div style="font-size:.72rem;color:var(--txt3);margin-bottom:.5rem">Name · External IP · Mapped IP · External intf · Ext-port · Mapped-port</div>
+              <div id="cp-vip-rows" style="display:flex;flex-direction:column;gap:.4rem"></div>
+              <button class="btn btn-ghost" style="margin-top:.6rem;font-size:.78rem"
+                onclick="CustomPolicy._addVip()">+ Add VIP</button>
+            </div>
           </div>
         </details>
 
