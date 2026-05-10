@@ -26,6 +26,11 @@ RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
     "mcp>=1.0.0" cryptography prometheus-client==0.20.0 \
     && pip install --no-cache-dir --prefer-binary --prefix=/install "starlette==0.41.3"
 
+# Phase 1 — Enterprise auth, MFA, SSO, GitOps
+# bcrypt pinned to 3.2.2: passlib 1.7.4 uses bcrypt.__about__ removed in bcrypt>=4.0
+RUN pip install --no-cache-dir --prefer-binary --prefix=/install \
+    "bcrypt==3.2.2" "passlib[bcrypt]==1.7.4" "pyotp==2.9.0" "authlib==1.3.1" "gitpython==3.1.43"
+
 RUN pip install --no-cache-dir --prefer-binary --prefix=/install pygnmi==0.8.13 || \
     echo "WARNING: pygnmi optional — skipping"
 

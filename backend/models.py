@@ -41,7 +41,7 @@ try:
         return str(uuid.uuid4())
 
     def _now() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.utcnow()   # naive UTC — asyncpg TIMESTAMP columns require naive
 
     # ── Organisations (multi-tenancy root) ───────────────────────────────────
 
@@ -146,7 +146,7 @@ try:
 
         id:            Mapped[str]       = mapped_column(String, primary_key=True, default=_uuid)
         org_id:        Mapped[str]       = mapped_column(ForeignKey("orgs.id"), nullable=False, index=True)
-        design_id:     Mapped[str]       = mapped_column(ForeignKey("designs.id"), nullable=False)
+        design_id:     Mapped[str]       = mapped_column(String, nullable=False)   # logical ref, no FK (design may be frontend-only)
         requested_by:  Mapped[str]       = mapped_column(String, nullable=False)   # user_id
         environment:   Mapped[str]       = mapped_column(String, nullable=False)   # target env
         status:        Mapped[str]       = mapped_column(String, default="pending") # pending|approved|rejected|expired
@@ -311,7 +311,7 @@ class ApprovalDecision(BaseModel):
 
 class IntegrationConfigCreate(BaseModel):
     provider: str
-    config:   dict[str, str]   # provider-specific key/value
+    config:   dict[str, Any]   # provider-specific — values may be str, bool, int
     enabled:  bool = True
 
 class IntegrationConfigRead(BaseModel):

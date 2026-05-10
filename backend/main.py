@@ -148,6 +148,62 @@ def _load_telemetry_devices() -> list:
     return targets
 
 
+async def _bootstrap_admin() -> None:
+    """
+    Ensure the ADMIN_USER from env exists as a UserProfile so the
+    users-router /api/auth/token can authenticate against the DB.
+    Also creates a default org so org_id is always available.
+    """
+    try:
+        from db import _SessionLocal
+        from models import UserProfile, Org, OrgMember
+        from auth import hash_password
+        from sqlalchemy import select
+        if not _SessionLocal:
+            return
+        async with _SessionLocal() as s:
+            # --- Admin user ---
+            res = await s.execute(select(UserProfile).where(UserProfile.email == _ADMIN_USER))
+            profile = res.scalar_one_or_none()
+            if not profile:
+                profile = UserProfile(
+                    user_id=str(uuid.uuid4()),
+                    email=_ADMIN_USER,
+                    display_name="Admin",
+                    hashed_password=hash_password(_ADMIN_PASS),
+                    is_active=True,
+                )
+                s.add(profile)
+                log.info("Bootstrap: created admin UserProfile for '%s'", _ADMIN_USER)
+            elif not profile.hashed_password:
+                profile.hashed_password = hash_password(_ADMIN_PASS)
+
+            # --- Default org ---
+            res2 = await s.execute(select(Org).where(Org.slug == "default"))
+            org = res2.scalar_one_or_none()
+            if not org:
+                org = Org(id=str(uuid.uuid4()), name="Default Org", slug="default", is_active=True)
+                s.add(org)
+                log.info("Bootstrap: created default org")
+
+            await s.flush()
+
+            # --- Admin org membership ---
+            res3 = await s.execute(
+                select(OrgMember).where(
+                    OrgMember.user_id == profile.user_id,
+                    OrgMember.org_id  == org.id,
+                )
+            )
+            if not res3.scalar_one_or_none():
+                s.add(OrgMember(org_id=org.id, user_id=profile.user_id, org_role="admin", is_active=True))
+                log.info("Bootstrap: added admin to default org")
+
+            await s.commit()
+    except Exception as exc:
+        log.warning("Bootstrap admin failed (non-fatal): %s", exc)
+
+
 def get_active_license():
     """Return the currently loaded license (Community if none loaded)."""
     if _active_license is not None:
@@ -164,6 +220,9 @@ async def lifespan(application: FastAPI):
     # Startup: create tables in dev mode (Alembic handles prod)
     if os.environ.get("AUTO_CREATE_TABLES", "").lower() == "true":
         await create_all_tables()
+
+    # Ensure the env-var admin user exists as a UserProfile + default Org
+    await _bootstrap_admin()
 
     # Phase 5: Load license from environment
     if _LICENSE_AVAILABLE:
@@ -209,8 +268,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
     allow_credentials=True,
 )
 

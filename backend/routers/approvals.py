@@ -55,9 +55,8 @@ async def request_approval(
     org_id  = payload.get("org_id")
 
     design = await db.get(Design, body.design_id)
-    if not design:
-        raise HTTPException(404, "Design not found")
-    if org_id and design.org_id != org_id:
+    # Design may not be persisted to DB yet (frontend-only designs) — allow it
+    if design and org_id and design.org_id and design.org_id != org_id:
         raise HTTPException(403, "Design belongs to a different org")
 
     # Block if there is already a pending approval for this design+env
@@ -71,7 +70,7 @@ async def request_approval(
     if existing.scalar_one_or_none():
         raise HTTPException(409, "A pending approval already exists for this design and environment")
 
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=_APPROVAL_TTL_HOURS)
+    expires_at = datetime.utcnow() + timedelta(hours=_APPROVAL_TTL_HOURS)
 
     approval = ApprovalRequest(
         org_id=       org_id or design.org_id,
@@ -120,7 +119,7 @@ async def list_approvals(
         q = q.where(ApprovalRequest.environment == environment)
 
     # Auto-expire stale pending approvals
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     expired_q = select(ApprovalRequest).where(
         ApprovalRequest.status == "pending",
         ApprovalRequest.expires_at < now,
@@ -178,7 +177,7 @@ async def approve(
     if approval.requested_by == payload["sub"] and payload.get("role") != Role.ADMIN:
         raise HTTPException(403, "Requester cannot self-approve (4-eyes policy)")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     if approval.expires_at and now > approval.expires_at:
         approval.status = "expired"
         await db.commit()
@@ -227,7 +226,7 @@ async def reject(
 
     approval.status      = "rejected"
     approval.reviewed_by = payload["sub"]
-    approval.reviewed_at = datetime.now(timezone.utc)
+    approval.reviewed_at = datetime.utcnow()
     approval.reviewer_note = body.note
 
     dep_row = await db.execute(
@@ -264,7 +263,7 @@ async def escalate(
         raise HTTPException(409, f"Cannot escalate '{approval.status}' approval")
 
     # Extend TTL + boost risk score
-    approval.expires_at = datetime.now(timezone.utc) + timedelta(hours=_APPROVAL_TTL_HOURS)
+    approval.expires_at = datetime.utcnow() + timedelta(hours=_APPROVAL_TTL_HOURS)
     approval.risk_score = min(100, approval.risk_score + 20)
     await db.commit()
     await db.refresh(approval)

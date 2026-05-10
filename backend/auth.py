@@ -169,8 +169,11 @@ def require_permission(permission: str):
         if not _SECRET:
             return {"sub": "dev-user", "role": Role.ADMIN.value, "org_id": None, "dev_mode": True}
 
-        # ── API key (nd-key-...) ──────────────────────────────────────────────
+        # ── API key (nd-key-...) — accepted in X-API-Key header or Bearer ───────
         raw = creds.credentials if creds else ""
+        x_api_key = request.headers.get("X-API-Key", "")
+        if x_api_key.startswith("nd-key-"):
+            return _validate_api_key(x_api_key, permission)
         if raw.startswith("nd-key-"):
             return _validate_api_key(raw, permission)
 
@@ -212,34 +215,37 @@ def require_permission(permission: str):
 
 def _validate_api_key(raw_key: str, permission: str) -> dict[str, Any]:
     """
-    Validate an API key (nd-key-<random>).
-    Looks up the SHA-256 hash in UserProfile.api_key_hash.
-    Returns synthetic JWT-like claims on success.
+    Validate an API key (nd-key-<random>) via asyncpg direct query.
+    FastAPI runs sync dependencies in a thread pool, so asyncio.run() is safe here.
     """
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-    # DB lookup is done synchronously here via a sync session for simplicity.
-    # In a high-throughput path, cache the result in Redis.
     try:
-        from sqlalchemy import create_engine, select
-        from sqlalchemy.orm import Session as SyncSession
+        import asyncio
+        import asyncpg
 
-        db_url = os.environ.get("DATABASE_URL", "").replace("+asyncpg", "")
-        if not db_url:
+        db_url = os.environ.get("DATABASE_URL", "")
+        # asyncpg wants postgresql:// not postgresql+asyncpg://
+        conn_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+        if not conn_url:
             raise ValueError("no DB")
 
-        engine = create_engine(db_url, pool_pre_ping=True)
-        from models import UserProfile
-        with SyncSession(engine) as s:
-            profile = s.execute(
-                select(UserProfile).where(UserProfile.api_key_hash == key_hash)
-            ).scalar_one_or_none()
-        engine.dispose()
+        async def _lookup() -> tuple[str | None, bool]:
+            conn = await asyncpg.connect(conn_url)
+            try:
+                row = await conn.fetchrow(
+                    "SELECT user_id, is_active FROM user_profiles WHERE api_key_hash = $1",
+                    key_hash,
+                )
+                return (row["user_id"], row["is_active"]) if row else (None, False)
+            finally:
+                await conn.close()
 
-        if not profile or not profile.is_active:
+        user_id, is_active = asyncio.run(_lookup())
+
+        if not user_id or not is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
-        # API keys are always designer-level unless user is admin
-        return {"sub": profile.user_id, "role": Role.DESIGNER.value, "org_id": None, "api_key": True}
+        return {"sub": user_id, "role": Role.DESIGNER.value, "org_id": None, "api_key": True}
 
     except HTTPException:
         raise

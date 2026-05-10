@@ -157,7 +157,7 @@ const Enterprise = (() => {
   async function approve(id) {
     const note = prompt('Approval note (optional):') || '';
     try {
-      await _post(`/api/approvals/${id}/approve`, { note });
+      await _post(`/api/approvals/${id}/approve`, { decision: 'approved', note });
       toast('Approved ✓', 'success');
       loadApprovals('pending');
     } catch(e) { toast(e.message, 'error', 5000); }
@@ -167,7 +167,7 @@ const Enterprise = (() => {
     const note = prompt('Rejection reason (required):');
     if (note === null) return;
     try {
-      await _post(`/api/approvals/${id}/reject`, { note });
+      await _post(`/api/approvals/${id}/reject`, { decision: 'rejected', note });
       toast('Rejected', 'info');
       loadApprovals('pending');
     } catch(e) { toast(e.message, 'error', 5000); }

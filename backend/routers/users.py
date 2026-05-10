@@ -98,7 +98,7 @@ async def login(
             await record_login(profile.user_id, "failed_totp", ip_address=ip, method="local")
             raise HTTPException(401, "Invalid TOTP code")
 
-    profile.last_login_at = datetime.now(timezone.utc)
+    profile.last_login_at = datetime.utcnow()
     await db.commit()
 
     token = create_token(profile.user_id, Role(org_role), org_id=org_id)
@@ -133,7 +133,7 @@ async def totp_verify(
                            ip_address=request.client.host if request.client else "")
         raise HTTPException(401, "Invalid TOTP code")
 
-    profile.last_login_at = datetime.now(timezone.utc)
+    profile.last_login_at = datetime.utcnow()
     await db.commit()
 
     org_id   = payload.get("org_id")
@@ -206,7 +206,7 @@ async def oidc_callback(
                 db.add(OrgMember(org_id=org.id, user_id=profile.user_id, org_role="designer"))
     else:
         profile.sso_subject  = sub
-        profile.last_login_at = datetime.now(timezone.utc)
+        profile.last_login_at = datetime.utcnow()
 
     await db.commit()
     await db.refresh(profile)
