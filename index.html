@@ -1861,10 +1861,26 @@
           <div>
             <label class="cp-label">Device Platform *</label>
             <select id="cp-device-type" class="cp-select" style="width:100%">
-              <option value="cisco_ios">Cisco IOS / IOS-XE</option>
-              <option value="cisco_nxos">Cisco NX-OS</option>
-              <option value="juniper_junos">Juniper Junos</option>
-              <option value="arista_eos">Arista EOS</option>
+              <optgroup label="Cisco">
+                <option value="cisco_ios">Cisco IOS / IOS-XE</option>
+                <option value="cisco_nxos">Cisco NX-OS</option>
+              </optgroup>
+              <optgroup label="Juniper">
+                <option value="juniper_junos">Juniper Junos</option>
+              </optgroup>
+              <optgroup label="Arista">
+                <option value="arista_eos">Arista EOS</option>
+              </optgroup>
+              <optgroup label="Palo Alto">
+                <option value="palo_alto">Palo Alto PAN-OS</option>
+              </optgroup>
+              <optgroup label="Fortinet">
+                <option value="fortinet">Fortinet FortiOS</option>
+              </optgroup>
+              <optgroup label="NVIDIA / SONiC">
+                <option value="nvidia_cumulus">NVIDIA Cumulus Linux</option>
+                <option value="sonic">SONiC (FRR)</option>
+              </optgroup>
             </select>
           </div>
         </div>
