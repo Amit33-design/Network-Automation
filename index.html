@@ -580,6 +580,39 @@
         </button>
       </div>
 
+      <!-- Group: Enterprise -->
+      <div class="sb-group">
+        <div class="sb-group-label">Enterprise</div>
+        <button class="sb-item" onclick="Enterprise.openApprovals();closeSidebar()">
+          <span class="sb-icon">✅</span>
+          <span class="sb-label">Change Approvals</span>
+        </button>
+        <button class="sb-item" onclick="Enterprise.openIntegrations();closeSidebar()">
+          <span class="sb-icon">🔌</span>
+          <span class="sb-label">Integrations</span>
+        </button>
+        <button class="sb-item" onclick="Enterprise.exportDrawio()">
+          <span class="sb-icon">📐</span>
+          <span class="sb-label">Export draw.io</span>
+        </button>
+        <button class="sb-item" onclick="Enterprise.exportRunbook('md')">
+          <span class="sb-icon">📋</span>
+          <span class="sb-label">Export Runbook</span>
+        </button>
+        <button class="sb-item" onclick="Enterprise.commitToGit()">
+          <span class="sb-icon">🐙</span>
+          <span class="sb-label">Commit to GitHub</span>
+        </button>
+        <button class="sb-item" onclick="Enterprise.openProfile();closeSidebar()">
+          <span class="sb-icon">👤</span>
+          <span class="sb-label">Profile &amp; MFA</span>
+        </button>
+        <button class="sb-item" onclick="Enterprise.openLogin();closeSidebar()">
+          <span class="sb-icon">🔑</span>
+          <span class="sb-label">Sign In</span>
+        </button>
+      </div>
+
     </nav><!-- /sb-nav -->
 
     <!-- Footer tools -->
@@ -1447,6 +1480,18 @@
       </div>
 
     </div>
+
+    <!-- ── Enterprise Export Bar ── -->
+    <div class="ent-export-bar">
+      <span class="ent-export-label">Export &amp; Commit</span>
+      <button id="ent-btn-drawio"      class="btn-ent btn-ent-ghost" onclick="Enterprise.exportDrawio()">📐 draw.io</button>
+      <button id="ent-btn-runbook"     class="btn-ent btn-ent-ghost" onclick="Enterprise.exportRunbook('md')">📋 Runbook .md</button>
+      <button id="ent-btn-runbook-pdf" class="btn-ent btn-ent-ghost" onclick="Enterprise.exportRunbook('pdf')">📄 Runbook PDF</button>
+      <button                          class="btn-ent btn-ent-ghost" onclick="Enterprise.syncToNetbox()">🗄 Sync Netbox</button>
+      <button                          class="btn-ent btn-ent-primary" onclick="Enterprise.commitToGit()">🐙 Commit to GitHub</button>
+      <button                          class="btn-ent btn-ent-warn"  onclick="Enterprise.openApprovals()">✅ Request Approval</button>
+    </div>
+
   </section><!-- /step-5 -->
 
 
@@ -2373,6 +2418,372 @@
 </div><!-- /dashboard-layout -->
 
 
+<!-- ════════════════════════════════════════════════════════════
+     ENTERPRISE MODALS
+════════════════════════════════════════════════════════════ -->
+
+<!-- ── LOGIN ─────────────────────────────────────────────────── -->
+<div id="ent-login-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)Enterprise.closeLogin()">
+  <div class="modal-box ent-modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>🔑 Sign In</h3>
+      <button class="modal-close" onclick="Enterprise.closeLogin()">✕</button>
+    </div>
+    <div style="padding:1.25rem 1.5rem">
+      <label class="ent-label">Email / Username</label>
+      <input id="ent-login-user" class="ent-input" type="email" placeholder="alice@corp.com" style="margin-bottom:.75rem">
+      <label class="ent-label">Password</label>
+      <input id="ent-login-pass" class="ent-input" type="password" placeholder="••••••••" style="margin-bottom:.75rem">
+      <div id="ent-login-totp-row" style="display:none;margin-bottom:.75rem">
+        <label class="ent-label">TOTP Code (from authenticator app)</label>
+        <input id="ent-login-totp" class="ent-input" type="text" placeholder="123456" maxlength="6" inputmode="numeric">
+        <button class="btn-ent btn-ent-ghost" style="margin-top:.5rem;width:100%" onclick="Enterprise.doTotpVerify()">Verify MFA Code</button>
+      </div>
+      <button id="ent-login-btn" class="btn-ent btn-ent-primary" style="width:100%" onclick="Enterprise.doLogin()">Sign In</button>
+      <p style="font-size:.78rem;color:var(--txt3);margin-top:.85rem">Backend must be running and connected (sidebar → Backend). For SSO/OIDC login, use the authorization URL from <code>/api/auth/oidc/login</code>.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ── APPROVALS ─────────────────────────────────────────────── -->
+<div id="ent-approvals-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)Enterprise.closeApprovals()">
+  <div class="modal-box ent-modal" style="max-width:780px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column">
+    <div class="modal-header">
+      <h3>✅ Change Approvals</h3>
+      <button class="modal-close" onclick="Enterprise.closeApprovals()">✕</button>
+    </div>
+    <div class="ent-tab-bar">
+      <button class="ent-tab active" data-tab="pending" onclick="Enterprise.switchApprovalsTab('pending')">Pending</button>
+      <button class="ent-tab" data-tab="all"     onclick="Enterprise.switchApprovalsTab('all')">All</button>
+      <button class="ent-tab" data-tab="request" onclick="Enterprise.switchApprovalsTab('request')">+ Request New</button>
+    </div>
+    <div style="overflow-y:auto;flex:1;padding:1rem 1.5rem">
+
+      <!-- Pending tab -->
+      <div class="ent-tab-pane" data-pane="pending">
+        <p style="font-size:.8rem;color:var(--txt3);margin-bottom:.75rem">Pending approvals require a <strong>different person</strong> to approve (4-eyes policy). Admins can override.</p>
+        <div id="ent-apr-pending-list"><div class="ent-loading">Loading…</div></div>
+      </div>
+
+      <!-- All tab -->
+      <div class="ent-tab-pane" data-pane="all" style="display:none">
+        <div id="ent-apr-all-list"><div class="ent-loading">Loading…</div></div>
+      </div>
+
+      <!-- Request tab -->
+      <div class="ent-tab-pane" data-pane="request" style="display:none">
+        <p style="font-size:.8rem;color:var(--txt3);margin-bottom:1rem">Request human approval before deploying to production. Slack, Teams, and ServiceNow are notified automatically.</p>
+        <label class="ent-label">Design ID <span style="color:var(--txt3)">(auto-filled from current design)</span></label>
+        <input id="ent-apr-design" class="ent-input" placeholder="design-uuid or leave blank to use current" style="margin-bottom:.75rem">
+        <label class="ent-label">Target Environment</label>
+        <select id="ent-apr-env" class="ent-input" style="margin-bottom:.75rem">
+          <option value="staging">Staging</option>
+          <option value="production">Production</option>
+          <option value="lab">Lab / Dev</option>
+          <option value="dr">DR / Failover</option>
+        </select>
+        <label class="ent-label">Summary <span style="color:var(--txt3)">(what is changing and why)</span></label>
+        <textarea id="ent-apr-summary" class="ent-input" rows="3" placeholder="Add 3 access switches to Building C, extend VLAN 40, BGP peer change on core…" style="margin-bottom:.75rem"></textarea>
+        <div style="display:flex;gap:1rem;margin-bottom:1rem">
+          <div style="flex:1">
+            <label class="ent-label">Risk Score <span style="color:var(--txt3)">(0–100)</span></label>
+            <input id="ent-apr-risk" class="ent-input" type="number" min="0" max="100" value="50">
+          </div>
+          <div style="flex:1">
+            <label class="ent-label">Device Count</label>
+            <input id="ent-apr-devices" class="ent-input" type="number" min="1" value="1">
+          </div>
+        </div>
+        <button id="ent-apr-submit-btn" class="btn-ent btn-ent-primary" onclick="Enterprise.submitApproval()">Submit for Approval</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── INTEGRATIONS ───────────────────────────────────────────── -->
+<div id="ent-int-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)Enterprise.closeIntegrations()">
+  <div class="modal-box ent-modal" style="max-width:820px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column">
+    <div class="modal-header">
+      <h3>🔌 Integrations</h3>
+      <button class="modal-close" onclick="Enterprise.closeIntegrations()">✕</button>
+    </div>
+    <div class="ent-tab-bar">
+      <button class="ent-tab active" data-tab="slack"       onclick="Enterprise.switchIntTab('slack')">Slack</button>
+      <button class="ent-tab"        data-tab="teams"       onclick="Enterprise.switchIntTab('teams')">Teams</button>
+      <button class="ent-tab"        data-tab="servicenow"  onclick="Enterprise.switchIntTab('servicenow')">ServiceNow</button>
+      <button class="ent-tab"        data-tab="jira"        onclick="Enterprise.switchIntTab('jira')">Jira</button>
+      <button class="ent-tab"        data-tab="netbox"      onclick="Enterprise.switchIntTab('netbox')">Netbox</button>
+      <button class="ent-tab"        data-tab="gitops"      onclick="Enterprise.switchIntTab('gitops')">GitOps / GitHub</button>
+    </div>
+    <div style="overflow-y:auto;flex:1;padding:1rem 1.5rem">
+
+      <!-- Slack -->
+      <div class="ent-int-pane" id="ent-int-pane-slack" data-pane="slack">
+        <div class="ent-int-enabled-row">
+          <label class="ent-label" style="margin:0">Enable Slack</label>
+          <input type="checkbox" id="ent-int-slack-enabled" checked>
+        </div>
+        <label class="ent-label">Incoming Webhook URL</label>
+        <input id="ent-int-slack-webhook_url" class="ent-input" data-field="webhook_url" placeholder="https://hooks.slack.com/services/T.../B.../xxx" style="margin-bottom:.75rem">
+        <label class="ent-label">Channel</label>
+        <input id="ent-int-slack-channel" class="ent-input" data-field="channel" placeholder="#network-approvals" style="margin-bottom:.75rem">
+        <label class="ent-label">Mention Group <span style="color:var(--txt3)">(optional)</span></label>
+        <input id="ent-int-slack-mention_group" class="ent-input" data-field="mention_group" placeholder="network-ops" style="margin-bottom:1rem">
+        <div class="ent-int-btn-row">
+          <button id="ent-int-slack-save" class="btn-ent btn-ent-primary" onclick="Enterprise.saveIntegration('slack')">Save</button>
+          <button id="ent-int-slack-test" class="btn-ent btn-ent-ghost"   onclick="Enterprise.testIntegration('slack')">Test</button>
+        </div>
+      </div>
+
+      <!-- Teams -->
+      <div class="ent-int-pane" id="ent-int-pane-teams" data-pane="teams" style="display:none">
+        <div class="ent-int-enabled-row">
+          <label class="ent-label" style="margin:0">Enable Teams</label>
+          <input type="checkbox" id="ent-int-teams-enabled" checked>
+        </div>
+        <label class="ent-label">Incoming Webhook URL</label>
+        <input id="ent-int-teams-webhook_url" class="ent-input" data-field="webhook_url" placeholder="https://yourcompany.webhook.office.com/..." style="margin-bottom:1rem">
+        <div class="ent-int-btn-row">
+          <button id="ent-int-teams-save" class="btn-ent btn-ent-primary" onclick="Enterprise.saveIntegration('teams')">Save</button>
+          <button id="ent-int-teams-test" class="btn-ent btn-ent-ghost"   onclick="Enterprise.testIntegration('teams')">Test</button>
+        </div>
+      </div>
+
+      <!-- ServiceNow -->
+      <div class="ent-int-pane" id="ent-int-pane-servicenow" data-pane="servicenow" style="display:none">
+        <div class="ent-int-enabled-row">
+          <label class="ent-label" style="margin:0">Enable ServiceNow</label>
+          <input type="checkbox" id="ent-int-servicenow-enabled" checked>
+        </div>
+        <label class="ent-label">Instance URL</label>
+        <input id="ent-int-servicenow-instance_url" class="ent-input" data-field="instance_url" placeholder="https://yourcompany.service-now.com" style="margin-bottom:.75rem">
+        <div style="display:flex;gap:1rem;margin-bottom:.75rem">
+          <div style="flex:1"><label class="ent-label">Username</label>
+            <input id="ent-int-servicenow-username" class="ent-input" data-field="username" placeholder="api-user"></div>
+          <div style="flex:1"><label class="ent-label">Password</label>
+            <input id="ent-int-servicenow-password" class="ent-input" data-field="password" type="password" placeholder="••••••••"></div>
+        </div>
+        <label class="ent-label">Assignment Group</label>
+        <input id="ent-int-servicenow-assignment_group" class="ent-input" data-field="assignment_group" placeholder="Network Operations" style="margin-bottom:.75rem">
+        <label class="ent-label">Category</label>
+        <input id="ent-int-servicenow-category" class="ent-input" data-field="category" placeholder="Network" style="margin-bottom:1rem">
+        <div class="ent-int-btn-row">
+          <button id="ent-int-servicenow-save" class="btn-ent btn-ent-primary" onclick="Enterprise.saveIntegration('servicenow')">Save</button>
+          <button id="ent-int-servicenow-test" class="btn-ent btn-ent-ghost"   onclick="Enterprise.testIntegration('servicenow')">Test</button>
+        </div>
+      </div>
+
+      <!-- Jira -->
+      <div class="ent-int-pane" id="ent-int-pane-jira" data-pane="jira" style="display:none">
+        <div class="ent-int-enabled-row">
+          <label class="ent-label" style="margin:0">Enable Jira</label>
+          <input type="checkbox" id="ent-int-jira-enabled" checked>
+        </div>
+        <label class="ent-label">Jira Base URL</label>
+        <input id="ent-int-jira-base_url" class="ent-input" data-field="base_url" placeholder="https://yourcompany.atlassian.net" style="margin-bottom:.75rem">
+        <div style="display:flex;gap:1rem;margin-bottom:.75rem">
+          <div style="flex:1"><label class="ent-label">Email</label>
+            <input id="ent-int-jira-email" class="ent-input" data-field="email" placeholder="netdesign@corp.com"></div>
+          <div style="flex:1"><label class="ent-label">API Token</label>
+            <input id="ent-int-jira-api_token" class="ent-input" data-field="api_token" type="password" placeholder="ATATT..."></div>
+        </div>
+        <div style="display:flex;gap:1rem;margin-bottom:1rem">
+          <div style="flex:1"><label class="ent-label">Project Key</label>
+            <input id="ent-int-jira-project_key" class="ent-input" data-field="project_key" placeholder="NETOPS"></div>
+          <div style="flex:1"><label class="ent-label">Issue Type</label>
+            <input id="ent-int-jira-issue_type" class="ent-input" data-field="issue_type" placeholder="Change Request"></div>
+        </div>
+        <div class="ent-int-btn-row">
+          <button id="ent-int-jira-save" class="btn-ent btn-ent-primary" onclick="Enterprise.saveIntegration('jira')">Save</button>
+          <button id="ent-int-jira-test" class="btn-ent btn-ent-ghost"   onclick="Enterprise.testIntegration('jira')">Test</button>
+        </div>
+      </div>
+
+      <!-- Netbox -->
+      <div class="ent-int-pane" id="ent-int-pane-netbox" data-pane="netbox" style="display:none">
+        <div class="ent-int-enabled-row">
+          <label class="ent-label" style="margin:0">Enable Netbox</label>
+          <input type="checkbox" id="ent-int-netbox-enabled" checked>
+        </div>
+        <label class="ent-label">Netbox URL</label>
+        <input id="ent-int-netbox-url" class="ent-input" data-field="url" placeholder="https://netbox.corp.com" style="margin-bottom:.75rem">
+        <label class="ent-label">API Token</label>
+        <input id="ent-int-netbox-token" class="ent-input" data-field="token" type="password" placeholder="Token abc123..." style="margin-bottom:1rem">
+        <div class="ent-int-btn-row">
+          <button id="ent-int-netbox-save" class="btn-ent btn-ent-primary" onclick="Enterprise.saveIntegration('netbox')">Save</button>
+          <button id="ent-int-netbox-test" class="btn-ent btn-ent-ghost"   onclick="Enterprise.testIntegration('netbox')">Test</button>
+        </div>
+      </div>
+
+      <!-- GitOps -->
+      <div class="ent-int-pane" id="ent-int-pane-gitops" data-pane="gitops" style="display:none">
+        <div class="ent-int-enabled-row">
+          <label class="ent-label" style="margin:0">Enable GitOps</label>
+          <input type="checkbox" id="ent-int-gitops-enabled" checked>
+        </div>
+        <label class="ent-label">GitHub Repo URL</label>
+        <input id="ent-int-gitops-repo_url" class="ent-input" data-field="repo_url" placeholder="https://github.com/your-org/network-configs.git" style="margin-bottom:.75rem">
+        <div style="display:flex;gap:1rem;margin-bottom:.75rem">
+          <div style="flex:1"><label class="ent-label">Branch</label>
+            <input id="ent-int-gitops-branch" class="ent-input" data-field="branch" placeholder="main"></div>
+          <div style="flex:1"><label class="ent-label">GitHub Token</label>
+            <input id="ent-int-gitops-github_token" class="ent-input" data-field="github_token" type="password" placeholder="ghp_xxxx"></div>
+        </div>
+        <div style="display:flex;gap:1rem;margin-bottom:.75rem">
+          <div style="flex:1"><label class="ent-label">Author Name</label>
+            <input id="ent-int-gitops-author_name" class="ent-input" data-field="author_name" placeholder="NetDesign AI"></div>
+          <div style="flex:1"><label class="ent-label">Author Email</label>
+            <input id="ent-int-gitops-author_email" class="ent-input" data-field="author_email" placeholder="netdesign@corp.com"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem">
+          <input type="checkbox" id="ent-int-gitops-create_pr" data-field="create_pr" style="width:auto">
+          <label class="ent-label" style="margin:0">Auto-create GitHub Pull Request on commit</label>
+        </div>
+        <label class="ent-label">PR Base Branch <span style="color:var(--txt3)">(if create PR enabled)</span></label>
+        <input id="ent-int-gitops-pr_base_branch" class="ent-input" data-field="pr_base_branch" placeholder="main" style="margin-bottom:1rem">
+        <div class="ent-int-btn-row">
+          <button id="ent-int-gitops-save" class="btn-ent btn-ent-primary" onclick="Enterprise.saveIntegration('gitops')">Save</button>
+          <button id="ent-int-gitops-test" class="btn-ent btn-ent-ghost"   onclick="Enterprise.testIntegration('gitops')">Test</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── PROFILE / MFA / API KEYS ──────────────────────────────── -->
+<div id="ent-profile-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)Enterprise.closeProfile()">
+  <div class="modal-box ent-modal" style="max-width:560px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column">
+    <div class="modal-header">
+      <h3>👤 Profile &amp; Security</h3>
+      <button class="modal-close" onclick="Enterprise.closeProfile()">✕</button>
+    </div>
+    <div class="ent-tab-bar">
+      <button class="ent-tab active" data-tab="profile" onclick="Enterprise.switchProfileTab('profile')">Profile</button>
+      <button class="ent-tab"        data-tab="mfa"     onclick="Enterprise.switchProfileTab('mfa')">MFA / TOTP</button>
+      <button class="ent-tab"        data-tab="apikeys" onclick="Enterprise.switchProfileTab('apikeys')">API Keys</button>
+    </div>
+    <div style="overflow-y:auto;flex:1;padding:1rem 1.5rem">
+
+      <!-- Profile tab -->
+      <div class="ent-prof-pane" data-pane="profile">
+        <div id="ent-prof-info"><div class="ent-loading">Loading…</div></div>
+        <hr style="border:none;border-top:1px solid var(--bg3);margin:1rem 0">
+        <label class="ent-label">Update Display Name</label>
+        <input id="ent-prof-name" class="ent-input" placeholder="Your name" style="margin-bottom:.75rem">
+        <label class="ent-label">Current Password</label>
+        <input id="ent-prof-cur-pw" class="ent-input" type="password" placeholder="Required to change password" style="margin-bottom:.75rem">
+        <label class="ent-label">New Password</label>
+        <input id="ent-prof-new-pw" class="ent-input" type="password" placeholder="Leave blank to keep current" style="margin-bottom:1rem">
+        <button class="btn-ent btn-ent-primary" onclick="Enterprise.updateProfile()">Update Profile</button>
+      </div>
+
+      <!-- MFA tab -->
+      <div class="ent-prof-pane" data-pane="mfa" style="display:none">
+        <div id="ent-mfa-status" style="margin-bottom:1rem;font-weight:600">Loading…</div>
+        <p style="font-size:.82rem;color:var(--txt3);margin-bottom:1rem">TOTP-based MFA works with Google Authenticator, Authy, 1Password, and any RFC 6238 app.</p>
+        <button class="btn-ent btn-ent-primary" onclick="Enterprise.setupTotp()" style="margin-bottom:.75rem">1. Generate TOTP Secret &amp; QR Code</button>
+        <div id="ent-totp-setup-box" style="display:none;background:var(--bg2);border-radius:8px;padding:1rem;margin-bottom:.75rem">
+          <div class="ent-label">Secret key (manual entry)</div>
+          <code id="ent-totp-secret" style="font-size:.95rem;letter-spacing:.1em;color:var(--accent)">—</code>
+          <div style="margin-top:.75rem">
+            <a id="ent-totp-qr-link" href="#" target="_blank" style="display:none;color:var(--accent);font-size:.85rem">📷 Open QR Code link (scan in authenticator)</a>
+          </div>
+          <div style="margin-top:1rem">
+            <label class="ent-label">2. Enter the 6-digit code to confirm</label>
+            <input id="ent-totp-code" class="ent-input" type="text" placeholder="123456" maxlength="6" inputmode="numeric" style="margin-bottom:.5rem">
+            <button class="btn-ent btn-ent-primary" onclick="Enterprise.enableTotp()">Enable MFA</button>
+          </div>
+        </div>
+        <button class="btn-ent btn-ent-err" onclick="Enterprise.disableTotp()" style="margin-top:.5rem">Disable MFA (requires password)</button>
+      </div>
+
+      <!-- API Keys tab -->
+      <div class="ent-prof-pane" data-pane="apikeys" style="display:none">
+        <p style="font-size:.82rem;color:var(--txt3);margin-bottom:1rem">API keys let scripts and CI pipelines authenticate without a password. Each account has one key at a time.</p>
+        <button class="btn-ent btn-ent-primary" onclick="Enterprise.generateApiKey()">Generate New API Key</button>
+        <div id="ent-apikey-box" style="display:none;margin-top:1rem;background:var(--bg2);border-radius:8px;padding:1rem">
+          <div class="ent-label" style="color:#fa0">⚠ Copy this key now — it will not be shown again</div>
+          <code id="ent-apikey-value" style="font-size:.85rem;word-break:break-all;color:var(--accent);display:block;margin:.5rem 0"></code>
+          <button class="btn-ent btn-ent-ghost" onclick="Enterprise.copyApiKey()">📋 Copy Key</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--bg3);margin:1rem 0">
+        <p style="font-size:.82rem;color:var(--txt3);margin-bottom:.5rem">Use in requests with header: <code>Authorization: Bearer nd-key-xxxxx</code></p>
+        <button class="btn-ent btn-ent-err" onclick="Enterprise.revokeApiKey()">Revoke API Key</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── Enterprise CSS ─────────────────────────────────────────── -->
+<style>
+/* Toasts */
+.ent-toast { position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;padding:.65rem 1.1rem;border-radius:8px;font-size:.85rem;font-weight:600;background:var(--bg2);color:var(--txt1);border:1px solid var(--bg3);box-shadow:0 4px 20px #0008;opacity:0;transform:translateY(8px);transition:opacity .3s,transform .3s;max-width:420px }
+.ent-toast-show { opacity:1;transform:translateY(0) }
+.ent-toast-success { border-color:#2d8a4e;background:#1a3d2a }
+.ent-toast-error   { border-color:#a33;background:#3a1a1a }
+.ent-toast-info    { border-color:var(--accent);background:var(--bg2) }
+
+/* Modal box */
+.ent-modal { padding:0 !important }
+.ent-modal .modal-header { padding:.9rem 1.5rem;border-bottom:1px solid var(--bg3) }
+.ent-modal .modal-header h3 { margin:0;font-size:1rem }
+
+/* Tabs */
+.ent-tab-bar { display:flex;gap:0;border-bottom:1px solid var(--bg3);padding:0 1.5rem }
+.ent-tab { background:none;border:none;color:var(--txt2);font-size:.82rem;font-weight:600;padding:.55rem .85rem;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s }
+.ent-tab:hover { color:var(--txt1) }
+.ent-tab.active { color:var(--accent);border-bottom-color:var(--accent) }
+
+/* Inputs & labels */
+.ent-label { display:block;font-size:.78rem;font-weight:600;color:var(--txt2);margin-bottom:.3rem }
+.ent-input { width:100%;box-sizing:border-box;background:var(--bg2);border:1px solid var(--bg3);border-radius:6px;padding:.45rem .7rem;color:var(--txt1);font-size:.85rem }
+.ent-input:focus { outline:none;border-color:var(--accent) }
+
+/* Buttons */
+.btn-ent { border:none;border-radius:6px;padding:.4rem .85rem;font-size:.8rem;font-weight:600;cursor:pointer;transition:opacity .15s }
+.btn-ent:disabled { opacity:.45;cursor:not-allowed }
+.btn-ent-primary { background:var(--accent);color:#fff }
+.btn-ent-primary:hover:not(:disabled) { opacity:.85 }
+.btn-ent-ghost { background:var(--bg3);color:var(--txt1);border:1px solid var(--bg3) }
+.btn-ent-ghost:hover:not(:disabled) { background:var(--bg2) }
+.btn-ent-ok   { background:#1d6a3a;color:#fff }
+.btn-ent-err  { background:#7a2020;color:#fff }
+.btn-ent-warn { background:#7a5c00;color:#fff }
+
+/* Badges */
+.ent-badge { display:inline-block;padding:.18rem .5rem;border-radius:4px;font-size:.7rem;font-weight:700 }
+.ent-badge-ok   { background:#1d6a3a;color:#a8f0c0 }
+.ent-badge-err  { background:#7a2020;color:#f8aaaa }
+.ent-badge-warn { background:#7a5c00;color:#fde68a }
+.ent-badge-muted{ background:var(--bg3);color:var(--txt2) }
+
+/* Approval cards */
+.ent-apr-card { background:var(--bg2);border:1px solid var(--bg3);border-radius:8px;padding:.9rem 1rem;margin-bottom:.65rem }
+.ent-apr-card-top { display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem }
+.ent-apr-summary { font-size:.87rem;color:var(--txt1);margin-bottom:.45rem }
+.ent-apr-meta { display:flex;gap:1.2rem;font-size:.78rem;color:var(--txt3);flex-wrap:wrap;margin-bottom:.5rem }
+.ent-apr-actions { display:flex;gap:.45rem;flex-wrap:wrap;margin-top:.5rem }
+
+/* Integration pane */
+.ent-int-enabled-row { display:flex;align-items:center;gap:.75rem;margin-bottom:1rem }
+.ent-int-btn-row { display:flex;gap:.6rem;margin-top:.25rem }
+
+/* Profile rows */
+.ent-prof-row { display:flex;gap:1rem;align-items:center;padding:.45rem 0;border-bottom:1px solid var(--bg3);font-size:.85rem }
+.ent-prof-row label { min-width:110px;color:var(--txt2);font-weight:600;font-size:.78rem }
+
+/* States */
+.ent-loading { color:var(--txt3);font-size:.85rem;padding:1rem }
+.ent-empty   { color:var(--txt2);font-size:.85rem;padding:1rem;text-align:center }
+
+/* Export bar on Step 5 */
+.ent-export-bar { display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;padding:.75rem 1rem;background:var(--bg2);border:1px solid var(--bg3);border-radius:8px;margin-top:1rem }
+.ent-export-label { font-size:.75rem;font-weight:700;color:var(--txt2);margin-right:.25rem }
+</style>
+
 <!-- ================================================================
      JavaScript modules — load order matters (dependencies first)
      state → products → app → scoring → recommendations →
@@ -2402,6 +2813,7 @@
 <script src="src/js/landing.js"></script>
 <script src="src/js/custom_policy.js"></script>
 <script src="src/js/ts_engine.js"></script>
+<script src="src/js/enterprise.js"></script>
 <script src="src/js/init.js"></script>
 <script>
 /* ── Policy options global helper ──────────────────────────── */
