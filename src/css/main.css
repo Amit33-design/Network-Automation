@@ -70,24 +70,56 @@
     /* ─── Header ─────────────────────────────────────────────────────── */
     #header {
       position: sticky; top: 0; z-index: 100;
-      background: rgba(6,11,24,.92);
+      background: rgba(6,11,24,.96);
       backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
-      padding: 0 2rem;
-      display: flex; align-items: center; gap: 1.5rem;
-      height: 60px;
+      padding: 0 1.5rem;
+      display: flex; align-items: center; gap: 1rem;
+      height: 52px;
+      flex-shrink: 0;
     }
+    /* Mobile hamburger (hidden on desktop) */
+    #sb-hamburger {
+      display: none;
+      background: none; border: none;
+      color: var(--txt1); font-size: 1.2rem;
+      cursor: pointer; padding: .25rem .4rem;
+      border-radius: 6px;
+    }
+    #sb-hamburger:hover { background: var(--bg3); }
+
+    /* Breadcrumb: shows current step name */
+    #header-breadcrumb {
+      flex: 1;
+      font-size: .78rem;
+      color: var(--txt2);
+      display: flex; align-items: center; gap: .4rem;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    #header-breadcrumb .bc-group {
+      color: var(--txt3);
+    }
+    #header-breadcrumb .bc-sep {
+      color: var(--txt3); font-size: .65rem;
+    }
+    #header-breadcrumb .bc-step {
+      color: var(--txt0); font-weight: 600;
+    }
+
+    /* Logo only shown on mobile (in header); hidden on desktop since sidebar has it */
     #logo {
-      display: flex; align-items: center; gap: .6rem;
-      font-size: 1.15rem; font-weight: 700; letter-spacing: -.02em;
+      display: none;
+      align-items: center; gap: .6rem;
+      font-size: 1rem; font-weight: 700; letter-spacing: -.02em;
       white-space: nowrap;
     }
     #logo .ico {
-      width: 30px; height: 30px;
+      width: 28px; height: 28px;
       background: linear-gradient(135deg, var(--blue), var(--cyan));
       border-radius: 7px;
       display: flex; align-items: center; justify-content: center;
-      font-size: .9rem;
+      font-size: .85rem;
     }
     #logo span { color: var(--cyan); }
 
@@ -143,11 +175,193 @@
     .badge-purple { background: var(--purple-dim); color: var(--purple); }
     .badge-red    { background: var(--red-dim);    color: var(--red);   }
 
+    /* ─── Dashboard shell ────────────────────────────────────────────── */
+    #dashboard-layout {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ──────────────────────────────────────────────────────── */
+    #sidebar {
+      width: 220px;
+      min-width: 220px;
+      height: 100vh;
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      transition: width .22s ease, min-width .22s ease;
+      overflow: hidden;
+      flex-shrink: 0;
+      z-index: 110;
+    }
+    #sidebar.collapsed {
+      width: 56px;
+      min-width: 56px;
+    }
+
+    /* Sidebar logo */
+    .sb-logo {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      padding: 0 .9rem;
+      height: 60px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .sb-logo .ico {
+      width: 30px; height: 30px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .9rem;
+    }
+    .sb-logo-text {
+      font-size: 1rem; font-weight: 700; letter-spacing: -.02em;
+      transition: opacity .18s, width .22s;
+    }
+    .sb-logo-text span { color: var(--cyan); }
+
+    /* Sidebar nav area */
+    .sb-nav {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: .5rem 0;
+    }
+    .sb-nav::-webkit-scrollbar { width: 4px; }
+    .sb-nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* Group label */
+    .sb-group { margin-bottom: .25rem; }
+    .sb-group-label {
+      font-size: .62rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--txt3);
+      padding: .7rem 1rem .2rem;
+      white-space: nowrap;
+      overflow: hidden;
+      transition: opacity .18s;
+    }
+
+    /* Nav item */
+    .sb-item {
+      display: flex;
+      align-items: center;
+      gap: .7rem;
+      padding: .52rem .9rem;
+      width: 100%;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--txt1);
+      font-size: .82rem;
+      font-family: inherit;
+      border-left: 3px solid transparent;
+      transition: background .12s, color .12s, border-color .12s;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .sb-item:hover { background: var(--bg3); color: var(--txt0); }
+    .sb-item.active {
+      background: rgba(26,127,255,.12);
+      color: var(--blue);
+      border-left-color: var(--blue);
+      font-weight: 600;
+    }
+    .sb-item.done { color: var(--green); }
+    .sb-item.done .sb-icon::after {
+      content: '✓';
+      font-size: .65rem;
+      position: absolute;
+      bottom: -2px; right: -2px;
+      background: var(--green);
+      color: #000;
+      border-radius: 50%;
+      width: 10px; height: 10px;
+      display: flex; align-items: center; justify-content: center;
+      line-height: 1;
+    }
+
+    /* Icon cell */
+    .sb-icon {
+      width: 22px;
+      text-align: center;
+      flex-shrink: 0;
+      font-size: 1rem;
+      position: relative;
+    }
+
+    /* Label cell */
+    .sb-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: opacity .18s, max-width .22s;
+      max-width: 160px;
+    }
+
+    /* Step badge (shows step number when not done/active) */
+    .sb-badge {
+      margin-left: auto;
+      font-size: .6rem;
+      color: var(--txt3);
+      flex-shrink: 0;
+      transition: opacity .18s;
+    }
+
+    /* Sidebar footer */
+    .sb-footer {
+      border-top: 1px solid var(--border);
+      padding: .35rem 0;
+      flex-shrink: 0;
+    }
+    .sb-footer .sb-item { font-size: .78rem; color: var(--txt2); }
+    .sb-footer .sb-item:hover { color: var(--txt0); }
+
+    /* Collapse button */
+    #sb-collapse-btn .sb-icon { transition: transform .22s; }
+    #sidebar.collapsed #sb-collapse-btn .sb-icon { transform: rotate(180deg); }
+
+    /* Collapsed: hide text, labels, group labels */
+    #sidebar.collapsed .sb-label,
+    #sidebar.collapsed .sb-group-label,
+    #sidebar.collapsed .sb-logo-text,
+    #sidebar.collapsed .sb-badge { opacity: 0; max-width: 0; overflow: hidden; }
+    #sidebar.collapsed .sb-item { padding: .52rem 0; justify-content: center; border-left: none; }
+    #sidebar.collapsed .sb-item.active { background: rgba(26,127,255,.15); border-radius: 0; }
+
+    /* Sidebar mobile overlay */
+    #sb-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.55);
+      z-index: 105;
+    }
+
+    /* ── Content area ─────────────────────────────────────────────────── */
+    #content-area {
+      flex: 1;
+      min-width: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
     /* ─── Layout ─────────────────────────────────────────────────────── */
     #app {
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 2rem 1.5rem 5rem;
+      flex: 1;
+      overflow-y: auto;
+      padding: 2rem 2rem 2rem;
+      max-width: 1100px;
+      width: 100%;
     }
 
     /* ─── Step Panels ────────────────────────────────────────────────── */
@@ -226,6 +440,34 @@
     }
     .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
     .form-grid.full  { grid-template-columns: 1fr; }
+    /* ─── Sidebar mobile (≤ 768px: sidebar becomes a slide-out drawer) ── */
+    @media (max-width: 768px) {
+      #sidebar {
+        position: fixed; top: 0; left: 0; bottom: 0;
+        transform: translateX(-100%);
+        transition: transform .25s ease, width .22s ease;
+        z-index: 120;
+        width: 220px !important; min-width: 220px !important;
+      }
+      #sidebar.mobile-open {
+        transform: translateX(0);
+        box-shadow: 4px 0 24px rgba(0,0,0,.5);
+      }
+      #sidebar.mobile-open ~ #sb-overlay,
+      #sb-overlay.active { display: block; }
+      #content-area { width: 100%; }
+      #sb-hamburger { display: flex !important; }
+      #logo { display: flex !important; }
+      #header-breadcrumb { display: none; }
+      /* Restore labels when open on mobile */
+      #sidebar.mobile-open .sb-label,
+      #sidebar.mobile-open .sb-group-label,
+      #sidebar.mobile-open .sb-logo-text,
+      #sidebar.mobile-open .sb-badge { opacity: 1; max-width: 160px; }
+      #sidebar.mobile-open .sb-item { padding: .52rem .9rem; justify-content: flex-start; border-left: 3px solid transparent; }
+      #sidebar.mobile-open .sb-item.active { border-left-color: var(--blue); }
+    }
+
     @media (max-width: 680px) {
       .form-grid, .form-grid.three { grid-template-columns: 1fr; }
     }
@@ -412,16 +654,17 @@
 
     /* ─── Bottom Nav ─────────────────────────────────────────────────── */
     #bottom-nav {
-      position: fixed; bottom: 0; left: 0; right: 0; z-index: 90;
-      background: rgba(6,11,24,.95); backdrop-filter: blur(16px);
+      position: sticky; bottom: 0; z-index: 90;
+      background: rgba(6,11,24,.97); backdrop-filter: blur(16px);
       border-top: 1px solid var(--border);
-      padding: .85rem 2rem;
+      padding: .75rem 1.5rem;
       display: flex; align-items: center; justify-content: space-between;
       gap: 1rem;
+      flex-shrink: 0;
     }
     #bottom-nav .left  { display: flex; align-items: center; gap: 1rem; }
     #bottom-nav .right { display: flex; align-items: center; gap: .75rem; }
-    #step-info { font-size: .8rem; color: var(--txt2); }
+    #step-info { font-size: .78rem; color: var(--txt2); }
     #step-info strong { color: var(--txt0); }
 
     /* ─── Divider ────────────────────────────────────────────────────── */

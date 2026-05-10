@@ -41,6 +41,7 @@ function jumpStep(n) {
   STATE.step = n;
   document.getElementById(`step-${n}`).classList.add('active');
   renderProgress();
+  renderSidebar();
   updateBottomNav();
   updateSummary();
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -51,6 +52,51 @@ function jumpStep(n) {
     if (typeof initGate === 'function')         initGate();
     if (typeof renderPolicyPanel === 'function') renderPolicyPanel();
   }
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────── */
+const _SB_GROUPS = [
+  { label: 'Design',            steps: [1, 2, 3] },
+  { label: 'Configuration',     steps: [4, 5]    },
+  { label: 'Deploy & Validate', steps: [6]       },
+];
+
+function renderSidebar() {
+  const s = STATE.step;
+  // Update active state on all sb-items that have data-step
+  document.querySelectorAll('#sidebar .sb-item[data-step]').forEach(btn => {
+    const n = parseInt(btn.dataset.step, 10);
+    btn.classList.toggle('active', n === s);
+    btn.classList.toggle('done',   n < s);
+  });
+
+  // Update header breadcrumb
+  const step = STEPS[s - 1];
+  const group = _SB_GROUPS.find(g => g.steps.includes(s));
+  const bcGroup = document.getElementById('bc-group-name');
+  const bcStep  = document.getElementById('bc-step-name');
+  if (bcGroup) bcGroup.textContent = group ? group.label : '';
+  if (bcStep)  bcStep.textContent  = step  ? step.label  : '';
+}
+
+function toggleSidebar() {
+  const sb  = document.getElementById('sidebar');
+  const btn = document.getElementById('sb-collapse-btn');
+  const collapsed = sb.classList.toggle('collapsed');
+  if (btn) {
+    btn.querySelector('.sb-icon').textContent = collapsed ? '▶' : '◀';
+    btn.querySelector('.sb-label').textContent = collapsed ? 'Expand' : 'Collapse';
+  }
+}
+
+function openSidebar() {
+  document.getElementById('sidebar').classList.add('mobile-open');
+  document.getElementById('sb-overlay').classList.add('active');
+}
+
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sb-overlay').classList.remove('active');
 }
 
 function updateBottomNav() {
@@ -207,6 +253,7 @@ function toast(msg, type = 'info', duration = 3200) {
 
 /* ── Init ────────────────────────────────────────────────────────── */
 renderProgress();
+renderSidebar();
 updateBottomNav();
 updateSummary();
 

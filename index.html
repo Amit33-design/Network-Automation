@@ -494,44 +494,129 @@
 </div>
 
 <!-- ── Header ─────────────────────────────────────────────────────── -->
-<header id="header">
-  <div id="logo">
-    <div class="ico">🌐</div>
-    <span class="logo-text">Net<span>Design</span> AI</span>
-  </div>
+<!-- ══════════════════════════════════════════════════════════════════
+     DASHBOARD LAYOUT — sidebar + content area
+══════════════════════════════════════════════════════════════════ -->
+<div id="dashboard-layout">
 
-  <nav id="progress-bar" role="navigation" aria-label="Design steps">
-    <!-- Rendered by JS -->
-  </nav>
+  <!-- Mobile overlay (tap to close sidebar) -->
+  <div id="sb-overlay" onclick="closeSidebar()"></div>
 
-  <div style="display:flex;align-items:center;gap:.5rem;flex-shrink:0">
-    <button class="btn btn-ghost" onclick="openDemoModal()"
-      style="padding:.35rem .85rem;font-size:.75rem;display:flex;align-items:center;gap:.35rem">
-      ⚡ Demo
-    </button>
-    <button class="btn btn-ghost" onclick="sharePage()"
-      style="padding:.35rem .85rem;font-size:.75rem;display:flex;align-items:center;gap:.35rem"
-      title="Copy shareable link">
-      🔗 Share
-    </button>
-    <button class="btn btn-ghost" id="btn-backend-settings" onclick="openBackendSettings()"
-      style="padding:.35rem .7rem;font-size:.75rem;display:flex;align-items:center;gap:.3rem"
-      title="Configure live backend connection">
-      <span id="backend-status-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);display:inline-block"></span>
-      Backend
-    </button>
-    <button class="btn btn-ghost" onclick="openCPModal()"
-      style="padding:.35rem .85rem;font-size:.75rem;display:flex;align-items:center;gap:.35rem"
-      title="Custom Policy Config Generator">
-      ⚙️ Custom Policy
-    </button>
-    <button class="btn btn-ghost" onclick="showKeyboardHelp()"
-      style="padding:.35rem .6rem;font-size:.8rem" title="Keyboard shortcuts (?)">⌨</button>
-  </div>
-</header>
+  <!-- ── Left Sidebar ─────────────────────────────────────────────── -->
+  <aside id="sidebar">
 
-<!-- ── Main App ────────────────────────────────────────────────────── -->
-<main id="app">
+    <!-- Logo -->
+    <div class="sb-logo">
+      <div class="ico">🌐</div>
+      <span class="sb-logo-text">Net<span>Design</span> AI</span>
+    </div>
+
+    <!-- Navigation groups -->
+    <nav class="sb-nav" role="navigation" aria-label="Main navigation">
+
+      <!-- Group: Design -->
+      <div class="sb-group">
+        <div class="sb-group-label">Design</div>
+        <button class="sb-item active" data-step="1" onclick="jumpStep(1);closeSidebar()">
+          <span class="sb-icon">🎯</span>
+          <span class="sb-label">Use Case</span>
+          <span class="sb-badge">1</span>
+        </button>
+        <button class="sb-item" data-step="2" onclick="jumpStep(2);closeSidebar()">
+          <span class="sb-icon">📋</span>
+          <span class="sb-label">Requirements</span>
+          <span class="sb-badge">2</span>
+        </button>
+        <button class="sb-item" data-step="3" onclick="jumpStep(3);closeSidebar()">
+          <span class="sb-icon">📦</span>
+          <span class="sb-label">Products</span>
+          <span class="sb-badge">3</span>
+        </button>
+      </div>
+
+      <!-- Group: Configuration -->
+      <div class="sb-group">
+        <div class="sb-group-label">Configuration</div>
+        <button class="sb-item" data-step="4" onclick="jumpStep(4);closeSidebar()">
+          <span class="sb-icon">🗺️</span>
+          <span class="sb-label">Design &amp; Policies</span>
+          <span class="sb-badge">4</span>
+        </button>
+        <button class="sb-item" data-step="5" onclick="jumpStep(5);closeSidebar()">
+          <span class="sb-icon">⚙️</span>
+          <span class="sb-label">Config Generation</span>
+          <span class="sb-badge">5</span>
+        </button>
+      </div>
+
+      <!-- Group: Deploy -->
+      <div class="sb-group">
+        <div class="sb-group-label">Deploy &amp; Validate</div>
+        <button class="sb-item" data-step="6" onclick="jumpStep(6);closeSidebar()">
+          <span class="sb-icon">🚀</span>
+          <span class="sb-label">Deploy &amp; Validate</span>
+          <span class="sb-badge">6</span>
+        </button>
+      </div>
+
+    </nav><!-- /sb-nav -->
+
+    <!-- Footer tools -->
+    <div class="sb-footer">
+      <button class="sb-item" onclick="openDemoModal();closeSidebar()">
+        <span class="sb-icon">⚡</span>
+        <span class="sb-label">Demo</span>
+      </button>
+      <button class="sb-item" onclick="openCPModal();closeSidebar()">
+        <span class="sb-icon">📄</span>
+        <span class="sb-label">Custom Policy</span>
+      </button>
+      <button class="sb-item" id="btn-backend-settings" onclick="openBackendSettings()">
+        <span class="sb-icon">
+          <span id="backend-status-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);display:inline-block;vertical-align:middle"></span>
+        </span>
+        <span class="sb-label">Backend</span>
+      </button>
+      <button class="sb-item" onclick="sharePage()">
+        <span class="sb-icon">🔗</span>
+        <span class="sb-label">Share Link</span>
+      </button>
+      <button id="sb-collapse-btn" class="sb-item" onclick="toggleSidebar()" title="Collapse sidebar">
+        <span class="sb-icon">◀</span>
+        <span class="sb-label">Collapse</span>
+      </button>
+    </div>
+
+  </aside><!-- /sidebar -->
+
+  <!-- ── Content area ─────────────────────────────────────────────── -->
+  <div id="content-area">
+
+    <!-- Slim top header -->
+    <header id="header">
+      <!-- Mobile: hamburger -->
+      <button id="sb-hamburger" onclick="openSidebar()" aria-label="Open menu">☰</button>
+      <!-- Mobile: logo -->
+      <div id="logo">
+        <div class="ico">🌐</div>
+        <span class="logo-text">Net<span>Design</span> AI</span>
+      </div>
+      <!-- Breadcrumb (hidden on mobile) -->
+      <div id="header-breadcrumb" aria-live="polite">
+        <span class="bc-group" id="bc-group-name"></span>
+        <span class="bc-sep">›</span>
+        <span class="bc-step" id="bc-step-name">Use Case</span>
+      </div>
+      <!-- Action buttons -->
+      <div style="display:flex;align-items:center;gap:.4rem;margin-left:auto">
+        <nav id="progress-bar" style="display:none" role="navigation" aria-label="Design steps"></nav>
+        <button class="btn btn-ghost" onclick="showKeyboardHelp()"
+          style="padding:.3rem .55rem;font-size:.8rem" title="Keyboard shortcuts (?)">⌨</button>
+      </div>
+    </header>
+
+    <!-- ── Main App ────────────────────────────────────────────────── -->
+    <main id="app">
 
   <!-- ══════════════════════════════════════════════════════════════
        STEP 1 — Use Case
@@ -1903,6 +1988,9 @@
     <button class="btn btn-primary" id="btn-next" onclick="goStep(1)">Continue →</button>
   </div>
 </nav>
+
+</div><!-- /content-area -->
+</div><!-- /dashboard-layout -->
 
 
 <!-- ================================================================

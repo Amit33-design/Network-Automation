@@ -10,10 +10,9 @@ function initLanding() {
     document.getElementById('landing')?.remove();
     return;
   }
-  // Hide the main app UI behind the landing
-  document.getElementById('app').style.visibility     = 'hidden';
-  document.getElementById('bottom-nav').style.display = 'none';
-  document.getElementById('header').style.opacity     = '0';
+  // Hide dashboard layout behind landing
+  const layout = document.getElementById('dashboard-layout');
+  if (layout) layout.style.visibility = 'hidden';
 
   // Start counter animations once visible
   animateCounters();
@@ -27,11 +26,13 @@ function startDesigning() {
   land.classList.add('landing-exit');
   setTimeout(() => {
     land.remove();
-    document.getElementById('app').style.visibility     = '';
-    document.getElementById('bottom-nav').style.display = '';
-    document.getElementById('header').style.opacity     = '';
-    document.getElementById('header').style.transition  = 'opacity .4s ease';
-    document.getElementById('header').style.opacity     = '1';
+    const layout = document.getElementById('dashboard-layout');
+    if (layout) {
+      layout.style.visibility = '';
+      layout.style.opacity    = '0';
+      layout.style.transition = 'opacity .4s ease';
+      requestAnimationFrame(() => { layout.style.opacity = '1'; });
+    }
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, 450);
 }
