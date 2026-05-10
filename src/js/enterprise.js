@@ -475,36 +475,89 @@ const Enterprise = (() => {
      5. LOGIN modal
   ═══════════════════════════════════════════════════════════════ */
 
-  function openLogin() { openModal('ent-login-modal'); }
+  function openLogin() {
+    openModal('ent-login-modal');
+    // Pre-fill URL from BackendClient and update dot
+    const urlEl = document.getElementById('ent-login-url');
+    if (urlEl) {
+      const saved = typeof BackendClient !== 'undefined' ? BackendClient.getBackendUrl() : '';
+      urlEl.value = saved || 'http://localhost:8000';
+      _updateLoginDot(urlEl.value);
+    }
+    document.getElementById('ent-login-totp-row').style.display = 'none';
+  }
   function closeLogin() { closeModal('ent-login-modal'); }
 
+  function saveLoginUrl(url) {
+    if (typeof BackendClient !== 'undefined') {
+      const key = BackendClient.getApiKey ? BackendClient.getApiKey() : '';
+      BackendClient.configure(url.trim(), key, true);
+    }
+    _updateLoginDot(url);
+  }
+
+  function _updateLoginDot(url) {
+    const dot = document.getElementById('ent-login-url-dot');
+    if (!dot) return;
+    dot.style.background = url && url.startsWith('http') ? '#4c8' : '#f66';
+  }
+
   async function doLogin() {
-    const user = document.getElementById('ent-login-user').value.trim();
-    const pass = document.getElementById('ent-login-pass').value;
-    const btn  = document.getElementById('ent-login-btn');
-    if (!user || !pass) { toast('Enter username and password', 'error'); return; }
+    const urlEl  = document.getElementById('ent-login-url');
+    const rawUrl = (urlEl ? urlEl.value.trim() : '') || _base();
+    const user   = document.getElementById('ent-login-user').value.trim();
+    const pass   = document.getElementById('ent-login-pass').value;
+    const btn    = document.getElementById('ent-login-btn');
+
+    if (!rawUrl) { toast('Enter the backend URL (e.g. http://localhost:8000)', 'error'); return; }
+    if (!user)   { toast('Enter your username', 'error'); return; }
+    if (!pass)   { toast('Enter your password', 'error'); return; }
+
+    // Persist URL before login attempt
+    saveLoginUrl(rawUrl);
+
     btn.disabled = true; btn.textContent = 'Signing in…';
     try {
-      const res = await (typeof BackendClient !== 'undefined'
-        ? BackendClient.login(user, pass)
-        : _post('/api/auth/token', { username: user, password: pass }));
-      if (res.mfa_required) {
+      const endpoint = rawUrl.replace(/\/$/, '') + '/api/auth/token';
+      const r = await fetch(endpoint, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ username: user, password: pass }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+
+      if (data.mfa_required) {
         document.getElementById('ent-login-totp-row').style.display = 'block';
-        toast('Enter your 6-digit TOTP code', 'info');
-      } else {
-        toast(`Signed in as ${user}`, 'success');
-        closeLogin();
-        await loadProfile();
+        toast('MFA required — enter your 6-digit TOTP code', 'info');
+        return;
       }
-    } catch(e) { toast(e.message, 'error', 5000); }
-    finally { btn.disabled = false; btn.textContent = 'Sign In'; }
+      if (data.access_token && typeof BackendClient !== 'undefined') {
+        BackendClient.setToken(data.access_token);
+      }
+      toast(`Signed in as ${user} (${data.role || 'user'}) ✓`, 'success');
+      closeLogin();
+      if (typeof updateBackendDot === 'function') updateBackendDot();
+    } catch(e) {
+      toast(`Login failed: ${e.message}`, 'error', 6000);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Sign In';
+    }
   }
 
   async function doTotpVerify() {
-    const code = document.getElementById('ent-login-totp').value.trim();
+    const code   = document.getElementById('ent-login-totp').value.trim();
+    const urlEl  = document.getElementById('ent-login-url');
+    const rawUrl = (urlEl ? urlEl.value.trim() : '') || _base();
     try {
-      const res = await _post('/api/auth/totp-verify', { code });
-      if (typeof BackendClient !== 'undefined') BackendClient.setToken(res.access_token);
+      const r = await fetch(rawUrl.replace(/\/$/, '') + '/api/auth/totp-verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ..._hdr(false) },
+        body:   JSON.stringify({ code }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+      if (data.access_token && typeof BackendClient !== 'undefined') BackendClient.setToken(data.access_token);
       toast('Signed in with MFA ✓', 'success');
       closeLogin();
     } catch(e) { toast(e.message, 'error', 5000); }
@@ -522,7 +575,7 @@ const Enterprise = (() => {
     openProfile, closeProfile, switchProfileTab,
     updateProfile, setupTotp, enableTotp, disableTotp,
     generateApiKey, revokeApiKey, copyApiKey,
-    openLogin, closeLogin, doLogin, doTotpVerify,
+    openLogin, closeLogin, doLogin, doTotpVerify, saveLoginUrl,
   };
 
 })();

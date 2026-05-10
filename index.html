@@ -2424,23 +2424,41 @@
 
 <!-- ── LOGIN ─────────────────────────────────────────────────── -->
 <div id="ent-login-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)Enterprise.closeLogin()">
-  <div class="modal-box ent-modal" style="max-width:420px">
+  <div class="modal-box ent-modal" style="max-width:440px">
     <div class="modal-header">
-      <h3>🔑 Sign In</h3>
+      <h3>🔑 Sign In to Backend</h3>
       <button class="modal-close" onclick="Enterprise.closeLogin()">✕</button>
     </div>
     <div style="padding:1.25rem 1.5rem">
-      <label class="ent-label">Email / Username</label>
-      <input id="ent-login-user" class="ent-input" type="email" placeholder="alice@corp.com" style="margin-bottom:.75rem">
+      <!-- Backend URL row -->
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1rem;padding:.6rem .75rem;background:var(--bg2);border:1px solid var(--bg3);border-radius:7px">
+        <span style="font-size:.75rem;color:var(--txt3);white-space:nowrap">Backend URL</span>
+        <input id="ent-login-url" class="ent-input" type="url"
+          placeholder="http://localhost:8000"
+          style="margin:0;flex:1;border:none;background:transparent;padding:.2rem .4rem"
+          onchange="Enterprise.saveLoginUrl(this.value)">
+        <span id="ent-login-url-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);flex-shrink:0"></span>
+      </div>
+
+      <label class="ent-label">Username</label>
+      <input id="ent-login-user" class="ent-input" type="text" placeholder="admin" style="margin-bottom:.75rem"
+        onkeydown="if(event.key==='Enter')document.getElementById('ent-login-pass').focus()">
       <label class="ent-label">Password</label>
-      <input id="ent-login-pass" class="ent-input" type="password" placeholder="••••••••" style="margin-bottom:.75rem">
+      <input id="ent-login-pass" class="ent-input" type="password" placeholder="••••••••" style="margin-bottom:.75rem"
+        onkeydown="if(event.key==='Enter')Enterprise.doLogin()">
       <div id="ent-login-totp-row" style="display:none;margin-bottom:.75rem">
         <label class="ent-label">TOTP Code (from authenticator app)</label>
-        <input id="ent-login-totp" class="ent-input" type="text" placeholder="123456" maxlength="6" inputmode="numeric">
+        <input id="ent-login-totp" class="ent-input" type="text" placeholder="123456" maxlength="6" inputmode="numeric"
+          onkeydown="if(event.key==='Enter')Enterprise.doTotpVerify()">
         <button class="btn-ent btn-ent-ghost" style="margin-top:.5rem;width:100%" onclick="Enterprise.doTotpVerify()">Verify MFA Code</button>
       </div>
-      <button id="ent-login-btn" class="btn-ent btn-ent-primary" style="width:100%" onclick="Enterprise.doLogin()">Sign In</button>
-      <p style="font-size:.78rem;color:var(--txt3);margin-top:.85rem">Backend must be running and connected (sidebar → Backend). For SSO/OIDC login, use the authorization URL from <code>/api/auth/oidc/login</code>.</p>
+      <button id="ent-login-btn" class="btn-ent btn-ent-primary" style="width:100%;padding:.6rem" onclick="Enterprise.doLogin()">Sign In</button>
+      <div style="margin-top:1rem;padding:.65rem .8rem;background:var(--bg2);border-radius:7px;font-size:.77rem;color:var(--txt3);line-height:1.5">
+        <strong style="color:var(--txt2)">Default credentials (from .env)</strong><br>
+        Username: <code style="color:var(--accent)">admin</code> &nbsp;
+        Password: <code style="color:var(--accent)">netdesign_admin_pass</code><br>
+        Backend must be running: <code>docker compose -f docker-compose.local.yml up -d</code>
+      </div>
     </div>
   </div>
 </div>
