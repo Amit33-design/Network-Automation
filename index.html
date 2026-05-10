@@ -2321,14 +2321,34 @@
   <!-- RCA within TS Engine -->
   <div class="ts-section">
     <div class="ts-section-hdr">🔬 AI Root Cause Analysis</div>
+    <div style="margin-bottom:.55rem">
+      <div style="font-size:.76rem;color:var(--txt3);margin-bottom:.4rem">Quick symptoms — click to populate:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:.3rem" id="ts-rca-chips">
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'BGP neighbor down, session not established')">BGP neighbor down</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'interface flapping, link going up and down')">Interface flapping</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'packet loss and high latency across the network')">Packet loss / latency</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'OSPF adjacency stuck in EXSTART or DOWN state')">OSPF adjacency fail</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'STP topology change, spanning tree reconvergence loop')">STP loop / storm</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'VXLAN EVPN MAC not learned, overlay reachability broken')">EVPN/VXLAN issue</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'PFC pause storm, RoCEv2 RDMA traffic degraded')">PFC / RoCEv2 storm</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'CPU high, control plane slow, routing protocol drops')">High CPU</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'DNS resolution failing, cannot resolve hostname')">DNS failure</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'DHCP addresses exhausted, clients not getting IP')">DHCP exhausted</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'IPSec VPN tunnel down, IKE negotiation failed')">VPN tunnel down</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'LACP port-channel flapping, member ports going down')">LACP / port-channel</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'asymmetric routing, traffic going different paths')">Asymmetric routing</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'MTU mismatch, large packets dropped, fragmentation')">MTU mismatch</button>
+        <button class="layer-filter-btn" onclick="TsEngine.rcaChip(this,'NTP out of sync, clock drift, stratum unreachable')">NTP drift</button>
+      </div>
+    </div>
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem">
       <input id="ts-rca-symptom" class="ts-input" type="text"
-        placeholder="Describe the symptom (e.g. intermittent packet drops on spine-01 Eth1/1)…"
-        style="flex:2;min-width:200px">
+        placeholder="Describe the symptom in plain English (e.g. intermittent packet drops on spine-01 Eth1/1, BGP session resets every 10 minutes)…"
+        style="flex:2;min-width:220px">
       <input id="ts-rca-devices" class="ts-input" type="text"
-        placeholder="Affected device(s) comma-sep"
-        style="flex:1;min-width:140px">
-      <button class="btn btn-primary" style="font-size:.82rem" onclick="TsEngine.runRca()">Analyze</button>
+        placeholder="Affected device(s) comma-sep (optional)"
+        style="flex:1;min-width:160px">
+      <button class="btn btn-primary" style="font-size:.82rem" onclick="TsEngine.runRca()">🔬 Analyze</button>
     </div>
     <div id="ts-rca-output" style="display:none"></div>
   </div>
