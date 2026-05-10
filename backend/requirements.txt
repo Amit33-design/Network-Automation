@@ -17,6 +17,9 @@ mcp>=1.0.0
 pyjwt==2.8.0
 structlog==24.2.0
 hvac==2.1.0
+passlib[bcrypt]==1.7.4           # password hashing (Phase 1)
+pyotp==2.9.0                     # TOTP/MFA (Phase 1)
+authlib==1.3.1                   # OIDC/SSO client (Phase 1)
 
 # ── Database ──────────────────────────────────────────────────────────────────
 sqlalchemy[asyncio]==2.0.30
@@ -45,3 +48,8 @@ prometheus-client==0.20.0
 
 # ── License ───────────────────────────────────────────────────────────────────
 cryptography>=42.0.0
+
+# ── Phase 2: Integrations ─────────────────────────────────────────────────────
+gitpython==3.1.43                # GitOps config commits
+# weasyprint>=60.0               # PDF runbook export (optional — needs system libs)
+# markdown>=3.6                  # Markdown→HTML for PDF (optional)

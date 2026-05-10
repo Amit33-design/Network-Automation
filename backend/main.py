@@ -48,6 +48,11 @@ from routers.designs import router as designs_router
 from routers.deployments import router as deployments_router
 from routers.devices import router as devices_router
 from routers.custom_policy import router as custom_policy_router
+from routers.orgs import router as orgs_router
+from routers.approvals import router as approvals_router
+from routers.users import router as users_router
+from routers.integrations import router as integrations_router
+from routers.export import router as export_router
 from ztp.router import ztp_router
 from api.ws import deployment_stream
 from ztp.dhcp_gen import generate_dhcp_config
@@ -219,6 +224,13 @@ app.include_router(designs_router)
 app.include_router(deployments_router)
 app.include_router(devices_router)
 app.include_router(custom_policy_router)
+# Phase 1 — Enterprise: auth, orgs, approvals
+app.include_router(users_router)
+app.include_router(orgs_router)
+app.include_router(approvals_router)
+# Phase 2 — Enterprise: integrations + export
+app.include_router(integrations_router)
+app.include_router(export_router)
 
 
 # ---------------------------------------------------------------------------
