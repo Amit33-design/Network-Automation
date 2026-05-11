@@ -505,13 +505,18 @@
   <!-- ── Left Sidebar ─────────────────────────────────────────────── -->
   <aside id="sidebar">
 
-    <!-- Logo -->
+    <!-- Logo + collapse toggle -->
     <div class="sb-logo">
       <div class="ico">🌐</div>
       <span class="sb-logo-text">Net<span>Design</span> AI</span>
+      <button id="sb-collapse-btn" class="sb-collapse-toggle" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar">
+        <svg class="sb-collapse-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 4L6 8L10 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
     </div>
 
-    <!-- Navigation groups -->
+    <!-- Navigation -->
     <nav class="sb-nav" role="navigation" aria-label="Main navigation">
 
       <!-- Group: Design -->
@@ -549,26 +554,33 @@
         </button>
       </div>
 
-      <!-- Group: Deploy -->
-      <div class="sb-group">
-        <div class="sb-group-label">Deploy &amp; Validate</div>
-        <button class="sb-item" data-step="6" data-sub="deploy" onclick="jumpSubStep(6,'deploy');closeSidebar()">
-          <span class="sb-icon">🚀</span>
-          <span class="sb-label">Deploy &amp; Validate</span>
-          <span class="sb-badge">6</span>
+      <!-- Group: Deploy & Validate (collapsible) -->
+      <div class="sb-group" id="sg-deploy">
+        <button class="sb-group-hdr" onclick="toggleSbGroup('deploy')" aria-expanded="false">
+          <span class="sb-group-hdr-label">Deploy &amp; Validate</span>
+          <svg class="sb-group-chevron" id="sgc-deploy" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
         </button>
-        <button class="sb-item sb-sub-item" data-step="6" data-sub="ztp" onclick="jumpSubStep(6,'ztp');closeSidebar()">
-          <span class="sb-icon">📡</span>
-          <span class="sb-label">Zero Touch Provisioning</span>
-        </button>
-        <button class="sb-item sb-sub-item" data-step="6" data-sub="monitoring" onclick="jumpSubStep(6,'monitoring');closeSidebar()">
-          <span class="sb-icon">📊</span>
-          <span class="sb-label">Monitoring &amp; Alerts</span>
-        </button>
-        <button class="sb-item sb-sub-item" data-step="6" data-sub="troubleshoot" onclick="jumpSubStep(6,'troubleshoot');closeSidebar()">
-          <span class="sb-icon">🔬</span>
-          <span class="sb-label">RCA &amp; Troubleshoot</span>
-        </button>
+        <div class="sb-group-body" id="sgb-deploy">
+          <button class="sb-item" data-step="6" data-sub="deploy" onclick="jumpSubStep(6,'deploy');closeSidebar()">
+            <span class="sb-icon">🚀</span>
+            <span class="sb-label">Deploy &amp; Validate</span>
+            <span class="sb-badge">6</span>
+          </button>
+          <button class="sb-item sb-sub-item" data-step="6" data-sub="ztp" onclick="jumpSubStep(6,'ztp');closeSidebar()">
+            <span class="sb-icon">📡</span>
+            <span class="sb-label">Zero Touch Provisioning</span>
+          </button>
+          <button class="sb-item sb-sub-item" data-step="6" data-sub="monitoring" onclick="jumpSubStep(6,'monitoring');closeSidebar()">
+            <span class="sb-icon">📊</span>
+            <span class="sb-label">Monitoring &amp; Alerts</span>
+          </button>
+          <button class="sb-item sb-sub-item" data-step="6" data-sub="troubleshoot" onclick="jumpSubStep(6,'troubleshoot');closeSidebar()">
+            <span class="sb-icon">🔬</span>
+            <span class="sb-label">RCA &amp; Troubleshoot</span>
+          </button>
+        </div>
       </div>
 
       <!-- Group: Tools -->
@@ -580,70 +592,47 @@
         </button>
       </div>
 
-      <!-- Group: Enterprise -->
-      <div class="sb-group">
-        <div class="sb-group-label">Enterprise</div>
-        <button class="sb-item" onclick="Enterprise.openApprovals();closeSidebar()">
-          <span class="sb-icon">✅</span>
-          <span class="sb-label">Change Approvals</span>
+      <!-- Group: Enterprise (collapsible) -->
+      <div class="sb-group" id="sg-enterprise">
+        <button class="sb-group-hdr" onclick="toggleSbGroup('enterprise')" aria-expanded="false">
+          <span class="sb-group-hdr-label">Enterprise</span>
+          <svg class="sb-group-chevron" id="sgc-enterprise" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
         </button>
-        <button class="sb-item" onclick="Enterprise.openIntegrations();closeSidebar()">
-          <span class="sb-icon">🔌</span>
-          <span class="sb-label">Integrations</span>
-        </button>
-        <button class="sb-item" onclick="Enterprise.exportDrawio()">
-          <span class="sb-icon">📐</span>
-          <span class="sb-label">Export draw.io</span>
-        </button>
-        <button class="sb-item" onclick="Enterprise.exportRunbook('md')">
-          <span class="sb-icon">📋</span>
-          <span class="sb-label">Export Runbook</span>
-        </button>
-        <button class="sb-item" onclick="Enterprise.commitToGit()">
-          <span class="sb-icon">🐙</span>
-          <span class="sb-label">Commit to GitHub</span>
-        </button>
-        <button class="sb-item" onclick="Enterprise.openProfile();closeSidebar()">
-          <span class="sb-icon">👤</span>
-          <span class="sb-label">Profile &amp; MFA</span>
-        </button>
-        <button class="sb-item" onclick="Enterprise.openLogin();closeSidebar()">
-          <span class="sb-icon">🔑</span>
-          <span class="sb-label">Sign In</span>
-        </button>
+        <div class="sb-group-body" id="sgb-enterprise">
+          <button class="sb-item" onclick="Enterprise.openApprovals();closeSidebar()">
+            <span class="sb-icon">✅</span>
+            <span class="sb-label">Change Approvals</span>
+          </button>
+          <button class="sb-item" onclick="Enterprise.openIntegrations();closeSidebar()">
+            <span class="sb-icon">🔌</span>
+            <span class="sb-label">Integrations</span>
+          </button>
+          <button class="sb-item" onclick="Enterprise.exportDrawio()">
+            <span class="sb-icon">📐</span>
+            <span class="sb-label">Export draw.io</span>
+          </button>
+          <button class="sb-item" onclick="Enterprise.exportRunbook('md')">
+            <span class="sb-icon">📁</span>
+            <span class="sb-label">Export Runbook</span>
+          </button>
+          <button class="sb-item" onclick="Enterprise.commitToGit()">
+            <span class="sb-icon">🐙</span>
+            <span class="sb-label">Commit to GitHub</span>
+          </button>
+          <button class="sb-item" onclick="Enterprise.openProfile();closeSidebar()">
+            <span class="sb-icon">👤</span>
+            <span class="sb-label">Profile &amp; MFA</span>
+          </button>
+          <button class="sb-item" onclick="Enterprise.openLogin();closeSidebar()">
+            <span class="sb-icon">🔑</span>
+            <span class="sb-label">Sign In</span>
+          </button>
+        </div>
       </div>
 
     </nav><!-- /sb-nav -->
-
-    <!-- Footer tools -->
-    <div class="sb-footer">
-      <button class="sb-item" onclick="openDemoModal();closeSidebar()">
-        <span class="sb-icon">⚡</span>
-        <span class="sb-label">Demo</span>
-      </button>
-      <button class="sb-item" onclick="openCPModal();closeSidebar()">
-        <span class="sb-icon">📄</span>
-        <span class="sb-label">Custom Policy</span>
-      </button>
-      <button class="sb-item" onclick="openPolicyRulesModal();closeSidebar()">
-        <span class="sb-icon">📋</span>
-        <span class="sb-label">Policy Rules</span>
-      </button>
-      <button class="sb-item" id="btn-backend-settings" onclick="openBackendSettings()">
-        <span class="sb-icon">
-          <span id="backend-status-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);display:inline-block;vertical-align:middle"></span>
-        </span>
-        <span class="sb-label">Backend</span>
-      </button>
-      <button class="sb-item" onclick="sharePage()">
-        <span class="sb-icon">🔗</span>
-        <span class="sb-label">Share Link</span>
-      </button>
-      <button id="sb-collapse-btn" class="sb-item" onclick="toggleSidebar()" title="Collapse sidebar">
-        <span class="sb-icon">◀</span>
-        <span class="sb-label">Collapse</span>
-      </button>
-    </div>
 
   </aside><!-- /sidebar -->
 
@@ -665,11 +654,34 @@
         <span class="bc-sep">›</span>
         <span class="bc-step" id="bc-step-name">Use Case</span>
       </div>
-      <!-- Action buttons -->
-      <div style="display:flex;align-items:center;gap:.4rem;margin-left:auto">
+      <!-- Top-right utility bar -->
+      <div class="hdr-util-bar">
         <nav id="progress-bar" style="display:none" role="navigation" aria-label="Design steps"></nav>
-        <button class="btn btn-ghost" onclick="showKeyboardHelp()"
-          style="padding:.3rem .55rem;font-size:.8rem" title="Keyboard shortcuts (?)">⌨</button>
+        <div class="hdr-util-group">
+          <button class="hdr-util-btn" id="btn-backend-settings" onclick="openBackendSettings()" title="Backend connection">
+            <span id="backend-status-dot" class="hdr-status-dot"></span>
+            <span class="hdr-util-label">Backend</span>
+          </button>
+          <button class="hdr-util-btn" onclick="openDemoModal()" title="Quick demo">
+            <span class="hdr-util-icon">⚡</span>
+            <span class="hdr-util-label">Demo</span>
+          </button>
+          <button class="hdr-util-btn" onclick="openCPModal()" title="Custom policy config">
+            <span class="hdr-util-icon">📄</span>
+            <span class="hdr-util-label">Config Policy</span>
+          </button>
+          <button class="hdr-util-btn" onclick="openPolicyRulesModal()" title="Policy rule editor">
+            <span class="hdr-util-icon">📋</span>
+            <span class="hdr-util-label">Rule Editor</span>
+          </button>
+          <button class="hdr-util-btn" onclick="sharePage()" title="Share link">
+            <span class="hdr-util-icon">🔗</span>
+            <span class="hdr-util-label">Share</span>
+          </button>
+          <button class="hdr-util-btn hdr-util-btn--icon" onclick="showKeyboardHelp()" title="Keyboard shortcuts (?)">
+            <span class="hdr-util-icon">⌨</span>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -2999,6 +3011,39 @@ function closePolicyRulesModal() {
   document.body.style.right = '';
   window.scrollTo(0, scrollY);
 }
+/* ── Collapsible sidebar groups ──────────────────────────────────── */
+function toggleSbGroup(id) {
+  const body = document.getElementById('sgb-' + id);
+  const hdr  = body ? body.previousElementSibling : null;
+  if (!body) return;
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  if (hdr) hdr.setAttribute('aria-expanded', String(!isOpen));
+}
+function _openSbGroup(id) {
+  const body = document.getElementById('sgb-' + id);
+  const hdr  = body ? body.previousElementSibling : null;
+  if (!body || body.classList.contains('open')) return;
+  body.classList.add('open');
+  if (hdr) hdr.setAttribute('aria-expanded', 'true');
+}
+/* Auto-expand Deploy group when navigating to step 6 */
+document.addEventListener('DOMContentLoaded', () => {
+  const _origJumpStep = window.jumpStep;
+  if (typeof _origJumpStep === 'function') {
+    window.jumpStep = function(n) {
+      _origJumpStep(n);
+      if (n === 6) _openSbGroup('deploy');
+    };
+  }
+  const _origJumpSubStep = window.jumpSubStep;
+  if (typeof _origJumpSubStep === 'function') {
+    window.jumpSubStep = function(n, sub) {
+      _origJumpSubStep(n, sub);
+      if (n === 6) _openSbGroup('deploy');
+    };
+  }
+});
 /* ── Global bake toggle (pre-checks all new row Bake checkboxes) ── */
 function toggleGlobalBake(checked) {
   document.querySelectorAll('.zrr-bake').forEach(cb => { cb.checked = checked; });
