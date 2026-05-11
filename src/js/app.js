@@ -140,13 +140,8 @@ function renderSidebar() {
 }
 
 function toggleSidebar() {
-  const sb  = document.getElementById('sidebar');
-  const btn = document.getElementById('sb-collapse-btn');
-  const collapsed = sb.classList.toggle('collapsed');
-  if (btn) {
-    btn.querySelector('.sb-icon').textContent = collapsed ? '▶' : '◀';
-    btn.querySelector('.sb-label').textContent = collapsed ? 'Expand' : 'Collapse';
-  }
+  const sb = document.getElementById('sidebar');
+  sb.classList.toggle('collapsed');
 }
 
 function openSidebar() {
