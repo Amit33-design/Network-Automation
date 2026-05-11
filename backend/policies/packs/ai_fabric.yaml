@@ -1,0 +1,167 @@
+name: AI / GPU Fabric Best Practices
+description: >
+  Enforcement rules for RoCEv2 lossless fabrics used with NVIDIA, AMD, or
+  Intel GPU clusters. Covers PFC, ECN/DCQCN, SHARP, redundancy, and MTU
+  requirements that must be in place before deploying an AI training network.
+tags: [gpu, rocev2, ai-fabric, lossless]
+
+rules:
+
+  # ── Hard requirements (FAIL) ────────────────────────────────────────────────
+
+  - id: af-rocev2-required
+    name: "AI Fabric: RoCEv2 Must Be Enabled"
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: RoCEv2
+    message: >
+      GPU use-case selected but RoCEv2 is not enabled. RDMA over Converged
+      Ethernet (RoCEv2) is mandatory for GPU-to-GPU collective operations.
+
+  - id: af-pfc-required
+    name: "AI Fabric: PFC Must Be Enabled"
+    severity: Fail
+    priority: 11
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: PFC
+    message: >
+      Priority Flow Control (PFC) is required for lossless RoCEv2 traffic.
+      Without PFC, dropped packets cause RDMA retransmits and collapse
+      collective bandwidth.
+
+  - id: af-ecn-required
+    name: "AI Fabric: ECN/DCQCN Must Be Enabled"
+    severity: Fail
+    priority: 12
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: ECN
+    message: >
+      Explicit Congestion Notification (ECN) with DCQCN is required to prevent
+      PFC storms. ECN signals congestion to NICs before queues fill, keeping
+      PFC pause frames rare rather than continuous.
+
+  - id: af-no-single-spine
+    name: "AI Fabric: Single Spine Is Unacceptable"
+    severity: Fail
+    priority: 20
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: redundancy
+          op: eq
+          value: single
+    message: >
+      A single spine is a hard failure for GPU fabrics. Any spine failure
+      partitions all rail traffic. Deploy a minimum of two spines (ECMP pair)
+      for production AI clusters.
+
+  - id: af-mtu-in-config
+    name: "AI Fabric: MTU 9216 Must Appear in Config"
+    severity: Fail
+    priority: 30
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - op: config_not_contains
+          value: "mtu 9216"
+    message: >
+      Jumbo frames (MTU 9216) must be set on all fabric interfaces for RoCEv2.
+      Standard MTU 1500 causes RoCEv2 fragmentation and severe throughput loss.
+      Run config generation first, then re-evaluate.
+
+  # ── Strong recommendations (WARN) ──────────────────────────────────────────
+
+  - id: af-sharp-recommended
+    name: "AI Fabric: SHARP Recommended for Large Clusters"
+    severity: Warn
+    priority: 40
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: SHARP
+    message: >
+      Scalable Hierarchical Aggregation and Reduction Protocol (SHARP) offloads
+      all-reduce collectives to the network fabric, reducing GPU idle time.
+      Enable SHARP if your switches support it (Spectrum-2/3, Quantum HDR).
+
+  - id: af-storage-isolation
+    name: "AI Fabric: Storage Traffic Should Be Isolated"
+    severity: Warn
+    priority: 41
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: storage-isolation
+    message: >
+      Storage (NFS/NVMe-oF) and GPU collective traffic share the same lossless
+      PFC domain. Isolate storage to a separate PFC priority (e.g. P4) to
+      prevent cross-traffic head-of-line blocking.
+
+  - id: af-hyperscale-redundancy
+    name: "AI Fabric: Hyperscale Requires Full Redundancy"
+    severity: Warn
+    priority: 42
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: orgSize
+          op: in
+          value: [large, hyperscale]
+        - field: redundancy
+          op: neq
+          value: full
+    message: >
+      Large / hyperscale GPU clusters should use full redundancy (dual-homed
+      ToR, ECMP spines). Partial redundancy with hundreds of GPUs means a
+      single link failure degrades job completion time for every running job.
+
+  # ── Informational ───────────────────────────────────────────────────────────
+
+  - id: af-no-compliance-gpu
+    name: "AI Fabric: No Compliance Framework"
+    severity: Info
+    priority: 60
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: compliance
+          op: is_empty
+    message: >
+      AI cluster environments often fall under SOC 2 or internal security
+      policies. Select a compliance framework so the policy engine can enforce
+      the relevant controls.

@@ -48,6 +48,7 @@ from routers.designs import router as designs_router
 from routers.deployments import router as deployments_router
 from routers.devices import router as devices_router
 from routers.custom_policy import router as custom_policy_router
+from routers.user_policies import router as user_policies_router
 from routers.orgs import router as orgs_router
 from routers.approvals import router as approvals_router
 from routers.users import router as users_router
@@ -286,6 +287,7 @@ app.include_router(designs_router)
 app.include_router(deployments_router)
 app.include_router(devices_router)
 app.include_router(custom_policy_router)
+app.include_router(user_policies_router)
 # Phase 1 — Enterprise: auth, orgs, approvals
 app.include_router(users_router)
 app.include_router(orgs_router)

@@ -201,6 +201,26 @@ try:
         ztp_state: Mapped[str] = mapped_column(String, default="unprovisioned")
         last_seen: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # ── User-Defined Policy Rulesets ─────────────────────────────────────────
+
+    class UserRuleset(Base):
+        """User-authored YAML policy rule sets with full version history."""
+        __tablename__ = "user_rulesets"
+
+        id:           Mapped[str]      = mapped_column(String, primary_key=True, default=_uuid)
+        org_id:       Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+        name:         Mapped[str]      = mapped_column(String, nullable=False)
+        description:  Mapped[str]      = mapped_column(Text, default="")
+        yaml_content: Mapped[str]      = mapped_column(Text, nullable=False)
+        is_active:    Mapped[bool]     = mapped_column(Boolean, default=True)
+        rule_count:   Mapped[int]      = mapped_column(Integer, default=0)
+        version:      Mapped[int]      = mapped_column(Integer, default=1)
+        # Append-only list of {version, yaml_content, changed_by, changed_at, note}
+        version_history: Mapped[list]  = mapped_column(JSONB, default=list)
+        created_by:   Mapped[str]      = mapped_column(String, default="user")
+        created_at:   Mapped[datetime] = mapped_column(default=_now)
+        updated_at:   Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+
     # ── Audit Log ─────────────────────────────────────────────────────────────
 
     class AuditEvent(Base):
@@ -398,6 +418,46 @@ class TokenResponse(BaseModel):
     role:         str
     org_id:       str | None = None
     mfa_required: bool = False     # True = call /api/auth/totp-verify next
+
+
+# ── User Ruleset schemas ──────────────────────────────────────────────────────
+
+class UserRulesetCreate(BaseModel):
+    name:         str
+    description:  str = ""
+    yaml_content: str
+    org_id:       str | None = None
+    change_note:  str = ""
+
+class UserRulesetUpdate(BaseModel):
+    name:         str | None = None
+    description:  str | None = None
+    yaml_content: str | None = None
+    change_note:  str = ""
+
+class UserRulesetRead(BaseModel):
+    id:           str
+    org_id:       str | None
+    name:         str
+    description:  str
+    is_active:    bool
+    rule_count:   int
+    version:      int
+    created_by:   str
+    created_at:   datetime
+    updated_at:   datetime
+    model_config  = {"from_attributes": True}
+
+class UserRulesetDetail(UserRulesetRead):
+    yaml_content:    str
+    version_history: list
+
+class EvaluateRequest(BaseModel):
+    intent:     dict[str, Any]
+    configs:    dict[str, str] = {}   # {hostname: config_text}
+
+class ValidateRequest(BaseModel):
+    yaml_content: str
 
 
 # ── Audit export schema ───────────────────────────────────────────────────────

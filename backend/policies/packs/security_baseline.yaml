@@ -1,0 +1,88 @@
+name: Security Baseline
+description: >
+  Cross-use-case security policy checks. Covers encryption in transit,
+  access control, NAC, and compliance framework selection. Apply to any
+  production network design as a minimum security bar.
+tags: [security, encryption, nac, compliance, baseline]
+
+rules:
+
+  - id: sec-wan-encryption
+    name: "Security: WAN Traffic Must Be Encrypted"
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: wan
+        - field: security
+          op: not_contains
+          value: ipsec
+        - field: security
+          op: not_contains
+          value: macsec
+    message: >
+      WAN designs without IPsec or MACsec transmit traffic in cleartext over
+      untrusted links. Enable IPsec (overlay) or MACsec (point-to-point) before
+      carrying production data.
+
+  - id: sec-campus-nac
+    name: "Security: Campus Must Enforce 802.1X NAC"
+    severity: Fail
+    priority: 11
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: campus
+        - field: security
+          op: not_contains
+          value: "802.1x"
+    message: >
+      Campus networks without 802.1X allow any device to connect and access
+      internal resources. Enable 802.1X NAC (EAP-TLS preferred) on all
+      access-layer ports.
+
+  - id: sec-no-compliance-framework
+    name: "Security: No Compliance Framework"
+    severity: Warn
+    priority: 20
+    condition:
+      field: compliance
+      op: is_empty
+    message: >
+      No compliance framework is selected. Production networks typically fall
+      under PCI-DSS, HIPAA, SOC 2, or internal security standards. Select the
+      applicable framework so controls are enforced automatically.
+
+  - id: sec-gpu-no-encryption
+    name: "Security: AI Fabric Has No Encryption Framework"
+    severity: Warn
+    priority: 30
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: security
+          op: is_empty
+    message: >
+      GPU cluster fabric has no security controls selected. While RoCEv2 lossless
+      fabric is typically trusted-zone, consider MACsec for east-west encryption
+      and ensure management access is via SSH with key-based auth.
+
+  - id: sec-macsec-in-config
+    name: "Security: MACsec Keyword Verification"
+    severity: Info
+    priority: 40
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: macsec
+        - op: config_not_contains
+          value: "macsec"
+    message: >
+      MACsec is selected in the design but 'macsec' does not appear in the
+      generated configs. Run config generation first, then re-evaluate.

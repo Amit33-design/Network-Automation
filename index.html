@@ -625,6 +625,10 @@
         <span class="sb-icon">📄</span>
         <span class="sb-label">Custom Policy</span>
       </button>
+      <button class="sb-item" onclick="openPolicyRulesModal();closeSidebar()">
+        <span class="sb-icon">📋</span>
+        <span class="sb-label">Policy Rules</span>
+      </button>
       <button class="sb-item" id="btn-backend-settings" onclick="openBackendSettings()">
         <span class="sb-icon">
           <span id="backend-status-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);display:inline-block;vertical-align:middle"></span>
@@ -1898,6 +1902,112 @@
 
   </section><!-- /step-6 -->
 
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       POLICY RULES EDITOR (floating modal)
+       Opened via toolbar / step-6 button
+  ════════════════════════════════════════════════════════════════════════════ -->
+  <div id="policy-rules-modal" class="modal-overlay" style="display:none"
+       onclick="if(event.target===this)closePolicyRulesModal()">
+    <div class="modal-box" style="max-width:900px;max-height:92vh;display:flex;flex-direction:column">
+
+      <div class="modal-header" style="flex-shrink:0">
+        <h3>📋 Custom Policy Rule Editor</h3>
+        <button class="modal-close" onclick="closePolicyRulesModal()">✕</button>
+      </div>
+
+      <div style="display:flex;gap:1rem;flex:1;overflow:hidden;padding:1rem">
+
+        <!-- ── Left column: saved rulesets + history ───────────────────── -->
+        <div style="width:210px;flex-shrink:0;display:flex;flex-direction:column;gap:.75rem;overflow-y:auto">
+
+          <div class="pre-sidebar-section">
+            <div class="pre-sidebar-title">Saved Rulesets</div>
+            <ul id="pre-ruleset-list" class="pre-list">
+              <li class="pre-list-empty">Loading…</li>
+            </ul>
+          </div>
+
+          <div class="pre-sidebar-section">
+            <div class="pre-sidebar-title">Version History</div>
+            <ul id="pre-history-list" class="pre-list">
+              <li class="pre-list-empty">Load a ruleset to see history.</li>
+            </ul>
+          </div>
+
+        </div>
+
+        <!-- ── Right column: editor + controls ────────────────────────── -->
+        <div style="flex:1;display:flex;flex-direction:column;gap:.6rem;overflow:hidden">
+
+          <!-- Pack loader -->
+          <div style="display:flex;gap:.5rem;align-items:center;flex-shrink:0">
+            <select id="pre-pack-select" class="cp-select" style="flex:1">
+              <option value="">— Load a built-in pack —</option>
+            </select>
+            <button class="btn-sm btn-sec" onclick="PolicyRulesEditor.loadPack()">Load</button>
+          </div>
+
+          <!-- Name + note -->
+          <div style="display:flex;gap:.5rem;flex-shrink:0">
+            <input id="pre-ruleset-name" class="cp-input" type="text"
+                   placeholder="Ruleset name (required to save)" style="flex:1">
+            <input id="pre-change-note" class="cp-input" type="text"
+                   placeholder="Change note (optional)" style="flex:1">
+          </div>
+
+          <!-- YAML editor -->
+          <div class="pre-editor-wrap" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+            <div class="pre-editor-label">YAML — same DSL as rules.yaml · ops: eq neq contains in gt lt gte lte is_empty config_contains…</div>
+            <pre id="pre-editor" class="pre-editor" contenteditable="true" spellcheck="false"
+                 style="flex:1;overflow:auto;margin:0"
+                 placeholder="# Paste or type your rules here, or load a built-in pack above.
+rules:
+  - id: my-first-rule
+    name: &quot;Example: GPU requires RoCEv2&quot;
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: RoCEv2
+    message: RoCEv2 must be enabled for GPU clusters."></pre>
+          </div>
+
+          <!-- Status bar -->
+          <div id="pre-status-bar" class="pre-status-bar pre-status-edited" style="flex-shrink:0">
+            ✏️ Start by loading a pack or typing rules above.
+          </div>
+
+          <!-- Action buttons -->
+          <div style="display:flex;gap:.5rem;flex-shrink:0;flex-wrap:wrap">
+            <button class="btn-sm btn-sec" onclick="PolicyRulesEditor.validate()" title="Check YAML syntax without saving">
+              🔍 Validate
+            </button>
+            <button class="btn-sm btn-pri" onclick="PolicyRulesEditor.save()" title="Save or update this ruleset">
+              💾 Save
+            </button>
+            <button class="btn-sm btn-sec" onclick="PolicyRulesEditor.evaluate()" title="Evaluate against the current design intent">
+              ▶ Evaluate vs Current Design
+            </button>
+            <button class="btn-sm btn-danger" onclick="PolicyRulesEditor.deleteActive()" title="Delete the loaded ruleset"
+                    style="margin-left:auto">
+              🗑 Delete
+            </button>
+          </div>
+
+          <!-- Results panel -->
+          <div id="pre-results-panel" class="pre-results-panel" style="display:none;flex-shrink:0;max-height:280px;overflow-y:auto"></div>
+
+        </div><!-- /right col -->
+      </div><!-- /body flex -->
+
+    </div><!-- /modal-box -->
+  </div><!-- /policy-rules-modal -->
+
   <!-- ZTP DHCP Options Modal -->
   <div id="ztp-dhcp-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)ZTP.closeDHCPModal()">
     <div class="modal-box" style="max-width:700px">
@@ -2830,6 +2940,7 @@
 <script src="src/js/demo.js"></script>
 <script src="src/js/landing.js"></script>
 <script src="src/js/custom_policy.js"></script>
+<script src="src/js/policy_rules_editor.js"></script>
 <script src="src/js/ts_engine.js"></script>
 <script src="src/js/enterprise.js"></script>
 <script src="src/js/init.js"></script>
@@ -2862,6 +2973,25 @@ function closeCPModal() {
   if (!m) return;
   m.style.display = 'none';
   // Restore body scroll
+  const scrollY = parseInt(document.body.dataset.scrollY || '0', 10);
+  document.body.style.position = '';
+  document.body.style.top = '';
+  document.body.style.left = '';
+  document.body.style.right = '';
+  window.scrollTo(0, scrollY);
+}
+function openPolicyRulesModal() {
+  const m = document.getElementById('policy-rules-modal');
+  if (!m) return;
+  const scrollY = window.scrollY;
+  document.body.dataset.scrollY = scrollY;
+  document.body.style.cssText += `;position:fixed;top:-${scrollY}px;left:0;right:0;`;
+  m.style.display = 'flex';
+}
+function closePolicyRulesModal() {
+  const m = document.getElementById('policy-rules-modal');
+  if (!m) return;
+  m.style.display = 'none';
   const scrollY = parseInt(document.body.dataset.scrollY || '0', 10);
   document.body.style.position = '';
   document.body.style.top = '';
