@@ -14,8 +14,7 @@
  *   querySimilarDesigns({ use_case, intent, vendor });  // call after Step 1 intent
  */
 
-import { track } from "./analytics.js";
-
+// track() is a global exposed by analytics.js
 const CONTAINER_ID = "similar-designs-panel";
 let _currentMatches = [];
 
@@ -151,7 +150,7 @@ function _toast(msg) {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-export async function querySimilarDesigns({ intent = {}, topology_params = {}, use_case = "", vendor = "" } = {}) {
+async function querySimilarDesigns({ intent = {}, topology_params = {}, use_case = "", vendor = "" } = {}) {
   // Only show for signed-in users — free/pro/team/dept all get this
   if (!window.Clerk?.user) return;
   const matches    = await _fetchSimilar({ intent, topology_params, use_case, vendor });
@@ -160,7 +159,7 @@ export async function querySimilarDesigns({ intent = {}, topology_params = {}, u
   return matches;
 }
 
-export function initSimilarDesigns() {
+function initSimilarDesigns() {
   // Inject fade-in keyframe if not already present
   if (!document.getElementById("similar-designs-style")) {
     const s = document.createElement("style");
@@ -169,3 +168,6 @@ export function initSimilarDesigns() {
     document.head.appendChild(s);
   }
 }
+
+window.querySimilarDesigns = querySimilarDesigns;
+window.initSimilarDesigns  = initSimilarDesigns;

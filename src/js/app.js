@@ -32,7 +32,11 @@ function goStep(dir) {
   if (dir === 1 && !validateStep(STATE.step)) return;
   const next = STATE.step + dir;
   if (next < 1 || next > STATE.totalSteps) return;
-  jumpStep(next);
+  if (dir === 1 && typeof window.requireAuth === 'function') {
+    window.requireAuth(next).then(() => jumpStep(next)).catch(() => {});
+  } else {
+    jumpStep(next);
+  }
 }
 
 let _activeSubStep = 'deploy';   // sub-section active within step 6
@@ -52,6 +56,11 @@ function jumpStep(n) {
   if (n === 6) {
     if (typeof initGate === 'function')         initGate();
     if (typeof renderPolicyPanel === 'function') renderPolicyPanel();
+  }
+  // Analytics funnel
+  if (window.Funnel) {
+    const ev = [null,'step1_complete','step2_complete','step3_complete','step4_complete','step5_start','step6_start'][n];
+    if (ev) window.track?.(ev, { use_case: STATE.uc ?? '', vendor: STATE.vendor ?? '' });
   }
 }
 
@@ -199,6 +208,10 @@ function selectUC(card) {
   card.classList.add('selected');
   STATE.uc = card.dataset.uc;
   updateSummary();
+  window.track?.('use_case_selected', { use_case: STATE.uc });
+  if (typeof window.querySimilarDesigns === 'function') {
+    window.querySimilarDesigns({ use_case: STATE.uc, intent: { uc: STATE.uc } });
+  }
 }
 
 /* ── Industry toggle ─────────────────────────────────────────────── */

@@ -717,6 +717,9 @@
           <button class="hdr-util-btn hdr-util-btn--icon" onclick="showKeyboardHelp()" title="Keyboard shortcuts (?)">
             <span class="hdr-util-icon">⌨</span>
           </button>
+          <!-- Auth buttons (Clerk populates this) -->
+          <div id="auth-buttons" style="display:flex;align-items:center"></div>
+          <span id="quota-badge" style="display:none;font-size:.72rem;color:var(--txt2);white-space:nowrap;padding:0 4px"></span>
         </div>
       </div>
     </header>
@@ -2994,6 +2997,9 @@ rules:
 <script src="src/js/policy_rules_editor.js"></script>
 <script src="src/js/ts_engine.js"></script>
 <script src="src/js/enterprise.js"></script>
+<script src="src/js/analytics.js"></script>
+<script src="src/js/paywall.js"></script>
+<script src="src/js/similar_designs.js"></script>
 <script src="src/js/init.js"></script>
 <script>
 /* ── Policy options global helper ──────────────────────────── */

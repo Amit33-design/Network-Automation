@@ -21,28 +21,29 @@ function _ph() { return window.posthog ?? null; }
  * Track a named event with optional properties.
  * No-ops silently when PostHog is not loaded (dev / Docker).
  */
-export function track(event, props = {}) {
+function track(event, props = {}) {
   try { _ph()?.capture(event, props); } catch { /* never throw */ }
 }
+window.track = track;
 
-/** Track a page view with the given name. */
-export function page(name, props = {}) {
+function page(name, props = {}) {
   try { _ph()?.capture("$pageview", { page: name, ...props }); } catch { /* */ }
 }
+window.ndPage = page;
 
-/** Identify a signed-in user so events are attributed correctly. */
-export function identify(userId, traits = {}) {
+function identify(userId, traits = {}) {
   try { _ph()?.identify(userId, traits); } catch { /* */ }
 }
+window.ndIdentify = identify;
 
-/** Reset identity on sign-out. */
-export function reset() {
+function reset() {
   try { _ph()?.reset(); } catch { /* */ }
 }
+window.ndReset = reset;
 
 // ── Convenience wrappers for the 6-step wizard funnel ───────────────────────
 
-export const Funnel = {
+const Funnel = window.Funnel = {
   landingViewed:    (props = {}) => track("landing_viewed", props),
   appLaunched:      (props = {}) => track("app_launched", props),
   demoStarted:      (props = {}) => track("demo_started", props),
@@ -75,7 +76,7 @@ export const Funnel = {
  * Call this once at app init. Patches window.goToStep() (if it exists) to
  * fire funnel events on each step transition automatically.
  */
-export function instrumentStepNavigation() {
+function instrumentStepNavigation() {
   const originalGoToStep = window.goToStep;
   if (typeof originalGoToStep !== "function") return;
 

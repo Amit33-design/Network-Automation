@@ -223,4 +223,6 @@ async function initPaywall() {
   await _loadClerk();
 }
 
-export { initPaywall, requireAuth, trackConfigGenQuota };
+window.initPaywall         = initPaywall;
+window.requireAuth         = requireAuth;
+window.trackConfigGenQuota = trackConfigGenQuota;

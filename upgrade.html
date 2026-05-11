@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Upgrade — NetDesign AI</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230a0e1a'/><text y='.9em' font-size='80' x='10'>🌐</text></svg>" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #0a0e1a;
+      --bg2:     #0f1320;
+      --bg3:     #16161f;
+      --border:  #1e1e2e;
+      --cyan:    #00e5a0;
+      --blue:    #7c6aff;
+      --text:    #e8e8f0;
+      --muted:   #6b6b8a;
+      --warn:    #f59e0b;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 2rem 1rem; }
+    nav { width: 100%; max-width: 900px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 3rem; }
+    .logo { display: flex; align-items: center; gap: .6rem; font-size: 1rem; font-weight: 700; text-decoration: none; color: var(--text); }
+    .logo-ico { width: 30px; height: 30px; background: linear-gradient(135deg, var(--blue), var(--cyan)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: .9rem; }
+    .back { font-size: .82rem; color: var(--muted); text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: .3rem .75rem; transition: border-color .15s; }
+    .back:hover { border-color: var(--cyan); color: var(--cyan); }
+    h1 { font-size: 2rem; font-weight: 800; text-align: center; margin-bottom: .5rem; }
+    .sub { color: var(--muted); font-size: .95rem; text-align: center; margin-bottom: 3rem; }
+    .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; width: 100%; max-width: 900px; }
+    .plan { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 1.75rem; display: flex; flex-direction: column; transition: border-color .2s, transform .2s; }
+    .plan:hover { border-color: var(--cyan); transform: translateY(-3px); }
+    .plan.featured { border-color: var(--blue); position: relative; }
+    .plan.featured::before { content: 'Most Popular'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--blue); color: #fff; font-size: .7rem; font-weight: 700; padding: 2px 12px; border-radius: 10px; white-space: nowrap; }
+    .plan-name { font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: .6rem; }
+    .plan-price { font-size: 2rem; font-weight: 800; margin-bottom: .15rem; }
+    .plan-price span { font-size: .9rem; font-weight: 400; color: var(--muted); }
+    .plan-desc { font-size: .82rem; color: var(--muted); margin-bottom: 1.5rem; line-height: 1.55; flex: 1; }
+    .plan-features { list-style: none; margin-bottom: 1.75rem; display: flex; flex-direction: column; gap: .5rem; }
+    .plan-features li { font-size: .83rem; display: flex; align-items: flex-start; gap: .5rem; }
+    .plan-features li::before { content: '✓'; color: var(--cyan); font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+    .btn-upgrade { display: block; text-align: center; padding: .75rem 1rem; border-radius: 8px; font-size: .88rem; font-weight: 700; text-decoration: none; transition: opacity .15s; cursor: pointer; border: none; }
+    .btn-upgrade.primary { background: linear-gradient(135deg, var(--blue), var(--cyan)); color: #0a0e1a; }
+    .btn-upgrade.outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-upgrade:hover { opacity: .85; }
+    .free-banner { margin-top: 2.5rem; text-align: center; font-size: .82rem; color: var(--muted); }
+    .free-banner a { color: var(--cyan); text-decoration: none; }
+    footer { margin-top: 3rem; font-size: .75rem; color: var(--muted); text-align: center; }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+  </style>
+  <script src="/env.js" onerror="void 0"></script>
+</head>
+<body>
+
+<nav>
+  <a class="logo" href="/">
+    <div class="logo-ico">🌐</div>
+    Net<span style="color:var(--cyan)">Design</span> AI
+  </a>
+  <a class="back" href="/">← Back to app</a>
+</nav>
+
+<h1>⚡ Unlock unlimited access</h1>
+<p class="sub">Free plan gives you 10 config generations per hour. Pro removes all limits.</p>
+
+<div class="plans">
+
+  <!-- Pro -->
+  <div class="plan">
+    <div class="plan-name">Pro</div>
+    <div class="plan-price">$50 <span>/ month</span></div>
+    <p class="plan-desc">For individual network engineers and consultants who design frequently.</p>
+    <ul class="plan-features">
+      <li>Unlimited config generations</li>
+      <li>Design history &amp; Supabase persistence</li>
+      <li>Similar-design recommendations (Pinecone)</li>
+      <li>Stripe-activated instantly</li>
+      <li>Email deploy reports (Resend)</li>
+    </ul>
+    <a id="btn-pro" class="btn-upgrade outline" href="#" onclick="checkout('pro')">Get Pro →</a>
+  </div>
+
+  <!-- Team (featured) -->
+  <div class="plan featured">
+    <div class="plan-name">Team</div>
+    <div class="plan-price">$400 <span>/ year</span></div>
+    <p class="plan-desc">10-seat license for network teams. Shared design library, RBAC roles.</p>
+    <ul class="plan-features">
+      <li>Everything in Pro</li>
+      <li>10 seats — viewer / designer / operator / admin</li>
+      <li>Shared design library (org-scoped)</li>
+      <li>Priority email support</li>
+      <li>Docker self-host license included</li>
+    </ul>
+    <a id="btn-team" class="btn-upgrade primary" href="#" onclick="checkout('team')">Get Team →</a>
+  </div>
+
+  <!-- Department -->
+  <div class="plan">
+    <div class="plan-name">Department</div>
+    <div class="plan-price">$1,500 <span>/ year</span></div>
+    <p class="plan-desc">50-seat license for large network teams, enterprises, and managed service providers.</p>
+    <ul class="plan-features">
+      <li>Everything in Team</li>
+      <li>50 seats</li>
+      <li>SSO via Clerk</li>
+      <li>Dedicated onboarding call</li>
+      <li>Custom deployment assistance</li>
+    </ul>
+    <a id="btn-dept" class="btn-upgrade outline" href="#" onclick="checkout('dept')">Get Department →</a>
+  </div>
+
+</div>
+
+<p class="free-banner">
+  Already have a license key? <a href="mailto:atiwari824@gmail.com">Email us</a> to activate it. &nbsp;·&nbsp;
+  Questions? <a href="mailto:atiwari824@gmail.com">atiwari824@gmail.com</a>
+</p>
+
+<footer>
+  <p>© 2026 Amit Tiwari · <a href="LICENSE">License</a> · <a href="/">NetDesign AI</a></p>
+</footer>
+
+<script>
+  // Stripe price IDs injected from env or hardcoded (public — not secret)
+  const PRICES = {
+    pro:  'price_1TVxekRvfPfGA7DRLZK4T45i',
+    team: 'price_1TVxfORvfPfGA7DR0f0Q4dcs',
+    dept: 'price_1TVxg9RvfPfGA7DRsj0Zadp8',
+  };
+
+  // Stripe publishable key (public)
+  const STRIPE_PK = 'pk_live_51TVxXxRvfPfGA7DRiQtlbmNz65HNR1W2qlQnGpOKIqVt4VZPlz9RiNqEgE3UVHKL00ypAXAhSLvKGBSBjWFwBqy00ULVoH2ms';
+
+  function checkout(plan) {
+    const priceId = PRICES[plan];
+    if (!priceId) return;
+    if (typeof posthog !== 'undefined') posthog.capture('upgrade_clicked', { plan });
+
+    // Load Stripe.js on demand (not needed until user clicks)
+    if (!window.Stripe) {
+      const s = document.createElement('script');
+      s.src = 'https://js.stripe.com/v3/';
+      s.onload = () => _redirect(priceId);
+      document.head.appendChild(s);
+    } else {
+      _redirect(priceId);
+    }
+  }
+
+  function _redirect(priceId) {
+    const stripe = Stripe(STRIPE_PK);
+    stripe.redirectToCheckout({
+      lineItems:  [{ price: priceId, quantity: 1 }],
+      mode:       'subscription',
+      successUrl: window.location.origin + '/?upgrade=success',
+      cancelUrl:  window.location.origin + '/upgrade.html',
+    }).then(result => {
+      if (result.error) alert(result.error.message);
+    });
+  }
+
+  // Show success toast if returning from Stripe
+  if (new URLSearchParams(location.search).get('upgrade') === 'success') {
+    const t = document.createElement('div');
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#16161f;border:1px solid #00e5a0;color:#00e5a0;padding:12px 24px;border-radius:8px;font-size:.85rem;z-index:9999';
+    t.textContent = '🎉 Upgrade complete! Your plan is now active.';
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 5000);
+  }
+</script>
+</body>
+</html>

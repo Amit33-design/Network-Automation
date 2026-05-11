@@ -45,6 +45,10 @@ function sharePage() {
 
 /* ── Init: restore saved state or show welcome ──────────────────── */
 window.addEventListener('DOMContentLoaded', () => {
+  // Auth gate + paywall
+  if (typeof initPaywall === 'function') initPaywall();
+  // Similar designs panel (injects CSS)
+  if (typeof initSimilarDesigns === 'function') initSimilarDesigns();
   // Landing page
   if (typeof initLanding === 'function') initLanding();
 
