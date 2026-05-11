@@ -30,6 +30,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -101,6 +106,24 @@ _active_license = None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+
+# ── Sentry error tracking ────────────────────────────────────────────────────
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        integrations=[
+            StarletteIntegration(transaction_style="endpoint"),
+            FastApiIntegration(transaction_style="endpoint"),
+            LoggingIntegration(level=logging.WARNING, event_level=logging.ERROR),
+        ],
+        traces_sample_rate=0.1,   # 10% of requests traced — enough for perf insights
+        profiles_sample_rate=0.05,
+        send_default_pii=False,   # never send raw PII to Sentry
+        release=os.getenv("APP_VERSION", "2.4.0"),
+        environment=os.getenv("APP_ENV", "production"),
+    )
+    log.info("Sentry initialized (DSN configured)")
 
 # ---------------------------------------------------------------------------
 # CORS — read allowed origins from environment (no wildcard default in prod)

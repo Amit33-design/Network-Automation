@@ -16,7 +16,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +27,7 @@ from auth import require_permission
 from audit import record
 from db import get_db
 from models import Design, DesignCreate, DesignRead
+from services.pinecone_service import embed_design as _embed_design
 
 log = logging.getLogger("netdesign.routers.designs")
 
@@ -91,6 +95,24 @@ async def create_design(
         detail={"name": design.name, "use_case": design.use_case},
     )
     log.info("Design created: %s by %s", design.id, user["sub"])
+
+    # Kick off Pinecone embedding in the background — non-blocking
+    state = body.state or {}
+    asyncio.create_task(_embed_design(
+        design_id=design.id,
+        intent=state.get("intent", {}),
+        topology_params={
+            k: state.get(k)
+            for k in ("node_count", "scale", "redundancy", "fabric_type", "protocols")
+            if state.get(k) is not None
+        },
+        use_case=body.use_case or state.get("use_case", ""),
+        vendor=state.get("vendor", ""),
+        design_name=body.name,
+        owner_id=user["sub"],
+        saved_at=design.created_at.isoformat() if hasattr(design, "created_at") else "",
+    ))
+
     return design
 
 
@@ -124,6 +146,51 @@ async def get_design_state(
         "vlan_plan":  design.vlan_plan,
         "bgp_design": design.bgp_design,
     }
+
+
+# ---------------------------------------------------------------------------
+# Config-gen quota (Upstash rate limit status)
+# ---------------------------------------------------------------------------
+
+@router.get("/quota")
+async def get_quota(
+    user: dict = Depends(require_permission("designs:read")),
+) -> dict[str, Any]:
+    """Return remaining config-gen quota for the current hour (used by paywall.js)."""
+    from middleware.rate_limit import get_user_quota
+    return await get_user_quota(user["sub"])
+
+
+# ---------------------------------------------------------------------------
+# Similar designs (Pinecone)
+# ---------------------------------------------------------------------------
+
+class SimilarRequest(BaseModel):
+    intent:          dict[str, Any] = {}
+    topology_params: dict[str, Any] = {}
+    use_case:        str = ""
+    vendor:          str = ""
+    top_k:           int = 3
+
+
+@router.post("/similar")
+async def find_similar_designs(
+    body: SimilarRequest,
+    user: dict = Depends(require_permission("designs:read")),
+) -> dict[str, Any]:
+    """
+    Returns top-k designs from Pinecone similar to the provided intent.
+    Called at the start of Step 1 to surface 'Start from a similar design' cards.
+    """
+    from services.pinecone_service import find_similar
+    matches = await find_similar(
+        intent=body.intent,
+        topology_params=body.topology_params,
+        use_case=body.use_case,
+        vendor=body.vendor,
+        top_k=min(body.top_k, 5),
+    )
+    return {"matches": matches}
 
 
 # ---------------------------------------------------------------------------

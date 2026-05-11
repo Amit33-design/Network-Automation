@@ -1,0 +1,14 @@
+{
+  "name": "netdesign-ai-vercel-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@clerk/nextjs": "^5.0.0",
+    "@pinecone-database/pinecone": "^2.2.2",
+    "@supabase/supabase-js": "^2.43.4",
+    "openai": "^4.52.7",
+    "resend": "^3.3.0",
+    "stripe": "^15.12.0"
+  }
+}

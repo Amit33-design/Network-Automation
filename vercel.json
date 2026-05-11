@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "name": "netdesign-ai",
+  "buildCommand": "echo 'static site'",
+  "outputDirectory": ".",
+  "framework": null,
+  "rewrites": [
+    { "source": "/api/webhook/(.*)", "destination": "/api/webhook/$1" },
+    { "source": "/api/license/(.*)",  "destination": "/api/license/$1" },
+    { "source": "/api/designs/(.*)",  "destination": "/api/designs/$1" },
+    { "source": "/api/(.*)",          "destination": "https://netdesign-api.railway.app/api/$1" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options",    "value": "nosniff" },
+        { "key": "X-Frame-Options",           "value": "DENY" },
+        { "key": "X-XSS-Protection",          "value": "1; mode=block" },
+        { "key": "Referrer-Policy",           "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy",        "value": "camera=(), microphone=(), geolocation=()" }
+      ]
+    },
+    {
+      "source": "/src/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+      ]
+    }
+  ],
+  "env": {
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "@clerk_publishable_key",
+    "CLERK_SECRET_KEY":                  "@clerk_secret_key",
+    "STRIPE_SECRET_KEY":                 "@stripe_secret_key",
+    "STRIPE_WEBHOOK_SECRET":             "@stripe_webhook_secret",
+    "SUPABASE_URL":                      "@supabase_url",
+    "SUPABASE_SERVICE_ROLE_KEY":         "@supabase_service_role_key",
+    "UPSTASH_REDIS_REST_URL":            "@upstash_redis_rest_url",
+    "UPSTASH_REDIS_REST_TOKEN":          "@upstash_redis_rest_token",
+    "PINECONE_API_KEY":                  "@pinecone_api_key",
+    "PINECONE_INDEX":                    "@pinecone_index",
+    "OPENAI_API_KEY":                    "@openai_api_key",
+    "RESEND_API_KEY":                    "@resend_api_key"
+  }
+}

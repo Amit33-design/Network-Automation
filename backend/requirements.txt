@@ -53,3 +53,9 @@ cryptography>=42.0.0
 gitpython==3.1.43                # GitOps config commits
 # weasyprint>=60.0               # PDF runbook export (optional — needs system libs)
 # markdown>=3.6                  # Markdown→HTML for PDF (optional)
+
+# ── SaaS stack (v2.0) ─────────────────────────────────────────────────────────
+sentry-sdk[fastapi]==2.5.1       # Error tracking + performance monitoring
+openai==1.35.10                  # text-embedding-3-small for Pinecone
+pinecone==4.1.0                  # Vector DB — design similarity search
+httpx>=0.27.0                    # Async HTTP for Upstash Redis REST + Resend

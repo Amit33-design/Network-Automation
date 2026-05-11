@@ -31,6 +31,42 @@
 
   <!-- Styles -->
   <link rel="stylesheet" href="src/css/main.css" />
+
+  <!-- ── Runtime config (injected by Vercel/server, or set in .env.js) ── -->
+  <script src="/env.js" onerror="void 0"></script>
+
+  <!-- Clerk — auth + paywall gate -->
+  <script async crossorigin="anonymous"
+          src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+          id="clerk-script"
+          data-clerk-publishable-key=""></script>
+
+  <!-- Sentry — error tracking (loads only when SENTRY_DSN is set) -->
+  <script src="https://browser.sentry-cdn.com/8.17.0/bundle.tracing.min.js"
+          crossorigin="anonymous"></script>
+  <script>
+    if (typeof Sentry !== "undefined" && window.__ENV && window.__ENV.SENTRY_DSN) {
+      Sentry.init({
+        dsn:              window.__ENV.SENTRY_DSN,
+        release:          "netdesign-ai@2.4.0",
+        environment:      window.__ENV.APP_ENV || "production",
+        tracesSampleRate: 0.1,
+        integrations:     [Sentry.browserTracingIntegration()],
+      });
+    }
+  </script>
+
+  <!-- PostHog — product analytics + feature flags -->
+  <script>
+    !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]);t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.async=!0,p.src=s.api_host+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+" (stub)"},o="capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+    if (window.__ENV && window.__ENV.POSTHOG_KEY) {
+      posthog.init(window.__ENV.POSTHOG_KEY, {
+        api_host:         "https://app.posthog.com",
+        autocapture:      false,
+        capture_pageview: true,
+      });
+    }
+  </script>
 </head>
 
 <body>
