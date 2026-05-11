@@ -1,31 +1,13 @@
 {
   "version": 2,
-  "name": "netdesign-ai",
-  "buildCommand": "echo 'static site'",
-  "outputDirectory": ".",
-  "framework": null,
-  "rewrites": [
-    { "source": "/api/webhook/(.*)", "destination": "/api/webhook/$1" },
-    { "source": "/api/license/(.*)",  "destination": "/api/license/$1" },
-    { "source": "/api/designs/(.*)",  "destination": "/api/designs/$1" },
-    { "source": "/api/(.*)",          "destination": "https://netdesign-api.railway.app/api/$1" }
-  ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options",    "value": "nosniff" },
-        { "key": "X-Frame-Options",           "value": "DENY" },
-        { "key": "X-XSS-Protection",          "value": "1; mode=block" },
-        { "key": "Referrer-Policy",           "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy",        "value": "camera=(), microphone=(), geolocation=()" }
-      ]
-    },
-    {
-      "source": "/src/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options",        "value": "DENY" },
+        { "key": "Referrer-Policy",        "value": "strict-origin-when-cross-origin" }
       ]
     }
-  ],
+  ]
 }
