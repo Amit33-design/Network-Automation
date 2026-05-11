@@ -34,6 +34,76 @@ class RunbookRequest(BaseModel):
     deployment_id: str = ""
     approval_id:   str | None = None      # optional — fetched from DB if provided
 
+class AnsibleRequest(BaseModel):
+    design_state: dict[str, Any]
+    configs:      dict[str, str] = {}
+    ip_plan:      dict[str, Any] | None = None
+
+class TerraformRequest(BaseModel):
+    design_state: dict[str, Any]
+    ip_plan:      dict[str, Any] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Ansible export
+# ---------------------------------------------------------------------------
+
+@router.post("/ansible")
+async def export_ansible(
+    body: AnsibleRequest,
+    payload: dict = Depends(require_permission("designs:read")),
+):
+    from export.ansible import generate_ansible
+    playbook, inventory = generate_ansible(body.design_state, body.configs, body.ip_plan)
+
+    org_name = body.design_state.get("orgName", "network").replace(" ", "_")
+    filename  = f"{org_name}_ansible.yml"
+
+    await record(
+        payload["sub"], "export.ansible", body.design_state.get("id", "design"),
+        "design", "success",
+        org_id=payload.get("org_id"),
+        detail={"filename": filename, "device_count": len(body.configs)},
+    )
+
+    # Return both files packed as a JSON object so the client can download each
+    import json
+    content = json.dumps({"playbook": playbook, "inventory": inventory})
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{org_name}_ansible_bundle.json"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Terraform export
+# ---------------------------------------------------------------------------
+
+@router.post("/terraform")
+async def export_terraform(
+    body: TerraformRequest,
+    payload: dict = Depends(require_permission("designs:read")),
+):
+    from export.terraform import generate_terraform
+    hcl = generate_terraform(body.design_state, body.ip_plan)
+
+    org_name = body.design_state.get("orgName", "network").replace(" ", "_")
+    filename  = f"{org_name}_main.tf"
+
+    await record(
+        payload["sub"], "export.terraform", body.design_state.get("id", "design"),
+        "design", "success",
+        org_id=payload.get("org_id"),
+        detail={"filename": filename},
+    )
+
+    return Response(
+        content=hcl,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 # ---------------------------------------------------------------------------
 # draw.io export

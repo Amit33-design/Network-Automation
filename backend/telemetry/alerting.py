@@ -142,3 +142,35 @@ def evaluate(metrics: dict[str, list[dict]] | None = None) -> list[Alert]:
             ))
 
     return alerts
+
+
+def evaluate_with_drift(
+    intended_state: dict,
+    metrics: dict[str, list[dict]] | None = None,
+) -> dict[str, list]:
+    """
+    Run both standard alert rules and drift detection in one call.
+
+    Returns:
+        {
+          "alerts": [Alert.to_dict(), ...],
+          "drift":  [DriftAlert.to_dict(), ...],
+        }
+    """
+    if metrics is None:
+        metrics = _collect_metrics()
+
+    standard = evaluate(metrics)
+
+    drift_alerts: list = []
+    try:
+        from telemetry.drift_detector import DriftDetector
+        detector = DriftDetector()
+        drift_alerts = detector.compare(intended_state, metrics)
+    except Exception:
+        pass
+
+    return {
+        "alerts": [a.to_dict() for a in standard],
+        "drift":  [d.to_dict() for d in drift_alerts],
+    }

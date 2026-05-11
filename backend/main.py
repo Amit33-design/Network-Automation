@@ -803,6 +803,32 @@ def api_alerts(user: dict = Depends(require_permission("designs:read"))):
 
 
 # ---------------------------------------------------------------------------
+# Phase 4: Drift Detection
+# ---------------------------------------------------------------------------
+
+class DriftRequest(BaseModel):
+    intended_state: dict[str, Any]
+
+
+@app.post("/api/drift")
+async def api_drift(
+    body: DriftRequest,
+    user: dict = Depends(require_permission("designs:read")),
+):
+    """
+    Compare intended design state against live gNMI metrics.
+    Returns lists of standard alerts and drift alerts.
+    """
+    try:
+        from telemetry.alerting import evaluate_with_drift
+        result = evaluate_with_drift(body.intended_state)
+        return result
+    except Exception as exc:
+        log.exception("Drift detection failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Phase 4: RCA analysis
 # ---------------------------------------------------------------------------
 

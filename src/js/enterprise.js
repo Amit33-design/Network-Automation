@@ -334,6 +334,74 @@ const Enterprise = (() => {
     } catch(e) { toast(e.message, 'error', 5000); }
   }
 
+  async function exportAnsible() {
+    if (!_base()) { toast('Connect backend first', 'error'); return; }
+    const ds = _getDesignState();
+    if (!ds) { toast('Generate a design first (Step 4)', 'error'); return; }
+    const btn = document.getElementById('ent-btn-ansible');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+    try {
+      const res = await _post('/api/export/ansible', {
+        design_state: ds, configs: _getConfigs(), ip_plan: _getIpPlan(),
+      });
+      const orgSlug = (ds.orgName || 'network').replace(/\s+/g, '_');
+      // Download playbook
+      const pbBlob = new Blob([res.playbook], { type: 'text/yaml' });
+      const pbUrl  = URL.createObjectURL(pbBlob);
+      const pbA    = document.createElement('a');
+      pbA.href = pbUrl; pbA.download = `${orgSlug}_ansible.yml`;
+      pbA.click(); URL.revokeObjectURL(pbUrl);
+      // Download inventory
+      const invBlob = new Blob([res.inventory], { type: 'text/yaml' });
+      const invUrl  = URL.createObjectURL(invBlob);
+      const invA    = document.createElement('a');
+      invA.href = invUrl; invA.download = `${orgSlug}_inventory.yml`;
+      invA.click(); URL.revokeObjectURL(invUrl);
+      toast('Ansible playbook + inventory downloaded', 'success');
+    } catch(e) { toast(`Ansible export failed: ${e.message}`, 'error', 5000); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '⚙️ Ansible'; } }
+  }
+
+  async function exportTerraform() {
+    if (!_base()) { toast('Connect backend first', 'error'); return; }
+    const ds = _getDesignState();
+    if (!ds) { toast('Generate a design first (Step 4)', 'error'); return; }
+    const btn = document.getElementById('ent-btn-terraform');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+    try {
+      const orgSlug = (ds.orgName || 'network').replace(/\s+/g, '_');
+      await _download('/api/export/terraform', { design_state: ds, ip_plan: _getIpPlan() },
+        `${orgSlug}_main.tf`, 'text/plain');
+      toast('Terraform main.tf downloaded', 'success');
+    } catch(e) { toast(`Terraform export failed: ${e.message}`, 'error', 5000); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '🏗 Terraform'; } }
+  }
+
+  async function checkDrift() {
+    if (!_base()) { toast('Connect backend first', 'error'); return; }
+    const ds = _getDesignState();
+    if (!ds) { toast('Generate a design first (Step 4)', 'error'); return; }
+    const btn = document.getElementById('ent-btn-drift');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Checking…'; }
+    try {
+      const res = await _post('/api/drift', { intended_state: ds });
+      const driftCount  = (res.drift  || []).length;
+      const alertCount  = (res.alerts || []).length;
+      if (driftCount === 0 && alertCount === 0) {
+        toast('Drift check PASS — no drift or alerts detected', 'success', 5000);
+      } else {
+        const driftItems  = (res.drift  || []).map(d => `• [${d.severity}] ${d.check}: ${d.message}`).join('\n');
+        const alertItems  = (res.alerts || []).map(a => `• [${a.severity}] ${a.check}: ${a.message}`).join('\n');
+        const summary = `Drift: ${driftCount} issue(s), Alerts: ${alertCount}\n\n${driftItems}\n${alertItems}`.trim();
+        toast(`Drift check: ${driftCount} drift + ${alertCount} alerts`, driftCount > 0 ? 'error' : 'info', 6000);
+        console.table(res.drift);
+        console.table(res.alerts);
+        if (driftCount > 0 || alertCount > 0) alert(`NetDesign AI — Drift Report\n\n${summary}`);
+      }
+    } catch(e) { toast(`Drift check failed: ${e.message}`, 'error', 5000); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '📡 Drift Check'; } }
+  }
+
   async function commitToGit() {
     if (!_base()) { toast('Connect backend first', 'error'); return; }
     const ds = _getDesignState();
@@ -571,7 +639,8 @@ const Enterprise = (() => {
     submitApproval, approve, reject, escalate, cancel,
     openIntegrations, closeIntegrations, switchIntTab,
     saveIntegration, testIntegration,
-    exportDrawio, exportRunbook, syncToNetbox, commitToGit,
+    exportDrawio, exportRunbook, exportAnsible, exportTerraform, checkDrift,
+    syncToNetbox, commitToGit,
     openProfile, closeProfile, switchProfileTab,
     updateProfile, setupTotp, enableTotp, disableTotp,
     generateApiKey, revokeApiKey, copyApiKey,
