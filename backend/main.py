@@ -105,7 +105,10 @@ log = logging.getLogger(__name__)
 # CORS — read allowed origins from environment (no wildcard default in prod)
 # ---------------------------------------------------------------------------
 _raw_origins = os.environ.get("CORS_ORIGINS", "")
-if _raw_origins and _raw_origins != "*":
+if _raw_origins == "*":
+    _cors_origins = ["*"]
+    log.warning("CORS_ORIGINS=* — all origins allowed (dev/local mode)")
+elif _raw_origins:
     _cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 elif not os.environ.get("JWT_SECRET"):
     # Dev mode: no JWT_SECRET → open CORS for local development convenience

@@ -18,7 +18,7 @@ services:
       NORNIR_WORKERS:     ${NORNIR_WORKERS:-10}
       BACKUP_DIR:         /app/backups
       AUDIT_LOG_PATH:     /app/backups/audit.jsonl
-      CORS_ORIGINS:       ${CORS_ORIGINS:-http://localhost:8080}
+      CORS_ORIGINS:       ${CORS_ORIGINS:-*}
       JWT_SECRET:         ${JWT_SECRET}
       ADMIN_USER:         ${ADMIN_USER:-admin}
       ADMIN_PASS:         ${ADMIN_PASS}
