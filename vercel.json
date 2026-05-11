@@ -28,18 +28,4 @@
       ]
     }
   ],
-  "env": {
-    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "@clerk_publishable_key",
-    "CLERK_SECRET_KEY":                  "@clerk_secret_key",
-    "STRIPE_SECRET_KEY":                 "@stripe_secret_key",
-    "STRIPE_WEBHOOK_SECRET":             "@stripe_webhook_secret",
-    "SUPABASE_URL":                      "@supabase_url",
-    "SUPABASE_SERVICE_ROLE_KEY":         "@supabase_service_role_key",
-    "UPSTASH_REDIS_REST_URL":            "@upstash_redis_rest_url",
-    "UPSTASH_REDIS_REST_TOKEN":          "@upstash_redis_rest_token",
-    "PINECONE_API_KEY":                  "@pinecone_api_key",
-    "PINECONE_INDEX":                    "@pinecone_index",
-    "OPENAI_API_KEY":                    "@openai_api_key",
-    "RESEND_API_KEY":                    "@resend_api_key"
-  }
 }
