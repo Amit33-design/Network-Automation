@@ -562,7 +562,7 @@
             <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
-        <div class="sb-group-body" id="sgb-deploy">
+        <div class="sb-group-body" id="sgb-deploy" style="display:none">
           <button class="sb-item" data-step="6" data-sub="deploy" onclick="jumpSubStep(6,'deploy');closeSidebar()">
             <span class="sb-icon">🚀</span>
             <span class="sb-label">Deploy &amp; Validate</span>
@@ -600,7 +600,7 @@
             <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
-        <div class="sb-group-body" id="sgb-enterprise">
+        <div class="sb-group-body" id="sgb-enterprise" style="display:none">
           <button class="sb-item" onclick="Enterprise.openApprovals();closeSidebar()">
             <span class="sb-icon">✅</span>
             <span class="sb-label">Change Approvals</span>
@@ -3016,34 +3016,31 @@ function toggleSbGroup(id) {
   const body = document.getElementById('sgb-' + id);
   const hdr  = body ? body.previousElementSibling : null;
   if (!body) return;
-  const isOpen = body.classList.contains('open');
-  body.classList.toggle('open', !isOpen);
-  if (hdr) hdr.setAttribute('aria-expanded', String(!isOpen));
+  const isOpen = body.style.display !== 'none' && body.style.display !== '';
+  /* treat empty display as none since inline style starts as "none" */
+  const currentlyHidden = (body.style.display === 'none' || body.style.display === '');
+  body.style.display = currentlyHidden ? 'block' : 'none';
+  if (hdr) hdr.setAttribute('aria-expanded', String(currentlyHidden));
 }
 function _openSbGroup(id) {
   const body = document.getElementById('sgb-' + id);
   const hdr  = body ? body.previousElementSibling : null;
-  if (!body || body.classList.contains('open')) return;
-  body.classList.add('open');
+  if (!body || body.style.display === 'block') return;
+  body.style.display = 'block';
   if (hdr) hdr.setAttribute('aria-expanded', 'true');
 }
-/* Auto-expand Deploy group when navigating to step 6 */
-document.addEventListener('DOMContentLoaded', () => {
-  const _origJumpStep = window.jumpStep;
-  if (typeof _origJumpStep === 'function') {
-    window.jumpStep = function(n) {
-      _origJumpStep(n);
-      if (n === 6) _openSbGroup('deploy');
-    };
+/* Auto-expand Deploy group when navigating to step 6.
+   Patch after scripts load — scripts are sync so they're defined by now. */
+(function _patchNavForGroups() {
+  const _origJump = window.jumpStep;
+  if (typeof _origJump === 'function') {
+    window.jumpStep = function(n) { _origJump(n); if (n === 6) _openSbGroup('deploy'); };
   }
-  const _origJumpSubStep = window.jumpSubStep;
-  if (typeof _origJumpSubStep === 'function') {
-    window.jumpSubStep = function(n, sub) {
-      _origJumpSubStep(n, sub);
-      if (n === 6) _openSbGroup('deploy');
-    };
+  const _origSub = window.jumpSubStep;
+  if (typeof _origSub === 'function') {
+    window.jumpSubStep = function(n, sub) { _origSub(n, sub); if (n === 6) _openSbGroup('deploy'); };
   }
-});
+}());
 /* ── Global bake toggle (pre-checks all new row Bake checkboxes) ── */
 function toggleGlobalBake(checked) {
   document.querySelectorAll('.zrr-bake').forEach(cb => { cb.checked = checked; });
