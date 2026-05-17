@@ -1233,6 +1233,55 @@
                       onchange="STATE.mcOrgCidr=this.value">
                   </div>
 
+                  <!-- ── Orchestration layer ─────────────────────── -->
+                  <div class="field span2" style="margin-top:.4rem">
+                    <label style="font-size:.8rem;font-weight:600;color:var(--txt1)">Cloud Orchestration Layer</label>
+                    <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.4rem">
+                      <button class="seg-btn active" id="mc-orch-native"
+                        onclick="_mcOrchChange('native',this)"
+                        style="display:flex;align-items:center;gap:.4rem;padding:.45rem .9rem;border-radius:8px;font-size:.78rem">
+                        🔗 Native (TGW / vWAN / NCC)
+                      </button>
+                      <button class="seg-btn" id="mc-orch-aviatrix"
+                        onclick="_mcOrchChange('aviatrix',this)"
+                        style="display:flex;align-items:center;gap:.4rem;padding:.45rem .9rem;border-radius:8px;font-size:.78rem">
+                        🛡 Aviatrix Encrypted Transit
+                      </button>
+                    </div>
+                    <p style="font-size:.72rem;color:var(--txt2);margin-top:.35rem">
+                      <strong>Native</strong>: AWS TGW, Azure vWAN, GCP NCC — cloud-provider managed hubs, no overlay encryption.
+                      <strong>Aviatrix</strong>: Single control plane, end-to-end IPsec encryption, FireNet, CoPilot observability, and network segmentation across all clouds.
+                    </p>
+                  </div>
+
+                  <!-- ── Aviatrix options (shown only when aviatrix selected) ── -->
+                  <div id="mc-avx-opts" class="field span2" style="display:none;padding:.6rem .8rem;background:rgba(26,127,255,.06);border-radius:8px;border:1px solid rgba(26,127,255,.2)">
+                    <div style="font-size:.78rem;font-weight:600;color:var(--blue);margin-bottom:.5rem">⚙ Aviatrix Options</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:.8rem">
+                      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.78rem">
+                        <input type="checkbox" id="mc-avx-hpe" checked onchange="STATE.mcAvxHPE=this.checked">
+                        High-Performance Encryption (Insane Mode, up to 100 Gbps)
+                      </label>
+                      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.78rem">
+                        <input type="checkbox" id="mc-avx-firenet" onchange="_mcAvxFireNetChange(this)">
+                        FireNet (Inline Firewall Insertion)
+                      </label>
+                      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.78rem">
+                        <input type="checkbox" id="mc-avx-segments" checked onchange="STATE.mcAvxSegments=this.checked">
+                        Network Domain Segmentation (Prod / Dev / Mgmt)
+                      </label>
+                    </div>
+                    <div id="mc-avx-fw-opts" style="display:none;margin-top:.5rem">
+                      <label style="font-size:.75rem;color:var(--txt2)">FireNet Firewall Vendor</label>
+                      <select id="mc-avx-fw-vendor" style="margin-top:.2rem;font-size:.78rem"
+                        onchange="STATE.mcAvxFireNetFW=this.value">
+                        <option value="paloalto">Palo Alto VM-Series</option>
+                        <option value="fortinet">Fortinet FortiGate</option>
+                        <option value="checkpoint">Check Point CloudGuard</option>
+                      </select>
+                    </div>
+                  </div>
+
                 </div>
               </div>
             </div>
@@ -1603,6 +1652,7 @@
           <button class="layer-filter-btn" data-layer="mc-tf-outputs"   onclick="filterDevLayer('mc-tf-outputs',this)">📤 TF Outputs</button>
           <button class="layer-filter-btn" data-layer="mc-tf-bootstrap" onclick="filterDevLayer('mc-tf-bootstrap',this)">🏗 Bootstrap</button>
           <button class="layer-filter-btn" data-layer="mc-repo"         onclick="filterDevLayer('mc-repo',this)">📁 Repo Setup</button>
+          <button class="layer-filter-btn" data-layer="mc-aviatrix"     onclick="filterDevLayer('mc-aviatrix',this)">🛡 Aviatrix</button>
         </div>
         <div id="dev-list-body"></div>
       </div>
@@ -3216,6 +3266,18 @@ window._mcCloudChange = function() {
 };
 window._mcDCTopologyChange = function(radio) {
   if (typeof STATE !== 'undefined') STATE.mcDualDC = (radio.value === 'dual');
+};
+window._mcOrchChange = function(val, btn) {
+  if (typeof STATE !== 'undefined') STATE.mcOrchestration = val;
+  document.querySelectorAll('#mc-orch-native, #mc-orch-aviatrix').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  var avxOpts = document.getElementById('mc-avx-opts');
+  if (avxOpts) avxOpts.style.display = (val === 'aviatrix') ? '' : 'none';
+};
+window._mcAvxFireNetChange = function(chk) {
+  if (typeof STATE !== 'undefined') STATE.mcAvxFireNet = chk.checked;
+  var fwOpts = document.getElementById('mc-avx-fw-opts');
+  if (fwOpts) fwOpts.style.display = chk.checked ? '' : 'none';
 };
 </script>
 

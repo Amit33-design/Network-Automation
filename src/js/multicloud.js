@@ -1142,6 +1142,50 @@ window.multicloudDevices = function(state) {
     layer:'mc-repo', vendor:'Ansible', icon:'A',
     role:'NetBox inventory, ssh pipelining, forks=20', platform:'INI', idx:5, _repo:'ansiblecfg' });
 
+  // ── Aviatrix devices (only when orchestration = aviatrix) ──────────
+  var orch = (state && state.mcOrchestration) ? state.mcOrchestration : 'native';
+  if (orch === 'aviatrix') {
+    devs.push({
+      id:'avx-controller', name:'Aviatrix: controller.tf',
+      layer:'mc-aviatrix', vendor:'Aviatrix', icon:'🛡',
+      role:'Controller VM + provider bootstrap', platform:'HCL', idx:0, _avx:'controller',
+    });
+    devs.push({
+      id:'avx-transit', name:'Aviatrix: transit_gateways.tf',
+      layer:'mc-aviatrix', vendor:'Aviatrix', icon:'🛡',
+      role:'Transit GW per cloud (HPE, Active-Active HA)', platform:'HCL', idx:1, _avx:'transit',
+    });
+    devs.push({
+      id:'avx-peering', name:'Aviatrix: transit_peering.tf',
+      layer:'mc-aviatrix', vendor:'Aviatrix', icon:'🛡',
+      role:'Cross-cloud encrypted Transit Gateway Peering', platform:'HCL', idx:2, _avx:'peering',
+    });
+    devs.push({
+      id:'avx-onprem', name:'Aviatrix: onprem_bgp.tf',
+      layer:'mc-aviatrix', vendor:'Aviatrix', icon:'🛡',
+      role:'BGP External Device Connection (DC edge → Transit GW)', platform:'HCL', idx:3, _avx:'onprem',
+    });
+    if (state && state.mcAvxSegments) {
+      devs.push({
+        id:'avx-segments', name:'Aviatrix: segmentation.tf',
+        layer:'mc-aviatrix', vendor:'Aviatrix', icon:'🛡',
+        role:'Network Domains: Prod / Dev / Mgmt + Connection Policies', platform:'HCL', idx:4, _avx:'segments',
+      });
+    }
+    if (state && state.mcAvxFireNet) {
+      devs.push({
+        id:'avx-firenet', name:'Aviatrix: firenet.tf',
+        layer:'mc-aviatrix', vendor:'Aviatrix', icon:'🛡',
+        role:'FireNet inline FW insertion (' + (state.mcAvxFireNetFW || 'paloalto') + ')', platform:'HCL', idx:5, _avx:'firenet',
+      });
+    }
+    devs.push({
+      id:'avx-copilot', name:'Aviatrix: copilot.tf',
+      layer:'mc-aviatrix', vendor:'Aviatrix', icon:'🛡',
+      role:'CoPilot VM — FlowIQ, topology, ThreatIQ, AppIQ', platform:'HCL', idx:6, _avx:'copilot',
+    });
+  }
+
   return devs;
 };
 
@@ -1201,6 +1245,17 @@ window.genMulticloudConfig = function(device, state) {
     if (device._repo === 'gitignore')     return _genGitignore();
     if (device._repo === 'pyrequirements') return _genPyRequirements();
     if (device._repo === 'ansiblecfg')    return _genAnsibleCfg();
+  }
+
+  // Aviatrix Terraform configs
+  if (device.layer === 'mc-aviatrix' && device._avx) {
+    if (device._avx === 'controller') return _genAviatrixControllerTF(state);
+    if (device._avx === 'transit')    return _genAviatrixTransitTF(state);
+    if (device._avx === 'peering')    return _genAviatrixPeeringTF(state);
+    if (device._avx === 'onprem')     return _genAviatrixOnPremBGP(state);
+    if (device._avx === 'segments')   return _genAviatrixSegmentsTF(state);
+    if (device._avx === 'firenet')    return _genAviatrixFireNetTF(state);
+    if (device._avx === 'copilot')    return _genAviatrixCoPilotTF(state);
   }
 
   return '# Config not available for device: ' + (device.name || device.id);
@@ -1870,4 +1925,744 @@ function _genAnsibleCfg() {
     'pipelining = True',
     'ssh_args   = -o ControlMaster=auto -o ControlPersist=300s',
   ].join('\n');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   AVIATRIX — Encrypted Multicloud Transit Orchestration
+   Generates Terraform HCL using the aviatrix/aviatrix provider.
+
+   Architecture:
+     Controller VM (single, in primary cloud account)
+     Transit GW per cloud/region   → encrypted IPsec mesh (HPE)
+     Spoke GW per shared-services VPC
+     Transit Gateway Peering       → cross-cloud full mesh
+     External Device Connection    → BGP from DC edge routers
+     FireNet                       → inline Palo/Fortigate/CheckPoint
+     Network Domains               → Prod / Dev / Mgmt segmentation
+     CoPilot VM                    → FlowIQ, ThreatIQ, AppIQ
+════════════════════════════════════════════════════════════════ */
+
+/* ── Aviatrix cloud type codes ────────────────────────────────── */
+var AVX_CLOUD_TYPE = { aws: 1, azure: 8, gcp: 4, oci: 16 };
+
+/* ── GW instance sizing (HPE-capable) ────────────────────────── */
+var AVX_GW_SIZE = {
+  aws:   { transit: 'c5n.4xlarge',  spoke: 'c5.xlarge' },
+  azure: { transit: 'Standard_D8_v5', spoke: 'Standard_D4_v5' },
+  gcp:   { transit: 'n2-standard-8',  spoke: 'n2-standard-4' },
+};
+
+/* ── Header boilerplate ───────────────────────────────────────── */
+function _avxHeader(title) {
+  return [
+    '# ============================================================',
+    '# ' + title,
+    '# Generated by NetDesign AI — Aviatrix Multicloud Orchestration',
+    '# Provider: aviatrix/aviatrix  ≥ 3.1',
+    '# ============================================================',
+    '',
+  ].join('\n');
+}
+
+function _orgSlug(state) {
+  var name = (state && state.orgName) ? state.orgName : 'acme';
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+/* ────────────────────────────────────────────────────────────────
+   1. CONTROLLER  —  aviatrix/controller.tf
+   Deploys the Aviatrix Controller VM and configures accounts
+   for each selected cloud provider.
+──────────────────────────────────────────────────────────────── */
+function _genAviatrixControllerTF(state) {
+  var clouds = _mcClouds(state);
+  var org    = _orgSlug(state);
+  var hpe    = (state && state.mcAvxHPE !== false);
+
+  var lines = [_avxHeader('Aviatrix Controller + Cloud Account Bootstrap')];
+
+  lines.push(
+    'terraform {',
+    '  required_version = ">= 1.5"',
+    '  required_providers {',
+    '    aviatrix = {',
+    '      source  = "AviatrixSystems/aviatrix"',
+    '      version = "~> 3.1"',
+    '    }',
+    '    aws = { source = "hashicorp/aws"; version = "~> 5.0" }',
+    '  }',
+    '  backend "s3" {',
+    '    bucket         = "' + org + '-tf-state"',
+    '    key            = "aviatrix/controller/terraform.tfstate"',
+    '    region         = "us-east-1"',
+    '    dynamodb_table = "' + org + '-tf-lock"',
+    '    encrypt        = true',
+    '  }',
+    '}',
+    '',
+    'provider "aviatrix" {',
+    '  controller_ip = var.avx_controller_ip',
+    '  username      = var.avx_username',
+    '  password      = var.avx_password',
+    '}',
+    '',
+    'provider "aws" {',
+    '  region = "us-east-1"',
+    '  default_tags { tags = { ManagedBy = "Terraform", Project = "aviatrix-' + org + '" } }',
+    '}',
+    '',
+    '# ── Variables ─────────────────────────────────────────────',
+    'variable "avx_controller_ip" { description = "Controller FQDN or IP" }',
+    'variable "avx_username"      { description = "Controller admin username"; default = "admin" }',
+    'variable "avx_password"      { description = "Controller admin password"; sensitive = true }',
+    '',
+  );
+
+  // Cloud account onboarding
+  if (clouds.includes('aws')) {
+    lines.push(
+      '# ── AWS Account Access ────────────────────────────────────',
+      'resource "aviatrix_account" "aws_primary" {',
+      '  account_name       = "aws-' + org + '"',
+      '  cloud_type         = 1  # AWS',
+      '  aws_account_number = var.aws_account_id',
+      '  aws_iam            = true  # IAM role-based (OIDC preferred)',
+      '  aws_role_app       = "arn:aws:iam::${var.aws_account_id}:role/aviatrix-role-app"',
+      '  aws_role_ec2       = "arn:aws:iam::${var.aws_account_id}:role/aviatrix-role-ec2"',
+      '}',
+      '',
+      'variable "aws_account_id" { description = "AWS account ID for primary account" }',
+      '',
+    );
+  }
+  if (clouds.includes('azure')) {
+    lines.push(
+      '# ── Azure Account Access ──────────────────────────────────',
+      'resource "aviatrix_account" "azure_primary" {',
+      '  account_name                     = "azure-' + org + '"',
+      '  cloud_type                       = 8  # Azure',
+      '  arm_subscription_id              = var.azure_subscription_id',
+      '  arm_directory_id                 = var.azure_tenant_id',
+      '  arm_application_id               = var.azure_app_id',
+      '  arm_application_key              = var.azure_app_secret',
+      '}',
+      '',
+      'variable "azure_subscription_id" {}',
+      'variable "azure_tenant_id"       {}',
+      'variable "azure_app_id"          {}',
+      'variable "azure_app_secret"      { sensitive = true }',
+      '',
+    );
+  }
+  if (clouds.includes('gcp')) {
+    lines.push(
+      '# ── GCP Account Access ────────────────────────────────────',
+      'resource "aviatrix_account" "gcp_primary" {',
+      '  account_name                           = "gcp-' + org + '"',
+      '  cloud_type                             = 4  # GCP',
+      '  gcloud_project_id                      = var.gcp_project_id',
+      '  gcloud_project_credentials_filepath    = var.gcp_credentials_path',
+      '}',
+      '',
+      'variable "gcp_project_id"       {}',
+      'variable "gcp_credentials_path" { default = "/run/secrets/gcp-sa.json" }',
+      '',
+    );
+  }
+
+  lines.push(
+    '# ── Controller version pin ────────────────────────────────',
+    'resource "aviatrix_controller_config" "this" {',
+    '  sg_management_account_name = aviatrix_account.aws_primary.account_name',
+    '  http_access                = false',
+    '  fqdn_exception_rule        = true',
+    '}',
+    '',
+    '# NOTE: The Controller VM itself is deployed via Marketplace.',
+    '# Use the Aviatrix bootstrap module or GH Marketplace Launch:',
+    '# https://docs.aviatrix.com/documentation/latest/getting-started/',
+  );
+
+  return lines.join('\n');
+}
+
+/* ────────────────────────────────────────────────────────────────
+   2. TRANSIT GATEWAYS  —  aviatrix/transit_gateways.tf
+   Deploys Transit GW + HA GW per cloud per region.
+   Spoke GW for shared-services VPC (DNS, NTP, monitoring).
+──────────────────────────────────────────────────────────────── */
+function _genAviatrixTransitTF(state) {
+  var clouds = _mcClouds(state);
+  var org    = _orgSlug(state);
+  var hpe    = (state && state.mcAvxHPE !== false);
+  var lines  = [_avxHeader('Aviatrix Transit Gateways — All Clouds')];
+
+  lines.push(
+    '# HPE / Insane Mode: ' + (hpe ? 'ENABLED (multi-tunnel parallel IPsec, up to 100 Gbps on private)' : 'disabled'),
+    '# Gateway sizing: network-optimised instances with jumbo frames',
+    '',
+  );
+
+  clouds.forEach(function(cloud) {
+    var regions  = _mcRegions(state, cloud);
+    var acctRef  = 'aviatrix_account.' + cloud + '_primary.account_name';
+    var gwSize   = AVX_GW_SIZE[cloud] || AVX_GW_SIZE.aws;
+    var cloudNum = AVX_CLOUD_TYPE[cloud] || 1;
+
+    regions.forEach(function(region) {
+      var rInfo = MC_REGIONS[cloud] && MC_REGIONS[cloud][region];
+      if (!rInfo) return;
+      var suffix   = rInfo.az_suffix;
+      var hubCIDR  = rInfo.hub_cidr || rInfo.cidr;
+      var gwName   = org + '-transit-' + cloud + '-' + suffix;
+      var vpcCIDR  = rInfo.cidr;
+
+      lines.push(
+        '# ── ' + cloud.toUpperCase() + ' Transit — ' + region + ' ─────────────────────────',
+      );
+
+      // VPC / VNet is assumed pre-existing or managed separately
+      // Reference it via locals / data sources
+      lines.push(
+        'locals {',
+        '  ' + cloud + '_' + suffix + '_transit_vpc_id  = var.' + cloud + '_' + suffix + '_transit_vpc_id',
+        '  ' + cloud + '_' + suffix + '_transit_subnet  = var.' + cloud + '_' + suffix + '_transit_subnet',
+        '  ' + cloud + '_' + suffix + '_ha_subnet       = var.' + cloud + '_' + suffix + '_ha_subnet',
+        '}',
+        '',
+        'variable "' + cloud + '_' + suffix + '_transit_vpc_id" { description = "' + cloud.toUpperCase() + ' Transit VPC/VNet ID (' + region + ')" }',
+        'variable "' + cloud + '_' + suffix + '_transit_subnet"  { description = "Transit GW subnet CIDR (' + region + ')" }',
+        'variable "' + cloud + '_' + suffix + '_ha_subnet"       { description = "Transit HA GW subnet CIDR (' + region + ')" }',
+        '',
+        'resource "aviatrix_transit_gateway" "' + gwName.replace(/-/g,'_') + '" {',
+        '  cloud_type                  = ' + cloudNum,
+        '  account_name                = ' + acctRef,
+        '  gw_name                     = "' + gwName + '"',
+        '  vpc_id                      = local.' + cloud + '_' + suffix + '_transit_vpc_id',
+        '  vpc_reg                     = "' + region + '"',
+        '  gw_subnet                   = local.' + cloud + '_' + suffix + '_transit_subnet',
+        '  gw_size                     = "' + gwSize.transit + '"',
+        '',
+        '  # Active-Active HA',
+        '  ha_subnet                   = local.' + cloud + '_' + suffix + '_ha_subnet',
+        '  ha_gw_size                  = "' + gwSize.transit + '"',
+        '',
+        hpe ? (
+          '  # High Performance Encryption — Insane Mode\n' +
+          '  insane_mode                 = true\n' +
+          '  insane_mode_az              = "' + (cloud === 'aws' ? region + 'a' : '') + '"'
+        ) : '  insane_mode                 = false',
+        '',
+        '  # BGP + Transit features',
+        '  connected_transit           = true   # full-mesh spoke-to-spoke',
+        '  enable_active_standby       = false  # active-active (both GWs forward)',
+        '  local_as_number             = "' + (MC_CLOUD_ASN[cloud] ? MC_CLOUD_ASN[cloud].customer_as : 65020) + '"',
+        '',
+        '  # Encryption',
+        '  enable_encrypt_volume       = true',
+        '  tunnel_encryption_cipher    = "AES-256-GCM-128"',
+        '',
+        '  tags = {',
+        '    Name        = "' + gwName + '"',
+        '    Environment = "production"',
+        '    ManagedBy   = "Terraform"',
+        '    Org         = "' + org + '"',
+        '  }',
+        '}',
+        '',
+      );
+
+      // Shared-services Spoke GW
+      var spkName = org + '-spoke-shared-' + cloud + '-' + suffix;
+      lines.push(
+        '# Spoke GW — Shared Services VPC (' + cloud.toUpperCase() + ' ' + region + ')',
+        'resource "aviatrix_spoke_gateway" "' + spkName.replace(/-/g,'_') + '" {',
+        '  cloud_type   = ' + cloudNum,
+        '  account_name = ' + acctRef,
+        '  gw_name      = "' + spkName + '"',
+        '  vpc_id       = var.' + cloud + '_' + suffix + '_shared_vpc_id',
+        '  vpc_reg      = "' + region + '"',
+        '  gw_subnet    = var.' + cloud + '_' + suffix + '_shared_subnet',
+        '  gw_size      = "' + gwSize.spoke + '"',
+        '  ha_subnet    = var.' + cloud + '_' + suffix + '_shared_ha_subnet',
+        '  ha_gw_size   = "' + gwSize.spoke + '"',
+        '  enable_active_mesh = true',
+        '}',
+        '',
+        '# Attach spoke to its regional transit',
+        'resource "aviatrix_spoke_transit_attachment" "' + spkName.replace(/-/g,'_') + '_attach" {',
+        '  spoke_gw_name   = aviatrix_spoke_gateway.' + spkName.replace(/-/g,'_') + '.gw_name',
+        '  transit_gw_name = aviatrix_transit_gateway.' + gwName.replace(/-/g,'_') + '.gw_name',
+        '}',
+        '',
+        'variable "' + cloud + '_' + suffix + '_shared_vpc_id"    {}',
+        'variable "' + cloud + '_' + suffix + '_shared_subnet"     {}',
+        'variable "' + cloud + '_' + suffix + '_shared_ha_subnet"  {}',
+        '',
+      );
+    });
+  });
+
+  return lines.join('\n');
+}
+
+/* ────────────────────────────────────────────────────────────────
+   3. TRANSIT PEERING  —  aviatrix/transit_peering.tf
+   Full-mesh encrypted peering between all Transit GWs.
+   When HPE is enabled, peering uses parallel IPsec tunnels.
+──────────────────────────────────────────────────────────────── */
+function _genAviatrixPeeringTF(state) {
+  var clouds  = _mcClouds(state);
+  var org     = _orgSlug(state);
+  var hpe     = (state && state.mcAvxHPE !== false);
+  var lines   = [_avxHeader('Aviatrix Transit Gateway Peering — Cross-Cloud Full Mesh')];
+
+  lines.push(
+    '# Each pair gets a dedicated peering resource.',
+    '# HPE: ' + (hpe ? 'parallel tunnels (up to 20) for maximum throughput' : 'standard single tunnel'),
+    '# enable_peering_over_private_network = true when DX/ExpressRoute is available.',
+    '',
+  );
+
+  // Build list of all transit GW names
+  var gws = [];
+  clouds.forEach(function(cloud) {
+    var regions = _mcRegions(state, cloud);
+    regions.forEach(function(region) {
+      var rInfo = MC_REGIONS[cloud] && MC_REGIONS[cloud][region];
+      if (!rInfo) return;
+      gws.push({
+        cloud: cloud,
+        region: region,
+        suffix: rInfo.az_suffix,
+        name: org + '-transit-' + cloud + '-' + rInfo.az_suffix,
+        ref:  'aviatrix_transit_gateway.' + (org + '-transit-' + cloud + '-' + rInfo.az_suffix).replace(/-/g,'_') + '.gw_name',
+      });
+    });
+  });
+
+  // Full-mesh: every pair (i < j)
+  var pairIdx = 0;
+  for (var i = 0; i < gws.length; i++) {
+    for (var j = i + 1; j < gws.length; j++) {
+      var a = gws[i];
+      var b = gws[j];
+      var resourceName = 'peer_' + a.cloud + '_' + a.suffix + '_to_' + b.cloud + '_' + b.suffix;
+      var sameCloud    = a.cloud === b.cloud;
+      lines.push(
+        '# ' + a.cloud.toUpperCase() + ' ' + a.region + '  ↔  ' + b.cloud.toUpperCase() + ' ' + b.region,
+        'resource "aviatrix_transit_gateway_peering" "' + resourceName + '" {',
+        '  transit_gateway_name1 = ' + a.ref,
+        '  transit_gateway_name2 = ' + b.ref,
+        '',
+        hpe && !sameCloud ? (
+          '  # HPE over private network (DX/ExpressRoute)\n' +
+          '  enable_peering_over_private_network              = true\n' +
+          '  enable_insane_mode_encryption_over_internet      = false\n' +
+          '  tunnels                                          = 4  # 4 parallel tunnels per pair'
+        ) : (
+          hpe && sameCloud ? (
+            '  # Same cloud, different region — HPE over AWS backbone\n' +
+            '  enable_insane_mode_encryption_over_internet    = true\n' +
+            '  tunnels                                        = 4'
+          ) : '  # Standard single-tunnel peering'
+        ),
+        '}',
+        '',
+      );
+      pairIdx++;
+    }
+  }
+
+  if (pairIdx === 0) {
+    lines.push('# Add more cloud providers in Step 2 to generate peering configs.');
+  }
+
+  return lines.join('\n');
+}
+
+/* ────────────────────────────────────────────────────────────────
+   4. ON-PREM BGP  —  aviatrix/onprem_bgp.tf
+   External Device Connection from DC edge routers to each
+   Transit GW (BGP over IPsec or BGP over LAN via Colo).
+──────────────────────────────────────────────────────────────── */
+function _genAviatrixOnPremBGP(state) {
+  var clouds   = _mcClouds(state);
+  var org      = _orgSlug(state);
+  var entAsn   = _enterpriseAsn(state);
+  var hpe      = (state && state.mcAvxHPE !== false);
+  var sites    = _mcSites(state);
+  var lines    = [_avxHeader('Aviatrix External Device Connection — DC Edge BGP')];
+
+  lines.push(
+    '# BGP over IPsec from DC edge routers to each cloud Transit GW.',
+    '# BFD enabled for sub-second failover detection.',
+    '# Use BGP over LAN instead if the colo NVA is in the same VPC.',
+    '',
+  );
+
+  clouds.forEach(function(cloud) {
+    var regions = _mcRegions(state, cloud);
+    regions.forEach(function(region) {
+      var rInfo = MC_REGIONS[cloud] && MC_REGIONS[cloud][region];
+      if (!rInfo) return;
+      var suffix   = rInfo.az_suffix;
+      var gwName   = org + '-transit-' + cloud + '-' + suffix;
+      var gwRef    = 'aviatrix_transit_gateway.' + gwName.replace(/-/g,'_') + '.gw_name';
+      var cloudAsn = MC_CLOUD_ASN[cloud] ? MC_CLOUD_ASN[cloud].customer_as : 65020;
+
+      sites.forEach(function(site) {
+        var siteInfo = MC_DC_SITES[site];
+        var siteLow  = site.toLowerCase().replace('-','_');
+        var connName = org + '-' + siteLow + '-to-' + cloud + '-' + suffix;
+        var edgeLoop = siteInfo ? siteInfo.loopback_base + '1' : '10.10.255.1';
+
+        lines.push(
+          '# ' + site + ' → ' + cloud.toUpperCase() + ' ' + region,
+          'resource "aviatrix_transit_external_device_conn" "' + connName.replace(/-/g,'_') + '" {',
+          '  vpc_id                    = local.' + cloud + '_' + suffix + '_transit_vpc_id',
+          '  connection_name           = "' + connName + '"',
+          '  gw_name                   = ' + gwRef,
+          '  connection_type           = "bgp"',
+          '  tunnel_protocol           = "IPsec"',
+          '',
+          '  # Aviatrix side',
+          '  bgp_local_as_num          = "' + cloudAsn + '"',
+          '',
+          '  # DC Edge side',
+          '  remote_gateway_ip         = var.' + siteLow + '_edge_public_ip',
+          '  bgp_remote_as_num         = "' + entAsn + '"',
+          '',
+          hpe ? (
+            '  # High-performance: 4 parallel tunnels\n' +
+            '  enable_ikev2                = true\n' +
+            '  custom_algorithms           = true\n' +
+            '  phase1_authentication       = "SHA-512"\n' +
+            '  phase1_dh_groups            = "21"\n' +
+            '  phase2_authentication       = "HMAC-SHA-512"\n' +
+            '  phase2_dh_groups            = "21"'
+          ) : (
+            '  enable_ikev2                = true'
+          ),
+          '',
+          '  # Pre-shared key (use AWS Secrets Manager / Vault in production)',
+          '  pre_shared_key              = var.' + siteLow + '_' + cloud + '_psk',
+          '',
+          '  # BFD for fast failover',
+          '  enable_bfd                  = true',
+          '',
+          '  # Backup (HA) tunnel to HA Transit GW',
+          '  backup_remote_gateway_ip    = var.' + siteLow + '_edge_backup_ip',
+          '  backup_pre_shared_key       = var.' + siteLow + '_' + cloud + '_psk_ha',
+          '  backup_bgp_remote_as_num    = "' + entAsn + '"',
+          '}',
+          '',
+          'variable "' + siteLow + '_edge_public_ip"   { description = "' + site + ' edge router public IP for ' + cloud.toUpperCase() + ' tunnel" }',
+          'variable "' + siteLow + '_edge_backup_ip"   { description = "' + site + ' HA edge router public IP" }',
+          'variable "' + siteLow + '_' + cloud + '_psk"    { sensitive = true; description = "IPsec PSK (' + site + ' → ' + cloud.toUpperCase() + ')" }',
+          'variable "' + siteLow + '_' + cloud + '_psk_ha" { sensitive = true; description = "IPsec PSK HA (' + site + ' → ' + cloud.toUpperCase() + ')" }',
+          '',
+        );
+      });
+    });
+  });
+
+  return lines.join('\n');
+}
+
+/* ────────────────────────────────────────────────────────────────
+   5. FIRENET  —  aviatrix/firenet.tf
+   Inline firewall insertion into the Transit Gateway data path.
+   Supports Palo Alto VM-Series, Fortinet FortiGate, Check Point.
+──────────────────────────────────────────────────────────────── */
+function _genAviatrixFireNetTF(state) {
+  var clouds  = _mcClouds(state);
+  var org     = _orgSlug(state);
+  var fwType  = (state && state.mcAvxFireNetFW) ? state.mcAvxFireNetFW : 'paloalto';
+  var lines   = [_avxHeader('Aviatrix FireNet — Inline Firewall Insertion')];
+
+  var fwMeta = {
+    paloalto:   { label: 'Palo Alto VM-Series', fw_size: 'c5.4xlarge',  fw_size_az: 'Standard_D8s_v3', login: 'admin', bootstrap: 'S3 bucket bootstrap with day-0 XML config' },
+    fortinet:   { label: 'Fortinet FortiGate',  fw_size: 'c5.2xlarge',  fw_size_az: 'Standard_D4s_v3', login: 'admin', bootstrap: 'FortiManager / user-data script' },
+    checkpoint: { label: 'Check Point CloudGuard', fw_size: 'c5.2xlarge', fw_size_az: 'Standard_D4s_v3', login: 'admin', bootstrap: 'Management server or smart-1 cloud' },
+  };
+  var fw = fwMeta[fwType] || fwMeta.paloalto;
+
+  lines.push(
+    '# Firewall: ' + fw.label,
+    '# Each Transit GW gets a FireNet + one HA firewall instance.',
+    '# CRITICAL: FireNet and Network Segmentation are mutually exclusive per Transit GW.',
+    '# If both are needed, use separate Transit GWs for each function.',
+    '',
+  );
+
+  clouds.forEach(function(cloud) {
+    var regions = _mcRegions(state, cloud);
+    regions.forEach(function(region) {
+      var rInfo = MC_REGIONS[cloud] && MC_REGIONS[cloud][region];
+      if (!rInfo) return;
+      var suffix  = rInfo.az_suffix;
+      var gwName  = org + '-transit-' + cloud + '-' + suffix;
+      var gwRef   = 'aviatrix_transit_gateway.' + gwName.replace(/-/g,'_') + '.vpc_id';
+      var fnName  = org + '-firenet-' + cloud + '-' + suffix;
+
+      lines.push(
+        '# FireNet — ' + cloud.toUpperCase() + ' ' + region,
+        'resource "aviatrix_firenet" "' + fnName.replace(/-/g,'_') + '" {',
+        '  vpc_id              = ' + gwRef,
+        '  inspection_enabled  = true   # East-West + North-South inspection',
+        '  egress_enabled      = true   # Inspect outbound internet traffic',
+        '  egress_static_cidrs = ["0.0.0.0/0"]',
+        '  keep_alive_via_lan_interface_enabled = true',
+        '}',
+        '',
+        '# ' + fw.label + ' instance',
+        'resource "aviatrix_firewall_instance" "' + fnName.replace(/-/g,'_') + '_fw1" {',
+        '  vpc_id               = ' + gwRef,
+        '  firenet_gw_name      = aviatrix_transit_gateway.' + gwName.replace(/-/g,'_') + '.gw_name',
+        '  firewall_name        = "' + org + '-fw-' + cloud + '-' + suffix + '-01"',
+        '  firewall_image       = "' + _avxFWImage(fwType, cloud) + '"',
+        '  firewall_size        = "' + (cloud === 'azure' ? fw.fw_size_az : fw.fw_size) + '"',
+        '  username             = "' + fw.login + '"',
+        '  password             = var.fw_admin_password',
+        '  management_subnet    = var.' + cloud + '_' + suffix + '_fw_mgmt_subnet',
+        '  egress_subnet        = var.' + cloud + '_' + suffix + '_fw_egress_subnet',
+        '  # Bootstrap: ' + fw.bootstrap,
+        '}',
+        '',
+        'resource "aviatrix_firewall_instance_association" "' + fnName.replace(/-/g,'_') + '_fw1_assoc" {',
+        '  vpc_id          = ' + gwRef,
+        '  firenet_gw_name = aviatrix_transit_gateway.' + gwName.replace(/-/g,'_') + '.gw_name',
+        '  instance_id     = aviatrix_firewall_instance.' + fnName.replace(/-/g,'_') + '_fw1.instance_id',
+        '  attached        = true',
+        '}',
+        '',
+        'variable "' + cloud + '_' + suffix + '_fw_mgmt_subnet"   {}',
+        'variable "' + cloud + '_' + suffix + '_fw_egress_subnet"  {}',
+        '',
+      );
+    });
+  });
+
+  lines.push(
+    'variable "fw_admin_password" {',
+    '  sensitive   = true',
+    '  description = "Firewall admin password (store in Secrets Manager)"',
+    '}',
+  );
+
+  return lines.join('\n');
+}
+
+function _avxFWImage(fwType, cloud) {
+  var images = {
+    paloalto: {
+      aws:   'Palo Alto Networks VM-Series Next-Generation Firewall (BYOL)',
+      azure: 'Palo Alto Networks VM-Series Next Generation Firewall Bundle 1',
+      gcp:   'Palo Alto Networks VM-Series Next-Generation Firewall BYOL',
+    },
+    fortinet: {
+      aws:   'Fortinet FortiGate (BYOL) Next Generation Firewall',
+      azure: 'Fortinet FortiGate Next-Generation Firewall',
+      gcp:   'FortiGate Next-Generation Firewall (BYOL)',
+    },
+    checkpoint: {
+      aws:   'Check Point CloudGuard IaaS Next Gen Firewall w. Threat Prevention',
+      azure: 'Check Point CloudGuard Network Security for Gateways-PAYG',
+      gcp:   'Check Point CloudGuard IaaS Firewall and Threat Prevention (BYOL)',
+    },
+  };
+  return (images[fwType] && images[fwType][cloud]) ? images[fwType][cloud] : images.paloalto.aws;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   6. SEGMENTATION  —  aviatrix/segmentation.tf
+   Network Domains: Prod / Dev / Mgmt — intent-based isolation.
+   Connection Policies define allowed cross-domain flows.
+   NOTE: Cannot coexist with FireNet on same Transit GW.
+──────────────────────────────────────────────────────────────── */
+function _genAviatrixSegmentsTF(state) {
+  var org   = _orgSlug(state);
+  var lines = [_avxHeader('Aviatrix Network Domain Segmentation')];
+
+  var domains = [
+    { name: 'prod',    label: 'Production',       color: '#00e87a' },
+    { name: 'dev',     label: 'Development',       color: '#1a7fff' },
+    { name: 'mgmt',    label: 'Management',        color: '#9955ff' },
+    { name: 'shared',  label: 'Shared Services',   color: '#ff8c00' },
+  ];
+
+  // Allowed cross-domain flows: prod↔shared, dev↔shared, mgmt→all, dev↔dev is blocked by default
+  var policies = [
+    ['prod',   'shared',  'Production can reach Shared Services (DNS, NTP, logging)'],
+    ['dev',    'shared',  'Development can reach Shared Services'],
+    ['mgmt',   'prod',    'Management can reach Production for ops access'],
+    ['mgmt',   'dev',     'Management can reach Development'],
+    ['mgmt',   'shared',  'Management can reach Shared Services'],
+  ];
+
+  lines.push(
+    '# Network Domains map spoke VPCs into logical groups.',
+    '# Default: intra-domain traffic allowed; inter-domain blocked unless policy defined.',
+    '# Prod ↔ Dev is intentionally BLOCKED (no policy defined).',
+    '',
+  );
+
+  domains.forEach(function(d) {
+    lines.push(
+      'resource "aviatrix_segmentation_network_domain" "' + d.name + '" {',
+      '  domain_name = "' + org + '-' + d.name + '"',
+      '}',
+      '',
+    );
+  });
+
+  lines.push(
+    '# ── Spoke association (one per application VPC) ───────────────',
+    '# Associate each spoke gateway with its domain.',
+    '# Duplicate this block for every additional application spoke.',
+    '',
+    '# Example: Prod spoke in AWS us-east-1',
+    'resource "aviatrix_segmentation_network_domain_association" "prod_aws_use1" {',
+    '  transit_gateway_name = "' + org + '-transit-aws-use1"',
+    '  network_domain_name  = aviatrix_segmentation_network_domain.prod.domain_name',
+    '  attachment_name      = "' + org + '-spoke-prod-aws-use1"  # spoke GW name or TGW attachment',
+    '}',
+    '',
+  );
+
+  lines.push('# ── Connection Policies ───────────────────────────────────────');
+  policies.forEach(function(p) {
+    var resourceName = 'allow_' + p[0] + '_to_' + p[1];
+    lines.push(
+      '# ' + p[2],
+      'resource "aviatrix_segmentation_network_domain_connection_policy" "' + resourceName + '" {',
+      '  domain_name_1 = aviatrix_segmentation_network_domain.' + p[0] + '.domain_name',
+      '  domain_name_2 = aviatrix_segmentation_network_domain.' + p[1] + '.domain_name',
+      '}',
+      '',
+    );
+  });
+
+  lines.push(
+    '# ── Outputs ───────────────────────────────────────────────────',
+    'output "network_domains" {',
+    '  description = "Aviatrix Network Domain names"',
+    '  value = {',
+    '    prod   = aviatrix_segmentation_network_domain.prod.domain_name',
+    '    dev    = aviatrix_segmentation_network_domain.dev.domain_name',
+    '    mgmt   = aviatrix_segmentation_network_domain.mgmt.domain_name',
+    '    shared = aviatrix_segmentation_network_domain.shared.domain_name',
+    '  }',
+    '}',
+  );
+
+  return lines.join('\n');
+}
+
+/* ────────────────────────────────────────────────────────────────
+   7. COPILOT  —  aviatrix/copilot.tf
+   CoPilot VM deployment: FlowIQ, topology, ThreatIQ, AppIQ.
+   Separate VM in same VPC as Controller.
+──────────────────────────────────────────────────────────────── */
+function _genAviatrixCoPilotTF(state) {
+  var org   = _orgSlug(state);
+  var lines = [_avxHeader('Aviatrix CoPilot — Observability & Analytics')];
+
+  lines.push(
+    '# CoPilot: FlowIQ (NetFlow analytics), Dynamic Topology, AppIQ (path trace),',
+    '# ThreatIQ (Proofpoint threat feeds), Network Behavior Analytics.',
+    '# Deploy in the same VPC/account as the Controller.',
+    '# Sizing: t3.2xlarge minimum (recommended: c5.4xlarge for >500 GWs or high flow volume)',
+    '',
+    'data "aws_ami" "aviatrix_copilot" {',
+    '  most_recent = true',
+    '  owners      = ["679593333241"]  # Aviatrix AWS Marketplace account',
+    '  filter {',
+    '    name   = "name"',
+    '    values = ["aviatrix-copilot-*"]',
+    '  }',
+    '}',
+    '',
+    'resource "aws_instance" "aviatrix_copilot" {',
+    '  ami                    = data.aws_ami.aviatrix_copilot.id',
+    '  instance_type          = "c5.4xlarge"',
+    '  subnet_id              = var.controller_subnet_id',
+    '  vpc_security_group_ids = [aws_security_group.copilot_sg.id]',
+    '  iam_instance_profile   = aws_iam_instance_profile.copilot_profile.name',
+    '  ebs_optimized          = true',
+    '',
+    '  root_block_device {',
+    '    volume_type           = "gp3"',
+    '    volume_size           = 100  # GB — increase to 500+ for long retention',
+    '    encrypted             = true',
+    '    delete_on_termination = false',
+    '  }',
+    '',
+    '  # Additional EBS for NetFlow storage (1 TB for ~6 months at moderate scale)',
+    '  ebs_block_device {',
+    '    device_name           = "/dev/sdb"',
+    '    volume_type           = "gp3"',
+    '    volume_size           = 1000',
+    '    encrypted             = true',
+    '    delete_on_termination = false',
+    '  }',
+    '',
+    '  tags = {',
+    '    Name      = "' + org + '-aviatrix-copilot"',
+    '    ManagedBy = "Terraform"',
+    '  }',
+    '}',
+    '',
+    'resource "aws_security_group" "copilot_sg" {',
+    '  name   = "' + org + '-copilot-sg"',
+    '  vpc_id = var.controller_vpc_id',
+    '',
+    '  # HTTPS from controller + admin CIDRs',
+    '  ingress {',
+    '    from_port   = 443',
+    '    to_port     = 443',
+    '    protocol    = "tcp"',
+    '    cidr_blocks = [var.admin_cidr, var.controller_private_ip + "/32"]',
+    '  }',
+    '',
+    '  # NetFlow from all Aviatrix Gateways (UDP 31283)',
+    '  ingress {',
+    '    from_port   = 31283',
+    '    to_port     = 31283',
+    '    protocol    = "udp"',
+    '    cidr_blocks = ["0.0.0.0/0"]  # Restrict to GW elastic IPs in production',
+    '  }',
+    '',
+    '  egress {',
+    '    from_port   = 0',
+    '    to_port     = 0',
+    '    protocol    = "-1"',
+    '    cidr_blocks = ["0.0.0.0/0"]',
+    '  }',
+    '}',
+    '',
+    '# ── CoPilot integration with Controller ───────────────────────',
+    'resource "aviatrix_copilot_association" "this" {',
+    '  copilot_address = aws_instance.aviatrix_copilot.private_ip',
+    '}',
+    '',
+    '# ── Outputs ───────────────────────────────────────────────────',
+    'output "copilot_url" {',
+    '  description = "CoPilot HTTPS URL (configure DNS CNAME in production)"',
+    '  value       = "https://${aws_instance.aviatrix_copilot.public_ip}"',
+    '}',
+    '',
+    'variable "controller_vpc_id"    {}',
+    'variable "controller_subnet_id" {}',
+    'variable "controller_private_ip" {}',
+    'variable "admin_cidr" { description = "Admin source CIDR for UI access"; default = "10.0.0.0/8" }',
+    '',
+    '# ── ThreatIQ Notes ────────────────────────────────────────────',
+    '# ThreatIQ is automatically activated in CoPilot once a customer ID is registered.',
+    '# ThreatGuard (prevention) integrates with DCF rules — no additional TF config needed.',
+    '# GeoBlocking: configure in CoPilot UI → Security → GeoBlocking.',
+  );
+
+  return lines.join('\n');
 }

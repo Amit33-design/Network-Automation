@@ -264,7 +264,10 @@ function buildDesignSummaryData() {
       .map(c => c.toUpperCase()).join(' + ');
     const dcSites = STATE.mcDualDC ? 2 : 1;
     const edgeCnt = (STATE.redundancy === 'ha' || STATE.redundancy === 'full') ? dcSites * 2 : dcSites;
-    capacityNote = `${clouds} via Direct Connect / ExpressRoute / Cloud Interconnect · ` +
+    const orchLabel = STATE.mcOrchestration === 'aviatrix'
+      ? 'Aviatrix Encrypted Transit (HPE' + (STATE.mcAvxHPE ? ', Insane Mode' : '') + ')'
+      : 'Native (TGW / vWAN / NCC)';
+    capacityNote = `${clouds} via ${orchLabel} · ` +
       `${dcSites} DC site${dcSites>1?'s':''} · ${edgeCnt} HA edge router${edgeCnt>1?'s':''}`;
   } else if (cap.campus) {
     const c = cap.campus;

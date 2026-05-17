@@ -65,7 +65,8 @@ function renderRecsUI(layers) {
   if (STATE.uc === 'multicloud') {
     const clouds = (STATE.mcClouds && STATE.mcClouds.length ? STATE.mcClouds : ['aws','azure','gcp'])
       .map(c => c.toUpperCase()).join(', ');
-    subline += ` · ${clouds} · ${STATE.mcDualDC ? '2 DC sites' : '1 DC site'}`;
+    const orchLabel = STATE.mcOrchestration === 'aviatrix' ? '🛡 Aviatrix' : '🔗 Native';
+    subline += ` · ${clouds} · ${STATE.mcDualDC ? '2 DC sites' : '1 DC site'} · ${orchLabel}`;
   } else {
     subline += ` · ${hosts} endpoints`;
   }

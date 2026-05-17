@@ -51,3 +51,4 @@ nornir.log
 # License vendor private key and generated license files
 *.ndlic
 .netdesign_machine_id
+desktop/dist-electron/

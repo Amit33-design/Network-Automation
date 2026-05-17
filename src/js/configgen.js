@@ -14,6 +14,7 @@ function getOS(layerKey) {
   if (layerKey === 'mc-tf-outputs')    return 'terraform';
   if (layerKey === 'mc-tf-bootstrap')  return 'terraform';
   if (layerKey === 'mc-repo')          return 'text';
+  if (layerKey === 'mc-aviatrix')      return 'terraform';
   const prod = PRODUCTS[STATE.selectedProducts[layerKey]];
   if (!prod) return 'ios-xe';
   const v = prod.vendor;
@@ -162,6 +163,7 @@ const _GROUP_LABELS = {
   'mc-tf-outputs':    '📤 TF Outputs',
   'mc-tf-bootstrap':  '🏗 TF Bootstrap',
   'mc-repo':          '📁 Repo Scaffolding',
+  'mc-aviatrix':      '🛡 Aviatrix Config',
 };
 
 function renderDeviceList() {
@@ -365,7 +367,7 @@ function generateConfig(dev, os) {
 
   // Multicloud devices — delegate to multicloud.js
   if (['mc-dc-edge','mc-aws','mc-azure','mc-gcp','mc-ansible',
-       'mc-cicd','mc-tf-outputs','mc-tf-bootstrap','mc-repo'].includes(layer)) {
+       'mc-cicd','mc-tf-outputs','mc-tf-bootstrap','mc-repo','mc-aviatrix'].includes(layer)) {
     if (typeof window.genMulticloudConfig === 'function') {
       return window.genMulticloudConfig(dev, STATE);
     }

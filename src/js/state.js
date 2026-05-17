@@ -38,9 +38,15 @@ const STATE = {
   mcDCEdgeVendor:  'iosxr',                // iosxr | eos | junos
   mcEnterpriseAsn: 65000,
   mcOrgCidr:       '10.0.0.0/9',
-  mcAWSRegions:    ['us-east-1'],
-  mcAzureRegions:  ['eastus'],
-  mcGCPRegions:    ['us-east4'],
+  mcAWSRegions:      ['us-east-1'],
+  mcAzureRegions:    ['eastus'],
+  mcGCPRegions:      ['us-east4'],
+  // Aviatrix orchestration
+  mcOrchestration:   'native',   // 'native' | 'aviatrix'
+  mcAvxHPE:          true,       // High Performance Encryption (Insane Mode)
+  mcAvxFireNet:      false,      // Enable FireNet (inline FW insertion)
+  mcAvxFireNetFW:    'paloalto', // paloalto | fortinet | checkpoint
+  mcAvxSegments:     true,       // Network Domain segmentation
 };
 
 /* ── Step metadata ───────────────────────────────────────────────── */
