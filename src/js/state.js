@@ -31,6 +31,16 @@ const STATE = {
   budget: '',             // smb | mid | enterprise | hyperscale
   preferredVendors: [],   // ['Cisco','Fortinet', ...]  — empty = any
   numSitesTopology: 3,    // for multi-site diagram (3-6)
+  // ── Multicloud ────────────────────────────────────────────────
+  mcClouds:        ['aws', 'azure', 'gcp'], // selected cloud providers
+  mcDualDC:        true,                    // true = DC-EAST + DC-WEST
+  mcColoProvider:  'equinix',               // equinix | megaport
+  mcDCEdgeVendor:  'iosxr',                // iosxr | eos | junos
+  mcEnterpriseAsn: 65000,
+  mcOrgCidr:       '10.0.0.0/9',
+  mcAWSRegions:    ['us-east-1'],
+  mcAzureRegions:  ['eastus'],
+  mcGCPRegions:    ['us-east4'],
 };
 
 /* ── Step metadata ───────────────────────────────────────────────── */
@@ -50,6 +60,7 @@ const UC_LABELS = {
   hybrid:     'Hybrid (Campus + DC)',
   wan:        'WAN / SD-WAN',
   multisite:  'Multi-Site DC / DCI',
+  multicloud: 'Enterprise / GPU → Multicloud',
 };
 
 /* ── Budget labels ───────────────────────────────────────────────── */

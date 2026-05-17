@@ -819,6 +819,20 @@
         </div>
       </div>
 
+      <div class="use-card" data-uc="multicloud" onclick="selectUC(this)">
+        <div class="check-mark">✓</div>
+        <div class="card-icon">☁️</div>
+        <h3>Enterprise / GPU → Multicloud</h3>
+        <p>Connect enterprise DCs and GPU clusters to AWS, Azure, and GCP via Direct Connect, ExpressRoute, and Cloud Interconnect. BGP-routed, inspection-enforced, IaC-automated.</p>
+        <div class="card-tags">
+          <span class="badge badge-blue">AWS DX</span>
+          <span class="badge badge-blue">Azure ER</span>
+          <span class="badge badge-blue">GCP IC</span>
+          <span class="badge badge-purple">Terraform</span>
+          <span class="badge badge-purple">Ansible</span>
+        </div>
+      </div>
+
     </div>
 
     <!-- Organization details -->
@@ -1150,6 +1164,79 @@
                 <div class="chip" onclick="toggleChip(this)">NVLink / NVSwitch</div>
               </div>
             </div>
+
+            <!-- ── Multicloud requirements ──────────────────────── -->
+            <div id="mc-req" class="field span2" style="display:none">
+              <div class="form-card" style="margin:0;padding:1rem 1.2rem">
+                <div class="form-card-head" style="margin-bottom:.8rem">
+                  <div class="ico" style="background:rgba(26,127,255,.15)">☁️</div>
+                  <div>
+                    <h3 style="font-size:.95rem">Multicloud Settings</h3>
+                    <p style="font-size:.78rem">Configure cloud providers, connectivity, and DC edge platform</p>
+                  </div>
+                </div>
+                <div class="form-grid">
+
+                  <div class="field span2">
+                    <label>Cloud Providers</label>
+                    <div style="display:flex;gap:.8rem;flex-wrap:wrap;margin-top:.3rem">
+                      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                        <input type="checkbox" id="mc-cloud-aws" checked onchange="_mcCloudChange()"> AWS
+                      </label>
+                      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                        <input type="checkbox" id="mc-cloud-azure" checked onchange="_mcCloudChange()"> Azure
+                      </label>
+                      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                        <input type="checkbox" id="mc-cloud-gcp" checked onchange="_mcCloudChange()"> GCP
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label>DC Topology</label>
+                    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:.3rem">
+                      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                        <input type="radio" name="mc-dc-topology" value="single" onchange="_mcDCTopologyChange(this)"> Single DC
+                      </label>
+                      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                        <input type="radio" name="mc-dc-topology" value="dual" checked onchange="_mcDCTopologyChange(this)"> Dual DC (Active-Active)
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label>Colo Provider</label>
+                    <select id="mc-colo-provider" onchange="STATE.mcColoProvider=this.value">
+                      <option value="equinix">Equinix Fabric</option>
+                      <option value="megaport">Megaport MCR</option>
+                    </select>
+                  </div>
+
+                  <div class="field">
+                    <label>DC Edge Vendor</label>
+                    <select id="mc-edge-vendor" onchange="STATE.mcDCEdgeVendor=this.value">
+                      <option value="iosxr">Cisco IOS-XR</option>
+                      <option value="eos">Arista EOS</option>
+                      <option value="junos">Juniper JunOS</option>
+                    </select>
+                  </div>
+
+                  <div class="field">
+                    <label>Enterprise AS Number</label>
+                    <input type="number" id="mc-enterprise-asn" value="65000" min="1" max="4294967295"
+                      onchange="STATE.mcEnterpriseAsn=parseInt(this.value)||65000">
+                  </div>
+
+                  <div class="field">
+                    <label>Org CIDR Super-Summary</label>
+                    <input type="text" id="mc-org-cidr" value="10.0.0.0/9" placeholder="10.0.0.0/9"
+                      onchange="STATE.mcOrgCidr=this.value">
+                  </div>
+
+                </div>
+              </div>
+            </div>
+            <!-- /Multicloud requirements -->
 
             <div class="field span2">
               <label>Additional notes / special requirements</label>
@@ -1507,6 +1594,11 @@
           <button class="layer-filter-btn" data-layer="dc-leaf"             onclick="filterDevLayer('dc-leaf',this)">🍃 Leaf</button>
           <button class="layer-filter-btn" data-layer="gpu-spine"           onclick="filterDevLayer('gpu-spine',this)">🧠 GPU Sp</button>
           <button class="layer-filter-btn" data-layer="gpu-tor"             onclick="filterDevLayer('gpu-tor',this)">⚡ TOR</button>
+          <button class="layer-filter-btn" data-layer="mc-dc-edge" onclick="filterDevLayer('mc-dc-edge',this)">🔌 DC Edge</button>
+          <button class="layer-filter-btn" data-layer="mc-aws"     onclick="filterDevLayer('mc-aws',this)">☁️ AWS TF</button>
+          <button class="layer-filter-btn" data-layer="mc-azure"   onclick="filterDevLayer('mc-azure',this)">☁️ Azure TF</button>
+          <button class="layer-filter-btn" data-layer="mc-gcp"     onclick="filterDevLayer('mc-gcp',this)">☁️ GCP TF</button>
+          <button class="layer-filter-btn" data-layer="mc-ansible" onclick="filterDevLayer('mc-ansible',this)">📋 Ansible</button>
         </div>
         <div id="dev-list-body"></div>
       </div>
@@ -3000,6 +3092,7 @@ rules:
 <script src="src/js/analytics.js"></script>
 <script src="src/js/paywall.js"></script>
 <script src="src/js/similar_designs.js"></script>
+<script src="src/js/multicloud.js"></script>
 <script src="src/js/init.js"></script>
 <script>
 /* ── Policy options global helper ──────────────────────────── */
@@ -3106,6 +3199,47 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 });
+</script>
+
+<script>
+/* ── Multicloud requirements visibility + state wiring ──────── */
+(function() {
+  // Show/hide mc-req block based on selected use case.
+  // Patches selectUC after it is defined (app.js loads first).
+  var _origSelectUC = null;
+  function _patchSelectUC() {
+    if (typeof selectUC === 'undefined') {
+      setTimeout(_patchSelectUC, 100);
+      return;
+    }
+    if (_origSelectUC) return; // already patched
+    _origSelectUC = selectUC;
+    window.selectUC = function(card) {
+      _origSelectUC(card);
+      _updateMCReqVisibility();
+    };
+  }
+  _patchSelectUC();
+
+  window._updateMCReqVisibility = function() {
+    var el = document.getElementById('mc-req');
+    if (!el) return;
+    var uc = (typeof STATE !== 'undefined') ? STATE.uc : null;
+    el.style.display = (uc === 'multicloud') ? '' : 'none';
+  };
+
+  window._mcCloudChange = function() {
+    var clouds = [];
+    if (document.getElementById('mc-cloud-aws')   && document.getElementById('mc-cloud-aws').checked)   clouds.push('aws');
+    if (document.getElementById('mc-cloud-azure') && document.getElementById('mc-cloud-azure').checked) clouds.push('azure');
+    if (document.getElementById('mc-cloud-gcp')   && document.getElementById('mc-cloud-gcp').checked)   clouds.push('gcp');
+    if (typeof STATE !== 'undefined') STATE.mcClouds = clouds.length ? clouds : ['aws','azure','gcp'];
+  };
+
+  window._mcDCTopologyChange = function(radio) {
+    if (typeof STATE !== 'undefined') STATE.mcDualDC = (radio.value === 'dual');
+  };
+})();
 </script>
 
 <script>

@@ -59,6 +59,7 @@ from design_engine import (
     generate_bgp_design,
     generate_topology,
     generate_design_rationale,
+    multicloud_ip_plan,
 )
 from sim_engine import simulate_failure, simulate_link_failure
 from gate_engine import run_policies, compute_confidence, can_deploy
@@ -1533,6 +1534,140 @@ def monitor_network(
         "errors":         errors,
     })
     return result
+
+
+# ===========================================================================
+# ── TOOL — design_multicloud_network ────────────────────────────────────────
+# ===========================================================================
+@mcp.tool()
+def design_multicloud_network(
+    use_case: str = "multicloud",
+    clouds: list[str] | None = None,
+    dc_count: int = 2,
+    colo_provider: str = "equinix",
+    dc_edge_vendor: str = "iosxr",
+    enterprise_asn: int = 65000,
+    org_cidr: str = "10.0.0.0/9",
+    aws_regions: list[str] | None = None,
+    azure_regions: list[str] | None = None,
+    gcp_regions: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Design an Enterprise / GPU → Multicloud network.
+
+    Generates a complete multicloud network plan including:
+      - IP addressing plan (enterprise DCs + colo hubs + cloud regions)
+      - BGP peer table (Direct Connect, ExpressRoute, Cloud Interconnect)
+      - ASN assignments for all participants
+      - Circuit summary (type, sites, BFD)
+      - Terraform stack descriptors for AWS TGW, Azure vWAN, GCP NCC
+
+    Args:
+        use_case:        Must be "multicloud".
+        clouds:          List of cloud providers to include. Default: ["aws","azure","gcp"].
+        dc_count:        Number of enterprise DCs. 1 = DC-EAST only; 2 = DC-EAST + DC-WEST.
+        colo_provider:   Carrier-neutral colo fabric. "equinix" (default) or "megaport".
+        dc_edge_vendor:  DC edge router platform. "iosxr" (default), "eos", or "junos".
+        enterprise_asn:  Enterprise BGP AS number. Default: 65000.
+        org_cidr:        Enterprise org super-summary CIDR. Default: "10.0.0.0/9".
+        aws_regions:     AWS regions to include. Default: ["us-east-1"].
+        azure_regions:   Azure regions to include. Default: ["eastus"].
+        gcp_regions:     GCP regions to include. Default: ["us-east4"].
+
+    Returns:
+        use_case:        "multicloud"
+        ip_plan:         List of IP plan rows
+        bgp_peers:       List of BGP peer rows
+        asn_assignments: Dict of ASN assignments
+        circuit_summary: List of circuit descriptors
+        terraform_stacks: List of Terraform stack descriptors
+        ansible_summary: Ansible role variables summary
+        summary:         Human-readable summary string
+    """
+    log.info(
+        "design_multicloud_network: clouds=%s dc_count=%d colo=%s vendor=%s",
+        clouds, dc_count, colo_provider, dc_edge_vendor,
+    )
+
+    if use_case != "multicloud":
+        return {
+            "error": f"This tool only handles use_case='multicloud', got '{use_case}'.",
+            "hint":  "For other use cases use the design_network tool.",
+        }
+
+    _clouds    = clouds       or ["aws", "azure", "gcp"]
+    _aws_r     = aws_regions   or ["us-east-1"]
+    _azure_r   = azure_regions or ["eastus"]
+    _gcp_r     = gcp_regions   or ["us-east4"]
+    _dual_dc   = dc_count >= 2
+
+    intent = {
+        "clouds":          _clouds,
+        "dual_dc":         _dual_dc,
+        "enterprise_asn":  enterprise_asn,
+        "org_cidr":        org_cidr,
+        "colo_provider":   colo_provider,
+        "aws_regions":     _aws_r,
+        "azure_regions":   _azure_r,
+        "gcp_regions":     _gcp_r,
+    }
+
+    plan = multicloud_ip_plan(intent)
+
+    # Build Terraform stack descriptors
+    from design_engine import _MC_REGIONS, _MC_CLOUD_ASN  # type: ignore[attr-defined]
+    terraform_stacks: list[dict] = []
+    for cloud in _clouds:
+        region_list: list[str] = {
+            "aws":   _aws_r,
+            "azure": _azure_r,
+            "gcp":   _gcp_r,
+        }.get(cloud, [])
+        for region in region_list:
+            r_info = _MC_REGIONS.get(cloud, {}).get(region, {})
+            asns   = _MC_CLOUD_ASN.get(cloud, {})
+            az_suffix = (
+                region.replace("us-east-", "use").replace("us-west-", "usw")
+                      .replace("eastus", "eus").replace("westus2", "wus2")
+                      .replace("-", "")
+            )
+            stack: dict[str, Any] = {
+                "cloud":       cloud,
+                "region":      region,
+                "stack_name":  f"{cloud}-prod-{az_suffix}",
+                "template":    f"multicloud/{cloud}_{'tgw' if cloud == 'aws' else ('vwan' if cloud == 'azure' else 'ncc')}_stack.tf.j2",
+                "variables": {
+                    "org_name":    "org",
+                    "stack_name":  f"{cloud}-prod-{az_suffix}",
+                    "region":      region,
+                    "region_code": az_suffix,
+                    "env":         "prod",
+                    "cidr":        r_info.get("cidr", ""),
+                    "hub_cidr":    r_info.get("hub_cidr", ""),
+                    "amazon_asn":  asns.get("provider_as", 0),
+                    "customer_asn": asns.get("customer_as", 0),
+                },
+            }
+            terraform_stacks.append(stack)
+
+    ansible_summary = {
+        "role":    "dc-edge-bgp",
+        "sites":   ["DC-EAST"] + (["DC-WEST"] if _dual_dc else []),
+        "clouds":  _clouds,
+        "peers":   len(plan["bgp_peers"]),
+        "template": "multicloud/ansible_dc_vars.yml.j2",
+    }
+
+    return {
+        "use_case":         "multicloud",
+        "ip_plan":          plan["ip_plan"],
+        "bgp_peers":        plan["bgp_peers"],
+        "asn_assignments":  plan["asn_assignments"],
+        "circuit_summary":  plan["circuit_summary"],
+        "terraform_stacks": terraform_stacks,
+        "ansible_summary":  ansible_summary,
+        "summary":          plan["summary"],
+    }
 
 
 # ===========================================================================

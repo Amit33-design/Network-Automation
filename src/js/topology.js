@@ -205,12 +205,13 @@ const C = {
 function renderHLD() {
   const uc = STATE.uc;
   let result;
-  if (uc === 'campus')        result = campusHLD();
-  else if (uc === 'dc')       result = dcHLD();
-  else if (uc === 'gpu')      result = gpuHLD();
-  else if (uc === 'wan')      result = wanHLD();
-  else if (uc === 'multisite')result = multiSiteHLD();
-  else                        result = hybridHLD();
+  if (uc === 'campus')          result = campusHLD();
+  else if (uc === 'dc')         result = dcHLD();
+  else if (uc === 'gpu')        result = gpuHLD();
+  else if (uc === 'wan')        result = wanHLD();
+  else if (uc === 'multisite')  result = multiSiteHLD();
+  else if (uc === 'multicloud') result = multicloudHLD();
+  else                          result = hybridHLD();
 
   document.getElementById('hld-svg-container').innerHTML = result.svg;
   document.getElementById('hld-title').textContent  = result.title;
@@ -992,6 +993,134 @@ function multiSiteHLD() {
 
   const meta = `Multi-site topology · ${numSites} DC locations · VXLAN/EVPN DCI · ${hasFW ? fwLbl + ' perimeter ·' : ''} Active-Active`;
   return { svg: buildSVG({ nodes, links, bands, W, H }), title:'Multi-Site DC / DCI — High Level Design', meta, legend };
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MULTICLOUD HLD
+════════════════════════════════════════════════════════════════ */
+function multicloudHLD() {
+  const W = 1300, H = 780;
+  const dualDC    = STATE.mcDualDC !== false;
+  const clouds    = (STATE.mcClouds && STATE.mcClouds.length) ? STATE.mcClouds : ['aws','azure','gcp'];
+  const coloLabel = (STATE.mcColoProvider === 'megaport') ? 'Megaport MCR' : 'Equinix Fabric';
+
+  const nodes = [];
+  const links = [];
+
+  // ── Zone bands ───────────────────────────────────────────────
+  const bands = [
+    { y: 0,   h: 110, color: '#1a7fff', label: 'Enterprise DC' },
+    { y: 110, h: 130, color: '#ffd000', label: 'Colo / Interconnect' },
+    { y: 240, h: 540, color: '#1aff7f', label: 'Cloud Providers' },
+  ];
+
+  // ── DC EAST ──────────────────────────────────────────────────
+  nodes.push({ id:'dc-east-box', x:40,  y:15, w:200, h:80, fill:'#0d1a30', stroke:'#1a7fff',
+    label:'DC-EAST (IAD)', sub:'10.10.0.0/16 · AS 65000', fontSize:9, glow:true });
+  nodes.push({ id:'dc-east-e1', x:55,  y:30, w:80, h:34, fill:'#112244', stroke:'#4a90ff',
+    label:'EDGE-01', sub:'ASR/MX', fontSize:8, icon:'R' });
+  nodes.push({ id:'dc-east-e2', x:145, y:30, w:80, h:34, fill:'#112244', stroke:'#4a90ff',
+    label:'EDGE-02', sub:'HA pair',  fontSize:8, icon:'R' });
+  links.push({ from:'dc-east-e1', to:'dc-east-e2', color:'#2a5a9f', width:1.5 });
+
+  if (dualDC) {
+    nodes.push({ id:'dc-west-box', x:280, y:15, w:200, h:80, fill:'#0d1a30', stroke:'#1a7fff',
+      label:'DC-WEST (SEA)', sub:'10.20.0.0/16 · AS 65000', fontSize:9, glow:true });
+    nodes.push({ id:'dc-west-e1', x:295, y:30, w:80, h:34, fill:'#112244', stroke:'#4a90ff',
+      label:'EDGE-01', sub:'ASR/MX', fontSize:8, icon:'R' });
+    nodes.push({ id:'dc-west-e2', x:385, y:30, w:80, h:34, fill:'#112244', stroke:'#4a90ff',
+      label:'EDGE-02', sub:'HA pair',  fontSize:8, icon:'R' });
+    links.push({ from:'dc-west-e1', to:'dc-west-e2', color:'#2a5a9f', width:1.5 });
+  }
+
+  // ── Colo hubs ────────────────────────────────────────────────
+  nodes.push({ id:'colo-iad', x:55,  y:125, w:140, h:50, fill:'#1a1000', stroke:'#ffd000',
+    label:coloLabel + ' IAD', sub:'AS 65010 · 100.64.10.0/24', fontSize:8, glow:true });
+  links.push({ from:'dc-east-e1', to:'colo-iad', color:'#ffd000', width:2, label:'DX/ER/IC' });
+  links.push({ from:'dc-east-e2', to:'colo-iad', color:'#ffd000', width:2 });
+
+  if (dualDC) {
+    nodes.push({ id:'colo-sea', x:295, y:125, w:140, h:50, fill:'#1a1000', stroke:'#ffd000',
+      label:coloLabel + ' SEA', sub:'AS 65011 · 100.64.20.0/24', fontSize:8, glow:true });
+    links.push({ from:'dc-west-e1', to:'colo-sea', color:'#ffd000', width:2, label:'DX/ER/IC' });
+    links.push({ from:'dc-west-e2', to:'colo-sea', color:'#ffd000', width:2 });
+    // L2 backbone between colo hubs
+    links.push({ from:'colo-iad', to:'colo-sea', color:'#ffd000', width:2.5, label:'L2 backbone' });
+  }
+
+  // ── Cloud bands (right zone, stacked vertically) ─────────────
+  const CLOUD_COLORS = { aws: '#ff9900', azure: '#008ad7', gcp: '#34a853' };
+  const CLOUD_Y      = { aws: 255, azure: 420, gcp: 585 };
+  const CLOUD_LABELS = { aws: 'AWS', azure: 'Azure', gcp: 'GCP' };
+  const CIRCUIT_LABEL = { aws: 'DX VIF BGP/BFD', azure: 'ER peering', gcp: 'VLAN attach' };
+  const INSPECT_LABELS = {
+    aws:   'PA VM-Series (GWLB)',
+    azure: 'Azure FW Premium (vWAN)',
+    gcp:   'Cloud NGFW',
+  };
+  const HUB_LABELS = {
+    aws:   'TGW + DX GW',
+    azure: 'vWAN vHub + ER GW',
+    gcp:   'NCC Hub + CR',
+  };
+
+  clouds.forEach(function(cloud, ci) {
+    const cy     = CLOUD_Y[cloud] || (255 + ci * 165);
+    const color  = CLOUD_COLORS[cloud] || '#888';
+    const cLabel = CLOUD_LABELS[cloud] || cloud.toUpperCase();
+
+    // Cloud provider band label box
+    nodes.push({ id:'cloud-band-' + cloud, x:530, y:cy, w:100, h:40, fill:'#080e1a', stroke:color,
+      label:cLabel, sub:CIRCUIT_LABEL[cloud], fontSize:8, glow:true });
+
+    // Hub node
+    nodes.push({ id:'hub-' + cloud, x:660, y:cy, w:140, h:40, fill:'#0a1020', stroke:color,
+      label:HUB_LABELS[cloud], fontSize:8, icon:'⚙' });
+
+    // Inspection node
+    nodes.push({ id:'inspect-' + cloud, x:830, y:cy, w:140, h:40, fill:'#150a20', stroke:'#ff3355',
+      label:INSPECT_LABELS[cloud], fontSize:7.5, icon:'🔒' });
+
+    // Prod VPCs/VNets
+    nodes.push({ id:'prod-' + cloud, x:1000, y:cy, w:130, h:40, fill:'#0a1820', stroke:color,
+      label:cLabel + ' Prod VPCs', sub:'Workloads', fontSize:8, icon:'☁' });
+
+    // Links
+    links.push({ from:'colo-iad',      to:'cloud-band-' + cloud, color:color, width:2.5, label:CIRCUIT_LABEL[cloud] });
+    links.push({ from:'cloud-band-' + cloud, to:'hub-' + cloud,       color:color, width:2 });
+    links.push({ from:'hub-' + cloud,         to:'inspect-' + cloud,   color:'#ff3355', width:1.8 });
+    links.push({ from:'inspect-' + cloud,     to:'prod-' + cloud,      color:color, width:1.8 });
+  });
+
+  // ── Identity & Security plane ─────────────────────────────────
+  nodes.push({ id:'idp', x:1150, y:640, w:120, h:38, fill:'#0a1a0a', stroke:'#1aff7f',
+    label:'Entra ID / Okta', sub:'Identity Plane', fontSize:8, icon:'🔑' });
+  nodes.push({ id:'siem', x:1150, y:696, w:120, h:38, fill:'#1a0a0a', stroke:'#ff3355',
+    label:'SIEM + CSPM', sub:'Security plane', fontSize:8, icon:'👁' });
+  links.push({ from:'idp', to:'siem', color:'#888', width:1.5 });
+
+  // Connect SIEM to cloud prod nodes
+  clouds.forEach(function(cloud) {
+    links.push({ from:'siem', to:'prod-' + cloud, color:'#ff3355', width:1, opacity:0.4 });
+  });
+
+  const legend = `
+    <div class="legend-item"><div class="legend-dot" style="background:#1a7fff"></div>Enterprise DC</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffd000"></div>${coloLabel} colo hub</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff9900"></div>AWS Direct Connect</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#008ad7"></div>Azure ExpressRoute</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#34a853"></div>GCP Cloud Interconnect</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff3355"></div>Inspection / SIEM</div>`;
+
+  const cloudList = clouds.map(c => c.toUpperCase()).join(', ');
+  const meta = `Enterprise / GPU → Multicloud · ${dualDC ? 'DC-EAST + DC-WEST' : 'DC-EAST'} · ${coloLabel} · ${cloudList} · BGP/BFD inspection-enforced`;
+
+  return {
+    svg:    buildSVG({ nodes, links, bands, W, H }),
+    title:  'Enterprise / GPU → Multicloud — High Level Design',
+    meta,
+    legend,
+  };
 }
 
 /* ════════════════════════════════════════════════════════════════

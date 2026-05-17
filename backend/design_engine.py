@@ -820,6 +820,218 @@ def generate_design_rationale(state: dict[str, Any]) -> dict[str, Any]:
 # Full Design
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Multicloud IP Plan
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Reference data matching multicloud.js
+_MC_CLOUD_ASN: dict[str, dict] = {
+    "aws":   {"provider_as": 64512, "customer_as": 65020},
+    "azure": {"provider_as": 12076, "customer_as": 65021},
+    "gcp":   {"provider_as": 16550, "customer_as": 65022},
+}
+
+_MC_REGIONS: dict[str, dict] = {
+    "aws": {
+        "us-east-1": {"site": "IAD", "cidr": "10.128.0.0/14", "hub_cidr": "10.128.0.0/23"},
+        "us-west-2": {"site": "SEA", "cidr": "10.132.0.0/14", "hub_cidr": "10.132.0.0/23"},
+    },
+    "azure": {
+        "eastus":  {"site": "IAD", "cidr": "10.192.0.0/14", "hub_cidr": "10.192.0.0/23"},
+        "westus2": {"site": "SEA", "cidr": "10.196.0.0/14", "hub_cidr": "10.196.0.0/23"},
+    },
+    "gcp": {
+        "us-east4": {"site": "IAD", "cidr": "10.224.0.0/14", "hub_cidr": "10.224.0.0/23"},
+        "us-west1": {"site": "SEA", "cidr": "10.228.0.0/14", "hub_cidr": "10.228.0.0/23"},
+    },
+}
+
+_MC_DC_SITES: dict[str, dict] = {
+    "DC-EAST": {"location": "IAD", "mgmt_super": "10.10.0.0/16"},
+    "DC-WEST":  {"location": "SEA", "mgmt_super": "10.20.0.0/16"},
+}
+
+_MC_CIRCUIT_TYPE: dict[str, str] = {
+    "aws":   "AWS Direct Connect (DX VIF + BGP/BFD)",
+    "azure": "Azure ExpressRoute (ER peering)",
+    "gcp":   "GCP Cloud Interconnect (VLAN attach)",
+}
+
+
+def multicloud_ip_plan(intent: dict[str, Any]) -> dict[str, Any]:
+    """
+    Generate a complete multicloud IP plan, BGP peer table, ASN assignments,
+    and circuit summary from an intent dict.
+
+    Expected intent keys (all optional, sensible defaults used):
+        clouds           : list[str]  — e.g. ["aws","azure","gcp"]
+        dual_dc          : bool       — True = DC-EAST + DC-WEST
+        enterprise_asn   : int        — default 65000
+        org_cidr         : str        — default "10.0.0.0/9"
+        colo_provider    : str        — "equinix" | "megaport"
+        aws_regions      : list[str]
+        azure_regions    : list[str]
+        gcp_regions      : list[str]
+
+    Returns:
+        ip_plan        : list of {zone, cidr, purpose, asn, circuit}
+        bgp_peers      : list of BGP peer rows
+        asn_assignments: dict of ASN assignments
+        circuit_summary: list of circuit descriptors
+    """
+    clouds        = intent.get("clouds", ["aws", "azure", "gcp"])
+    dual_dc       = intent.get("dual_dc", True)
+    enterprise_asn = int(intent.get("enterprise_asn", 65000))
+    org_cidr      = intent.get("org_cidr", "10.0.0.0/9")
+    colo_provider = intent.get("colo_provider", "equinix")
+    colo_label    = "Equinix Fabric" if colo_provider == "equinix" else "Megaport MCR"
+
+    region_keys = {
+        "aws":   intent.get("aws_regions",   ["us-east-1"]),
+        "azure": intent.get("azure_regions", ["eastus"]),
+        "gcp":   intent.get("gcp_regions",   ["us-east4"]),
+    }
+
+    dc_sites = ["DC-EAST"]
+    if dual_dc:
+        dc_sites.append("DC-WEST")
+
+    # ── IP Plan ───────────────────────────────────────────────────
+    ip_plan: list[dict] = []
+
+    ip_plan.append({
+        "zone":    "Enterprise",
+        "cidr":    org_cidr,
+        "purpose": "Enterprise org super-summary (all DC + cloud)",
+        "asn":     enterprise_asn,
+        "circuit": "Internal",
+    })
+
+    for site in dc_sites:
+        info = _MC_DC_SITES[site]
+        ip_plan.append({
+            "zone":    site,
+            "cidr":    info["mgmt_super"],
+            "purpose": f"{site} ({info['location']}) — DC management + server subnets",
+            "asn":     enterprise_asn,
+            "circuit": "Internal",
+        })
+
+    ip_plan.append({
+        "zone":    "Colo-Hub-IAD",
+        "cidr":    "100.64.10.0/24",
+        "purpose": f"{colo_label} IAD — interconnect fabric (AS 65010)",
+        "asn":     65010,
+        "circuit": "Colo fabric",
+    })
+    if dual_dc:
+        ip_plan.append({
+            "zone":    "Colo-Hub-SEA",
+            "cidr":    "100.64.20.0/24",
+            "purpose": f"{colo_label} SEA — interconnect fabric (AS 65011)",
+            "asn":     65011,
+            "circuit": "Colo fabric",
+        })
+
+    for cloud in clouds:
+        asns    = _MC_CLOUD_ASN.get(cloud, {})
+        regions = region_keys.get(cloud, [])
+        for region in regions:
+            r_info = _MC_REGIONS.get(cloud, {}).get(region, {})
+            if not r_info:
+                continue
+            ip_plan.append({
+                "zone":    f"{cloud.upper()}-{region.upper()}",
+                "cidr":    r_info["cidr"],
+                "purpose": f"{cloud.upper()} {region} — workload VPCs/VNets",
+                "asn":     asns.get("customer_as", 0),
+                "circuit": _MC_CIRCUIT_TYPE.get(cloud, ""),
+            })
+            ip_plan.append({
+                "zone":    f"{cloud.upper()}-{region.upper()}-HUB",
+                "cidr":    r_info["hub_cidr"],
+                "purpose": f"{cloud.upper()} {region} — transit/inspection hub subnet",
+                "asn":     asns.get("provider_as", 0),
+                "circuit": _MC_CIRCUIT_TYPE.get(cloud, ""),
+            })
+
+    # ── BGP Peers ─────────────────────────────────────────────────
+    _peer_ips: dict[str, dict[str, list[str]]] = {
+        "DC-EAST": {
+            "aws":   ["169.254.10.1", "169.254.10.5"],
+            "azure": ["172.16.10.1",  "172.16.10.5"],
+            "gcp":   ["169.254.20.1", "169.254.20.5"],
+        },
+        "DC-WEST": {
+            "aws":   ["169.254.11.1", "169.254.11.5"],
+            "azure": ["172.16.11.1",  "172.16.11.5"],
+            "gcp":   ["169.254.21.1", "169.254.21.5"],
+        },
+    }
+
+    bgp_peers: list[dict] = []
+    for site in dc_sites:
+        for cloud in clouds:
+            asns     = _MC_CLOUD_ASN.get(cloud, {})
+            peer_ips = _peer_ips.get(site, {}).get(cloud, [])
+            for i, ip in enumerate(peer_ips):
+                suffix = "primary" if i == 0 else "backup"
+                bgp_peers.append({
+                    "device":      f"{site}-EDGE-01",
+                    "local_as":    enterprise_asn,
+                    "peer_ip":     ip,
+                    "peer_as":     asns.get("customer_as", 0),
+                    "description": f"{cloud.upper()} {suffix} ({site})",
+                    "bfd":         True,
+                    "policy_in":   f"PERMIT-{cloud.upper()}-PREFIXES-IN",
+                    "policy_out":  f"PERMIT-DC-TO-{cloud.upper()}-OUT",
+                    "circuit":     _MC_CIRCUIT_TYPE.get(cloud, ""),
+                })
+
+    # ── ASN assignments ───────────────────────────────────────────
+    asn_assignments: dict[str, Any] = {
+        "enterprise": enterprise_asn,
+        "colo_iad":   65010,
+        "colo_sea":   65011,
+    }
+    for cloud in clouds:
+        asns = _MC_CLOUD_ASN.get(cloud, {})
+        asn_assignments[f"{cloud}_provider"] = asns.get("provider_as", 0)
+        asn_assignments[f"{cloud}_customer"] = asns.get("customer_as", 0)
+
+    # ── Circuit summary ───────────────────────────────────────────
+    circuit_summary: list[dict] = []
+    for cloud in clouds:
+        for site in dc_sites:
+            r_info = _MC_REGIONS.get(cloud, {})
+            for region, rd in r_info.items():
+                if region not in region_keys.get(cloud, []):
+                    continue
+                circuit_summary.append({
+                    "from":    site,
+                    "to":      f"{cloud.upper()}-{region}",
+                    "type":    _MC_CIRCUIT_TYPE.get(cloud, ""),
+                    "colo":    f"Colo-Hub-{'IAD' if rd.get('site') == 'IAD' else 'SEA'}",
+                    "bgp_bfd": True,
+                })
+
+    total_circuits = len(bgp_peers)
+    total_clouds   = len(set(p["peer_as"] for p in bgp_peers))
+
+    return {
+        "ip_plan":         ip_plan,
+        "bgp_peers":       bgp_peers,
+        "asn_assignments": asn_assignments,
+        "circuit_summary": circuit_summary,
+        "summary": (
+            f"Multicloud design · {len(dc_sites)} DC site(s) · "
+            f"{', '.join(c.upper() for c in clouds)} · "
+            f"{total_circuits} BGP sessions · "
+            f"{colo_label} colo hub(s)"
+        ),
+    }
+
+
 def generate_full_design(state: dict[str, Any]) -> dict[str, Any]:
     """
     Generate the complete design artefact: IP plan + VLAN plan + BGP design +

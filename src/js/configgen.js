@@ -6,6 +6,10 @@
 
 /* ── Determine OS per layer ─────────────────────────────────────── */
 function getOS(layerKey) {
+  // Multicloud layers have their own OS/format label
+  if (layerKey === 'mc-dc-edge') return STATE.mcDCEdgeVendor === 'eos' ? 'eos' : (STATE.mcDCEdgeVendor === 'junos' ? 'junos' : 'ios-xe');
+  if (layerKey === 'mc-aws' || layerKey === 'mc-azure' || layerKey === 'mc-gcp') return 'terraform';
+  if (layerKey === 'mc-ansible') return 'ansible';
   const prod = PRODUCTS[STATE.selectedProducts[layerKey]];
   if (!prod) return 'ios-xe';
   const v = prod.vendor;
@@ -23,7 +27,7 @@ function getOS(layerKey) {
   return 'ios-xe';
 }
 
-const OS_LABELS = { 'ios-xe':'IOS-XE', 'nxos':'NX-OS', 'eos':'EOS', 'junos':'Junos', 'sonic':'SONiC' };
+const OS_LABELS = { 'ios-xe':'IOS-XE', 'nxos':'NX-OS', 'eos':'EOS', 'junos':'Junos', 'sonic':'SONiC', 'terraform':'Terraform HCL', 'ansible':'Ansible YAML' };
 
 /* ── Device list builder — generates ALL devices, no cap ─────────── */
 
@@ -122,6 +126,12 @@ function buildDeviceList() {
     }
   }
 
+  // ── MULTICLOUD ────────────────────────────────────────────────
+  if (uc === 'multicloud' && typeof window.multicloudDevices === 'function') {
+    const mcDevs = window.multicloudDevices(STATE);
+    mcDevs.forEach(d => devs.push(d));
+  }
+
   return devs;
 }
 
@@ -139,6 +149,11 @@ const _GROUP_LABELS = {
   'dc-leaf':       '🍃 DC Leaf / ToR',
   'gpu-spine':     '🧠 GPU Spine',
   'gpu-tor':       '⚡ GPU TOR',
+  'mc-dc-edge':    '🔌 Multicloud DC Edge',
+  'mc-aws':        '☁️ AWS Terraform',
+  'mc-azure':      '☁️ Azure Terraform',
+  'mc-gcp':        '☁️ GCP Terraform',
+  'mc-ansible':    '📋 Ansible Vars',
 };
 
 function renderDeviceList() {
@@ -339,6 +354,15 @@ function generateConfig(dev, os) {
   const layer = dev.layer;
   const idx   = dev.idx || 0;
   let base = '';
+
+  // Multicloud devices — delegate to multicloud.js
+  if (['mc-dc-edge','mc-aws','mc-azure','mc-gcp','mc-ansible'].includes(layer)) {
+    if (typeof window.genMulticloudConfig === 'function') {
+      return window.genMulticloudConfig(dev, STATE);
+    }
+    return '# multicloud.js not loaded';
+  }
+
   if (os === 'ios-xe') base = genIOSXE(dev, layer, idx);
   else if (os === 'nxos')   base = genNXOS(dev, layer, idx);
   else if (os === 'eos')    base = genEOS(dev, layer, idx);
