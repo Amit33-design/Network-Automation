@@ -61,7 +61,15 @@ function renderRecsUI(layers) {
   container.innerHTML = html;
 
   document.getElementById('recs-headline').textContent = `${layers.length} layer${layers.length!==1?'s':''} · ${Object.keys(PRODUCTS).length} SKUs evaluated`;
-  document.getElementById('recs-subline').textContent  = `Showing recommendations for ${UC_LABELS[STATE.uc] || 'your use case'} · ${hosts} endpoints`;
+  let subline = `Showing recommendations for ${UC_LABELS[STATE.uc] || 'your use case'}`;
+  if (STATE.uc === 'multicloud') {
+    const clouds = (STATE.mcClouds && STATE.mcClouds.length ? STATE.mcClouds : ['aws','azure','gcp'])
+      .map(c => c.toUpperCase()).join(', ');
+    subline += ` · ${clouds} · ${STATE.mcDualDC ? '2 DC sites' : '1 DC site'}`;
+  } else {
+    subline += ` · ${hosts} endpoints`;
+  }
+  document.getElementById('recs-subline').textContent = subline;
 }
 
 function selectProduct(layerKey, prodId) {

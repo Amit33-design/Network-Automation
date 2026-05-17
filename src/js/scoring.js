@@ -150,6 +150,11 @@ function estimateCounts(layerKey) {
   if (layerKey === 'gpu-tor')       return cap.gpu    ? cap.gpu.tors      : 2;
   if (layerKey === 'gpu-spine')     return cap.gpu    ? cap.gpu.spines    : 2;
   if (layerKey === 'fw')            return redMult;
+  // Multicloud: 2 HA edge routers per DC site
+  if (layerKey === 'mc-dc-edge') {
+    const dcSites = STATE.mcDualDC ? 2 : 1;
+    return redMult * dcSites;
+  }
   return 1;
 }
 
@@ -157,6 +162,19 @@ function estimateCounts(layerKey) {
 function getLayersForUC() {
   const uc = STATE.uc;
   const layers = [];
+
+  // Multicloud: only DC edge routers — cloud hubs are virtual/managed services
+  if (uc === 'multicloud') {
+    layers.push({
+      key:      'mc-dc-edge',
+      label:    'DC Edge Router',
+      icon:     '🌐',
+      color:    'rgba(26,127,255,.15)',
+      filterFn: p => p.subLayer === 'dc-spine',  // high-end spine/core platforms are ideal DC edge routers
+    });
+    return layers;  // no campus / DC fabric / firewall layers for multicloud
+  }
+
   if (uc === 'campus' || uc === 'hybrid') {
     layers.push({ key:'campus-access', label:'Access Layer',       icon:'🔌', color:'rgba(26,127,255,.15)', filterFn: p => p.subLayer === 'campus-access' });
     layers.push({ key:'campus-dist',   label:'Distribution Layer', icon:'🔀', color:'rgba(0,212,255,.15)', filterFn: p => p.subLayer === 'campus-dist'   });

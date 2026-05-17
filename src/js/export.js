@@ -209,6 +209,7 @@ function buildDesignSummaryData() {
     'gpu-spine':      { icon:'🧠', role:'GPU Spine',             label:'GPU Spine' },
     'gpu-tor':        { icon:'⚡', role:'GPU TOR',               label:'GPU TOR' },
     'campus-access_wan':{ icon:'📡', role:'Branch CPE',          label:'Branch CPE' },
+    'mc-dc-edge':     { icon:'🌐', role:'DC Edge Router',        label:'DC Edge' },
   };
 
   let totalDevices = 0;
@@ -258,7 +259,14 @@ function buildDesignSummaryData() {
 
   // Capacity narrative (for context cards)
   let capacityNote = '';
-  if (cap.campus) {
+  if (uc === 'multicloud') {
+    const clouds = (STATE.mcClouds && STATE.mcClouds.length ? STATE.mcClouds : ['aws','azure','gcp'])
+      .map(c => c.toUpperCase()).join(' + ');
+    const dcSites = STATE.mcDualDC ? 2 : 1;
+    const edgeCnt = (STATE.redundancy === 'ha' || STATE.redundancy === 'full') ? dcSites * 2 : dcSites;
+    capacityNote = `${clouds} via Direct Connect / ExpressRoute / Cloud Interconnect · ` +
+      `${dcSites} DC site${dcSites>1?'s':''} · ${edgeCnt} HA edge router${edgeCnt>1?'s':''}`;
+  } else if (cap.campus) {
     const c = cap.campus;
     capacityNote = `${c.endpoints.toLocaleString()} endpoints → ${c.effective.toLocaleString()} w/25% growth · ` +
       `${c.access} access (${c.usable} ports/sw) · ${c.dist} dist (${c.distPairs} HA pairs) · ${c.core} core`;
@@ -272,13 +280,28 @@ function buildDesignSummaryData() {
       `${c.isNonBlocking?'✓ 1:1 non-blocking':'⚠ check uplinks'} (oversub ${c.oversub}:1)`;
   }
 
-  const stats = [
-    { val: totalDevices || '—',                        label: 'Total Devices'   },
-    { val: prods.filter(([,v])=>v).length || '—',      label: 'Product Lines'   },
-    { val: (parseInt(STATE.totalHosts)||0).toLocaleString() || '—', label: 'Host Endpoints' },
-    { val: STATE.numSites || '1',                      label: 'Sites'           },
-    { val: STATE.redundancy?.toUpperCase() || '—',     label: 'Redundancy'      },
-  ];
+  // Build stats — multicloud gets cloud-specific labels
+  let stats;
+  if (uc === 'multicloud') {
+    const clouds = (STATE.mcClouds && STATE.mcClouds.length ? STATE.mcClouds : ['aws','azure','gcp'])
+      .map(c => c.toUpperCase()).join(', ');
+    const dcSites = STATE.mcDualDC ? '2 (Dual-DC)' : '1';
+    stats = [
+      { val: totalDevices || '—',                   label: 'Edge Routers'    },
+      { val: prods.filter(([,v])=>v).length || '—', label: 'Product Lines'   },
+      { val: clouds,                                 label: 'Cloud Providers' },
+      { val: dcSites,                                label: 'DC Sites'        },
+      { val: STATE.redundancy?.toUpperCase() || '—', label: 'Redundancy'     },
+    ];
+  } else {
+    stats = [
+      { val: totalDevices || '—',                        label: 'Total Devices'   },
+      { val: prods.filter(([,v])=>v).length || '—',      label: 'Product Lines'   },
+      { val: (parseInt(STATE.totalHosts)||0).toLocaleString() || '—', label: 'Host Endpoints' },
+      { val: STATE.numSites || '1',                      label: 'Sites'           },
+      { val: STATE.redundancy?.toUpperCase() || '—',     label: 'Redundancy'      },
+    ];
+  }
 
   const protoStack = [
     ...(STATE.underlayProto  || []),
