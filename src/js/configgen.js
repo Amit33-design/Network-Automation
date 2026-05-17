@@ -9,7 +9,11 @@ function getOS(layerKey) {
   // Multicloud layers have their own OS/format label
   if (layerKey === 'mc-dc-edge') return STATE.mcDCEdgeVendor === 'eos' ? 'eos' : (STATE.mcDCEdgeVendor === 'junos' ? 'junos' : 'ios-xe');
   if (layerKey === 'mc-aws' || layerKey === 'mc-azure' || layerKey === 'mc-gcp') return 'terraform';
-  if (layerKey === 'mc-ansible') return 'ansible';
+  if (layerKey === 'mc-ansible')       return 'ansible';
+  if (layerKey === 'mc-cicd')          return 'yaml';
+  if (layerKey === 'mc-tf-outputs')    return 'terraform';
+  if (layerKey === 'mc-tf-bootstrap')  return 'terraform';
+  if (layerKey === 'mc-repo')          return 'text';
   const prod = PRODUCTS[STATE.selectedProducts[layerKey]];
   if (!prod) return 'ios-xe';
   const v = prod.vendor;
@@ -153,7 +157,11 @@ const _GROUP_LABELS = {
   'mc-aws':        '☁️ AWS Terraform',
   'mc-azure':      '☁️ Azure Terraform',
   'mc-gcp':        '☁️ GCP Terraform',
-  'mc-ansible':    '📋 Ansible Vars',
+  'mc-ansible':       '📋 Ansible Vars',
+  'mc-cicd':          '⚙️ GitHub Actions',
+  'mc-tf-outputs':    '📤 TF Outputs',
+  'mc-tf-bootstrap':  '🏗 TF Bootstrap',
+  'mc-repo':          '📁 Repo Scaffolding',
 };
 
 function renderDeviceList() {
@@ -356,7 +364,8 @@ function generateConfig(dev, os) {
   let base = '';
 
   // Multicloud devices — delegate to multicloud.js
-  if (['mc-dc-edge','mc-aws','mc-azure','mc-gcp','mc-ansible'].includes(layer)) {
+  if (['mc-dc-edge','mc-aws','mc-azure','mc-gcp','mc-ansible',
+       'mc-cicd','mc-tf-outputs','mc-tf-bootstrap','mc-repo'].includes(layer)) {
     if (typeof window.genMulticloudConfig === 'function') {
       return window.genMulticloudConfig(dev, STATE);
     }

@@ -1091,6 +1091,57 @@ window.multicloudDevices = function(state) {
     _ansible: true,
   });
 
+  // ── GitHub Actions workflows ─────────────────────────────────────
+  devs.push({ id:'gha-tf-plan',  name:'GHA: terraform-plan.yml',
+    layer:'mc-cicd', vendor:'GitHub Actions', icon:'⚙',
+    role:'CI: plan on PR + PR comment', platform:'YAML', idx:0, _gha:'plan' });
+  devs.push({ id:'gha-tf-apply', name:'GHA: terraform-apply.yml',
+    layer:'mc-cicd', vendor:'GitHub Actions', icon:'⚙',
+    role:'CI: apply on merge (gated, sequential)', platform:'YAML', idx:1, _gha:'apply' });
+  devs.push({ id:'gha-drift',    name:'GHA: drift-detection.yml',
+    layer:'mc-cicd', vendor:'GitHub Actions', icon:'⚙',
+    role:'CI: hourly drift → auto-open GitHub issue', platform:'YAML', idx:2, _gha:'drift' });
+
+  // ── Terraform outputs.tf (per stack) ─────────────────────────────
+  var clouds2 = _mcClouds(state);
+  clouds2.forEach(function(c) {
+    var key = 'mc' + c.charAt(0).toUpperCase() + c.slice(1) + 'Regions';
+    var regs = (state && state[key]) || Object.keys(MC_REGIONS[c]).slice(0, 1);
+    regs.forEach(function(region) {
+      var suf = MC_REGIONS[c] && MC_REGIONS[c][region] ? MC_REGIONS[c][region].az_suffix : region;
+      devs.push({ id:c+'-outputs-'+suf, name:c.toUpperCase()+' outputs.tf ('+region+')',
+        layer:'mc-tf-outputs', vendor:'Terraform', icon:'📤',
+        role:'Stack outputs fed to validate_post_apply.py', platform:'HCL',
+        idx:0, _cloud:c, _region:region, _outputs:true });
+    });
+  });
+
+  // ── Terraform bootstrap ───────────────────────────────────────────
+  devs.push({ id:'tf-bootstrap-aws', name:'terraform/bootstrap/aws/main.tf',
+    layer:'mc-tf-bootstrap', vendor:'Terraform', icon:'🏗',
+    role:'One-time S3 + DynamoDB state backend bootstrap', platform:'HCL',
+    idx:0, _bootstrap:'aws' });
+
+  // ── Repo scaffolding ──────────────────────────────────────────────
+  devs.push({ id:'pre-commit-cfg',    name:'.pre-commit-config.yaml',
+    layer:'mc-repo', vendor:'pre-commit', icon:'🔒',
+    role:'tf fmt/validate/tflint/tfsec, ansible-lint, gitleaks', platform:'YAML', idx:0, _repo:'precommit' });
+  devs.push({ id:'codeowners',        name:'.github/CODEOWNERS',
+    layer:'mc-repo', vendor:'GitHub', icon:'👥',
+    role:'Prod stacks require network-leads + security-reviewers', platform:'Text', idx:1, _repo:'codeowners' });
+  devs.push({ id:'pr-template',       name:'.github/pull_request_template.md',
+    layer:'mc-repo', vendor:'GitHub', icon:'📋',
+    role:'CR ref, blast radius, rollback plan checklist', platform:'Markdown', idx:2, _repo:'prtemplate' });
+  devs.push({ id:'gitignore',         name:'.gitignore',
+    layer:'mc-repo', vendor:'Git', icon:'🚫',
+    role:'TF state, secrets, caches, plan artifacts', platform:'Text', idx:3, _repo:'gitignore' });
+  devs.push({ id:'python-req',        name:'python/requirements.txt',
+    layer:'mc-repo', vendor:'Python', icon:'🐍',
+    role:'ansible-core, boto3, azure-identity, google-cloud-compute', platform:'Text', idx:4, _repo:'pyrequirements' });
+  devs.push({ id:'ansible-cfg',       name:'ansible/ansible.cfg',
+    layer:'mc-repo', vendor:'Ansible', icon:'A',
+    role:'NetBox inventory, ssh pipelining, forks=20', platform:'INI', idx:5, _repo:'ansiblecfg' });
+
   return devs;
 };
 
@@ -1125,5 +1176,698 @@ window.genMulticloudConfig = function(device, state) {
     return window.genAnsibleVars(state);
   }
 
+  // Terraform outputs.tf
+  if (device.layer === 'mc-tf-outputs' && device._outputs) {
+    return _genTFOutputs(device._cloud, device._region, state);
+  }
+
+  // Terraform bootstrap
+  if (device.layer === 'mc-tf-bootstrap') {
+    return _genTFBootstrap(state);
+  }
+
+  // GitHub Actions workflows
+  if (device.layer === 'mc-cicd' && device._gha) {
+    if (device._gha === 'plan')  return _genGHAPlan(state);
+    if (device._gha === 'apply') return _genGHAApply(state);
+    if (device._gha === 'drift') return _genGHADrift(state);
+  }
+
+  // Repo scaffolding
+  if (device.layer === 'mc-repo' && device._repo) {
+    if (device._repo === 'precommit')     return _genPreCommit();
+    if (device._repo === 'codeowners')    return _genCodeOwners(state);
+    if (device._repo === 'prtemplate')    return _genPRTemplate();
+    if (device._repo === 'gitignore')     return _genGitignore();
+    if (device._repo === 'pyrequirements') return _genPyRequirements();
+    if (device._repo === 'ansiblecfg')    return _genAnsibleCfg();
+  }
+
   return '# Config not available for device: ' + (device.name || device.id);
 };
+
+/* ════════════════════════════════════════════════════════════════
+   TERRAFORM OUTPUTS
+════════════════════════════════════════════════════════════════ */
+function _genTFOutputs(cloud, region, state) {
+  var org = _orgSlug(state);
+  if (cloud === 'aws') {
+    return [
+      '# =============================================================================',
+      '# Outputs — aws stack (' + region + ')',
+      '# Consumed by validate_post_apply.py and sync_to_netbox.py',
+      '# =============================================================================',
+      '',
+      'output "transit_gateway_id" {',
+      '  description = "TGW ID — used by validate_post_apply.py"',
+      '  value       = module.hub.transit_gateway_id',
+      '}',
+      '',
+      'output "dx_gateway_id" {',
+      '  description = "Direct Connect Gateway ID"',
+      '  value       = module.hub.dx_gateway_id',
+      '}',
+      '',
+      'output "inspection_vpc_id" {',
+      '  description = "Inspection VPC ID"',
+      '  value       = module.hub.inspection_vpc_id',
+      '}',
+      '',
+      'output "bgp_peering_info" {',
+      '  description = "BGP ASN and peer info for NetBox sync"',
+      '  value = {',
+      '    amazon_asn   = module.hub.amazon_side_asn',
+      '    customer_asn = module.hub.customer_asn',
+      '    region       = "' + region + '"',
+      '  }',
+      '}',
+    ].join('\n');
+  }
+  if (cloud === 'azure') {
+    return [
+      '# =============================================================================',
+      '# Outputs — azure stack (' + region + ')',
+      '# =============================================================================',
+      '',
+      'output "virtual_hub_id" {',
+      '  description = "vWAN hub resource ID — used by validate_post_apply.py"',
+      '  value       = module.hub.virtual_hub_id',
+      '}',
+      '',
+      'output "firewall_private_ip" {',
+      '  description = "Azure Firewall private IP for routing"',
+      '  value       = module.hub.firewall_private_ip',
+      '}',
+      '',
+      'output "expressroute_gateway_id" {',
+      '  description = "ER gateway resource ID"',
+      '  value       = module.hub.expressroute_gateway_id',
+      '}',
+    ].join('\n');
+  }
+  if (cloud === 'gcp') {
+    return [
+      '# =============================================================================',
+      '# Outputs — gcp stack (' + region + ')',
+      '# =============================================================================',
+      '',
+      'output "network_id" {',
+      '  description = "Host VPC self_link — used by validate_post_apply.py"',
+      '  value       = module.hub.network_id',
+      '}',
+      '',
+      'output "network_name" {',
+      '  description = "Host VPC name — used by sync_to_netbox.py"',
+      '  value       = module.hub.network_name',
+      '}',
+      '',
+      'output "cloud_router_name" {',
+      '  description = "Cloud Router name for BGP monitoring"',
+      '  value       = module.hub.cloud_router_name',
+      '}',
+      '',
+      'output "ncc_hub_id" {',
+      '  description = "NCC hub resource ID"',
+      '  value       = module.hub.ncc_hub_id',
+      '}',
+    ].join('\n');
+  }
+  return '# outputs.tf not implemented for cloud: ' + cloud;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TERRAFORM BOOTSTRAP (AWS S3 + DynamoDB)
+════════════════════════════════════════════════════════════════ */
+function _genTFBootstrap(state) {
+  var org = _orgSlug(state);
+  return [
+    '# =============================================================================',
+    '# terraform/bootstrap/aws/main.tf',
+    '# Run ONCE per AWS account to create the remote state backend.',
+    '# After apply: migrate state to the bucket it just created.',
+    '# =============================================================================',
+    '',
+    'terraform {',
+    '  required_version = ">= 1.6"',
+    '  required_providers {',
+    '    aws = { source = "hashicorp/aws", version = "~> 5.40" }',
+    '  }',
+    '  # Bootstrap state is stored locally until the bucket exists.',
+    '  # After: terraform init -migrate-state',
+    '}',
+    '',
+    'provider "aws" {',
+    '  region = "us-east-1"',
+    '}',
+    '',
+    'data "aws_caller_identity" "current" {}',
+    '',
+    '# S3 bucket — one per AWS account, versioned + encrypted',
+    'resource "aws_s3_bucket" "tfstate" {',
+    '  bucket = "' + org + '-tfstate-${data.aws_caller_identity.current.account_id}"',
+    '  tags   = { ManagedBy = "terraform", Purpose = "terraform-state" }',
+    '}',
+    '',
+    'resource "aws_s3_bucket_versioning" "tfstate" {',
+    '  bucket = aws_s3_bucket.tfstate.id',
+    '  versioning_configuration { status = "Enabled" }',
+    '}',
+    '',
+    'resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {',
+    '  bucket = aws_s3_bucket.tfstate.id',
+    '  rule {',
+    '    apply_server_side_encryption_by_default {',
+    '      sse_algorithm = "aws:kms"',
+    '    }',
+    '  }',
+    '}',
+    '',
+    'resource "aws_s3_bucket_public_access_block" "tfstate" {',
+    '  bucket                  = aws_s3_bucket.tfstate.id',
+    '  block_public_acls       = true',
+    '  block_public_policy     = true',
+    '  ignore_public_acls      = true',
+    '  restrict_public_buckets = true',
+    '}',
+    '',
+    '# DynamoDB table — state locking',
+    'resource "aws_dynamodb_table" "tflock" {',
+    '  name         = "terraform-locks"',
+    '  billing_mode = "PAY_PER_REQUEST"',
+    '  hash_key     = "LockID"',
+    '  attribute { name = "LockID"; type = "S" }',
+    '  tags = { ManagedBy = "terraform", Purpose = "terraform-lock" }',
+    '}',
+    '',
+    '# IAM role trusted by GitHub Actions (OIDC)',
+    'resource "aws_iam_role" "gha" {',
+    '  name = "' + org + '-GHA-Network-Platform"',
+    '  assume_role_policy = jsonencode({',
+    '    Version = "2012-10-17"',
+    '    Statement = [{',
+    '      Effect    = "Allow"',
+    '      Principal = { Federated = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com" }',
+    '      Action    = "sts:AssumeRoleWithWebIdentity"',
+    '      Condition = { StringLike = { "token.actions.githubusercontent.com:sub" = "repo:YOUR-ORG/network-platform:*" } }',
+    '    }]',
+    '  })',
+    '}',
+    '',
+    'output "tfstate_bucket" { value = aws_s3_bucket.tfstate.id }',
+    'output "gha_role_arn"   { value = aws_iam_role.gha.arn }',
+  ].join('\n');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GITHUB ACTIONS — TERRAFORM PLAN
+════════════════════════════════════════════════════════════════ */
+function _ghaStacks(state) {
+  var stacks = [];
+  var clouds = _mcClouds(state);
+  clouds.forEach(function(c) {
+    var key = 'mc' + c.charAt(0).toUpperCase() + c.slice(1) + 'Regions';
+    var regs = (state && state[key]) || Object.keys(MC_REGIONS[c]).slice(0, 1);
+    regs.forEach(function(region) {
+      var suf = MC_REGIONS[c] && MC_REGIONS[c][region] ? MC_REGIONS[c][region].az_suffix : region;
+      stacks.push(c + '-prod-' + suf);
+    });
+  });
+  return stacks;
+}
+
+function _ghaAuthSteps(indent) {
+  var p = indent || '      ';
+  return [
+    p + '- name: AWS OIDC',
+    p + '  if: startsWith(matrix.stack, \'aws-\')',
+    p + '  uses: aws-actions/configure-aws-credentials@v4',
+    p + '  with:',
+    p + '    role-to-assume: ${{ vars.AWS_GHA_ROLE_ARN }}',
+    p + '    aws-region: us-east-1',
+    p + '',
+    p + '- name: Azure OIDC',
+    p + '  if: startsWith(matrix.stack, \'azure-\')',
+    p + '  uses: azure/login@v2',
+    p + '  with:',
+    p + '    client-id: ${{ vars.AZ_CLIENT_ID }}',
+    p + '    tenant-id: ${{ vars.AZ_TENANT_ID }}',
+    p + '    subscription-id: ${{ vars.AZ_SUB_ID }}',
+    p + '',
+    p + '- name: GCP OIDC',
+    p + '  if: startsWith(matrix.stack, \'gcp-\')',
+    p + '  uses: google-github-actions/auth@v2',
+    p + '  with:',
+    p + '    workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}',
+    p + '    service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}',
+  ].join('\n');
+}
+
+function _ghaInitStep(indent) {
+  var p = indent || '      ';
+  return [
+    p + '- name: terraform init',
+    p + '  working-directory: terraform/stacks/${{ matrix.stack }}',
+    p + '  run: |',
+    p + '    case "${{ matrix.stack }}" in',
+    p + '      aws-*)   terraform init -backend-config="bucket=${{ vars.AWS_TFSTATE_BUCKET }}" -backend-config="dynamodb_table=terraform-locks" ;;',
+    p + '      azure-*) terraform init -backend-config="storage_account_name=${{ vars.AZ_TFSTATE_SA }}" -backend-config="resource_group_name=${{ vars.AZ_TFSTATE_RG }}" ;;',
+    p + '      gcp-*)   terraform init -backend-config="bucket=${{ vars.GCP_TFSTATE_BUCKET }}" ;;',
+    p + '    esac',
+  ].join('\n');
+}
+
+function _genGHAPlan(state) {
+  var stacks = _ghaStacks(state);
+  var stacksYaml = stacks.map(function(s) { return '          - ' + s; }).join('\n');
+  return [
+    'name: terraform-plan',
+    '',
+    'on:',
+    '  pull_request:',
+    '    paths: [\'terraform/**\', \'ansible/**\']',
+    '',
+    'permissions:',
+    '  id-token: write      # required for OIDC',
+    '  contents: read',
+    '  pull-requests: write  # post plan as PR comment',
+    '',
+    'jobs:',
+    '  plan:',
+    '    runs-on: ubuntu-latest',
+    '    strategy:',
+    '      fail-fast: false',
+    '      matrix:',
+    '        stack:',
+    stacksYaml,
+    '',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '',
+    '      - uses: hashicorp/setup-terraform@v3',
+    '        with: { terraform_version: 1.6.6, terraform_wrapper: false }',
+    '',
+    _ghaAuthSteps('      '),
+    '',
+    _ghaInitStep('      '),
+    '',
+    '      - name: terraform plan',
+    '        working-directory: terraform/stacks/${{ matrix.stack }}',
+    '        run: |',
+    '          terraform plan -out=tfplan -no-color',
+    '          terraform show -no-color tfplan > plan.txt',
+    '',
+    '      - name: tfsec',
+    '        uses: aquasecurity/tfsec-pr-commenter-action@v1.2.0',
+    '        with:',
+    '          github_token: ${{ github.token }}',
+    '          working_directory: terraform/stacks/${{ matrix.stack }}',
+    '',
+    '      - name: Post plan comment on PR',
+    '        uses: actions/github-script@v7',
+    '        with:',
+    '          script: |',
+    '            const fs = require(\'fs\');',
+    '            const plan = fs.readFileSync(\'terraform/stacks/${{ matrix.stack }}/plan.txt\', \'utf8\');',
+    '            github.rest.issues.createComment({',
+    '              issue_number: context.issue.number,',
+    '              owner: context.repo.owner, repo: context.repo.repo,',
+    '              body: \'**Plan: ${{ matrix.stack }}**\\n```hcl\\n\' + plan.slice(0, 60000) + \'\\n```\',',
+    '            });',
+  ].join('\n');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GITHUB ACTIONS — TERRAFORM APPLY
+════════════════════════════════════════════════════════════════ */
+function _genGHAApply(state) {
+  return [
+    'name: terraform-apply',
+    '',
+    'on:',
+    '  push:',
+    '    branches: [main]',
+    '    paths: [\'terraform/**\']',
+    '',
+    'permissions:',
+    '  id-token: write',
+    '  contents: read',
+    '',
+    'concurrency:',
+    '  group: tf-apply-${{ github.ref }}',
+    '  cancel-in-progress: false   # never cancel an in-flight apply',
+    '',
+    'jobs:',
+    '  detect-stacks:',
+    '    runs-on: ubuntu-latest',
+    '    outputs:',
+    '      stacks: ${{ steps.find.outputs.stacks }}',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '        with: { fetch-depth: 2 }',
+    '      - id: find',
+    '        run: |',
+    '          CHANGED=$(git diff --name-only HEAD~1 HEAD -- terraform/ \\',
+    '            | awk -F/ \'/^terraform\\/stacks\\// {print $3}\' | sort -u)',
+    '          # If a shared module changed, run all stacks',
+    '          if git diff --name-only HEAD~1 HEAD -- terraform/modules/ | grep -q .; then',
+    '            CHANGED=$(ls terraform/stacks/)',
+    '          fi',
+    '          STACKS=$(echo "$CHANGED" | jq -R . | jq -sc \'map(select(length > 0))\')',
+    '          echo "stacks=$STACKS" >> "$GITHUB_OUTPUT"',
+    '',
+    '  apply:',
+    '    name: apply ${{ matrix.stack }}',
+    '    needs: detect-stacks',
+    '    if: needs.detect-stacks.outputs.stacks != \'[]\'',
+    '    runs-on: ubuntu-latest',
+    '    environment: ${{ contains(matrix.stack, \'prod\') && \'production\' || \'nonprod\' }}',
+    '    strategy:',
+    '      fail-fast: true',
+    '      max-parallel: 1    # sequential — never apply two stacks simultaneously',
+    '      matrix:',
+    '        stack: ${{ fromJson(needs.detect-stacks.outputs.stacks) }}',
+    '',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '      - uses: hashicorp/setup-terraform@v3',
+    '        with: { terraform_version: 1.6.6, terraform_wrapper: false }',
+    '',
+    _ghaAuthSteps('      '),
+    '',
+    _ghaInitStep('      '),
+    '',
+    '      - name: terraform apply',
+    '        working-directory: terraform/stacks/${{ matrix.stack }}',
+    '        run: terraform apply -auto-approve -lock-timeout=15m -input=false',
+    '',
+    '      - name: post-apply validation',
+    '        run: |',
+    '          python3 -m pip install -r python/requirements.txt -q',
+    '          python3 python/scripts/validate_post_apply.py \\',
+    '            --stack ${{ matrix.stack }} \\',
+    '            --workdir terraform/stacks/${{ matrix.stack }}',
+    '',
+    '      - name: sync to NetBox',
+    '        run: |',
+    '          terraform -chdir=terraform/stacks/${{ matrix.stack }} output -json > /tmp/outputs.json',
+    '          python3 python/scripts/sync_to_netbox.py \\',
+    '            --stack ${{ matrix.stack }} --outputs-file /tmp/outputs.json',
+    '        env:',
+    '          NETBOX_URL:   ${{ vars.NETBOX_URL }}',
+    '          NETBOX_TOKEN: ${{ secrets.NETBOX_TOKEN }}',
+    '',
+    '      - name: Update ServiceNow CR',
+    '        if: always() && contains(matrix.stack, \'prod\')',
+    '        run: |',
+    '          CR=$(grep -oE \'CHG[0-9]{7}\' <<<\'${{ github.event.head_commit.message }}\' | head -1 || echo "")',
+    '          if [ -n "$CR" ]; then',
+    '            STATE=$([ "${{ job.status }}" = "success" ] && echo 3 || echo 4)',
+    '            curl -fsS -X PATCH \\',
+    '              -u "${{ secrets.SN_USER }}:${{ secrets.SN_TOKEN }}" \\',
+    '              -H \'Content-Type: application/json\' \\',
+    '              -d "{\\"state\\":\\"$STATE\\",\\"close_notes\\":\\"GHA run ${{ github.run_id }}\\"}" \\',
+    '              "${{ vars.SN_URL }}/api/now/table/change_request?sysparm_query=number=$CR"',
+    '          fi',
+  ].join('\n');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GITHUB ACTIONS — DRIFT DETECTION
+════════════════════════════════════════════════════════════════ */
+function _genGHADrift(state) {
+  var stacks = _ghaStacks(state);
+  var stacksYaml = stacks.map(function(s) { return '          - ' + s; }).join('\n');
+  return [
+    'name: drift-detection',
+    '',
+    'on:',
+    '  schedule:',
+    '    - cron: \'0 * * * *\'   # hourly',
+    '  workflow_dispatch:         # manual trigger for ad-hoc checks',
+    '',
+    'permissions:',
+    '  id-token: write',
+    '  contents: read',
+    '  issues: write              # open drift issue',
+    '',
+    'jobs:',
+    '  drift:',
+    '    runs-on: ubuntu-latest',
+    '    strategy:',
+    '      fail-fast: false       # check all stacks even if one errors',
+    '      matrix:',
+    '        stack:',
+    stacksYaml,
+    '',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '      - uses: hashicorp/setup-terraform@v3',
+    '        with: { terraform_version: 1.6.6, terraform_wrapper: false }',
+    '',
+    _ghaAuthSteps('      '),
+    '',
+    _ghaInitStep('      '),
+    '',
+    '      - name: detect-only plan',
+    '        id: plan',
+    '        working-directory: terraform/stacks/${{ matrix.stack }}',
+    '        run: |',
+    '          set +e',
+    '          terraform plan -detailed-exitcode -lock=false -no-color -out=tfplan',
+    '          EXIT=$?',
+    '          set -e',
+    '          # 0=no change  2=drift  other=error',
+    '          if [ "$EXIT" = "2" ]; then',
+    '            terraform show -no-color tfplan > drift.txt',
+    '            echo "drift=true" >> "$GITHUB_OUTPUT"',
+    '          elif [ "$EXIT" != "0" ]; then exit "$EXIT"; fi',
+    '',
+    '      - name: Open drift issue',
+    '        if: steps.plan.outputs.drift == \'true\'',
+    '        uses: actions/github-script@v7',
+    '        with:',
+    '          script: |',
+    '            const fs = require(\'fs\');',
+    '            const body = fs.readFileSync(\'terraform/stacks/${{ matrix.stack }}/drift.txt\', \'utf8\');',
+    '            await github.rest.issues.create({',
+    '              owner: context.repo.owner, repo: context.repo.repo,',
+    '              title: `Drift detected: ${{ matrix.stack }}`,',
+    '              labels: [\'drift\', \'urgent\'],',
+    '              body: \'```hcl\\n\' + body.slice(0, 60000) + \'\\n```\',',
+    '            });',
+  ].join('\n');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   REPO SCAFFOLDING GENERATORS
+════════════════════════════════════════════════════════════════ */
+function _genPreCommit() {
+  return [
+    'repos:',
+    '  - repo: https://github.com/pre-commit/pre-commit-hooks',
+    '    rev: v4.6.0',
+    '    hooks:',
+    '      - id: trailing-whitespace',
+    '      - id: end-of-file-fixer',
+    '      - id: check-yaml',
+    '        args: [\'--allow-multiple-documents\']',
+    '      - id: check-merge-conflict',
+    '      - id: check-added-large-files',
+    '        args: [\'--maxkb=500\']',
+    '      - id: detect-private-key',
+    '',
+    '  - repo: https://github.com/antonbabenko/pre-commit-terraform',
+    '    rev: v1.88.0',
+    '    hooks:',
+    '      - id: terraform_fmt',
+    '      - id: terraform_validate',
+    '      - id: terraform_tflint',
+    '        args: [\'--args=--minimum-failure-severity=warning\']',
+    '      - id: terraform_tfsec',
+    '      - id: terraform_docs',
+    '        args:',
+    '          - \'--hook-config=--path-to-file=README.md\'',
+    '          - \'--hook-config=--add-to-existing-file=true\'',
+    '          - \'--hook-config=--create-file-if-not-exist=true\'',
+    '',
+    '  - repo: https://github.com/ansible/ansible-lint',
+    '    rev: v24.2.0',
+    '    hooks:',
+    '      - id: ansible-lint',
+    '        files: ^ansible/',
+    '        additional_dependencies: [jsonschema]',
+    '',
+    '  - repo: https://github.com/astral-sh/ruff-pre-commit',
+    '    rev: v0.4.0',
+    '    hooks:',
+    '      - id: ruff',
+    '        args: [--fix]',
+    '        files: ^python/',
+    '      - id: ruff-format',
+    '        files: ^python/',
+    '',
+    '  - repo: https://github.com/gitleaks/gitleaks',
+    '    rev: v8.18.4',
+    '    hooks:',
+    '      - id: gitleaks',
+  ].join('\n');
+}
+
+function _genCodeOwners(state) {
+  var org = _orgName(state).replace(/\s+/g, '-').toLowerCase();
+  return [
+    '# =============================================================================',
+    '# CODEOWNERS — ' + _orgName(state) + ' network-platform',
+    '# Prod stacks require 2 reviewers (network-leads + security-reviewers).',
+    '# Module changes require senior platform engineers.',
+    '# =============================================================================',
+    '',
+    '# Catch-all',
+    '*                                   @' + org + '/network-platform-leads',
+    '',
+    '# Terraform stacks: prod requires network + security; nonprod requires network only',
+    '/terraform/stacks/aws-prod-*/       @' + org + '/network-leads @' + org + '/security-reviewers',
+    '/terraform/stacks/azure-prod-*/     @' + org + '/network-leads @' + org + '/security-reviewers',
+    '/terraform/stacks/gcp-prod-*/       @' + org + '/network-leads @' + org + '/security-reviewers',
+    '/terraform/stacks/*-nonprod-*/      @' + org + '/network-engineers',
+    '',
+    '# Modules: senior platform engineers',
+    '/terraform/modules/                 @' + org + '/platform-seniors',
+    '/terraform/bootstrap/               @' + org + '/platform-admins',
+    '',
+    '# Ansible: network engineers',
+    '/ansible/roles/                     @' + org + '/network-engineers',
+    '/ansible/playbooks/                 @' + org + '/network-engineers',
+    '',
+    '# Pipelines and security: platform admins only',
+    '/.github/workflows/                 @' + org + '/platform-admins',
+    '/.github/CODEOWNERS                 @' + org + '/platform-admins',
+    '/.pre-commit-config.yaml            @' + org + '/platform-admins',
+    '',
+    '# Python validation',
+    '/python/                            @' + org + '/platform-seniors',
+  ].join('\n');
+}
+
+function _genPRTemplate() {
+  return [
+    '<!--',
+    'Title format: <type>(<scope>): <short description>',
+    'Examples:',
+    '  feat(aws): add us-west-2 TGW hub stack',
+    '  fix(ansible): correct BFD interval on DC edge',
+    '  chore(deps): bump azurerm provider to 3.115',
+    '-->',
+    '',
+    '## Change description',
+    '<!-- What is changing and why. One paragraph. -->',
+    '',
+    '## Change Request',
+    '- ServiceNow CR: `CHG#######`  ← required for production paths',
+    '- Risk: [ ] Low  [ ] Medium  [ ] High',
+    '- Blast radius: [ ] single stack  [ ] cloud-wide  [ ] multi-cloud',
+    '',
+    '## Pre-deployment checklist',
+    '- [ ] `terraform plan` reviewed and reasonable',
+    '- [ ] `tfsec` / `checkov` — no new HIGH findings',
+    '- [ ] Batfish — no reachability regressions (snapshot ID: ___)',
+    '- [ ] Tested in non-prod (link to evidence: ___)',
+    '- [ ] Rollback plan documented below',
+    '- [ ] Affected teams notified (channels: ___)',
+    '',
+    '## Rollback plan',
+    '<!-- Specific steps. "Revert the PR" is not a rollback plan if state was applied. -->',
+    '',
+    '## Post-deployment validation',
+    '<!-- What evidence will we collect that the change worked? -->',
+    '',
+    '## Notes for reviewers',
+    '<!-- Timing, coordination, expected drift, etc. -->',
+  ].join('\n');
+}
+
+function _genGitignore() {
+  return [
+    '# Terraform',
+    '**/.terraform/',
+    '*.tfstate',
+    '*.tfstate.*',
+    '*.tfvars',
+    '!*.tfvars.example',
+    'crash.log',
+    'crash.*.log',
+    '.terraform.lock.hcl.bak',
+    'override.tf',
+    'tfplan',
+    'plan.txt',
+    'drift.txt',
+    '',
+    '# Python',
+    '__pycache__/',
+    '*.py[cod]',
+    '.pytest_cache/',
+    '.ruff_cache/',
+    'venv/',
+    '.venv/',
+    '',
+    '# Ansible',
+    '*.retry',
+    '.ansible/',
+    'ansible-netbox-cache*',
+    '',
+    '# Editor',
+    '.vscode/',
+    '.idea/',
+    '*.swp',
+    '.DS_Store',
+    '',
+    '# Secrets — defense in depth; real secrets must never be committed',
+    '*.pem',
+    '*.key',
+    '.envrc',
+    '.env',
+    'secrets.yml',
+    'secrets.yaml',
+  ].join('\n');
+}
+
+function _genPyRequirements() {
+  return [
+    'ansible-core>=2.16',
+    'pynetbox>=7.3',
+    'pybatfish>=2024.1',
+    'nornir>=3.4',
+    'diagrams>=0.23',
+    'jinja2>=3.1',
+    'pytest>=8.0',
+    'ruff>=0.4',
+    '# Cloud SDKs — used by validate_post_apply.py and sync_to_netbox.py',
+    'boto3>=1.34',
+    'azure-identity>=1.16',
+    'azure-mgmt-network>=25.4',
+    'google-cloud-compute>=1.19',
+    'requests>=2.32',
+  ].join('\n');
+}
+
+function _genAnsibleCfg() {
+  return [
+    '[defaults]',
+    'inventory         = inventory/netbox.yml',
+    'roles_path        = roles',
+    'host_key_checking = False',
+    'retry_files_enabled = False',
+    'stdout_callback   = yaml',
+    'deprecation_warnings = False',
+    'forks             = 20',
+    'timeout           = 30',
+    '',
+    '[persistent_connection]',
+    'connect_timeout = 60',
+    'command_timeout = 60',
+    '',
+    '[ssh_connection]',
+    'pipelining = True',
+    'ssh_args   = -o ControlMaster=auto -o ControlPersist=300s',
+  ].join('\n');
+}
