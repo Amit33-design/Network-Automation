@@ -3206,44 +3206,17 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <script>
-/* ── Multicloud requirements visibility + state wiring ──────── */
-(function() {
-  // Show/hide mc-req block based on selected use case.
-  // Patches selectUC after it is defined (app.js loads first).
-  var _origSelectUC = null;
-  function _patchSelectUC() {
-    if (typeof selectUC === 'undefined') {
-      setTimeout(_patchSelectUC, 100);
-      return;
-    }
-    if (_origSelectUC) return; // already patched
-    _origSelectUC = selectUC;
-    window.selectUC = function(card) {
-      _origSelectUC(card);
-      _updateMCReqVisibility();
-    };
-  }
-  _patchSelectUC();
-
-  window._updateMCReqVisibility = function() {
-    var el = document.getElementById('mc-req');
-    if (!el) return;
-    var uc = (typeof STATE !== 'undefined') ? STATE.uc : null;
-    el.style.display = (uc === 'multicloud') ? '' : 'none';
-  };
-
-  window._mcCloudChange = function() {
-    var clouds = [];
-    if (document.getElementById('mc-cloud-aws')   && document.getElementById('mc-cloud-aws').checked)   clouds.push('aws');
-    if (document.getElementById('mc-cloud-azure') && document.getElementById('mc-cloud-azure').checked) clouds.push('azure');
-    if (document.getElementById('mc-cloud-gcp')   && document.getElementById('mc-cloud-gcp').checked)   clouds.push('gcp');
-    if (typeof STATE !== 'undefined') STATE.mcClouds = clouds.length ? clouds : ['aws','azure','gcp'];
-  };
-
-  window._mcDCTopologyChange = function(radio) {
-    if (typeof STATE !== 'undefined') STATE.mcDualDC = (radio.value === 'dual');
-  };
-})();
+/* ── Multicloud Step 2 state wiring ──────────────────────────── */
+window._mcCloudChange = function() {
+  var clouds = [];
+  if (document.getElementById('mc-cloud-aws')?.checked)   clouds.push('aws');
+  if (document.getElementById('mc-cloud-azure')?.checked) clouds.push('azure');
+  if (document.getElementById('mc-cloud-gcp')?.checked)   clouds.push('gcp');
+  if (typeof STATE !== 'undefined') STATE.mcClouds = clouds.length ? clouds : ['aws','azure','gcp'];
+};
+window._mcDCTopologyChange = function(radio) {
+  if (typeof STATE !== 'undefined') STATE.mcDualDC = (radio.value === 'dual');
+};
 </script>
 
 <script>

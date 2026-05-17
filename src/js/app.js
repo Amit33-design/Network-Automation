@@ -42,6 +42,12 @@ function goStep(dir) {
 let _activeSubStep = 'deploy';   // sub-section active within step 6
 let _tsEngineOpen  = false;      // whether TS engine panel is showing
 
+/* ── Multicloud req panel toggle (called from selectUC + jumpStep) ── */
+function _showMCReq(show) {
+  const el = document.getElementById('mc-req');
+  if (el) el.style.display = show ? '' : 'none';
+}
+
 function jumpStep(n) {
   hideTsEngine();
   document.getElementById(`step-${STATE.step}`).classList.remove('active');
@@ -51,6 +57,8 @@ function jumpStep(n) {
   renderSidebar();
   updateBottomNav();
   updateSummary();
+  // Keep multicloud panel in sync when navigating between steps
+  if (n === 2) _showMCReq(STATE.uc === 'multicloud');
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (typeof renderIntentPanel === 'function') renderIntentPanel();
   if (n === 6) {
@@ -208,6 +216,8 @@ function selectUC(card) {
   card.classList.add('selected');
   STATE.uc = card.dataset.uc;
   updateSummary();
+  // Show/hide multicloud requirements panel in Step 2
+  _showMCReq(STATE.uc === 'multicloud');
   window.track?.('use_case_selected', { use_case: STATE.uc });
   if (typeof window.querySimilarDesigns === 'function') {
     window.querySimilarDesigns({ use_case: STATE.uc, intent: { uc: STATE.uc } });
