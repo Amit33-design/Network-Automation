@@ -1,0 +1,284 @@
+'use strict';
+
+// All products must have: id, model, vendor, subLayer, ports, uplinks, speed, asic, powerW, features, useCases, detail
+var PRODUCTS = [
+  // ─── Spine / Core ───────────────────────────────────────────────────────────
+  {
+    id: 'nxos-9336c',
+    model: 'Nexus 9336C-FX2',
+    vendor: 'Cisco',
+    subLayer: 'spine',
+    ports: 36,
+    uplinks: 0,
+    speed: '100G',
+    asic: 'Cloud Scale',
+    powerW: 650,
+    priceUSD: 28000,
+    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
+    useCases: ['dc', 'gpu', 'multisite'],
+    detail: '36x100G QSFP28, MACsec, CloudScale ASIC, 3.6Tbps'
+  },
+  {
+    id: 'nxos-9364c',
+    model: 'Nexus 9364C-GX',
+    vendor: 'Cisco',
+    subLayer: 'spine',
+    ports: 64,
+    uplinks: 0,
+    speed: '400G',
+    asic: 'Cloud Scale GX',
+    powerW: 1200,
+    priceUSD: 72000,
+    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
+    useCases: ['dc', 'gpu', 'multicloud'],
+    detail: '64x400G QSFP-DD, AI/ML optimised, 25.6Tbps'
+  },
+  {
+    id: 'arista-7800r3',
+    model: 'Arista 7800R3',
+    vendor: 'Arista',
+    subLayer: 'spine',
+    ports: 48,
+    uplinks: 0,
+    speed: '400G',
+    asic: 'Jericho2+',
+    powerW: 1400,
+    priceUSD: 95000,
+    features: ['VXLAN', 'EVPN', 'BGP', 'MPLS', 'FlowSpec'],
+    useCases: ['dc', 'wan', 'multisite', 'multicloud'],
+    detail: '48x400G QSFP-DD, segment routing, 19.2Tbps'
+  },
+  {
+    id: 'juniper-qfx10002',
+    model: 'QFX10002-72Q',
+    vendor: 'Juniper',
+    subLayer: 'spine',
+    ports: 72,
+    uplinks: 0,
+    speed: '40G',
+    asic: 'Q5',
+    powerW: 800,
+    priceUSD: 35000,
+    features: ['VXLAN', 'EVPN', 'BGP', 'MPLS'],
+    useCases: ['dc', 'multisite'],
+    detail: '72x40G QSFP+, 2.88Tbps, VC-capable'
+  },
+
+  // ─── Leaf / ToR ─────────────────────────────────────────────────────────────
+  {
+    id: 'nxos-93180yc',
+    model: 'Nexus 93180YC-FX',
+    vendor: 'Cisco',
+    subLayer: 'leaf',
+    ports: 48,
+    uplinks: 6,
+    speed: '25G',
+    asic: 'Cloud Scale',
+    powerW: 480,
+    priceUSD: 14000,
+    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
+    useCases: ['dc', 'gpu', 'multisite'],
+    detail: '48x25G SFP28 + 6x100G QSFP28 uplinks'
+  },
+  {
+    id: 'nxos-9332c',
+    model: 'Nexus 9332C',
+    vendor: 'Cisco',
+    subLayer: 'leaf',
+    ports: 32,
+    uplinks: 2,
+    speed: '100G',
+    asic: 'Cloud Scale',
+    powerW: 550,
+    priceUSD: 18000,
+    features: ['VXLAN', 'EVPN', 'BGP', 'PFC'],
+    useCases: ['dc', 'gpu'],
+    detail: '32x100G QSFP28 + 2x100G uplinks, GPU-optimised'
+  },
+  {
+    id: 'arista-7050cx3',
+    model: 'Arista 7050CX3-32S',
+    vendor: 'Arista',
+    subLayer: 'leaf',
+    ports: 32,
+    uplinks: 2,
+    speed: '100G',
+    asic: 'Trident3',
+    powerW: 460,
+    priceUSD: 16000,
+    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECMP'],
+    useCases: ['dc', 'multisite'],
+    detail: '32x100G QSFP28 + 2x100G uplinks, Trident3'
+  },
+  {
+    id: 'juniper-qfx5120',
+    model: 'QFX5120-48Y',
+    vendor: 'Juniper',
+    subLayer: 'leaf',
+    ports: 48,
+    uplinks: 8,
+    speed: '25G',
+    asic: 'Trident3',
+    powerW: 440,
+    priceUSD: 12000,
+    features: ['VXLAN', 'EVPN', 'BGP', 'LLDP'],
+    useCases: ['dc', 'multisite'],
+    detail: '48x25G SFP28 + 8x100G QSFP28 uplinks'
+  },
+
+  // ─── Distribution ────────────────────────────────────────────────────────────
+  {
+    id: 'cat9500',
+    model: 'Catalyst 9500-48Y4C',
+    vendor: 'Cisco',
+    subLayer: 'distribution',
+    ports: 48,
+    uplinks: 4,
+    speed: '25G',
+    asic: 'UADP 3.0',
+    powerW: 715,
+    priceUSD: 22000,
+    features: ['SDA', 'VXLAN', 'EVPN', 'BGP', 'QoS', 'MACsec'],
+    useCases: ['campus', 'multisite'],
+    detail: '48x25G + 4x100G, Cisco SDA-ready'
+  },
+  {
+    id: 'cat9300l',
+    model: 'Catalyst 9300L-48T-4G',
+    vendor: 'Cisco',
+    subLayer: 'access',
+    ports: 48,
+    uplinks: 4,
+    speed: '1G',
+    asic: 'UADP 2.0',
+    powerW: 390,
+    priceUSD: 4800,
+    features: ['PoE+', 'SDA', 'QoS', 'LLDP', 'MACsec'],
+    useCases: ['campus'],
+    detail: '48x1G PoE+ + 4x1G SFP uplinks, 740W PoE budget'
+  },
+  {
+    id: 'cat9200',
+    model: 'Catalyst 9200-48P',
+    vendor: 'Cisco',
+    subLayer: 'access',
+    ports: 48,
+    uplinks: 4,
+    speed: '1G',
+    asic: 'UADP 2.0 Lite',
+    powerW: 370,
+    priceUSD: 3200,
+    features: ['PoE+', 'QoS', 'LLDP'],
+    useCases: ['campus'],
+    detail: '48x1G PoE+ + 4x1G SFP uplinks'
+  },
+
+  // ─── WAN / Edge ──────────────────────────────────────────────────────────────
+  {
+    id: 'asr1002hx',
+    model: 'ASR 1002-HX',
+    vendor: 'Cisco',
+    subLayer: 'wan-edge',
+    ports: 4,
+    uplinks: 0,
+    speed: '10G',
+    asic: 'QuantumFlow',
+    powerW: 280,
+    priceUSD: 18000,
+    features: ['BGP', 'MPLS', 'OSPF', 'IPSec', 'DMVPN', 'SD-WAN'],
+    useCases: ['wan', 'multisite'],
+    detail: '4x10G, 60Gbps aggregate, crypto capable'
+  },
+  {
+    id: 'viptela-vedge',
+    model: 'Catalyst SD-WAN vEdge 2000',
+    vendor: 'Cisco',
+    subLayer: 'wan-edge',
+    ports: 8,
+    uplinks: 0,
+    speed: '1G',
+    asic: 'Software',
+    powerW: 150,
+    priceUSD: 9500,
+    features: ['SD-WAN', 'BGP', 'IPSec', 'ZTP', 'AppQoE'],
+    useCases: ['wan', 'multisite', 'multicloud'],
+    detail: '8x1G, SD-WAN ZTP, AppQoE, 20Gbps'
+  },
+
+  // ─── Aviatrix ────────────────────────────────────────────────────────────────
+  {
+    id: 'aviatrix-gw',
+    model: 'Aviatrix Gateway (c5.xlarge)',
+    vendor: 'Aviatrix',
+    subLayer: 'cloud-gw',
+    ports: 0,
+    uplinks: 0,
+    speed: '10G',
+    asic: 'Software',
+    powerW: 0,
+    priceUSD: 4200,
+    features: ['BGP', 'IPSec', 'SNAT', 'DNAT', 'FireNet', 'TGW'],
+    useCases: ['aviatrix', 'multicloud'],
+    detail: 'Cloud-native gateway, AWS/Azure/GCP'
+  },
+  {
+    id: 'aviatrix-transit',
+    model: 'Aviatrix Transit GW (c5.2xlarge)',
+    vendor: 'Aviatrix',
+    subLayer: 'cloud-transit',
+    ports: 0,
+    uplinks: 0,
+    speed: '25G',
+    asic: 'Software',
+    powerW: 0,
+    priceUSD: 9800,
+    features: ['BGP', 'EVPN', 'Segmentation', 'FireNet', 'TGW'],
+    useCases: ['aviatrix', 'multicloud'],
+    detail: 'Cloud transit, multi-cloud meshing'
+  },
+
+  // ─── Firewalls / Security ────────────────────────────────────────────────────
+  {
+    id: 'ftd4145',
+    model: 'Firepower 4145 NGFW',
+    vendor: 'Cisco',
+    subLayer: 'firewall',
+    ports: 8,
+    uplinks: 0,
+    speed: '40G',
+    asic: 'Liqid',
+    powerW: 800,
+    priceUSD: 65000,
+    features: ['IPS', 'AVC', 'TLS-decrypt', 'AMP', 'HA'],
+    useCases: ['campus', 'dc', 'multisite', 'multicloud'],
+    detail: '8x40G, 80Gbps FW throughput, HA pair'
+  },
+  {
+    id: 'panos-pa5260',
+    model: 'PA-5260 NGFW',
+    vendor: 'Palo Alto',
+    subLayer: 'firewall',
+    ports: 16,
+    uplinks: 0,
+    speed: '100G',
+    asic: 'CN-Series',
+    powerW: 1100,
+    priceUSD: 120000,
+    features: ['IPS', 'URL-filter', 'GlobalProtect', 'TLS-decrypt', 'HA'],
+    useCases: ['campus', 'dc', 'multicloud'],
+    detail: '16x100G, 200Gbps threat prevention'
+  }
+];
+
+var LAYER_PAIRS = {
+  dc:         ['spine-leaf'],
+  gpu:        ['spine-leaf'],
+  campus:     ['distribution-access', 'core-distribution'],
+  wan:        ['wan-edge'],
+  multisite:  ['spine-leaf', 'wan-edge'],
+  multicloud: ['cloud-gw', 'cloud-transit'],
+  aviatrix:   ['cloud-gw', 'cloud-transit']
+};
+
+window.PRODUCTS = PRODUCTS;
+window.LAYER_PAIRS = LAYER_PAIRS;

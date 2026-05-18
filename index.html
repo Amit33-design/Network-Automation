@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NetDesign AI — Network Design Platform</title>
+  <style>
+    /* ─── Reset & Base ───────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --surface2:  #232638;
+      --border:    #2e3248;
+      --accent:    #4f8ef7;
+      --accent2:   #7c5cfc;
+      --success:   #22c55e;
+      --warn:      #f59e0b;
+      --danger:    #ef4444;
+      --text:      #e2e8f0;
+      --text-dim:  #8892a4;
+      --radius:    8px;
+      --font:      'SF Mono', 'Fira Code', 'Consolas', monospace;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    code, pre, .config-pre { font-family: var(--font); }
+
+    /* ─── Layout ──────────────────────────────────────────────────────────── */
+    .app-header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .app-logo {
+      font-size: 20px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .app-tagline { color: var(--text-dim); font-size: 12px; }
+
+    .wizard-tabs {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      padding: 0 24px;
+      overflow-x: auto;
+    }
+    .step-tab {
+      padding: 12px 20px;
+      cursor: pointer;
+      color: var(--text-dim);
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+      font-size: 13px;
+      transition: color .15s, border-color .15s;
+      user-select: none;
+    }
+    .step-tab:hover   { color: var(--text); }
+    .step-tab.active  { color: var(--accent); border-bottom-color: var(--accent); }
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px; height: 20px;
+      background: var(--surface2);
+      border-radius: 50%;
+      font-size: 11px;
+      margin-right: 6px;
+    }
+    .step-tab.active .step-num { background: var(--accent); color: #fff; }
+
+    .main-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px 24px;
+    }
+    .step-panel { display: none; }
+    .step-panel.active { display: block; }
+
+    /* ─── Forms ───────────────────────────────────────────────────────────── */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 680px) { .form-grid { grid-template-columns: 1fr; } }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; }
+    .form-group select, .form-group input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 9px 12px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    .form-group select:focus, .form-group input:focus { border-color: var(--accent); }
+    .form-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .form-section h3 { font-size: 14px; margin-bottom: 16px; color: var(--accent); }
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 10px; }
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .checkbox-item input { accent-color: var(--accent); }
+
+    /* ─── Buttons ─────────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 18px;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn:active { transform: scale(.97); }
+    .btn-primary   { background: var(--accent);   color: #fff; }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-success   { background: var(--success);  color: #fff; }
+    .btn-toolbar   { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+
+    /* ─── Tables ──────────────────────────────────────────────────────────── */
+    .bom-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .bom-table th {
+      background: var(--surface2);
+      padding: 10px 12px;
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+    }
+    .bom-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .bom-table tr:hover td { background: rgba(79,142,247,.04); }
+    .bom-table tfoot td {
+      background: var(--surface2);
+      font-weight: 600;
+    }
+    .bom-table small { color: var(--text-dim); font-size: 11px; }
+    .cabling-row td { color: var(--text-dim); font-style: italic; }
+
+    /* Cable type badges */
+    .cable-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .cable-dac   { background: #1e3a5f; color: #60a5fa; }
+    .cable-aoc   { background: #2d1b69; color: #a78bfa; }
+    .cable-lclc  { background: #1a3d2b; color: #4ade80; }
+    .cable-mpo   { background: #3d2a1a; color: #fb923c; }
+
+    /* ─── Sub-tabs (BOM panes) ────────────────────────────────────────────── */
+    .bom-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+    .bom-tab {
+      padding: 7px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      transition: all .15s;
+    }
+    .bom-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .bom-pane { display: none; }
+    .bom-pane.active { display: block; }
+
+    /* ─── Config viewer ───────────────────────────────────────────────────── */
+    .config-viewer { display: flex; flex-direction: column; gap: 12px; }
+    .config-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .config-toolbar select {
+      flex: 1;
+      min-width: 220px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 13px;
+    }
+    .config-pre {
+      background: #0a0c12;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      overflow: auto;
+      max-height: 520px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #c9d1d9;
+      white-space: pre;
+    }
+
+    /* ─── Section headers ─────────────────────────────────────────────────── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .section-title { font-size: 18px; font-weight: 700; }
+    .section-sub   { color: var(--text-dim); font-size: 13px; margin-top: 4px; }
+
+    /* ─── Empty state ─────────────────────────────────────────────────────── */
+    .empty-state {
+      color: var(--text-dim);
+      text-align: center;
+      padding: 48px 0;
+      font-size: 14px;
+    }
+
+    /* ─── Coming-soon placeholder ─────────────────────────────────────────── */
+    .coming-soon {
+      background: var(--surface);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 40px;
+      text-align: center;
+      color: var(--text-dim);
+    }
+    .coming-soon .cs-icon { font-size: 36px; margin-bottom: 12px; }
+    .coming-soon h3 { color: var(--text); margin-bottom: 8px; }
+
+    /* ─── Toast ───────────────────────────────────────────────────────────── */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 18px;
+      font-size: 13px;
+      opacity: 0;
+      transform: translateX(20px);
+      transition: opacity .25s, transform .25s;
+      max-width: 320px;
+    }
+    .toast.show { opacity: 1; transform: translateX(0); }
+    .toast-success { border-left: 3px solid var(--success); }
+    .toast-warning { border-left: 3px solid var(--warn); }
+    .toast-info    { border-left: 3px solid var(--accent); }
+    .toast-error   { border-left: 3px solid var(--danger); }
+
+    /* ─── Distance inputs ─────────────────────────────────────────────────── */
+    .dist-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .dist-label { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+    .dist-row { display: flex; align-items: center; gap: 8px; }
+    .dist-row input { width: 80px; }
+    .dist-row span { font-size: 12px; color: var(--text-dim); }
+  </style>
+</head>
+<body>
+
+<header class="app-header">
+  <div>
+    <div class="app-logo">NetDesign AI</div>
+    <div class="app-tagline">From blank slate to running network</div>
+  </div>
+</header>
+
+<nav class="wizard-tabs">
+  <div class="step-tab active" data-step="1"><span class="step-num">1</span>Design</div>
+  <div class="step-tab" data-step="2"><span class="step-num">2</span>BOM &amp; Cabling</div>
+  <div class="step-tab" data-step="3"><span class="step-num">3</span>Config Gen</div>
+  <div class="step-tab" data-step="4"><span class="step-num">4</span>ZTP &amp; Policy</div>
+  <div class="step-tab" data-step="5"><span class="step-num">5</span>Pre/Post Checks</div>
+  <div class="step-tab" data-step="6"><span class="step-num">6</span>Monitoring</div>
+</nav>
+
+<main class="main-content">
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       STEP 1: Network Design
+  ══════════════════════════════════════════════════════════════════════════ -->
+  <section id="step-1" class="step-panel active">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Network Design</div>
+        <div class="section-sub">Define your use case, scale, and site parameters</div>
+      </div>
+    </div>
+
+    <form onsubmit="window.onStep1Submit(event)">
+      <div class="form-section">
+        <h3>Site Identity</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Site Name</label>
+            <input id="inp-sitename" type="text" placeholder="e.g. Ashburn DC1" required>
+          </div>
+          <div class="form-group">
+            <label>Site Code (3-5 chars)</label>
+            <input id="inp-sitecode" type="text" placeholder="e.g. IAD" maxlength="5" required>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Architecture</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Use Case</label>
+            <select id="sel-usecase" onchange="window.onUseCaseChange()" required>
+              <option value="">— Select —</option>
+              <option value="dc">Data Center (spine-leaf)</option>
+              <option value="gpu">GPU Cluster (RoCEv2/VXLAN)</option>
+              <option value="campus">Campus (dist-access)</option>
+              <option value="wan">WAN / SD-WAN</option>
+              <option value="multisite">Multi-site</option>
+              <option value="multicloud">Multi-cloud</option>
+              <option value="aviatrix">Aviatrix Cloud Networking</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Scale</label>
+            <select id="sel-scale">
+              <option value="small">Small (POC / branch)</option>
+              <option value="medium" selected>Medium (mid-size DC)</option>
+              <option value="large">Large (hyperscale)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Redundancy</label>
+            <select id="sel-redundancy">
+              <option value="dual" selected>Dual (HA)</option>
+              <option value="single">Single (dev/lab)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Link Distances</h3>
+        <div class="dist-grid">
+          <div>
+            <div class="dist-label">Spine ↔ Leaf</div>
+            <div class="dist-row"><input id="dist-spine-leaf" type="number" value="100" min="1" max="80000"><span>metres</span></div>
+          </div>
+          <div>
+            <div class="dist-label">Dist ↔ Access</div>
+            <div class="dist-row"><input id="dist-dist-access" type="number" value="50" min="1" max="80000"><span>metres</span></div>
+          </div>
+          <div>
+            <div class="dist-label">Core ↔ Dist</div>
+            <div class="dist-row"><input id="dist-core-dist" type="number" value="200" min="1" max="80000"><span>metres</span></div>
+          </div>
+          <div>
+            <div class="dist-label">WAN Edge</div>
+            <div class="dist-row"><input id="dist-wan-edge" type="number" value="5000" min="1" max="80000"><span>metres</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Application Types</h3>
+        <div class="checkbox-group">
+          <label class="checkbox-item"><input type="checkbox" class="chk-apptype" value="voice"> Voice / UC</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-apptype" value="video"> Video</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-apptype" value="storage"> Storage / NAS</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-apptype" value="hpc"> HPC / GPU</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-apptype" value="internet"> Internet</label>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Compliance Requirements</h3>
+        <div class="checkbox-group">
+          <label class="checkbox-item"><input type="checkbox" class="chk-compliance" value="QoS"> QoS</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-compliance" value="PCI"> PCI-DSS</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-compliance" value="HIPAA"> HIPAA</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-compliance" value="SOC2"> SOC 2</label>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Generate BOM →</button>
+    </form>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       STEP 2: BOM & Cabling
+  ══════════════════════════════════════════════════════════════════════════ -->
+  <section id="step-2" class="step-panel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Bill of Materials &amp; Cabling</div>
+        <div class="section-sub">Hardware BOM, device list, and cable schedule</div>
+      </div>
+    </div>
+
+    <div class="btn-toolbar">
+      <button class="btn btn-secondary" onclick="window.exportBOM()">Export BOM CSV</button>
+      <button class="btn btn-secondary" onclick="window.exportCabling()">Export Cabling CSV</button>
+      <button class="btn btn-primary" onclick="window.renderStep3(); window.goToStep(3)">Generate Configs →</button>
+    </div>
+
+    <div class="bom-tabs">
+      <div class="bom-tab active" data-pane="bom-pane-devices">Devices &amp; BOM</div>
+      <div class="bom-tab" data-pane="bom-pane-cabling">Cabling Schedule</div>
+    </div>
+
+    <div id="bom-pane-devices" class="bom-pane active">
+      <div id="bom-output">
+        <p class="empty-state">Complete Step 1 to generate the BOM.</p>
+      </div>
+    </div>
+
+    <div id="bom-pane-cabling" class="bom-pane">
+      <div id="cabling-output">
+        <p class="empty-state">Cabling schedule will appear after BOM generation.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       STEP 3: Config Generation
+  ══════════════════════════════════════════════════════════════════════════ -->
+  <section id="step-3" class="step-panel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Configuration Generator</div>
+        <div class="section-sub">Vendor-specific configs for every device</div>
+      </div>
+    </div>
+    <div id="config-output">
+      <p class="empty-state">Complete Steps 1 &amp; 2 first.</p>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       STEP 4: ZTP & Policy
+  ══════════════════════════════════════════════════════════════════════════ -->
+  <section id="step-4" class="step-panel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">ZTP &amp; Policy Management</div>
+        <div class="section-sub">Zero-touch provisioning and network policies</div>
+      </div>
+    </div>
+    <div class="coming-soon">
+      <div class="cs-icon">⚙️</div>
+      <h3>Coming soon</h3>
+      <p>ZTP scripts, DHCP scopes, boot scripts, and policy engine.<br>
+         Implement from AGENT_ROADMAP.md: Ansible playbook generator + BGP route-policy validator.</p>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       STEP 5: Pre/Post Checks
+  ══════════════════════════════════════════════════════════════════════════ -->
+  <section id="step-5" class="step-panel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Pre / Post Deployment Checks</div>
+        <div class="section-sub">Netmiko-based validation scripts</div>
+      </div>
+    </div>
+    <div class="coming-soon">
+      <div class="cs-icon">🔍</div>
+      <h3>Coming soon</h3>
+      <p>Auto-generated Python scripts using Netmiko to verify interface states,<br>
+         BGP neighbor counts, and LLDP neighbors before and after deployment.</p>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       STEP 6: Monitoring
+  ══════════════════════════════════════════════════════════════════════════ -->
+  <section id="step-6" class="step-panel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Monitoring &amp; Observability</div>
+        <div class="section-sub">Prometheus alerts, Grafana dashboards</div>
+      </div>
+    </div>
+    <div class="coming-soon">
+      <div class="cs-icon">📊</div>
+      <h3>Coming soon</h3>
+      <p>Prometheus alert rules, Grafana dashboard JSON, and ML-based RCA.<br>
+         Implement from AGENT_ROADMAP.md: Prometheus alerts + Grafana dashboard generator.</p>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast-container"></div>
+
+<!-- ─── Scripts (order matters — no ES modules) ─────────────────────────── -->
+<script src="src/js/state.js"></script>
+<script src="src/js/products.js"></script>
+<script src="src/js/naming.js"></script>
+<script src="src/js/cabling.js"></script>
+<script src="src/js/bom.js"></script>
+<script src="src/js/configgen.js"></script>
+<script src="src/js/init.js"></script>
+
+</body>
+</html>
