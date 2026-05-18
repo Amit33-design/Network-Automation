@@ -94,6 +94,14 @@ function renderStep2() {
   if (cableOut) {
     cableOut.innerHTML = window.renderCablingTable(STATE.cabling);
   }
+
+  // Optics tab
+  var opticsOut = document.getElementById('optics-output');
+  if (opticsOut && window.recommendOptics) {
+    window.recommendOptics(STATE.cabling, STATE.devices, STATE);
+    opticsOut.innerHTML = window.renderOpticsTable(STATE.optics);
+  }
+
   showToast('BOM generated: ' + STATE.devices.length + ' devices', 'success');
 }
 window.renderStep2 = renderStep2;
@@ -116,6 +124,17 @@ function exportCabling() {
   showToast('Cabling schedule exported', 'success');
 }
 window.exportCabling = exportCabling;
+
+function exportOptics() {
+  if (!STATE.optics || !STATE.optics.length) {
+    showToast('Generate BOM first', 'warning');
+    return;
+  }
+  var csv = window.exportOpticsCSV(STATE.optics);
+  downloadFile('optics-' + STATE.siteCode + '.csv', csv, 'text/csv');
+  showToast('Optics recommendations exported', 'success');
+}
+window.exportOptics = exportOptics;
 
 // ─── Step 3: Config generation ────────────────────────────────────────────────
 function renderStep3() {

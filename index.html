@@ -191,6 +191,18 @@
     .cable-lclc  { background: #1a3d2b; color: #4ade80; }
     .cable-mpo   { background: #3d2a1a; color: #fb923c; }
 
+    /* Optics form-factor badge */
+    .badge-ff {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+
     /* ─── Sub-tabs (BOM panes) ────────────────────────────────────────────── */
     .bom-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
     .bom-tab {
@@ -440,12 +452,14 @@
     <div class="btn-toolbar">
       <button class="btn btn-secondary" onclick="window.exportBOM()">Export BOM CSV</button>
       <button class="btn btn-secondary" onclick="window.exportCabling()">Export Cabling CSV</button>
+      <button class="btn btn-secondary" onclick="window.exportOptics()">Export Optics CSV</button>
       <button class="btn btn-primary" onclick="window.renderStep3(); window.goToStep(3)">Generate Configs →</button>
     </div>
 
     <div class="bom-tabs">
       <div class="bom-tab active" data-pane="bom-pane-devices">Devices &amp; BOM</div>
       <div class="bom-tab" data-pane="bom-pane-cabling">Cabling Schedule</div>
+      <div class="bom-tab" data-pane="bom-pane-optics">Optics</div>
     </div>
 
     <div id="bom-pane-devices" class="bom-pane active">
@@ -457,6 +471,12 @@
     <div id="bom-pane-cabling" class="bom-pane">
       <div id="cabling-output">
         <p class="empty-state">Cabling schedule will appear after BOM generation.</p>
+      </div>
+    </div>
+
+    <div id="bom-pane-optics" class="bom-pane">
+      <div id="optics-output">
+        <p class="empty-state">Optics recommendations will appear after BOM generation.</p>
       </div>
     </div>
   </section>
@@ -540,6 +560,7 @@
 <script src="src/js/naming.js"></script>
 <script src="src/js/cabling.js"></script>
 <script src="src/js/bom.js"></script>
+<script src="src/js/optics.js"></script>
 <script src="src/js/configgen.js"></script>
 <script src="src/js/init.js"></script>
 

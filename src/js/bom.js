@@ -124,17 +124,37 @@ function buildBOM(state) {
     var cabling = window.generateCablingMatrix(null, devices, state);
     var cablingCost = cabling.reduce(function(s, r) { return s + r.totalCostUSD; }, 0);
     summary['__cabling__'] = {
-      model:     'Cabling & Optics (estimated)',
+      model:     'Cabling (DAC/AOC/LC-LC/MPO)',
       vendor:    'Various',
       subLayer:  'infrastructure',
       unitCost:  0,
       qty:       cabling.length,
       totalCost: cablingCost,
       features:  [],
-      detail:    'DAC/AOC/LC-LC per link distance',
+      detail:    'Per-link cable schedule; see Cabling tab',
       speed:     '',
       ports:     0
     };
+  }
+
+  // Add optics costs if available
+  if (window.recommendOptics && state.cabling && state.cabling.length) {
+    var optics = window.recommendOptics(state.cabling, devices, state);
+    var opticsCost = optics.reduce(function(s, r) { return s + r.totalCostUSD; }, 0);
+    if (optics.length) {
+      summary['__optics__'] = {
+        model:     'Optical Transceivers',
+        vendor:    'Various',
+        subLayer:  'infrastructure',
+        unitCost:  0,
+        qty:       optics.reduce(function(s, r) { return s + r.qty; }, 0),
+        totalCost: opticsCost,
+        features:  [],
+        detail:    'SR/LR/SR4/LR4/DR4/FR4 per link distance; see Optics tab',
+        speed:     '',
+        ports:     0
+      };
+    }
   }
 
   return { devices: devices, summary: summary };
@@ -145,11 +165,12 @@ function buildBOM(state) {
  */
 function renderBOMTable(summary) {
   var rows = Object.values(summary).map(function(item) {
-    if (item.model === 'Cabling & Optics (estimated)') {
+    if (item.model === 'Cabling (DAC/AOC/LC-LC/MPO)' || item.model === 'Optical Transceivers') {
       return '<tr class="cabling-row">' +
-        '<td colspan="2"><em>' + item.model + '</em></td>' +
+        '<td><em>' + item.vendor + '</em></td>' +
+        '<td><em>' + item.model + '</em><br><small>' + item.detail + '</small></td>' +
         '<td>' + item.subLayer + '</td>' +
-        '<td>' + item.qty + ' links</td>' +
+        '<td>' + item.qty + '</td>' +
         '<td>—</td>' +
         '<td><strong>$' + item.totalCost.toLocaleString() + '</strong></td>' +
         '</tr>';
