@@ -137,6 +137,11 @@ function buildDeviceList() {
     mcDevs.forEach(d => devs.push(d));
   }
 
+  // Apply structured hostnames — skip multisite (site prefix in name is load-bearing)
+  if (uc !== 'multisite' && uc !== 'multicloud' && typeof generateHostnames === 'function') {
+    generateHostnames(devs, STATE);
+  }
+
   return devs;
 }
 

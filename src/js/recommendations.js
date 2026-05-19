@@ -110,6 +110,15 @@ function updateBOMTable(layers) {
   if (!tbody) return;
   let rows = '', totalDev = 0, totalPorts = 0, totalCost = 0;
 
+  // Build hostname map per layer (requires naming.js + configgen.js)
+  const hostnamesByLayer = {};
+  try {
+    buildDeviceList().forEach(function(d) {
+      if (!hostnamesByLayer[d.layer]) hostnamesByLayer[d.layer] = [];
+      hostnamesByLayer[d.layer].push(d.name);
+    });
+  } catch(e) { /* STATE not ready yet — hostnames shown as — */ }
+
   layers.forEach(layer => {
     const selId = STATE.selectedProducts[layer.key];
     const prod  = PRODUCTS[selId];
@@ -122,6 +131,11 @@ function updateBOMTable(layers) {
     totalPorts += qty * portCount;
     totalCost  += extCost;
 
+    const names = hostnamesByLayer[layer.key] || [];
+    const hostnameCell = names.length === 0 ? '—'
+      : names.length === 1 ? names[0]
+      : names[0] + ' … ' + names[names.length - 1];
+
     rows += `<tr>
       <td><span class="layer-tag">${layer.label}</span></td>
       <td>${prod.vendor}</td>
@@ -129,6 +143,7 @@ function updateBOMTable(layers) {
       <td class="qty">${qty}</td>
       <td>${prod.ports}</td>
       <td style="color:var(--txt2);font-size:.78rem">${prod.features.slice(0,2).join(', ')}</td>
+      <td style="color:var(--txt2);font-size:.73rem;font-family:monospace">${hostnameCell}</td>
       <td style="text-align:right;color:var(--txt2)">${unitCost ? '$' + unitCost.toLocaleString() : '—'}</td>
       <td style="text-align:right;color:var(--green);font-weight:600">${extCost ? '$' + extCost.toLocaleString() : '—'}</td>
     </tr>`;
@@ -143,8 +158,17 @@ function updateBOMTable(layers) {
 
 function exportBOM() {
   const layers = getLayersForUC();
-  let csv = 'Layer,Vendor,Model,Quantity,Ports,Uplinks,Speed,Key Features,Unit Price (USD),Extended Cost (USD)\n';
+  let csv = 'Layer,Vendor,Model,Quantity,Ports,Uplinks,Speed,Key Features,Hostnames,Unit Price (USD),Extended Cost (USD)\n';
   let totalCost = 0;
+
+  const hostnamesByLayer = {};
+  try {
+    buildDeviceList().forEach(function(d) {
+      if (!hostnamesByLayer[d.layer]) hostnamesByLayer[d.layer] = [];
+      hostnamesByLayer[d.layer].push(d.name);
+    });
+  } catch(e) {}
+
   layers.forEach(layer => {
     const prod = PRODUCTS[STATE.selectedProducts[layer.key]];
     if (!prod) return;
@@ -152,9 +176,11 @@ function exportBOM() {
     const unitCost = prod.estimatedCostUSD || 0;
     const extCost  = unitCost * qty;
     totalCost += extCost;
-    csv += `"${layer.label}","${prod.vendor}","${prod.model}",${qty},"${prod.ports}","${prod.uplinks}","${prod.speed}","${prod.features.slice(0,4).join('; ')}",${unitCost},${extCost}\n`;
+    const names = hostnamesByLayer[layer.key] || [];
+    const hnCell = names.join(' ');
+    csv += `"${layer.label}","${prod.vendor}","${prod.model}",${qty},"${prod.ports}","${prod.uplinks}","${prod.speed}","${prod.features.slice(0,4).join('; ')}","${hnCell}",${unitCost},${extCost}\n`;
   });
-  csv += `"TOTAL",,,,,,,,,"${totalCost}"\n`;
+  csv += `"TOTAL",,,,,,,,,,"${totalCost}"\n`;
   const blob = new Blob([csv], { type:'text/csv' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
