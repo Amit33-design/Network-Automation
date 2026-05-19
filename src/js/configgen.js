@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'BGP', 'EVPN', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -663,6 +663,120 @@ system {
   }
 }
 # Apply: sudo config load /etc/sonic/config_db.json -y
+`;
+  }
+  return '';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   OSPF UNDERLAY HELPER  (DC + campus — area 0, passive-default)
+════════════════════════════════════════════════════════════════ */
+
+function _genOSPFUnderlay(vendor, state, dev, layer, idx) {
+  const isSpine = layer === 'dc-spine' || layer === 'gpu-spine';
+  const isTOR   = layer === 'gpu-tor';
+  const loIP    = isSpine ? `10.255.1.${idx+1}` : (isTOR ? `10.255.5.${idx+1}` : `10.255.2.${idx+1}`);
+
+  if (vendor === 'nxos') {
+    const uplinkIntfs = isSpine
+      ? ['Ethernet1/1','Ethernet1/2','Ethernet1/3','Ethernet1/4']
+      : ['Ethernet1/49','Ethernet1/50'];
+    const noPassive = uplinkIntfs.map(i => `  no passive-interface ${i}`).join('\n');
+    const ospfIntfs = uplinkIntfs.map(i =>
+      `interface ${i}\n  ip ospf UNDERLAY area 0.0.0.0\n  ip ospf network point-to-point\n  ip ospf authentication message-digest\n  ip ospf message-digest-key 1 md5 OspfUnder@2024\n  ip ospf mtu-ignore\n  no ip ospf passive-interface\n!`
+    ).join('\n');
+    return `!
+! ── OSPF UNDERLAY (area 0 — replaces IS-IS if selected) ────
+router ospf UNDERLAY
+  router-id ${loIP}
+  log-adjacency-changes detail
+  passive-interface default
+  no passive-interface loopback0
+${noPassive}
+  area 0.0.0.0 authentication message-digest
+!
+interface loopback0
+  ip ospf UNDERLAY area 0.0.0.0
+!
+${ospfIntfs}
+`;
+  }
+
+  if (vendor === 'eos') {
+    const noPassive = isSpine
+      ? ['Ethernet1/1','Ethernet1/2','Ethernet1/3','Ethernet1/4']
+      : ['Ethernet49/1','Ethernet50/1'];
+    const noPassiveLines = noPassive.map(i => `   no passive-interface ${i}`).join('\n');
+    const ospfIntfs = noPassive.map(i =>
+      `interface ${i}\n   ip ospf network point-to-point\n   ip ospf area 0.0.0.0\n!`
+    ).join('\n');
+    return `!
+! ── OSPF UNDERLAY ───────────────────────────────────────────
+router ospf 1
+   router-id ${loIP}
+   bfd all-interfaces
+   passive-interface default
+${noPassiveLines}
+   network 10.1.0.0/16 area 0.0.0.0
+   network 10.255.0.0/16 area 0.0.0.0
+   max-lsa 12000
+   distance ospf intra-area 65
+!
+interface Loopback0
+   ip ospf area 0.0.0.0
+!
+${ospfIntfs}
+`;
+  }
+
+  if (vendor === 'junos') {
+    return `## ── OSPF UNDERLAY ─────────────────────────────────────────
+protocols {
+    ospf {
+        reference-bandwidth 100g;
+        no-rfc-1583;
+        export CONNECTED;
+        area 0.0.0.0 {
+            interface lo0.0 { passive; }
+            interface et-0/0/48.0 {
+                interface-type p2p;
+                authentication { md5 1 key "OspfUnder@2024"; }
+            }
+            interface et-0/0/49.0 {
+                interface-type p2p;
+                authentication { md5 1 key "OspfUnder@2024"; }
+            }
+        }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic') {
+    return `# ── OSPF UNDERLAY (FRRouting) ────────────────────────────
+# /etc/frr/frr.conf  (append to existing frr config)
+router ospf
+  ospf router-id ${loIP}
+  passive-interface default
+  no passive-interface Ethernet112
+  no passive-interface Ethernet116
+  network ${loIP}/32 area 0.0.0.0
+  network 10.1.1.0/24 area 0.0.0.0
+  area 0.0.0.0 authentication message-digest
+!
+interface Ethernet112
+  ip ospf network point-to-point
+  ip ospf area 0.0.0.0
+  ip ospf authentication message-digest
+  ip ospf message-digest-key 1 md5 OspfUnder@2024
+!
+interface Ethernet116
+  ip ospf network point-to-point
+  ip ospf area 0.0.0.0
+  ip ospf authentication message-digest
+  ip ospf message-digest-key 1 md5 OspfUnder@2024
+!
+# Apply: sudo vtysh -f /etc/frr/frr.conf && sudo systemctl restart frr
 `;
   }
   return '';
@@ -1149,6 +1263,7 @@ function genNXOS(dev, layer, idx) {
   const hasEVPN = _rs('evpnEnabled',  () => hasVxlan);
   const hasPFC  = _rs('pfcEnabled',   () => (STATE.gpuSpecifics || []).includes('pfc'));
   const hasRoCE = _rs('roceEnabled',  () => (STATE.gpuSpecifics || []).includes('rocev2'));
+  const hasOSPF = _rs('ospfEnabled',  () => (STATE.underlayProto || []).includes('OSPF'));
 
   let cfg = `! ═══════════════════════════════════════════════════════════
 ! Device : ${name}
@@ -1163,6 +1278,7 @@ hostname ${name}
 ! ── FEATURES ───────────────────────────────────────────────
 feature bgp
 feature isis
+${hasOSPF ? `feature ospf` : ''}
 feature interface-vlan
 feature lacp
 feature lldp
@@ -1531,6 +1647,8 @@ router bgp ${asn}
 `;
   }
 
+  if (hasOSPF && !isTOR) cfg += _genOSPFUnderlay('nxos', STATE, dev, layer, idx);
+
   // Common NX-OS footer
   cfg += `!
 ! ── MANAGEMENT INTERFACE ───────────────────────────────────
@@ -1579,6 +1697,7 @@ function genEOS(dev, layer, idx) {
   const hasVxlan= _rs('vxlanEnabled', () => STATE.overlayProto.some(o=>o.includes('VXLAN'))) && !isTOR;
   const hasPFC  = _rs('pfcEnabled',   () => (STATE.gpuSpecifics || []).includes('pfc'));
   const hasRoCE = _rs('roceEnabled',  () => (STATE.gpuSpecifics || []).includes('rocev2'));
+  const hasOSPF = _rs('ospfEnabled',  () => (STATE.underlayProto || []).includes('OSPF'));
 
   return `! ═══════════════════════════════════════════════════════════
 ! Device : ${name}
@@ -1698,6 +1817,7 @@ ${hasVxlan && !isSpine ? `   vlan 100
       network ${loIP}/32
       ${hasVxlan && !isSpine ? `network ${vtepIP}/32` : ''}
 !
+${hasOSPF && !isTOR ? _genOSPFUnderlay('eos', STATE, dev, layer, idx) : ''}
 ${_genNTP('eos')}
 ${_genSNMPv3('eos')}
 ${_genAAA('eos', STATE)}
@@ -1709,9 +1829,10 @@ end
 
 /* ── Junos ──────────────────────────────────────────────────────── */
 function genJunos(dev, layer, idx) {
-  const name  = dev.name.toLowerCase().replace(/-/g, '_');
-  const loIP  = `10.255.2.${idx+1}`;
-  const mgmt  = `10.0.0.${20+idx}`;
+  const name    = dev.name.toLowerCase().replace(/-/g, '_');
+  const loIP    = `10.255.2.${idx+1}`;
+  const mgmt    = `10.0.0.${20+idx}`;
+  const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
   return `## ═══════════════════════════════════════════════════════════
 ## Device : ${dev.name}  Role: ${dev.role}
 ## OS     : Juniper Junos 23.x
@@ -1802,13 +1923,15 @@ protocols {
     lldp { interface all; }
     rstp { bridge-priority 32768; }
 }
+${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
 ${_genAAA('junos', STATE)}
 `;
 }
 
 /* ── SONiC ──────────────────────────────────────────────────────── */
 function genSONiC(dev, layer, idx) {
-  const name = dev.name;
+  const name    = dev.name;
+  const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
   return `# ═══════════════════════════════════════════════════════════
 # Device : ${name}  Role: ${dev.role}
 # OS     : NVIDIA SONiC 202311
@@ -1875,6 +1998,7 @@ function genSONiC(dev, layer, idx) {
   }
 }
 
+${hasOSPF ? _genOSPFUnderlay('sonic', STATE, dev, layer, idx) : ''}
 ${_genNTP('sonic')}
 ${_genSNMPv3('sonic')}
 ${_genAAA('sonic', STATE)}
