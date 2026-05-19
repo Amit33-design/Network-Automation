@@ -83,7 +83,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 ### TIER 1 — Core gaps (ship these first)
 
 #### BOM Enhancements
-- [ ] **Cabling matrix** [#4](https://github.com/Amit33-design/Network-Automation/issues/4): For each BOM layer pair (e.g. spine↔leaf), generate a cable schedule: port A device/interface → port B device/interface, cable type (DAC/AOC/LC-LC), length (1m/3m/5m), quantity, part number
+- [x] **Cabling matrix** [#4](https://github.com/Amit33-design/Network-Automation/issues/4): For each BOM layer pair (e.g. spine↔leaf), generate a cable schedule: port A device/interface → port B device/interface, cable type (DAC/AOC/LC-LC), length (1m/3m/5m), quantity, part number
 - [ ] **Optics catalog** [#5](https://github.com/Amit33-design/Network-Automation/issues/5): Add optics to PRODUCTS or a separate OPTICS catalog — SFP-10G-SR, QSFP-100G-SR4, QSFP-DD-400G-DR4, etc. with vendor (Cisco OEM, Finisar, Lumentum), reach, cost, and compatibility matrix
 - [x] **Price database** [#6](https://github.com/Amit33-design/Network-Automation/issues/6): Add `estimatedCostUSD` to all PRODUCTS entries (currently missing on most). Pull reference pricing from public sources. Add total BOM cost estimate in the BOM footer
 - [x] **Device naming convention** [#7](https://github.com/Amit33-design/Network-Automation/issues/7): Systematic hostname generator — `{site}-{role}-{rack}-{idx}` e.g. `IAD-LEAF-A01-01` based on STATE.orgName, numSites, role
@@ -203,3 +203,21 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - BOM table shows `first … last` hostname range per layer; CSV export includes full hostname list.
 
 **Issues closed:** #6, #7
+
+### 2026-05-19 (run 2)
+
+**Features completed this run:**
+
+1. **Cabling matrix (#4)** — `144bc10`
+   - Created `src/js/cabling.js` with four public functions exposed via `window.*`.
+   - `generateCablingMatrix(layers, state)` — builds cable rows per layer pair.
+   - Cable-type rules: DAC ≤3 m, AOC ≤100 m, LC-LC SMF >100 m.
+   - Link pairs: campus access↔dist (5 m AOC), dist↔core (20 m AOC), DC leaf↔spine (3 m DAC), GPU TOR↔spine (3 m DAC), WAN branch↔hub (500 m LC-LC SMF).
+   - Full-mesh uplink model for DC/GPU; each campus access gets exactly 2 uplinks to its dist pair.
+   - Generic reference part numbers keyed by `{speed}-{cableType}` (e.g. `QSFP-100G-CU3M`, `SFP-10G-AOC5M`, `QSFP-100G-LR4`).
+   - `updateCablingMatrix()` renders a collapsible table inside `#bom-section`; called automatically from `updateBOMTable()`.
+   - `getCablingCSVSection()` appends full per-device-pair cable schedule to `exportBOM()` CSV.
+   - CSS: `.cable-type-badge`, `.cable-dac` (green), `.cable-aoc` (cyan), `.cable-smf` (purple), `.cable-speed` (blue) added to `src/css/main.css`.
+   - `#cabling-section` div added inside `#bom-section` in `index.html`; script tag added after `recommendations.js`.
+
+**Issues closed:** #4
