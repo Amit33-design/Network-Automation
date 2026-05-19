@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'BGP', 'EVPN', 'QoS', 'SECURITY', 'NTP', 'SNMP'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'BGP', 'EVPN', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -532,6 +532,137 @@ view NETDESIGN-VIEW included .1 80000000
 access NETDESIGN-RO "" usm priv exact NETDESIGN-VIEW none none
 rouser netmon priv
 trapsess -v 3 -u netmon -l authPriv -a SHA -A "NetDesign@Auth2024" -x AES -X "NetDesign@Priv2024" 10.0.0.200
+`;
+  }
+  return '';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   AAA / TACACS+ HELPER BLOCKS
+════════════════════════════════════════════════════════════════ */
+
+function _genAAA(vendor, state) {
+  if (vendor === 'ios-xe') {
+    return `!
+! ── AAA / TACACS+ ───────────────────────────────────────────
+aaa new-model
+!
+tacacs server ISE-TACACS-PRIMARY
+ address ipv4 10.0.0.101
+ key 7 NetDesign@TACACS2024
+ timeout 3
+ single-connection
+!
+tacacs server ISE-TACACS-SECONDARY
+ address ipv4 10.0.0.102
+ key 7 NetDesign@TACACS2024
+ timeout 3
+!
+aaa group server tacacs+ TACACS-GROUP
+ server name ISE-TACACS-PRIMARY
+ server name ISE-TACACS-SECONDARY
+ ip tacacs source-interface Vlan10
+!
+aaa authentication login default group TACACS-GROUP local
+aaa authentication enable default group TACACS-GROUP enable
+aaa authorization console
+aaa authorization exec default group TACACS-GROUP local if-authenticated
+aaa authorization commands 1 default group TACACS-GROUP local if-authenticated
+aaa authorization commands 15 default group TACACS-GROUP local if-authenticated
+aaa accounting exec default start-stop group TACACS-GROUP
+aaa accounting commands 1 default start-stop group TACACS-GROUP
+aaa accounting commands 15 default start-stop group TACACS-GROUP
+!
+`;
+  }
+  if (vendor === 'nxos') {
+    return `!
+! ── AAA / TACACS+ ───────────────────────────────────────────
+tacacs-server host 10.0.0.101 key NetDesign@TACACS2024
+tacacs-server host 10.0.0.102 key NetDesign@TACACS2024
+tacacs-server timeout 3
+!
+aaa group server tacacs+ TACACS-GROUP
+    server 10.0.0.101
+    server 10.0.0.102
+    source-interface mgmt0
+    use-vrf management
+!
+aaa authentication login default group TACACS-GROUP local
+aaa authentication login console group TACACS-GROUP local
+aaa authentication enable default group TACACS-GROUP local
+aaa authorization commands default group TACACS-GROUP local
+aaa accounting default group TACACS-GROUP
+!
+`;
+  }
+  if (vendor === 'eos') {
+    return `!
+! ── AAA / TACACS+ ───────────────────────────────────────────
+tacacs-server host 10.0.0.101 key NetDesign@TACACS2024
+tacacs-server host 10.0.0.102 key NetDesign@TACACS2024
+tacacs-server timeout 3
+!
+aaa group server tacacs+ TACACS-GROUP
+   server 10.0.0.101
+   server 10.0.0.102
+!
+aaa authentication login default group TACACS-GROUP local
+aaa authentication enable default group TACACS-GROUP local
+aaa authorization exec default group TACACS-GROUP local
+aaa authorization commands all default group TACACS-GROUP local
+aaa accounting exec default start-stop group TACACS-GROUP
+aaa accounting commands all default start-stop group TACACS-GROUP
+!
+`;
+  }
+  if (vendor === 'junos') {
+    return `## ── AAA / TACACS+ ─────────────────────────────────────────
+system {
+    tacplus-server {
+        10.0.0.101 {
+            secret "NetDesign@TACACS2024";
+            single-connection;
+            timeout 3;
+        }
+        10.0.0.102 {
+            secret "NetDesign@TACACS2024";
+            timeout 3;
+        }
+    }
+    authentication-order [ tacplus password ];
+    accounting {
+        events [ login change-log interactive-commands ];
+        destination {
+            tacplus;
+        }
+    }
+}
+`;
+  }
+  if (vendor === 'sonic') {
+    return `# ── AAA / TACACS+ ─────────────────────────────────────────
+# /etc/sonic/config_db.json  (AAA section — merge with base config)
+{
+  "TACPLUS_SERVER": {
+    "10.0.0.101": {
+      "priority": "1",
+      "tcp_port": "49",
+      "passkey": "NetDesign@TACACS2024"
+    },
+    "10.0.0.102": {
+      "priority": "2",
+      "tcp_port": "49",
+      "passkey": "NetDesign@TACACS2024"
+    }
+  },
+  "AAA": {
+    "authentication": { "login": "tacacs+,local", "failthrough": "true" },
+    "authorization":  { "login": "tacacs+,local" },
+    "accounting":     { "login": "tacacs+" }
+  }
+}
+# Apply: sudo config load /etc/sonic/config_db.json -y
 `;
   }
   return '';
@@ -979,11 +1110,9 @@ ${hasBGP ? `router bgp 65100
   // Common footer for all IOS-XE
   cfg += _genNTP('ios-xe');
   cfg += _genSNMPv3('ios-xe');
+  cfg += _genAAA('ios-xe', STATE);
   cfg += `!
-! ── SSH / AAA ───────────────────────────────────────────────
-aaa new-model
-aaa authentication login default local
-!
+! ── SSH ─────────────────────────────────────────────────────
 crypto key generate rsa modulus 2048
 ip ssh version 2
 ip ssh time-out 60
@@ -995,7 +1124,7 @@ line con 0
 !
 line vty 0 15
  transport input ssh
- login local
+ login authentication default
  exec-timeout 10 0
  logging synchronous
 !
@@ -1414,6 +1543,7 @@ ip route 0.0.0.0/0 10.0.0.1 vrf management
 `;
   cfg += _genNTP('nxos');
   cfg += _genSNMPv3('nxos');
+  cfg += _genAAA('nxos', STATE);
   cfg += `!
 ! ── SSH ─────────────────────────────────────────────────────
 ssh key rsa 2048
@@ -1570,6 +1700,7 @@ ${hasVxlan && !isSpine ? `   vlan 100
 !
 ${_genNTP('eos')}
 ${_genSNMPv3('eos')}
+${_genAAA('eos', STATE)}
 ip route vrf MGMT 0.0.0.0/0 10.0.0.1
 !
 end
@@ -1671,6 +1802,7 @@ protocols {
     lldp { interface all; }
     rstp { bridge-priority 32768; }
 }
+${_genAAA('junos', STATE)}
 `;
 }
 
@@ -1745,6 +1877,7 @@ function genSONiC(dev, layer, idx) {
 
 ${_genNTP('sonic')}
 ${_genSNMPv3('sonic')}
+${_genAAA('sonic', STATE)}
 `;
 }
 
