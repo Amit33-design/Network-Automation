@@ -85,8 +85,8 @@ https://github.com/Amit33-design/Network-Automation/issues
 #### BOM Enhancements
 - [ ] **Cabling matrix** [#4](https://github.com/Amit33-design/Network-Automation/issues/4): For each BOM layer pair (e.g. spine↔leaf), generate a cable schedule: port A device/interface → port B device/interface, cable type (DAC/AOC/LC-LC), length (1m/3m/5m), quantity, part number
 - [ ] **Optics catalog** [#5](https://github.com/Amit33-design/Network-Automation/issues/5): Add optics to PRODUCTS or a separate OPTICS catalog — SFP-10G-SR, QSFP-100G-SR4, QSFP-DD-400G-DR4, etc. with vendor (Cisco OEM, Finisar, Lumentum), reach, cost, and compatibility matrix
-- [ ] **Price database** [#6](https://github.com/Amit33-design/Network-Automation/issues/6): Add `estimatedCostUSD` to all PRODUCTS entries (currently missing on most). Pull reference pricing from public sources. Add total BOM cost estimate in the BOM footer
-- [ ] **Device naming convention** [#7](https://github.com/Amit33-design/Network-Automation/issues/7): Systematic hostname generator — `{site}-{role}-{rack}-{idx}` e.g. `IAD-LEAF-A01-01` based on STATE.orgName, numSites, role
+- [x] **Price database** [#6](https://github.com/Amit33-design/Network-Automation/issues/6): Add `estimatedCostUSD` to all PRODUCTS entries (currently missing on most). Pull reference pricing from public sources. Add total BOM cost estimate in the BOM footer
+- [x] **Device naming convention** [#7](https://github.com/Amit33-design/Network-Automation/issues/7): Systematic hostname generator — `{site}-{role}-{rack}-{idx}` e.g. `IAD-LEAF-A01-01` based on STATE.orgName, numSites, role
 - [ ] **Rack unit planning**: Add `rackU` field to PRODUCTS. Generate rack diagram data showing U consumption per device
 
 #### Config Generation Gaps
@@ -183,3 +183,23 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 ## Agent Log
 
 <!-- The agent appends entries here after each run -->
+
+### 2026-05-19
+
+**Features completed this run:**
+
+1. **Price database (#6)** — `81bea99`
+   - All PRODUCTS already had `estimatedCostUSD`; wired it into the BOM UI.
+   - `updateBOMTable()` computes Unit Price + Extended Cost per row; Total BOM Cost shown in footer (green).
+   - `exportBOM()` CSV now includes Unit Price (USD) and Extended Cost (USD) columns plus a TOTAL row.
+   - BOM table `<thead>` updated with two new right-aligned columns.
+
+2. **Device hostname generator (#7)** — `aff2de8`
+   - Created `src/js/naming.js` with `window.generateHostnames(devices, state)`.
+   - Pattern: `{SITE}-{ROLE}-{RACK}-{IDX:02d}` (e.g. `NYC-LEAF-A01-01`, `HQ-CORE-A01-01`).
+   - Site code derived from `STATE.orgName` (multi-word → initials, single-word → first 4 chars).
+   - Leaf/dist/TOR devices grouped 2-per-rack (A01, A02…); all others in A01.
+   - `buildDeviceList()` calls it automatically for campus/dc/gpu/wan/hybrid (skips multisite/multicloud).
+   - BOM table shows `first … last` hostname range per layer; CSV export includes full hostname list.
+
+**Issues closed:** #6, #7
