@@ -93,7 +93,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [ ] **OSPF underlay** [#8](https://github.com/Amit33-design/Network-Automation/issues/8): Currently BGP-only. Add OSPF area 0 underlay config for campus and DC use cases
 - [ ] **STP/RSTP config**: Add Rapid-PVST+/MST config blocks for campus switches (port types, portfast, BPDU guard)
 - [ ] **QoS policies** [#9](https://github.com/Amit33-design/Network-Automation/issues/9): Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
-- [ ] **AAA/TACACS+** [#10](https://github.com/Amit33-design/Network-Automation/issues/10): Add TACACS+ / RADIUS config blocks for all vendors
+- [x] **AAA/TACACS+** [#10](https://github.com/Amit33-design/Network-Automation/issues/10): Add TACACS+ / RADIUS config blocks for all vendors
 - [x] **NTP + SNMP v3** [#11](https://github.com/Amit33-design/Network-Automation/issues/11): Add NTP server hierarchy + SNMP v3 auth+priv config to all vendors
 - [ ] **interface descriptions**: Auto-generate `description` lines from the cabling matrix (e.g. `description TO: IAD-SPINE-01 Eth1/1`)
 
@@ -236,3 +236,18 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - `SECTION_MARKERS` extended with `'SNMP'` so the section-nav jump bar gains an SNMP button.
 
 **Issues closed:** #11
+
+### 2026-05-19 (run 4)
+
+**Features completed this run:**
+
+1. **AAA/TACACS+ (#10)** — `3642210`
+   - Added `_genAAA(vendor, state)` helper in `configgen.js` covering all 5 vendors.
+   - **IOS-XE**: `tacacs server` named objects + `TACACS-GROUP` aaa-group with source-interface; full `aaa authentication/authorization/accounting` for login, enable, exec, commands 1 + 15; `line vty` uses `login authentication default` (removes hardcoded `login local`).
+   - **NX-OS**: `tacacs-server host` entries + `TACACS-GROUP` with `use-vrf management` + `source-interface mgmt0`; aaa auth/authz/accounting for login, console, enable.
+   - **EOS**: `tacacs-server` hosts + `TACACS-GROUP`; aaa auth login/enable/exec/commands all + accounting exec+commands.
+   - **JunOS**: `tacplus-server` block with `single-connection`; `authentication-order [ tacplus password ]`; `accounting events [ login change-log interactive-commands ]` — appended as a top-level `system {}` stanza (JunOS merges on load).
+   - **SONiC**: `TACPLUS_SERVER` + `AAA` stanza in `config_db.json` with `failthrough=true`; comment shows apply command.
+   - `SECTION_MARKERS` extended with `'AAA'` for the section-nav jump bar.
+
+**Issues closed:** #10
