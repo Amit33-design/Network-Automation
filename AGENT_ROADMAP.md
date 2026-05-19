@@ -90,7 +90,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [ ] **Rack unit planning**: Add `rackU` field to PRODUCTS. Generate rack diagram data showing U consumption per device
 
 #### Config Generation Gaps
-- [ ] **OSPF underlay** [#8](https://github.com/Amit33-design/Network-Automation/issues/8): Currently BGP-only. Add OSPF area 0 underlay config for campus and DC use cases
+- [x] **OSPF underlay** [#8](https://github.com/Amit33-design/Network-Automation/issues/8): Currently BGP-only. Add OSPF area 0 underlay config for campus and DC use cases
 - [ ] **STP/RSTP config**: Add Rapid-PVST+/MST config blocks for campus switches (port types, portfast, BPDU guard)
 - [ ] **QoS policies** [#9](https://github.com/Amit33-design/Network-Automation/issues/9): Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
 - [x] **AAA/TACACS+** [#10](https://github.com/Amit33-design/Network-Automation/issues/10): Add TACACS+ / RADIUS config blocks for all vendors
@@ -251,3 +251,19 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - `SECTION_MARKERS` extended with `'AAA'` for the section-nav jump bar.
 
 **Issues closed:** #10
+
+### 2026-05-19 (run 5)
+
+**Features completed this run:**
+
+1. **OSPF underlay (#8)** — `5efd87f`
+   - Added `_genOSPFUnderlay(vendor, state, dev, layer, idx)` helper in `configgen.js` for NX-OS, EOS, JunOS, SONiC.
+   - **NX-OS**: `feature ospf` added conditionally; `router ospf UNDERLAY` with MD5 auth area 0; passive-interface default + no-passive on spine (Eth1/1–4) or leaf uplinks (Eth1/49–50); per-interface `ip ospf point-to-point` + `mtu-ignore`.
+   - **EOS**: `router ospf 1` with `bfd all-interfaces`, passive-interface default, per-uplink no-passive; `ip ospf network point-to-point` per interface.
+   - **JunOS**: `protocols { ospf { area 0.0.0.0 { ... } } }` with p2p interface-type and MD5 auth; appended after the BGP block as a separate `protocols {}` merge stanza.
+   - **SONiC**: FRRouting `/etc/frr/frr.conf` OSPF stanza with passive-interface default, MD5 auth on uplinks, `sudo systemctl restart frr` apply comment.
+   - **IOS-XE campus**: already had inline OSPF (unchanged).
+   - `hasOSPF` derived from `STATE.underlayProto.includes('OSPF')` via `_rs()`; GPU TOR excluded.
+   - `'OSPF'` added to `SECTION_MARKERS` for section-nav jump bar.
+
+**Issues closed:** #8
