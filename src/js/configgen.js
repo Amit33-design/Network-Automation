@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'BGP', 'EVPN', 'QoS', 'SECURITY', 'NTP'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'BGP', 'EVPN', 'QoS', 'SECURITY', 'NTP', 'SNMP'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -360,6 +360,181 @@ function downloadConfig() {
   a.download = `${ACTIVE_DEV.name.toLowerCase()}.${ext}`;
   a.click();
   toast(`${ACTIVE_DEV.name} config downloaded`, 'success');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   NTP + SNMP v3 HELPER BLOCKS  (appended to every vendor config)
+════════════════════════════════════════════════════════════════ */
+
+function _genNTP(vendor) {
+  if (vendor === 'ios-xe') {
+    return `!
+! ── NTP ─────────────────────────────────────────────────────
+ntp authenticate
+ntp authentication-key 1 md5 NetDesignNTP@2024
+ntp trusted-key 1
+ntp source Vlan10
+ntp server 10.0.0.1 prefer key 1
+ntp server 10.0.0.2 key 1
+clock timezone UTC 0 0
+clock calendar-valid
+`;
+  }
+  if (vendor === 'nxos') {
+    return `!
+! ── NTP ─────────────────────────────────────────────────────
+ntp authenticate
+ntp authentication-key 1 md5 NetDesignNTP@2024
+ntp trusted-key 1
+ntp server 10.0.0.1 prefer use-vrf management key 1
+ntp server 10.0.0.2 use-vrf management key 1
+clock timezone UTC 0 0
+`;
+  }
+  if (vendor === 'eos') {
+    return `!
+! ── NTP ─────────────────────────────────────────────────────
+ntp authenticate
+ntp authentication-key 1 md5 NetDesignNTP@2024
+ntp trusted-key 1
+ntp server 10.0.0.1 prefer key 1
+ntp server 10.0.0.2 key 1
+`;
+  }
+  if (vendor === 'junos') {
+    return `ntp {
+        authentication-key 1 type md5 value "NetDesignNTP@2024";
+        trusted-key 1;
+        boot-server 10.0.0.1;
+        server 10.0.0.1 prefer key 1;
+        server 10.0.0.2 key 1;
+    }`;
+  }
+  if (vendor === 'sonic') {
+    return `# ── NTP ─────────────────────────────────────────────────────
+# /etc/sonic/config_db.json  (NTP section)
+{
+  "NTP_SERVER": {
+    "10.0.0.1": { "resolve_as_hostname": "false" },
+    "10.0.0.2": { "resolve_as_hostname": "false" }
+  },
+  "NTP": { "global": { "src_intf": "eth0", "vrf": "mgmt" } },
+  "SYSLOG_SERVER": { "10.0.0.201": {} }
+}
+`;
+  }
+  return '';
+}
+
+function _genSNMPv3(vendor) {
+  if (vendor === 'ios-xe') {
+    return `!
+! ── SNMP v3 (authPriv) ──────────────────────────────────────
+no snmp-server community NetRead
+no snmp-server community NetWrite
+snmp-server view NETDESIGN-VIEW iso included
+snmp-server group NETDESIGN-RO v3 priv read NETDESIGN-VIEW
+snmp-server group NETDESIGN-RW v3 priv read NETDESIGN-VIEW write NETDESIGN-VIEW
+snmp-server user netmon NETDESIGN-RO v3 auth sha NetDesign@Auth2024 priv aes 128 NetDesign@Priv2024
+snmp-server host 10.0.0.200 traps version 3 priv netmon
+snmp-server enable traps bgp
+snmp-server enable traps envmon
+snmp-server enable traps interface
+!
+logging host 10.0.0.201
+logging trap informational
+logging source-interface Vlan10
+`;
+  }
+  if (vendor === 'nxos') {
+    return `!
+! ── SNMP v3 (authPriv) ──────────────────────────────────────
+no snmp-server community NetRead
+snmp-server user netmon auth sha NetDesign@Auth2024 priv aes-128 NetDesign@Priv2024
+snmp-server group NETDESIGN-RO v3 priv
+snmp-server host 10.0.0.200 traps version 3 priv netmon use-vrf management
+snmp-server enable traps bgp
+snmp-server enable traps link
+!
+logging server 10.0.0.201 6 use-vrf management
+`;
+  }
+  if (vendor === 'eos') {
+    return `!
+! ── SNMP v3 (authPriv) ──────────────────────────────────────
+no snmp-server community NetRead
+snmp-server group NETDESIGN-RO v3 priv
+snmp-server user netmon NETDESIGN-RO v3 auth sha NetDesign@Auth2024 priv aes128 NetDesign@Priv2024
+snmp-server host 10.0.0.200 traps version 3 priv netmon
+snmp-server enable traps bgp
+!
+logging host 10.0.0.201
+logging buffered 10000
+`;
+  }
+  if (vendor === 'junos') {
+    return `snmp {
+    v3 {
+        usm {
+            local-engine {
+                user netmon {
+                    authentication-sha {
+                        authentication-password "NetDesign@Auth2024";
+                    }
+                    privacy-aes128 {
+                        privacy-password "NetDesign@Priv2024";
+                    }
+                }
+            }
+        }
+        vacm {
+            security-to-group {
+                security-model usm {
+                    security-name netmon { group NETDESIGN-RO; }
+                }
+            }
+            access {
+                group NETDESIGN-RO {
+                    default-context-prefix {
+                        security-model usm {
+                            security-level privacy {
+                                read-view NETDESIGN-VIEW;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        target-address NMS {
+            address 10.0.0.200;
+            tag-list netdesign;
+        }
+        target-parameters NMS {
+            parameters {
+                message-processing-model v3;
+                security-model usm;
+                security-level privacy;
+                security-name netmon;
+            }
+        }
+        notify netdesign { tag netdesign; type trap; }
+    }
+    view NETDESIGN-VIEW { oid .1 include; }
+}
+`;
+  }
+  if (vendor === 'sonic') {
+    return `# ── SNMP v3 ─────────────────────────────────────────────────
+# /etc/snmp/snmpd.conf  (net-snmp v3 authPriv — apply via sudo)
+createUser netmon SHA "NetDesign@Auth2024" AES "NetDesign@Priv2024"
+group NETDESIGN-RO usm netmon
+view NETDESIGN-VIEW included .1 80000000
+access NETDESIGN-RO "" usm priv exact NETDESIGN-VIEW none none
+rouser netmon priv
+trapsess -v 3 -u netmon -l authPriv -a SHA -A "NetDesign@Auth2024" -x AES -X "NetDesign@Priv2024" 10.0.0.200
+`;
+  }
+  return '';
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -802,20 +977,9 @@ ${hasBGP ? `router bgp 65100
   }
 
   // Common footer for all IOS-XE
+  cfg += _genNTP('ios-xe');
+  cfg += _genSNMPv3('ios-xe');
   cfg += `!
-! ── NTP / SNMP / SYSLOG ────────────────────────────────────
-ntp server 10.0.0.1 prefer
-ntp server 10.0.0.2
-clock timezone UTC 0 0
-!
-snmp-server community NetRead ro
-snmp-server community NetWrite rw
-snmp-server host 10.0.0.200 version 2c NetRead
-snmp-server enable traps
-logging host 10.0.0.201
-logging trap informational
-logging source-interface Vlan10
-!
 ! ── SSH / AAA ───────────────────────────────────────────────
 aaa new-model
 aaa authentication login default local
@@ -1247,15 +1411,10 @@ interface mgmt0
   ip address ${mgmtIP}/24
 !
 ip route 0.0.0.0/0 10.0.0.1 vrf management
-!
-! ── NTP / SNMP / SYSLOG ────────────────────────────────────
-ntp server 10.0.0.1 use-vrf management
-ntp server 10.0.0.2 use-vrf management
-!
-snmp-server community NetRead group network-operator
-snmp-server host 10.0.0.200 version 2c NetRead use-vrf management
-logging server 10.0.0.201 6 use-vrf management
-!
+`;
+  cfg += _genNTP('nxos');
+  cfg += _genSNMPv3('nxos');
+  cfg += `!
 ! ── SSH ─────────────────────────────────────────────────────
 ssh key rsa 2048
 feature ssh
@@ -1409,16 +1568,9 @@ ${hasVxlan && !isSpine ? `   vlan 100
       network ${loIP}/32
       ${hasVxlan && !isSpine ? `network ${vtepIP}/32` : ''}
 !
-! ── NTP / SYSLOG ────────────────────────────────────────────
-ntp server 10.0.0.1 iburst
-logging host 10.0.0.201
-logging buffered 10000
-!
+${_genNTP('eos')}
+${_genSNMPv3('eos')}
 ip route vrf MGMT 0.0.0.0/0 10.0.0.1
-!
-! ── SNMP ────────────────────────────────────────────────────
-snmp-server community NetRead ro
-snmp-server host 10.0.0.200 version 2c NetRead
 !
 end
 `;
@@ -1458,12 +1610,9 @@ system {
         host 10.0.0.201 { any info; }
         file messages { any notice; authorization info; }
     }
-    ntp { server 10.0.0.1; }
-    snmp {
-        community NetRead { authorization read-only; }
-        trap-group netdesign { version v2; targets { 10.0.0.200; } }
-    }
+    ${_genNTP('junos')}
 }
+${_genSNMPv3('junos')}
 interfaces {
     lo0 {
         unit 0 {
@@ -1594,13 +1743,8 @@ function genSONiC(dev, layer, idx) {
   }
 }
 
-# ── NTP / SYSLOG ─────────────────────────────────────────────
-# /etc/sonic/config_db.json (NTP)
-{
-  "NTP_SERVER": { "10.0.0.1": {}, "10.0.0.2": {} },
-  "SYSLOG_SERVER": { "10.0.0.201": {} },
-  "SNMP_COMMUNITY": { "NetRead": { "TYPE": "RO" } }
-}
+${_genNTP('sonic')}
+${_genSNMPv3('sonic')}
 `;
 }
 
