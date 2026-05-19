@@ -154,6 +154,9 @@ function updateBOMTable(layers) {
   document.getElementById('bom-total-ports').textContent = totalPorts.toLocaleString();
   const costEl = document.getElementById('bom-total-cost');
   if (costEl) costEl.textContent = totalCost ? '$' + totalCost.toLocaleString() : '—';
+
+  /* Refresh cable schedule whenever the BOM updates */
+  if (typeof updateCablingMatrix === 'function') updateCablingMatrix(layers, STATE);
 }
 
 function exportBOM() {
@@ -181,6 +184,7 @@ function exportBOM() {
     csv += `"${layer.label}","${prod.vendor}","${prod.model}",${qty},"${prod.ports}","${prod.uplinks}","${prod.speed}","${prod.features.slice(0,4).join('; ')}","${hnCell}",${unitCost},${extCost}\n`;
   });
   csv += `"TOTAL",,,,,,,,,,"${totalCost}"\n`;
+  if (typeof getCablingCSVSection === 'function') csv += getCablingCSVSection();
   const blob = new Blob([csv], { type:'text/csv' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
