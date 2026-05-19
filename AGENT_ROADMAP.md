@@ -94,7 +94,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [ ] **STP/RSTP config**: Add Rapid-PVST+/MST config blocks for campus switches (port types, portfast, BPDU guard)
 - [ ] **QoS policies** [#9](https://github.com/Amit33-design/Network-Automation/issues/9): Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
 - [ ] **AAA/TACACS+** [#10](https://github.com/Amit33-design/Network-Automation/issues/10): Add TACACS+ / RADIUS config blocks for all vendors
-- [ ] **NTP + SNMP v3** [#11](https://github.com/Amit33-design/Network-Automation/issues/11): Add NTP server hierarchy + SNMP v3 auth+priv config to all vendors
+- [x] **NTP + SNMP v3** [#11](https://github.com/Amit33-design/Network-Automation/issues/11): Add NTP server hierarchy + SNMP v3 auth+priv config to all vendors
 - [ ] **interface descriptions**: Auto-generate `description` lines from the cabling matrix (e.g. `description TO: IAD-SPINE-01 Eth1/1`)
 
 #### ZTP (Zero Touch Provisioning)
@@ -221,3 +221,18 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - `#cabling-section` div added inside `#bom-section` in `index.html`; script tag added after `recommendations.js`.
 
 **Issues closed:** #4
+
+### 2026-05-19 (run 3)
+
+**Features completed this run:**
+
+1. **NTP + SNMP v3 (#11)** — `16fcf57`
+   - Added `_genNTP(vendor)` and `_genSNMPv3(vendor)` private helpers to `configgen.js` (inserted before CONFIG GENERATION TEMPLATES section).
+   - **IOS-XE**: `ntp authenticate` + md5 key 1; SNMP v3 group/view/user (SHA auth + AES-128 priv); removes v2c communities; appended via `cfg +=` in common footer.
+   - **NX-OS**: same pattern with `use-vrf management`; `snmp-server user` localizedkey syntax; appended via `cfg +=` after mgmt interface block.
+   - **EOS**: `ntp authenticate`; `snmp-server user … priv aes128`; injected via `${…}` interpolation in return template.
+   - **JunOS**: NTP auth-key block inside `system { ntp {} }`; top-level `snmp { v3 { usm/vacm } }` block — also fixes pre-existing bug where `snmp {}` was incorrectly nested inside `system {}`.
+   - **SONiC**: `config_db.json` NTP stanza + `/etc/snmp/snmpd.conf` net-snmp v3 `createUser`/`group`/`access`/`rouser`/`trapsess` lines.
+   - `SECTION_MARKERS` extended with `'SNMP'` so the section-nav jump bar gains an SNMP button.
+
+**Issues closed:** #11
