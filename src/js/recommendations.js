@@ -108,16 +108,19 @@ function openBOM() {
 function updateBOMTable(layers) {
   const tbody = document.getElementById('bom-tbody');
   if (!tbody) return;
-  let rows = '', totalDev = 0, totalPorts = 0;
+  let rows = '', totalDev = 0, totalPorts = 0, totalCost = 0;
 
   layers.forEach(layer => {
     const selId = STATE.selectedProducts[layer.key];
     const prod  = PRODUCTS[selId];
     if (!prod) return;
-    const qty = estimateCounts(layer.key);
+    const qty       = estimateCounts(layer.key);
     const portCount = parseInt(prod.ports) || 24;
+    const unitCost  = prod.estimatedCostUSD || 0;
+    const extCost   = unitCost * qty;
     totalDev   += qty;
     totalPorts += qty * portCount;
+    totalCost  += extCost;
 
     rows += `<tr>
       <td><span class="layer-tag">${layer.label}</span></td>
@@ -126,23 +129,32 @@ function updateBOMTable(layers) {
       <td class="qty">${qty}</td>
       <td>${prod.ports}</td>
       <td style="color:var(--txt2);font-size:.78rem">${prod.features.slice(0,2).join(', ')}</td>
+      <td style="text-align:right;color:var(--txt2)">${unitCost ? '$' + unitCost.toLocaleString() : '—'}</td>
+      <td style="text-align:right;color:var(--green);font-weight:600">${extCost ? '$' + extCost.toLocaleString() : '—'}</td>
     </tr>`;
   });
 
   tbody.innerHTML = rows;
   document.getElementById('bom-total-dev').textContent   = totalDev;
   document.getElementById('bom-total-ports').textContent = totalPorts.toLocaleString();
+  const costEl = document.getElementById('bom-total-cost');
+  if (costEl) costEl.textContent = totalCost ? '$' + totalCost.toLocaleString() : '—';
 }
 
 function exportBOM() {
   const layers = getLayersForUC();
-  let csv = 'Layer,Vendor,Model,Quantity,Ports,Uplinks,Speed,Key Features\n';
+  let csv = 'Layer,Vendor,Model,Quantity,Ports,Uplinks,Speed,Key Features,Unit Price (USD),Extended Cost (USD)\n';
+  let totalCost = 0;
   layers.forEach(layer => {
     const prod = PRODUCTS[STATE.selectedProducts[layer.key]];
     if (!prod) return;
-    const qty = estimateCounts(layer.key);
-    csv += `"${layer.label}","${prod.vendor}","${prod.model}",${qty},"${prod.ports}","${prod.uplinks}","${prod.speed}","${prod.features.slice(0,4).join('; ')}"\n`;
+    const qty      = estimateCounts(layer.key);
+    const unitCost = prod.estimatedCostUSD || 0;
+    const extCost  = unitCost * qty;
+    totalCost += extCost;
+    csv += `"${layer.label}","${prod.vendor}","${prod.model}",${qty},"${prod.ports}","${prod.uplinks}","${prod.speed}","${prod.features.slice(0,4).join('; ')}",${unitCost},${extCost}\n`;
   });
+  csv += `"TOTAL",,,,,,,,,"${totalCost}"\n`;
   const blob = new Blob([csv], { type:'text/csv' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
