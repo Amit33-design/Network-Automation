@@ -69,50 +69,56 @@ backend/
 
 ---
 
+## GitHub Issues
+All backlog items are tracked as GitHub Issues:
+https://github.com/Amit33-design/Network-Automation/issues
+
+> **Agent**: when you complete a feature, close the corresponding issue with:
+> `gh issue close <N> --repo Amit33-design/Network-Automation --comment "Implemented in commit <hash>"`
+
+---
+
 ## Feature Backlog (priority order)
 
 ### TIER 1 — Core gaps (ship these first)
 
 #### BOM Enhancements
-- [ ] **Cabling matrix**: For each BOM layer pair (e.g. spine↔leaf), generate a cable schedule: port A device/interface → port B device/interface, cable type (DAC/AOC/LC-LC), length (1m/3m/5m), quantity, part number
-- [ ] **Optics catalog**: Add optics to PRODUCTS or a separate OPTICS catalog — SFP-10G-SR, QSFP-100G-SR4, QSFP-DD-400G-DR4, etc. with vendor (Cisco OEM, Finisar, Lumentum), reach, cost, and compatibility matrix
-- [ ] **Price database**: Add `estimatedCostUSD` to all PRODUCTS entries (currently missing on most). Pull reference pricing from public sources. Add total BOM cost estimate in the BOM footer
-- [ ] **Device naming convention**: Systematic hostname generator — `{site}-{role}-{rack}-{idx}` e.g. `IAD-LEAF-A01-01` based on STATE.orgName, numSites, role
+- [ ] **Cabling matrix** [#4](https://github.com/Amit33-design/Network-Automation/issues/4): For each BOM layer pair (e.g. spine↔leaf), generate a cable schedule: port A device/interface → port B device/interface, cable type (DAC/AOC/LC-LC), length (1m/3m/5m), quantity, part number
+- [ ] **Optics catalog** [#5](https://github.com/Amit33-design/Network-Automation/issues/5): Add optics to PRODUCTS or a separate OPTICS catalog — SFP-10G-SR, QSFP-100G-SR4, QSFP-DD-400G-DR4, etc. with vendor (Cisco OEM, Finisar, Lumentum), reach, cost, and compatibility matrix
+- [ ] **Price database** [#6](https://github.com/Amit33-design/Network-Automation/issues/6): Add `estimatedCostUSD` to all PRODUCTS entries (currently missing on most). Pull reference pricing from public sources. Add total BOM cost estimate in the BOM footer
+- [ ] **Device naming convention** [#7](https://github.com/Amit33-design/Network-Automation/issues/7): Systematic hostname generator — `{site}-{role}-{rack}-{idx}` e.g. `IAD-LEAF-A01-01` based on STATE.orgName, numSites, role
 - [ ] **Rack unit planning**: Add `rackU` field to PRODUCTS. Generate rack diagram data showing U consumption per device
 
 #### Config Generation Gaps
-- [ ] **OSPF underlay**: Currently BGP-only. Add OSPF area 0 underlay config for campus and DC use cases
+- [ ] **OSPF underlay** [#8](https://github.com/Amit33-design/Network-Automation/issues/8): Currently BGP-only. Add OSPF area 0 underlay config for campus and DC use cases
 - [ ] **STP/RSTP config**: Add Rapid-PVST+/MST config blocks for campus switches (port types, portfast, BPDU guard)
-- [ ] **QoS policies**: Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
-- [ ] **AAA/TACACS+**: Add TACACS+ / RADIUS config blocks for all vendors
-- [ ] **NTP config**: Add NTP server hierarchy config to all generated configs
-- [ ] **SNMP v3**: Add SNMP v3 auth+priv config to all vendors
+- [ ] **QoS policies** [#9](https://github.com/Amit33-design/Network-Automation/issues/9): Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
+- [ ] **AAA/TACACS+** [#10](https://github.com/Amit33-design/Network-Automation/issues/10): Add TACACS+ / RADIUS config blocks for all vendors
+- [ ] **NTP + SNMP v3** [#11](https://github.com/Amit33-design/Network-Automation/issues/11): Add NTP server hierarchy + SNMP v3 auth+priv config to all vendors
 - [ ] **interface descriptions**: Auto-generate `description` lines from the cabling matrix (e.g. `description TO: IAD-SPINE-01 Eth1/1`)
 
 #### ZTP (Zero Touch Provisioning)
-- [ ] **DHCP option 67**: Generate ISC DHCP / Cisco IOS DHCP config for ZTP boot file delivery
-- [ ] **Netmiko/NAPALM onboarding script**: Generate Python script using netmiko to push day-0 config to a list of devices (reads from a CSV inventory)
-- [ ] **Ansible playbook**: Generate `site.yml` + roles for pushing generated configs via NAPALM/netconf
+- [ ] **DHCP option 67 + Netmiko** [#12](https://github.com/Amit33-design/Network-Automation/issues/12): Generate ISC DHCP / Cisco IOS DHCP config for ZTP boot file delivery + Netmiko onboarding script
+- [ ] **Ansible playbook** [#13](https://github.com/Amit33-design/Network-Automation/issues/13): Generate `site.yml` + roles for pushing generated configs via NAPALM/netconf
 - [ ] **Serial number → hostname mapping**: ZTP lookup table (CSV/YAML) mapping serial numbers to hostnames for Cisco ZTP / Arista ZTP
 - [ ] **POAP (Cisco)**: Generate Cisco POAP Python script
 - [ ] **EOS ZTP**: Generate Arista EOS ZTP script
 
 #### Policy Management
-- [ ] **ACL generator**: Generate named ACLs / prefix-lists from compliance selections (PCI, HIPAA zones)
+- [ ] **ACL generator** [#14](https://github.com/Amit33-design/Network-Automation/issues/14): Generate named ACLs / prefix-lists from compliance selections (PCI, HIPAA zones)
 - [ ] **BGP route-policy validator**: Check generated BGP policies for common mistakes (missing default deny, wrong community syntax)
 - [ ] **Firewall rule consistency check**: Cross-check FW rules with network segmentation design — flag any policy that contradicts the HLD
 - [ ] **Policy diff**: Show what changed between two policy versions (already have diffengine.js — extend it for policies)
 
 #### Pre/Post Deployment Checks
-- [ ] **Pre-check scripts**: Generate Python/Bash scripts that SSH to devices and verify: interface states, BGP neighbor count, routing table prefixes, LLDP neighbors match expected topology
-- [ ] **Post-check scripts**: After config push — verify same checks pass, diff before/after states
-- [ ] **NetBox sync**: Generate Python script to sync deployed topology to NetBox (using pynetbox)
+- [ ] **Pre/Post-check scripts** [#15](https://github.com/Amit33-design/Network-Automation/issues/15): Generate Python/Bash scripts that SSH to devices and verify: interface states, BGP neighbor count, routing table prefixes, LLDP neighbors match expected topology
+- [ ] **NetBox sync** [#20](https://github.com/Amit33-design/Network-Automation/issues/20): Generate Python script to sync deployed topology to NetBox (using pynetbox)
 - [ ] **Change window validator**: Check if proposed changes violate any maintenance window rules
 
 ### TIER 2 — Monitoring & Observability
 
-- [ ] **Prometheus alert rules**: Generate `alert.rules.yml` for device-specific alerts (BGP session down, interface error rate, CPU > 80%)
-- [ ] **Grafana dashboard JSON**: Generate Grafana dashboard for the designed topology (panels per device/layer)
+- [ ] **Prometheus alert rules** [#16](https://github.com/Amit33-design/Network-Automation/issues/16): Generate `alert.rules.yml` for device-specific alerts (BGP session down, interface error rate, CPU > 80%)
+- [ ] **Grafana dashboard JSON** [#17](https://github.com/Amit33-design/Network-Automation/issues/17): Generate Grafana dashboard for the designed topology (panels per device/layer)
 - [ ] **SNMP MIB mapping**: Map key SNMP OIDs to human-readable labels for each vendor in the product catalog
 - [ ] **Syslog parsing rules**: Generate Logstash/Fluentd parsing rules for vendor-specific syslog formats
 - [ ] **Netflow/sFlow collector config**: Generate nfcapd / pmacct config for flow collection from designed devices
@@ -121,9 +127,9 @@ backend/
 ### TIER 3 — ML-Based Troubleshooting & RCA
 
 - [ ] **Symptom classifier**: Train/embed a simple nearest-neighbor classifier over a dataset of (symptom, root cause) pairs for common network issues. Use it in ts_engine.js to suggest root causes from free-text symptoms
-- [ ] **BGP convergence predictor**: Given the topology (AS count, path count, policy complexity), estimate convergence time and flag risks
+- [ ] **BGP convergence predictor** [#19](https://github.com/Amit33-design/Network-Automation/issues/19): Given the topology (AS count, path count, policy complexity), estimate convergence time and flag risks
 - [ ] **Anomaly detection**: Add a time-series anomaly detector in observability.js — flag metrics deviating > 2σ from rolling baseline
-- [ ] **RCA playbook generator**: Given an alert type (e.g. "BGP neighbor down"), generate a step-by-step RCA playbook as a downloadable Markdown/PDF
+- [ ] **RCA playbook generator** [#18](https://github.com/Amit33-design/Network-Automation/issues/18): Given an alert type (e.g. "BGP neighbor down"), generate a step-by-step RCA playbook as a downloadable Markdown/PDF
 - [ ] **Historical incident database**: Embed a JSONL of common network incident patterns with resolution steps; use cosine similarity to find relevant past incidents
 - [ ] **Confidence scoring**: Each RCA suggestion should include a confidence %, reasoning chain, and evidence references
 
@@ -158,15 +164,17 @@ backend/
 
 Each run, the agent should:
 
+0. **Ensure correct branch**: Run `git fetch origin && git checkout main && git pull origin main` — ALWAYS start on `main`, never work on `master` or any other branch
 1. **Read this file** (`AGENT_ROADMAP.md`) to understand current priorities
 2. **Check git log** (`git log --oneline -20`) to see what was recently done
 3. **Grep for TODOs** (`grep -r "TODO\|FIXME\|HACK\|XXX" src/js/ backend/ --include="*.js" --include="*.py" -n`)
-4. **Pick the highest-priority incomplete feature** from TIER 1 that hasn't been implemented yet
+4. **Pick the highest-priority incomplete feature** from TIER 1 that hasn't been implemented yet (pick the first unchecked `[ ]` item)
 5. **Implement it** following the coding conventions above
 6. **Verify** it doesn't break existing functionality (trace through affected code paths)
-7. **Commit** with a descriptive conventional-commit message
-8. **Update this file** — mark completed items with `[x]` and add any new discoveries to the backlog
-9. **Document** what was done in a `## Agent Log` section at the bottom of this file
+7. **Commit** with a descriptive conventional-commit message, e.g. `feat: price database — estimatedCostUSD for all PRODUCTS (#6)`
+8. **Close the GitHub issue**: `gh issue close <N> --repo Amit33-design/Network-Automation --comment "Implemented in commit $(git rev-parse --short HEAD)"`
+9. **Update this file** — mark completed items with `[x]` and add any new discoveries to the backlog
+10. **Document** what was done in a `## Agent Log` section at the bottom of this file
 
 The agent should aim to complete **1-2 full features** per 5-hour run, not start many things partially.
 
