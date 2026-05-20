@@ -286,3 +286,283 @@ function _renderRCAResults(hypotheses) {
       ${h.automation_available ? `<div style="margin-top:.5rem;font-size:.75rem;color:var(--cyan)">▶ Automation: <code style="background:var(--bg2);padding:.1rem .35rem;border-radius:3px">${h.automation_playbook}</code></div>` : ''}
     </div>`).join('');
 }
+
+/* ════════════════════════════════════════════════════════════════
+   PROMETHEUS ALERT RULES GENERATOR (#16)
+   Generates alert.rules.yml for device-specific alerts
+════════════════════════════════════════════════════════════════ */
+
+function genPrometheusAlerts(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var today = new Date().toISOString().slice(0, 10);
+
+  /* Build device list from BOM */
+  var devices = [];
+  try {
+    if (typeof buildDeviceList === 'function') {
+      devices = buildDeviceList();
+    }
+  } catch(e) {}
+
+  var rules = [];
+
+  /* Per-device BGP + interface alerts */
+  devices.forEach(function(dev) {
+    var hostname = dev.name || dev.id || 'unknown';
+    var instance = hostname.toLowerCase();
+
+    rules.push(
+      '  # --- ' + hostname + ' ---',
+      '  - alert: BGPSessionDown_' + hostname.replace(/-/g, '_'),
+      '    expr: bgp_session_up{instance="' + instance + '"} == 0',
+      '    for: 2m',
+      '    labels:',
+      '      severity: critical',
+      '      device: "' + hostname + '"',
+      '      layer: "' + (dev.layer || 'unknown') + '"',
+      '    annotations:',
+      '      summary: "BGP session down on {{ $labels.device }}"',
+      '      description: "BGP neighbor {{ $labels.neighbor }} is down on ' + hostname + '."',
+      '',
+      '  - alert: InterfaceDown_' + hostname.replace(/-/g, '_'),
+      '    expr: ifOperStatus{instance="' + instance + '"} == 2',
+      '    for: 1m',
+      '    labels:',
+      '      severity: warning',
+      '      device: "' + hostname + '"',
+      '    annotations:',
+      '      summary: "Interface down on {{ $labels.device }}"',
+      '      description: "Interface {{ $labels.ifDescr }} is operationally down."',
+      '',
+      '  - alert: HighCPU_' + hostname.replace(/-/g, '_'),
+      '    expr: cpu_utilization_percent{instance="' + instance + '"} > 80',
+      '    for: 5m',
+      '    labels:',
+      '      severity: warning',
+      '      device: "' + hostname + '"',
+      '    annotations:',
+      '      summary: "High CPU on {{ $labels.device }}"',
+      '      description: "CPU utilization is {{ $value }}% on ' + hostname + '."',
+      '',
+      '  - alert: HighMemory_' + hostname.replace(/-/g, '_'),
+      '    expr: memory_utilization_percent{instance="' + instance + '"} > 85',
+      '    for: 5m',
+      '    labels:',
+      '      severity: warning',
+      '      device: "' + hostname + '"',
+      '    annotations:',
+      '      summary: "High memory on {{ $labels.device }}"',
+      '      description: "Memory utilization is {{ $value }}% on ' + hostname + '."',
+      '',
+      '  - alert: InterfaceErrorRate_' + hostname.replace(/-/g, '_'),
+      '    expr: rate(ifInErrors{instance="' + instance + '"}[5m]) + rate(ifOutErrors{instance="' + instance + '"}[5m]) > 10',
+      '    for: 3m',
+      '    labels:',
+      '      severity: warning',
+      '      device: "' + hostname + '"',
+      '    annotations:',
+      '      summary: "High interface error rate on {{ $labels.device }}"',
+      '      description: "Interface {{ $labels.ifDescr }} error rate exceeds 10 errors/sec."',
+      ''
+    );
+  });
+
+  /* Global network health alerts */
+  rules = rules.concat([
+    '  # --- Global network health ---',
+    '  - alert: LinkUtilizationHigh',
+    '    expr: ifHCInOctets_rate * 8 / ifSpeed > 0.90',
+    '    for: 5m',
+    '    labels:',
+    '      severity: warning',
+    '    annotations:',
+    '      summary: "Link utilization >90% on {{ $labels.device }} {{ $labels.ifDescr }}"',
+    '      description: "Interface utilization has been above 90% for 5 minutes."',
+    '',
+    '  - alert: SNMPTargetUnreachable',
+    '    expr: up{job="network_devices"} == 0',
+    '    for: 2m',
+    '    labels:',
+    '      severity: critical',
+    '    annotations:',
+    '      summary: "Network device unreachable: {{ $labels.instance }}"',
+    '      description: "SNMP exporter cannot reach {{ $labels.instance }}."',
+    '',
+  ]);
+
+  var yaml = [
+    '# ═══════════════════════════════════════════════════════════',
+    '# Prometheus Alert Rules — NetDesign AI',
+    '# Generated: ' + today,
+    '# Org: ' + (s.orgName || 'N/A'),
+    '# Devices: ' + devices.length,
+    '#',
+    '# Apply:',
+    '#   1. Copy to /etc/prometheus/rules/netdesign.rules.yml',
+    '#   2. Add to prometheus.yml:',
+    '#        rule_files:',
+    '#          - "rules/netdesign.rules.yml"',
+    '#   3. Reload: curl -X POST http://localhost:9090/-/reload',
+    '# ═══════════════════════════════════════════════════════════',
+    '',
+    'groups:',
+    '  - name: netdesign_network_alerts',
+    '    interval: 30s',
+    '    rules:',
+  ].concat(rules.map(function(l) { return l ? '    ' + l : ''; }));
+
+  return yaml.join('\n');
+}
+
+function downloadPrometheusAlerts() {
+  var content = genPrometheusAlerts(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'text/yaml' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'netdesign-alert.rules.yml';
+  a.click();
+  if (typeof toast === 'function') toast('Prometheus alert rules downloaded', 'success');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GRAFANA DASHBOARD JSON GENERATOR (#17)
+   Generates importable Grafana dashboard per BOM layer
+════════════════════════════════════════════════════════════════ */
+
+function genGrafanaDashboard(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var layers = typeof getLayersForUC === 'function' ? getLayersForUC() : [];
+  var devices = [];
+  try {
+    if (typeof buildDeviceList === 'function') devices = buildDeviceList();
+  } catch(e) {}
+
+  var uid = 'netdesign-' + Date.now().toString(36);
+  var panels = [];
+  var panelId = 1;
+  var y = 0;
+
+  /* One row per BOM layer */
+  layers.forEach(function(layer) {
+    var layerDevices = devices.filter(function(d) { return d.layer === layer.key; });
+
+    /* Row header */
+    panels.push({
+      type: 'row',
+      id: panelId++,
+      title: layer.label,
+      collapsed: false,
+      gridPos: { h: 1, w: 24, x: 0, y: y++ },
+    });
+
+    var targets = layerDevices.length ? layerDevices : [{ name: layer.key }];
+
+    targets.forEach(function(dev) {
+      var instance = (dev.name || dev.id || layer.key).toLowerCase();
+
+      /* Interface utilization */
+      panels.push({
+        type: 'timeseries',
+        id: panelId++,
+        title: (dev.name || layer.label) + ' — Interface Utilization',
+        gridPos: { h: 6, w: 8, x: 0, y: y },
+        datasource: { type: 'prometheus', uid: 'prometheus' },
+        targets: [{
+          expr: 'rate(ifHCInOctets{instance="' + instance + '"}[5m]) * 8',
+          legendFormat: '{{ifDescr}} In',
+        }, {
+          expr: 'rate(ifHCOutOctets{instance="' + instance + '"}[5m]) * 8',
+          legendFormat: '{{ifDescr}} Out',
+        }],
+        fieldConfig: { defaults: { unit: 'bps' } },
+      });
+
+      /* CPU + Memory */
+      panels.push({
+        type: 'gauge',
+        id: panelId++,
+        title: (dev.name || layer.label) + ' — CPU %',
+        gridPos: { h: 6, w: 4, x: 8, y: y },
+        datasource: { type: 'prometheus', uid: 'prometheus' },
+        targets: [{
+          expr: 'cpu_utilization_percent{instance="' + instance + '"}',
+          legendFormat: 'CPU',
+        }],
+        fieldConfig: {
+          defaults: {
+            unit: 'percent',
+            thresholds: { steps: [
+              { color: 'green', value: null },
+              { color: 'yellow', value: 60 },
+              { color: 'red', value: 80 },
+            ]},
+          },
+        },
+      });
+
+      /* BGP sessions */
+      panels.push({
+        type: 'stat',
+        id: panelId++,
+        title: (dev.name || layer.label) + ' — BGP Sessions Up',
+        gridPos: { h: 6, w: 4, x: 12, y: y },
+        datasource: { type: 'prometheus', uid: 'prometheus' },
+        targets: [{
+          expr: 'count(bgp_session_up{instance="' + instance + '"} == 1)',
+          legendFormat: 'Up',
+        }],
+        fieldConfig: { defaults: { unit: 'short', color: { mode: 'thresholds' } } },
+      });
+
+      /* Interface errors */
+      panels.push({
+        type: 'timeseries',
+        id: panelId++,
+        title: (dev.name || layer.label) + ' — Interface Errors',
+        gridPos: { h: 6, w: 8, x: 16, y: y },
+        datasource: { type: 'prometheus', uid: 'prometheus' },
+        targets: [{
+          expr: 'rate(ifInErrors{instance="' + instance + '"}[5m])',
+          legendFormat: '{{ifDescr}} In Errors',
+        }, {
+          expr: 'rate(ifOutErrors{instance="' + instance + '"}[5m])',
+          legendFormat: '{{ifDescr}} Out Errors',
+        }],
+        fieldConfig: { defaults: { unit: 'pps' } },
+      });
+
+      y += 6;
+    });
+  });
+
+  var dashboard = {
+    uid:   uid,
+    title: 'NetDesign AI — ' + (s.orgName || 'Network') + ' Topology',
+    tags:  ['netdesign', 'network', 'auto-generated'],
+    timezone: 'browser',
+    schemaVersion: 38,
+    version: 1,
+    refresh: '30s',
+    time: { from: 'now-1h', to: 'now' },
+    panels: panels,
+    templating: { list: [] },
+    annotations: { list: [] },
+  };
+
+  return JSON.stringify({ dashboard: dashboard, overwrite: true, folderId: 0 }, null, 2);
+}
+
+function downloadGrafanaDashboard() {
+  var content = genGrafanaDashboard(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'application/json' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'netdesign-grafana-dashboard.json';
+  a.click();
+  if (typeof toast === 'function') toast('Grafana dashboard downloaded', 'success');
+}
+
+window.genPrometheusAlerts      = genPrometheusAlerts;
+window.downloadPrometheusAlerts = downloadPrometheusAlerts;
+window.genGrafanaDashboard      = genGrafanaDashboard;
+window.downloadGrafanaDashboard = downloadGrafanaDashboard;

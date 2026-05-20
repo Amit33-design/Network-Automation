@@ -1396,6 +1396,27 @@
 
       <!-- Cabling matrix — rendered by cabling.js -->
       <div id="cabling-section" style="display:none"></div>
+
+      <!-- Optics recommendations — rendered by optics.js -->
+      <div id="optics-section" style="display:none;margin-top:1.2rem">
+        <div class="section-toggle-hdr" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none';this.querySelector('.toggle-caret').textContent=this.nextElementSibling.style.display===''?'▼':'▶'">
+          <span>🔌 Optics Recommendations</span>
+          <span class="toggle-caret">▼</span>
+        </div>
+        <div>
+          <table class="bom-table" style="margin-top:.5rem">
+            <thead><tr>
+              <th>Layer</th><th>Vendor</th><th>Model</th><th>Form Factor</th>
+              <th>Speed</th><th>Reach</th><th>Cable</th>
+              <th>Qty</th><th>Unit $</th><th>Extended $</th>
+            </tr></thead>
+            <tbody id="optics-tbody"></tbody>
+          </table>
+          <div class="bom-footer">
+            <span>Optics subtotal: <strong id="optics-grand-total" style="color:var(--green)">—</strong></span>
+          </div>
+        </div>
+      </div>
     </div>
 
   </section><!-- /step-3 -->
@@ -1838,7 +1859,10 @@
 
     <!-- Policy Engine panel (always visible in step 6) -->
     <div class="policy-panel-section">
-      <div class="divider-label">🛡️ Policy Engine — Best Practice Checks</div>
+      <div class="divider-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>🛡️ Policy Engine — Best Practice Checks</span>
+        <button class="btn-cfg-action" onclick="downloadACLs()" style="font-size:.72rem">⬇ ACL Configs</button>
+      </div>
       <div id="policy-panel">
         <div class="policy-pass">
           <span style="font-size:1.4rem">⏳</span>
@@ -1909,9 +1933,13 @@
 
       <!-- Phase 4: Live Alerts -->
       <div class="obs-block">
-        <div class="obs-block-hdr" style="display:flex;align-items:center;justify-content:space-between">
+        <div class="obs-block-hdr" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem">
           <span>🔔 Live Alerts</span>
-          <button class="btn-cfg-action" onclick="startAlertPolling()" style="font-size:.72rem">Refresh</button>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+            <button class="btn-cfg-action" onclick="startAlertPolling()" style="font-size:.72rem">Refresh</button>
+            <button class="btn-cfg-action" onclick="downloadPrometheusAlerts()" style="font-size:.72rem">⬇ Prometheus Rules</button>
+            <button class="btn-cfg-action" onclick="downloadGrafanaDashboard()" style="font-size:.72rem">⬇ Grafana Dashboard</button>
+          </div>
         </div>
         <div id="obs-alerts" class="obs-alerts-container">
           <div class="obs-placeholder">No active alerts. Requires ENABLE_TELEMETRY=true on the backend.</div>
@@ -1963,6 +1991,8 @@
           <span class="ztp-board-title">📋 Device Onboarding Board</span>
           <div class="ztp-toolbar-actions">
             <button class="btn-cfg-action" onclick="ZTP.showDHCPOptions()">📡 DHCP Options</button>
+            <button class="btn-cfg-action" onclick="ZTP.downloadDHCPConfig()">⬇ dhcpd.conf</button>
+            <button class="btn-cfg-action" onclick="ZTP.downloadNetmikoScript()">⬇ push_configs.py</button>
             <button class="btn-cfg-action" onclick="ZTP.startPolling()">🔄 Refresh</button>
             <button class="btn-cfg-action" onclick="ZTP.populateFromTopology()">⚡ From Topology</button>
           </div>
@@ -3134,6 +3164,7 @@ rules:
 <script src="src/js/scoring.js"></script>
 <script src="src/js/recommendations.js"></script>
 <script src="src/js/cabling.js"></script>
+<script src="src/js/optics.js"></script>
 <script src="src/js/topology.js"></script>
 <script src="src/js/policy_blocks.js"></script>
 <script src="src/js/naming.js"></script>

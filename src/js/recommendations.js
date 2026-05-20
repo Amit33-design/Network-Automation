@@ -157,6 +157,9 @@ function updateBOMTable(layers) {
 
   /* Refresh cable schedule whenever the BOM updates */
   if (typeof updateCablingMatrix === 'function') updateCablingMatrix(layers, STATE);
+
+  /* Refresh optics recommendations */
+  if (typeof renderOpticsSection === 'function') renderOpticsSection(layers, STATE);
 }
 
 function exportBOM() {
@@ -185,6 +188,7 @@ function exportBOM() {
   });
   csv += `"TOTAL",,,,,,,,,,"${totalCost}"\n`;
   if (typeof getCablingCSVSection === 'function') csv += getCablingCSVSection();
+  if (typeof getOpticsCSVSection === 'function') csv += getOpticsCSVSection(layers, STATE);
   const blob = new Blob([csv], { type:'text/csv' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
