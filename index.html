@@ -1993,6 +1993,10 @@
             <button class="btn-cfg-action" onclick="ZTP.showDHCPOptions()">📡 DHCP Options</button>
             <button class="btn-cfg-action" onclick="ZTP.downloadDHCPConfig()">⬇ dhcpd.conf</button>
             <button class="btn-cfg-action" onclick="ZTP.downloadNetmikoScript()">⬇ push_configs.py</button>
+            <button class="btn-cfg-action" onclick="downloadAnsiblePlaybook()">⬇ Ansible</button>
+            <button class="btn-cfg-action" onclick="ZTP.downloadSerialCSV()">⬇ Serial CSV</button>
+            <button class="btn-cfg-action" onclick="ZTP.downloadPOAPScript()">⬇ POAP</button>
+            <button class="btn-cfg-action" onclick="ZTP.downloadEOSZTPScript()">⬇ EOS ZTP</button>
             <button class="btn-cfg-action" onclick="ZTP.startPolling()">🔄 Refresh</button>
             <button class="btn-cfg-action" onclick="ZTP.populateFromTopology()">⚡ From Topology</button>
           </div>
@@ -2744,8 +2748,43 @@ rules:
         placeholder="Affected device(s) comma-sep (optional)"
         style="flex:1;min-width:160px">
       <button class="btn btn-primary" style="font-size:.82rem" onclick="TsEngine.runRca()">🔬 Analyze</button>
+      <button class="btn-cfg-action" style="font-size:.82rem" onclick="downloadRCAPlaybook()">⬇ RCA Playbook</button>
     </div>
     <div id="ts-rca-output" style="display:none"></div>
+  </div>
+
+  <!-- BGP Convergence Predictor -->
+  <div class="ts-section">
+    <div class="ts-section-hdr" style="display:flex;align-items:center;justify-content:space-between">
+      <span>⏱ BGP Convergence Predictor</span>
+      <button class="btn-cfg-action" style="font-size:.72rem" onclick="renderBGPConvergence()">Calculate</button>
+    </div>
+    <div id="bgp-convergence-panel" style="margin-top:.5rem">
+      <div class="obs-placeholder">Click Calculate to estimate BGP convergence time from your design.</div>
+    </div>
+  </div>
+
+  <!-- BGP Policy Validator -->
+  <div class="ts-section">
+    <div class="ts-section-hdr" style="display:flex;align-items:center;justify-content:space-between">
+      <span>🔎 BGP Policy Validator</span>
+      <button class="btn-cfg-action" style="font-size:.72rem" onclick="runBGPValidator()">Validate</button>
+    </div>
+    <div id="bgp-validator-results" style="margin-top:.5rem">
+      <div class="obs-placeholder">Click Validate to check generated BGP configs for common mistakes.</div>
+    </div>
+  </div>
+
+  <!-- NetBox Sync -->
+  <div class="ts-section">
+    <div class="ts-section-hdr" style="display:flex;align-items:center;justify-content:space-between">
+      <span>📦 NetBox Sync</span>
+      <button class="btn-cfg-action" style="font-size:.72rem" onclick="downloadNetBoxSyncScript()">⬇ netbox_sync.py</button>
+    </div>
+    <p style="font-size:.78rem;color:var(--txt2);margin:.3rem 0 0">
+      Downloads a Python script that syncs your BOM + topology to NetBox via pynetbox.
+      Edit NETBOX_URL and NETBOX_TOKEN before running.
+    </p>
   </div>
 
 </div><!-- /panel-ts -->
@@ -3165,6 +3204,7 @@ rules:
 <script src="src/js/recommendations.js"></script>
 <script src="src/js/cabling.js"></script>
 <script src="src/js/optics.js"></script>
+<script src="src/js/ansible.js"></script>
 <script src="src/js/topology.js"></script>
 <script src="src/js/policy_blocks.js"></script>
 <script src="src/js/naming.js"></script>

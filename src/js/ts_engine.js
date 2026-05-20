@@ -975,3 +975,443 @@ const TsEngine = (() => {
   return { discover, parseNeighbors, startSnmpPoll, stopSnmpPoll, clearSnmpLog, runPlaybook, runRca, rcaChip, clearAll };
 
 })();
+
+/* ════════════════════════════════════════════════════════════════
+   RCA PLAYBOOK GENERATOR (#18)
+   Generates step-by-step RCA playbooks as downloadable Markdown.
+   BGP CONVERGENCE PREDICTOR (#19)
+   Estimates convergence time from topology complexity.
+════════════════════════════════════════════════════════════════ */
+
+var _RCA_PLAYBOOKS = {
+  'bgp-neighbor-down': {
+    title: 'RCA Playbook: BGP Neighbor Down',
+    symptom: 'BGP session to one or more neighbors is in Idle/Active/Connect state.',
+    likelyCauses: [
+      'Physical link failure or CRC errors on the peering interface',
+      'MTU mismatch between peers (BGP OPEN packet fragmentation)',
+      'ACL / firewall blocking TCP port 179',
+      'Incorrect or mismatched BGP timer configuration',
+      'Authentication password mismatch (MD5)',
+      'Route-map or policy rejecting all prefixes causing session reset',
+      'Peer AS number mismatch',
+      'Hold-timer expiry due to high CPU or packet drops',
+    ],
+    verifyCommands: {
+      'ios-xe': [
+        'show bgp summary',
+        'show bgp neighbors <peer-ip>',
+        'show interfaces <intf> | inc error|reset|CRC',
+        'show ip route <peer-ip>',
+        'debug ip bgp <peer-ip> events',
+        'ping <peer-ip> source <local-intf>',
+        'show access-lists | inc 179',
+      ],
+      'nxos': [
+        'show bgp summary',
+        'show bgp neighbors <peer-ip>',
+        'show interface <intf> | grep -i error',
+        'show ip route <peer-ip>',
+        'debug bgp <peer-ip> events',
+      ],
+      'eos': [
+        'show bgp summary',
+        'show bgp neighbors <peer-ip>',
+        'show interfaces <intf> | grep error',
+        'show ip route <peer-ip>',
+        'bash sudo tcpdump -i <intf> tcp port 179 -c 20',
+      ],
+      'junos': [
+        'show bgp summary',
+        'show bgp neighbor <peer-ip>',
+        'show interfaces <intf> detail | grep error',
+        'show route <peer-ip>',
+        'run traceroute <peer-ip>',
+      ],
+    },
+    steps: [
+      'Verify physical connectivity: check interface status and error counters.',
+      'Confirm the BGP peer IP is reachable (ping from peering interface).',
+      'Check MTU: ping with DF-bit set at full MTU size.',
+      'Verify no ACL/firewall is blocking TCP 179 in both directions.',
+      'Compare BGP configuration: AS number, timers, authentication.',
+      'Review BGP event log for specific error messages.',
+      'If authentication is used, verify MD5 password matches on both sides.',
+      'Check CPU utilization — high CPU can cause hold-timer expiry.',
+      'Restore the session: "clear ip bgp <peer-ip> soft" or reset the interface.',
+      'Monitor for session stability over 10 minutes after restoration.',
+    ],
+    escalation: 'If the session remains down after all checks, capture a packet trace on the peering interface and escalate to network engineering with the BGP debug log.',
+  },
+
+  'interface-down': {
+    title: 'RCA Playbook: Interface Down',
+    symptom: 'Interface is operationally down (line protocol down).',
+    likelyCauses: [
+      'Physical cable disconnected or damaged',
+      'SFP/QSFP optic failure or incompatibility',
+      'Far-end device port error-disabled or administratively down',
+      'Speed/duplex mismatch',
+      'Layer 2 loop causing BPDU guard err-disable',
+      'EtherChannel misconfig (LACP/PAgP mismatch)',
+    ],
+    verifyCommands: {
+      'ios-xe': [
+        'show interfaces <intf>',
+        'show interfaces <intf> transceiver',
+        'show errdisable recovery',
+        'show spanning-tree interface <intf>',
+        'show etherchannel summary',
+      ],
+      'nxos': [
+        'show interface <intf>',
+        'show interface <intf> transceiver',
+        'show interface <intf> error-disabled',
+        'show spanning-tree interface <intf>',
+        'show port-channel summary',
+      ],
+      'eos': [
+        'show interfaces <intf>',
+        'show interfaces <intf> transceiver',
+        'show errdisabled',
+        'show spanning-tree interface <intf>',
+        'show port-channel <N> summary',
+      ],
+      'junos': [
+        'show interfaces <intf>',
+        'show interfaces diagnostics optics <intf>',
+        'show spanning-tree interface',
+      ],
+    },
+    steps: [
+      'Check physical layer: inspect cable seating, SFP/QSFP seated properly.',
+      'Verify optic Tx/Rx power levels are within spec.',
+      'Check for err-disable state and identify the trigger.',
+      'If err-disable: resolve root cause then "shutdown / no shutdown" or use errdisable recovery.',
+      'Check far-end device port status.',
+      'Verify speed/duplex settings match on both sides.',
+      'If LAG member: verify LACP/PAgP mode matches.',
+      'Restore: "no shutdown" on both ends, monitor for 60 seconds.',
+    ],
+    escalation: 'If Tx/Rx power is out of spec, replace the SFP/QSFP transceiver. If cable replacement does not fix it, test with a known-good cable.',
+  },
+
+  'high-cpu': {
+    title: 'RCA Playbook: High CPU Utilization',
+    symptom: 'CPU utilization above 80% causing packet drops or control-plane instability.',
+    likelyCauses: [
+      'BGP/OSPF/IS-IS reconvergence flood',
+      'Excessive debug commands left enabled',
+      'Software forwarding (process switching) instead of hardware ASIC',
+      'Spanning-tree topology change storm',
+      'SNMP polling at too-high frequency',
+      'Multicast join storm or PIM issues',
+      'Hardware ASIC exception causing software fallback',
+    ],
+    verifyCommands: {
+      'ios-xe': [
+        'show processes cpu sorted',
+        'show processes cpu history',
+        'show platform resources',
+        'show debug',
+        'show logging | last 100',
+        'show spanning-tree summary',
+        'show ip pim interface',
+      ],
+      'nxos': [
+        'show processes cpu sort',
+        'show system resources',
+        'show debug',
+        'show logging last 100',
+        'show spanning-tree summary',
+      ],
+      'eos': [
+        'show processes top once',
+        'show system resources',
+        'show debug',
+        'show logging last 100',
+        'show spanning-tree summary',
+      ],
+      'junos': [
+        'show system processes summary',
+        'show chassis routing-engine',
+        'show log messages | last 100',
+      ],
+    },
+    steps: [
+      'Identify the top CPU-consuming process.',
+      'Immediately disable any debug commands: "undebug all".',
+      'Check for control-plane flapping (BGP/OSPF events in logs).',
+      'Check for STP topology changes — large numbers indicate a loop.',
+      'Rate-limit SNMP polling frequency to ≥30s intervals.',
+      'If a routing protocol is flapping, identify the unstable neighbor.',
+      'Engage hardware fast-path to offload forwarding from CPU.',
+      'If reconvergence is the cause, stabilize the flapping link first.',
+    ],
+    escalation: 'If CPU remains high after disabling debugs and stabilizing routing, open a TAC case with the output of "show tech-support" and process CPU history.',
+  },
+
+  'spanning-tree-loop': {
+    title: 'RCA Playbook: Spanning Tree Loop / Broadcast Storm',
+    symptom: 'Excessive broadcast traffic, network instability, devices unreachable.',
+    likelyCauses: [
+      'STP disabled on an interface that should be blocking',
+      'BPDU guard triggered but port not err-disabled (misconfigured)',
+      'Physical loop — cable connecting two ports on same switch',
+      'Rogue switch connected to access port without BPDU guard',
+      'STP topology change causing MAC table flush + broadcast flood',
+    ],
+    verifyCommands: {
+      'ios-xe': [
+        'show spanning-tree summary',
+        'show spanning-tree detail',
+        'show spanning-tree blockedports',
+        'show interfaces counters | inc broadcast',
+        'show errdisable recovery',
+        'show mac address-table count',
+      ],
+      'nxos': [
+        'show spanning-tree summary',
+        'show spanning-tree detail',
+        'show interface counters | grep broadcast',
+      ],
+      'eos': [
+        'show spanning-tree',
+        'show spanning-tree detail',
+        'show interfaces counters | grep broadcast',
+      ],
+      'junos': [
+        'show spanning-tree bridge',
+        'show spanning-tree interface',
+        'show interfaces statistics',
+      ],
+    },
+    steps: [
+      'Identify the source of the broadcast storm using interface counters.',
+      'Locate the physical loop — check all switch-to-switch connections.',
+      'Temporarily disable suspect ports to break the loop.',
+      'Verify BPDU guard is enabled on all access/edge ports.',
+      'Confirm STP root bridge placement is correct (lowest priority on core).',
+      'Check for rogue switches on access ports.',
+      'After loop removal, verify STP converges to expected topology.',
+      'Enable portfast + BPDU guard on all end-device ports permanently.',
+    ],
+    escalation: 'If broadcast storm persists after loop removal, check for a multicast/unknown-unicast flood and engage TAC with packet captures.',
+  },
+};
+
+function genRCAPlaybook(alertType, state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var key = (alertType || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+
+  /* Find best matching playbook */
+  var playbook = _RCA_PLAYBOOKS[key];
+  if (!playbook) {
+    /* Fuzzy match */
+    var keys = Object.keys(_RCA_PLAYBOOKS);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf(key.slice(0, 5)) !== -1 || key.indexOf(keys[i].slice(0, 5)) !== -1) {
+        playbook = _RCA_PLAYBOOKS[keys[i]];
+        break;
+      }
+    }
+  }
+  if (!playbook) return null;
+
+  var today = new Date().toISOString().slice(0, 10);
+  var vendor = (s.vendor || 'ios-xe').toLowerCase();
+  var cmds = playbook.verifyCommands[vendor] || playbook.verifyCommands['ios-xe'] || [];
+
+  var md = [
+    '# ' + playbook.title,
+    '',
+    '**Generated by NetDesign AI** — ' + today + '  |  Org: ' + (s.orgName || 'N/A'),
+    '',
+    '---',
+    '',
+    '## Symptom',
+    '',
+    playbook.symptom,
+    '',
+    '## Likely Root Causes',
+    '',
+  ].concat(playbook.likelyCauses.map(function(c, i) { return (i+1) + '. ' + c; }));
+
+  md = md.concat([
+    '',
+    '## Verification Commands (' + vendor + ')',
+    '',
+    '```',
+  ]).concat(cmds).concat([
+    '```',
+    '',
+    '## Step-by-Step RCA Procedure',
+    '',
+  ]).concat(playbook.steps.map(function(s, i) { return (i+1) + '. ' + s; }));
+
+  md = md.concat([
+    '',
+    '## Escalation Path',
+    '',
+    playbook.escalation,
+    '',
+    '---',
+    '*Generated by NetDesign AI — https://github.com/Amit33-design/Network-Automation*',
+  ]);
+
+  return md.join('\n');
+}
+
+function downloadRCAPlaybook(alertType) {
+  var s = typeof STATE !== 'undefined' ? STATE : {};
+  var type = alertType || document.getElementById('ts-rca-symptom')?.value || 'bgp-neighbor-down';
+  var content = genRCAPlaybook(type, s);
+  if (!content) {
+    if (typeof toast === 'function') toast('No playbook found for: ' + type, 'warn');
+    return;
+  }
+  var blob = new Blob([content], { type: 'text/markdown' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'rca-playbook-' + type.slice(0,30) + '.md';
+  a.click();
+  if (typeof toast === 'function') toast('RCA playbook downloaded', 'success');
+}
+
+/* List available playbooks */
+function listRCAPlaybooks() {
+  return Object.keys(_RCA_PLAYBOOKS).map(function(k) {
+    return { id: k, title: _RCA_PLAYBOOKS[k].title };
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════
+   BGP CONVERGENCE PREDICTOR (#19)
+════════════════════════════════════════════════════════════════ */
+
+function predictBGPConvergence(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var layers = typeof getLayersForUC === 'function' ? getLayersForUC() : [];
+
+  /* Count BGP speakers from device list */
+  var devices = [];
+  try { if (typeof buildDeviceList === 'function') devices = buildDeviceList(); } catch(e) {}
+
+  var speakers    = devices.length || 4;
+  var hasRedundancy = (s.redundancy === 'full' || s.redundancy === 'partial');
+  var hasOSPF     = (s.underlayProto || []).includes('OSPF');
+  var hasBFD      = (s.protocols || []).some(function(p) { return /bfd/i.test(p); }) ||
+                    (s.underlayProto || []).includes('BFD');
+  var ucType      = s.uc || 'campus';
+  var hasVxlan    = (s.overlayProto || []).some(function(o) { return /VXLAN/i.test(o); });
+
+  /* Base convergence estimate (seconds) */
+  var base = 0;
+
+  /* BGP default timers: keepalive=60s, hold=180s → detection = 180s */
+  /* With BFD: detection ~300ms */
+  var detectionTime = hasBFD ? 0.3 : 180;
+
+  /* RIB + FIB update: ~10ms per 1000 prefixes, but simplify */
+  var prefixCount = ucType === 'dc' ? 10000 : ucType === 'wan' ? 100000 : 5000;
+  var ribUpdateTime = Math.round(prefixCount / 50000 * 2); /* seconds */
+
+  /* Path selection + route propagation: O(log n) hops */
+  var hops = Math.ceil(Math.log2(speakers + 1));
+  var propagationTime = hasBFD ? hops * 0.05 : hops * 2;
+
+  base = detectionTime + ribUpdateTime + propagationTime;
+
+  /* Round to 1 decimal */
+  var totalSeconds = Math.round(base * 10) / 10;
+
+  /* Risk flags */
+  var risks = [];
+  if (!hasBFD) {
+    risks.push({
+      level: 'high',
+      msg: 'No BFD detected — hold-timer based failure detection takes up to 180s.',
+      fix: 'Enable BFD on all BGP peering interfaces (target: 300ms detection).',
+    });
+  }
+  if (!hasOSPF && ucType !== 'multicloud') {
+    risks.push({
+      level: 'medium',
+      msg: 'BGP-only underlay — no IGP fast-reroute available.',
+      fix: 'Consider adding OSPF as underlay IGP with BFD for sub-second failover.',
+    });
+  }
+  if (speakers > 20) {
+    risks.push({
+      level: 'medium',
+      msg: 'Large BGP speaker count (' + speakers + ') — route-reflector hierarchy recommended.',
+      fix: 'Implement BGP route-reflectors to reduce O(n²) iBGP mesh to O(n).',
+    });
+  }
+  if (prefixCount > 50000 && !hasVxlan) {
+    risks.push({
+      level: 'low',
+      msg: 'High prefix count — RIB/FIB update time may be significant.',
+      fix: 'Use prefix aggregation and outbound route filtering (ORF) to reduce table size.',
+    });
+  }
+  if (hasRedundancy && !hasBFD) {
+    risks.push({
+      level: 'medium',
+      msg: 'Redundant paths available but BFD not enabled — failover will use slow timer.',
+      fix: 'Enable BFD to take advantage of redundant paths for fast failover.',
+    });
+  }
+
+  return {
+    totalSeconds:    totalSeconds,
+    detectionTime:   detectionTime,
+    ribUpdateTime:   ribUpdateTime,
+    propagationTime: Math.round(propagationTime * 100) / 100,
+    speakers:        speakers,
+    prefixCount:     prefixCount,
+    hasBFD:          hasBFD,
+    risks:           risks,
+    summary: hasBFD
+      ? 'Estimated convergence: ~' + totalSeconds + 's (BFD enabled — fast detection)'
+      : 'Estimated convergence: ~' + totalSeconds + 's — SLOW (no BFD, using hold-timer)',
+  };
+}
+
+function renderBGPConvergence() {
+  var el = document.getElementById('bgp-convergence-panel');
+  if (!el) return;
+  var r = predictBGPConvergence(typeof STATE !== 'undefined' ? STATE : {});
+
+  var riskHtml = r.risks.map(function(risk) {
+    var color = risk.level === 'high' ? 'var(--red)' : risk.level === 'medium' ? 'var(--orange)' : 'var(--yellow)';
+    return '<div style="background:var(--bg3);border-left:3px solid ' + color + ';padding:.5rem .75rem;margin:.3rem 0;border-radius:0 6px 6px 0;font-size:.8rem">' +
+      '<strong>' + risk.msg + '</strong><br>' +
+      '<span style="color:var(--txt2)">Fix: ' + risk.fix + '</span>' +
+      '</div>';
+  }).join('');
+
+  el.innerHTML =
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.6rem;margin-bottom:.75rem">' +
+      _convStat('Total', r.totalSeconds + 's', r.hasBFD ? 'var(--green)' : 'var(--red)') +
+      _convStat('Detection', r.detectionTime + 's', r.hasBFD ? 'var(--green)' : 'var(--orange)') +
+      _convStat('RIB Update', r.ribUpdateTime + 's', 'var(--txt1)') +
+      _convStat('Propagation', r.propagationTime + 's', 'var(--txt1)') +
+      _convStat('BGP Speakers', r.speakers, 'var(--txt1)') +
+    '</div>' +
+    '<div style="font-size:.82rem;color:' + (r.hasBFD ? 'var(--green)' : 'var(--red)') + ';margin-bottom:.5rem;font-weight:600">' + r.summary + '</div>' +
+    (riskHtml ? '<div style="font-size:.78rem;font-weight:600;color:var(--txt2);margin:.5rem 0 .25rem">Risk Flags:</div>' + riskHtml : '');
+}
+
+function _convStat(label, val, color) {
+  return '<div style="background:var(--bg3);border-radius:8px;padding:.6rem .8rem;text-align:center">' +
+    '<div style="font-size:1.1rem;font-weight:700;color:' + color + '">' + val + '</div>' +
+    '<div style="font-size:.72rem;color:var(--txt2)">' + label + '</div>' +
+    '</div>';
+}
+
+window.genRCAPlaybook          = genRCAPlaybook;
+window.downloadRCAPlaybook     = downloadRCAPlaybook;
+window.listRCAPlaybooks        = listRCAPlaybooks;
+window.predictBGPConvergence   = predictBGPConvergence;
+window.renderBGPConvergence    = renderBGPConvergence;

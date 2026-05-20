@@ -712,3 +712,135 @@ function downloadACLs() {
 
 window.genACLs       = genACLs;
 window.downloadACLs  = downloadACLs;
+
+/* ════════════════════════════════════════════════════════════════
+   BGP ROUTE-POLICY VALIDATOR
+   Checks generated BGP configs for common mistakes.
+════════════════════════════════════════════════════════════════ */
+
+var _BGP_CHECKS = [
+  {
+    id: 'no-default-deny',
+    label: 'Missing default deny in route-map',
+    severity: 'error',
+    test: function(cfg) {
+      /* route-map present but no deny at end */
+      var rms = cfg.match(/^route-map\s+\S+\s+permit\s+\d+/gm) || [];
+      if (!rms.length) return false;
+      var hasDeny = /^route-map\s+\S+\s+deny\s+/m.test(cfg);
+      return rms.length > 0 && !hasDeny;
+    },
+    fix: 'Add a "route-map <NAME> deny 65535" at the end of each route-map to enforce default deny.',
+  },
+  {
+    id: 'max-prefix-missing',
+    label: 'BGP maximum-prefix not configured',
+    severity: 'warning',
+    test: function(cfg) {
+      var hasNeighbor = /^\s*neighbor\s+\S+\s+remote-as/m.test(cfg);
+      var hasMaxPrefix = /maximum-prefix/i.test(cfg);
+      return hasNeighbor && !hasMaxPrefix;
+    },
+    fix: 'Add "neighbor <IP> maximum-prefix <N> [warning-only]" to protect against route leaks.',
+  },
+  {
+    id: 'community-not-stripped',
+    label: 'Communities may not be stripped on export',
+    severity: 'warning',
+    test: function(cfg) {
+      var hasCommunity = /send-community/i.test(cfg) || /community\s+\d+:\d+/i.test(cfg);
+      var hasStripOut  = /community\s+none|strip.*community/i.test(cfg) ||
+                         /route-map.*deny.*community/i.test(cfg);
+      return hasCommunity && !hasStripOut;
+    },
+    fix: 'Verify outbound route-maps strip internal communities before advertising to external peers.',
+  },
+  {
+    id: 'as-path-prepend-check',
+    label: 'AS-path prepend without route-map guard',
+    severity: 'info',
+    test: function(cfg) {
+      return /set as-path prepend/i.test(cfg) && !/route-map.*permit.*\nset as-path prepend/s.test(cfg);
+    },
+    fix: 'Ensure AS-path prepend is inside a permit route-map term, not a bare neighbor statement.',
+  },
+  {
+    id: 'next-hop-self-missing',
+    label: 'next-hop-self not set on iBGP peers',
+    severity: 'warning',
+    test: function(cfg) {
+      /* iBGP = same ASN remote-as as local ASN in router bgp block */
+      var localAS = (cfg.match(/^router bgp\s+(\d+)/m) || [])[1];
+      if (!localAS) return false;
+      var ibgpPeers = cfg.match(new RegExp('neighbor\\s+\\S+\\s+remote-as\\s+' + localAS, 'gm')) || [];
+      var hasNextHopSelf = /next-hop-self/i.test(cfg);
+      return ibgpPeers.length > 0 && !hasNextHopSelf;
+    },
+    fix: 'Add "neighbor <IP> next-hop-self" for iBGP peers on route-reflectors and ASBR devices.',
+  },
+  {
+    id: 'soft-reconfiguration',
+    label: 'soft-reconfiguration inbound not enabled',
+    severity: 'info',
+    test: function(cfg) {
+      var hasNeighbor = /^\s*neighbor\s+\S+\s+remote-as/m.test(cfg);
+      var hasSoftReconfig = /soft-reconfiguration inbound/i.test(cfg);
+      return hasNeighbor && !hasSoftReconfig;
+    },
+    fix: 'Add "neighbor <IP> soft-reconfiguration inbound" to allow policy changes without session reset.',
+  },
+];
+
+function validateBGPPolicies(configText) {
+  var results = [];
+  _BGP_CHECKS.forEach(function(check) {
+    try {
+      if (check.test(configText)) {
+        results.push({ id: check.id, label: check.label, severity: check.severity, fix: check.fix });
+      }
+    } catch(e) { /* skip on regex error */ }
+  });
+  return results;
+}
+
+/* Validate all generated configs and render into a panel */
+function runBGPValidator() {
+  var el = document.getElementById('bgp-validator-results');
+  if (!el) return;
+
+  /* Collect all generated config text */
+  var allConfig = '';
+  try {
+    if (typeof DEVICE_LIST !== 'undefined' && DEVICE_LIST.length) {
+      DEVICE_LIST.forEach(function(dev) {
+        if (typeof generateConfig === 'function') {
+          var os = (dev.platform || 'ios-xe');
+          allConfig += generateConfig(dev, os) + '\n';
+        }
+      });
+    }
+  } catch(e) {}
+
+  if (!allConfig.trim()) {
+    el.innerHTML = '<div class="obs-placeholder">Generate configs in Step 5 first, then re-run validation.</div>';
+    return;
+  }
+
+  var issues = validateBGPPolicies(allConfig);
+
+  if (!issues.length) {
+    el.innerHTML = '<div style="color:var(--green);padding:.75rem">✅ No BGP policy issues found.</div>';
+    return;
+  }
+
+  var icons = { error: '❌', warning: '⚠️', info: 'ℹ️' };
+  el.innerHTML = issues.map(function(iss) {
+    return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:.7rem .9rem;margin:.4rem 0">' +
+      '<div style="font-weight:600;margin-bottom:.25rem">' + (icons[iss.severity] || '') + ' ' + iss.label + '</div>' +
+      '<div style="font-size:.78rem;color:var(--txt2)">Fix: ' + iss.fix + '</div>' +
+      '</div>';
+  }).join('');
+}
+
+window.validateBGPPolicies = validateBGPPolicies;
+window.runBGPValidator     = runBGPValidator;

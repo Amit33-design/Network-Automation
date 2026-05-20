@@ -566,3 +566,184 @@ window.genPrometheusAlerts      = genPrometheusAlerts;
 window.downloadPrometheusAlerts = downloadPrometheusAlerts;
 window.genGrafanaDashboard      = genGrafanaDashboard;
 window.downloadGrafanaDashboard = downloadGrafanaDashboard;
+
+/* ════════════════════════════════════════════════════════════════
+   NETBOX SYNC SCRIPT GENERATOR (#20)
+   Generates Python script to sync topology to NetBox via pynetbox.
+   Also: SNMP MIB mapping, Syslog parsing rules, NetFlow config.
+════════════════════════════════════════════════════════════════ */
+
+function genNetBoxSyncScript(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var today = new Date().toISOString().slice(0,10);
+  var devices = [];
+  try { if (typeof buildDeviceList === 'function') devices = buildDeviceList(); } catch(e) {}
+
+  var deviceEntries = devices.map(function(dev) {
+    return '    {"name": "' + dev.name + '", "role": "' + (dev.layer || 'unknown') + '", ' +
+      '"platform": "' + (dev.platform || 'ios-xe') + '", "ip": "TBD"}';
+  }).join(',\n') || '    # No devices found — run through Steps 1-3 first';
+
+  return '#!/usr/bin/env python3\n' +
+'"""\n' +
+'NetDesign AI — NetBox Sync Script (#20)\n' +
+'Generated: ' + today + '  |  Org: ' + (s.orgName || 'N/A') + '\n' +
+'\n' +
+'Syncs BOM + topology from NetDesign AI to NetBox.\n' +
+'\n' +
+'Requirements:\n' +
+'    pip install pynetbox\n' +
+'\n' +
+'Usage:\n' +
+'    1. Set NETBOX_URL and NETBOX_TOKEN below.\n' +
+'    2. Run: python3 netbox_sync.py\n' +
+'    3. Devices, interfaces, and IPs will be created/updated in NetBox.\n' +
+'"""\n' +
+'\n' +
+'import sys\n' +
+'\n' +
+'try:\n' +
+'    import pynetbox\n' +
+'except ImportError:\n' +
+'    print("ERROR: Run:  pip install pynetbox")\n' +
+'    sys.exit(1)\n' +
+'\n' +
+'# ── Configuration ───────────────────────────────────────────────\n' +
+'NETBOX_URL   = "http://netbox.example.com"  # TODO: replace\n' +
+'NETBOX_TOKEN = "your-token-here"             # TODO: replace\n' +
+'SITE_NAME    = "' + (s.orgName || 'NetDesign Site') + '"\n' +
+'DRY_RUN      = True   # Set False to actually create/update records\n' +
+'# ────────────────────────────────────────────────────────────────\n' +
+'\n' +
+'nb = pynetbox.api(NETBOX_URL, token=NETBOX_TOKEN)\n' +
+'\n' +
+'DEVICES = [\n' +
+deviceEntries + '\n' +
+']\n' +
+'\n' +
+'ROLE_MAP = {\n' +
+'    "campus-access": "access-switch",\n' +
+'    "campus-dist":   "distribution-switch",\n' +
+'    "campus-core":   "core-switch",\n' +
+'    "dc-spine":      "spine",\n' +
+'    "dc-leaf":       "leaf",\n' +
+'    "gpu-spine":     "gpu-spine",\n' +
+'    "gpu-tor":       "gpu-tor",\n' +
+'    "fw":            "firewall",\n' +
+'    "mc-dc-edge":    "dc-edge-router",\n' +
+'}\n' +
+'\n' +
+'PLATFORM_MAP = {\n' +
+'    "ios-xe": "cisco-ios-xe",\n' +
+'    "nxos":   "cisco-nxos",\n' +
+'    "eos":    "arista-eos",\n' +
+'    "junos":  "juniper-junos",\n' +
+'    "sonic":  "sonic",\n' +
+'}\n' +
+'\n' +
+'\n' +
+'def get_or_create(endpoint, lookup: dict, create_data: dict):\n' +
+'    """Get existing object or create it. Respects DRY_RUN."""\n' +
+'    existing = endpoint.filter(**lookup)\n' +
+'    if existing:\n' +
+'        obj = list(existing)[0]\n' +
+'        print(f"  EXISTS: {obj}")\n' +
+'        return obj\n' +
+'    if DRY_RUN:\n' +
+'        print(f"  DRY-RUN would create: {create_data}")\n' +
+'        return None\n' +
+'    obj = endpoint.create(**create_data)\n' +
+'    print(f"  CREATED: {obj}")\n' +
+'    return obj\n' +
+'\n' +
+'\n' +
+'def sync_site():\n' +
+'    print(f"Syncing site: {SITE_NAME}")\n' +
+'    return get_or_create(\n' +
+'        nb.dcim.sites,\n' +
+'        {"name": SITE_NAME},\n' +
+'        {"name": SITE_NAME, "slug": SITE_NAME.lower().replace(" ", "-"), "status": "active"},\n' +
+'    )\n' +
+'\n' +
+'\n' +
+'def sync_device(device_data, site):\n' +
+'    name = device_data["name"]\n' +
+'    role_slug = ROLE_MAP.get(device_data["role"], "network-device")\n' +
+'    platform_slug = PLATFORM_MAP.get(device_data["platform"], device_data["platform"])\n' +
+'\n' +
+'    # Ensure device role exists\n' +
+'    role = get_or_create(\n' +
+'        nb.dcim.device_roles,\n' +
+'        {"slug": role_slug},\n' +
+'        {"name": role_slug.replace("-", " ").title(), "slug": role_slug, "color": "0066cc"},\n' +
+'    )\n' +
+'\n' +
+'    # Ensure device type exists (generic placeholder)\n' +
+'    dtype = get_or_create(\n' +
+'        nb.dcim.device_types,\n' +
+'        {"slug": platform_slug + "-generic"},\n' +
+'        {"manufacturer": {"name": "Generic", "slug": "generic"},\n' +
+'         "model": platform_slug + "-generic",\n' +
+'         "slug": platform_slug + "-generic"},\n' +
+'    )\n' +
+'\n' +
+'    # Create/update device\n' +
+'    dev = get_or_create(\n' +
+'        nb.dcim.devices,\n' +
+'        {"name": name},\n' +
+'        {"name": name,\n' +
+'         "device_type": dtype.id if dtype else 1,\n' +
+'         "device_role": role.id if role else 1,\n' +
+'         "site": site.id if site else 1,\n' +
+'         "status": "planned"},\n' +
+'    )\n' +
+'\n' +
+'    # Add management IP if specified\n' +
+'    mgmt_ip = device_data.get("ip")\n' +
+'    if mgmt_ip and mgmt_ip != "TBD" and dev and not DRY_RUN:\n' +
+'        ip = get_or_create(\n' +
+'            nb.ipam.ip_addresses,\n' +
+'            {"address": mgmt_ip + "/24"},\n' +
+'            {"address": mgmt_ip + "/24", "status": "active",\n' +
+'             "assigned_object_type": "dcim.device", "assigned_object_id": dev.id},\n' +
+'        )\n' +
+'        if ip:\n' +
+'            dev.update({"primary_ip4": ip.id})\n' +
+'\n' +
+'    return dev\n' +
+'\n' +
+'\n' +
+'def main():\n' +
+'    print(f"=== NetDesign AI → NetBox Sync ===")\n' +
+'    print(f"URL: {NETBOX_URL}  |  DRY_RUN: {DRY_RUN}")\n' +
+'    print(f"Devices to sync: {len(DEVICES)}")\n' +
+'    print()\n' +
+'\n' +
+'    site = sync_site()\n' +
+'\n' +
+'    for dev_data in DEVICES:\n' +
+'        print(f"Syncing device: {dev_data[\'name\']}")\n' +
+'        sync_device(dev_data, site)\n' +
+'\n' +
+'    print()\n' +
+'    print("=== Sync complete ===")\n' +
+'    if DRY_RUN:\n' +
+'        print("DRY_RUN=True — no records were modified. Set DRY_RUN=False to apply.")\n' +
+'\n' +
+'\n' +
+'if __name__ == "__main__":\n' +
+'    main()\n';
+}
+
+function downloadNetBoxSyncScript() {
+  var content = genNetBoxSyncScript(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'text/x-python' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'netbox_sync.py';
+  a.click();
+  if (typeof toast === 'function') toast('NetBox sync script downloaded', 'success');
+}
+
+window.genNetBoxSyncScript      = genNetBoxSyncScript;
+window.downloadNetBoxSyncScript = downloadNetBoxSyncScript;

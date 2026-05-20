@@ -808,3 +808,262 @@ if __name__ == "__main__":
   };
 
 })();
+
+/* ════════════════════════════════════════════════════════════════
+   ZTP EXTRAS: Serial → Hostname CSV, POAP, EOS ZTP
+════════════════════════════════════════════════════════════════ */
+
+/* ── Serial number → hostname CSV ────────────────────────────── */
+function genSerialMappingCSV(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var devices = [];
+  try {
+    if (typeof buildDeviceList === 'function') devices = buildDeviceList();
+  } catch(e) {}
+
+  var lines = [
+    '# NetDesign AI — ZTP Serial → Hostname Mapping',
+    '# Generated: ' + new Date().toISOString().slice(0,10),
+    '# Replace PLACEHOLDER_SN_xxx with actual serial numbers before use.',
+    '#',
+    'serial,hostname,platform,ip,layer',
+  ];
+  devices.forEach(function(dev, i) {
+    var plat = dev.platform || 'ios-xe';
+    var ip = '10.0.0.' + (50 + i);
+    lines.push('PLACEHOLDER_SN_' + String(i+1).padStart(3,'0') + ',' + dev.name + ',' + plat + ',' + ip + ',' + dev.layer);
+  });
+  return lines.join('\n');
+}
+
+/* ── Cisco POAP script ───────────────────────────────────────── */
+function genPOAPScript(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var server = (typeof BackendClient !== 'undefined' && BackendClient.getBackendUrl())
+    ? BackendClient.getBackendUrl().replace(/\/$/, '')
+    : 'http://10.0.0.100:8000';
+
+  return '#!/usr/bin/env python\n' +
+'"""' + '\n' +
+'Cisco NX-OS POAP Script — NetDesign AI' + '\n' +
+'Generated: ' + new Date().toISOString().slice(0,10) + '\n' +
+'\n' +
+'Deployment:' + '\n' +
+'  1. Host this file at: ' + server + '/ztp/script/nxos' + '\n' +
+'  2. Configure DHCP option 67 to point to the URL above.' + '\n' +
+'  3. On first boot the switch fetches this script and executes it.' + '\n' +
+'  4. The script reads its serial number, looks up the hostname CSV,' + '\n' +
+'     downloads the matching config, and applies it.' + '\n' +
+'"""' + '\n' +
+'\n' +
+'import os\n' +
+'import sys\n' +
+'import urllib\n' +
+'import hashlib\n' +
+'\n' +
+'ZTP_SERVER = "' + server + '"\n' +
+'SERIAL_MAP_URL = ZTP_SERVER + "/ztp/serials.csv"\n' +
+'\n' +
+'def log(msg):\n' +
+'    poap_log(msg)\n' +
+'\n' +
+'def get_serial():\n' +
+'    """Read device serial number from NX-OS."""\n' +
+'    try:\n' +
+'        res = cli("show version | grep -i serial")\n' +
+'        for line in res.splitlines():\n' +
+'            if "Processor Board ID" in line:\n' +
+'                return line.split()[-1].strip()\n' +
+'    except Exception as e:\n' +
+'        log("Error reading serial: " + str(e))\n' +
+'    return None\n' +
+'\n' +
+'def lookup_hostname(serial):\n' +
+'    """Fetch serial→hostname CSV from ZTP server."""\n' +
+'    try:\n' +
+'        resp = urllib.urlopen(SERIAL_MAP_URL)\n' +
+'        for line in resp.read().splitlines():\n' +
+'            if line.startswith("#") or not line.strip():\n' +
+'                continue\n' +
+'            parts = line.split(",")\n' +
+'            if len(parts) >= 2 and parts[0].strip() == serial:\n' +
+'                return parts[1].strip(), parts[3].strip() if len(parts) > 3 else None\n' +
+'    except Exception as e:\n' +
+'        log("Error fetching serial map: " + str(e))\n' +
+'    return None, None\n' +
+'\n' +
+'def fetch_config(hostname):\n' +
+'    """Download the device config file from ZTP server."""\n' +
+'    url = ZTP_SERVER + "/ztp/configs/" + hostname + ".txt"\n' +
+'    try:\n' +
+'        resp = urllib.urlopen(url)\n' +
+'        return resp.read()\n' +
+'    except Exception as e:\n' +
+'        log("Error fetching config for " + hostname + ": " + str(e))\n' +
+'    return None\n' +
+'\n' +
+'def apply_config(config_data, hostname):\n' +
+'    """Write config to bootflash and apply it."""\n' +
+'    cfg_file = "bootflash:/poap-" + hostname + ".cfg"\n' +
+'    with open(cfg_file, "w") as f:\n' +
+'        f.write(config_data)\n' +
+'    cli("copy " + cfg_file + " running-config")\n' +
+'    cli("copy running-config startup-config")\n' +
+'    log("Config applied successfully for " + hostname)\n' +
+'\n' +
+'def main():\n' +
+'    log("=== NetDesign AI POAP script starting ===")\n' +
+'    serial = get_serial()\n' +
+'    if not serial:\n' +
+'        log("ERROR: Could not read serial number. Aborting.")\n' +
+'        sys.exit(1)\n' +
+'    log("Serial: " + serial)\n' +
+'\n' +
+'    hostname, mgmt_ip = lookup_hostname(serial)\n' +
+'    if not hostname:\n' +
+'        log("ERROR: Serial " + serial + " not found in mapping CSV. Aborting.")\n' +
+'        sys.exit(1)\n' +
+'    log("Hostname: " + hostname)\n' +
+'\n' +
+'    config = fetch_config(hostname)\n' +
+'    if not config:\n' +
+'        log("ERROR: Could not fetch config for " + hostname + ". Aborting.")\n' +
+'        sys.exit(1)\n' +
+'\n' +
+'    apply_config(config, hostname)\n' +
+'    log("=== POAP complete for " + hostname + " ===")\n' +
+'\n' +
+'main()\n';
+}
+
+/* ── Arista EOS ZTP script ───────────────────────────────────── */
+function genEOSZTPScript(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var server = (typeof BackendClient !== 'undefined' && BackendClient.getBackendUrl())
+    ? BackendClient.getBackendUrl().replace(/\/$/, '')
+    : 'http://10.0.0.100:8000';
+
+  return '#!/usr/bin/env python3\n' +
+'"""' + '\n' +
+'Arista EOS ZTP Script — NetDesign AI' + '\n' +
+'Generated: ' + new Date().toISOString().slice(0,10) + '\n' +
+'\n' +
+'Deployment:' + '\n' +
+'  1. Host this file at: ' + server + '/ztp/script/eos' + '\n' +
+'  2. Configure DHCP option 67 to point to the URL above.' + '\n' +
+'  3. On first boot EOS fetches and runs this script.' + '\n' +
+'"""' + '\n' +
+'\n' +
+'import re\n' +
+'import sys\n' +
+'import json\n' +
+'import urllib.request\n' +
+'import subprocess\n' +
+'\n' +
+'ZTP_SERVER = "' + server + '"\n' +
+'\n' +
+'def eos_cli(cmd):\n' +
+'    """Run an EOS CLI command and return stdout."""\n' +
+'    proc = subprocess.run(\n' +
+'        ["FastCli", "-p", "15", "-c", cmd],\n' +
+'        capture_output=True, text=True\n' +
+'    )\n' +
+'    return proc.stdout\n' +
+'\n' +
+'def get_serial():\n' +
+'    out = eos_cli("show version | json")\n' +
+'    try:\n' +
+'        data = json.loads(out)\n' +
+'        return data.get("serialNumber", "").strip()\n' +
+'    except Exception:\n' +
+'        # Fallback: grep text output\n' +
+'        out2 = eos_cli("show version")\n' +
+'        m = re.search(r"Serial number\\s*:\\s*(\\S+)", out2)\n' +
+'        return m.group(1) if m else ""\n' +
+'\n' +
+'def lookup_hostname(serial):\n' +
+'    url = ZTP_SERVER + "/ztp/serials.csv"\n' +
+'    try:\n' +
+'        with urllib.request.urlopen(url, timeout=10) as r:\n' +
+'            for line in r.read().decode().splitlines():\n' +
+'                if line.startswith("#") or not line.strip():\n' +
+'                    continue\n' +
+'                parts = line.split(",")\n' +
+'                if parts[0].strip() == serial:\n' +
+'                    return parts[1].strip()\n' +
+'    except Exception as e:\n' +
+'        print(f"Error fetching serial map: {e}")\n' +
+'    return None\n' +
+'\n' +
+'def fetch_and_apply(hostname):\n' +
+'    url = ZTP_SERVER + "/ztp/configs/" + hostname + ".eos"\n' +
+'    print(f"Fetching config from {url}")\n' +
+'    with urllib.request.urlopen(url, timeout=30) as r:\n' +
+'        config = r.read().decode()\n' +
+'    # Write to flash and apply\n' +
+'    cfg_path = f"/mnt/flash/startup-config"\n' +
+'    with open(cfg_path, "w") as f:\n' +
+'        f.write(config)\n' +
+'    print(f"Config written to {cfg_path}")\n' +
+'    print("Rebooting to apply startup-config...")\n' +
+'    eos_cli("reload now")\n' +
+'\n' +
+'def main():\n' +
+'    print("=== NetDesign AI EOS ZTP script ===")\n' +
+'    serial = get_serial()\n' +
+'    print(f"Serial: {serial}")\n' +
+'    if not serial:\n' +
+'        print("ERROR: Cannot read serial number")\n' +
+'        sys.exit(1)\n' +
+'\n' +
+'    hostname = lookup_hostname(serial)\n' +
+'    if not hostname:\n' +
+'        print(f"ERROR: Serial {serial} not in mapping — check serials.csv")\n' +
+'        sys.exit(1)\n' +
+'    print(f"Hostname: {hostname}")\n' +
+'\n' +
+'    fetch_and_apply(hostname)\n' +
+'\n' +
+'main()\n';
+}
+
+/* ── Download helpers ─────────────────────────────────────────── */
+function downloadSerialCSV() {
+  var content = genSerialMappingCSV(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ztp-serial-mapping.csv';
+  a.click();
+  if (typeof toast === 'function') toast('Serial → hostname mapping CSV downloaded', 'success');
+}
+
+function downloadPOAPScript() {
+  var content = genPOAPScript(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'text/x-python' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'poap_script.py';
+  a.click();
+  if (typeof toast === 'function') toast('Cisco POAP script downloaded', 'success');
+}
+
+function downloadEOSZTPScript() {
+  var content = genEOSZTPScript(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'text/x-python' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'eos_ztp.py';
+  a.click();
+  if (typeof toast === 'function') toast('Arista EOS ZTP script downloaded', 'success');
+}
+
+/* Expose to ZTP public API by augmenting the returned object */
+if (typeof ZTP !== 'undefined') {
+  ZTP.genSerialMappingCSV   = genSerialMappingCSV;
+  ZTP.genPOAPScript         = genPOAPScript;
+  ZTP.genEOSZTPScript       = genEOSZTPScript;
+  ZTP.downloadSerialCSV     = downloadSerialCSV;
+  ZTP.downloadPOAPScript    = downloadPOAPScript;
+  ZTP.downloadEOSZTPScript  = downloadEOSZTPScript;
+}
