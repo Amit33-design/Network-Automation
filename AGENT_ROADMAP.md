@@ -84,7 +84,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 #### BOM Enhancements
 - [x] **Cabling matrix** [#4](https://github.com/Amit33-design/Network-Automation/issues/4): For each BOM layer pair (e.g. spine↔leaf), generate a cable schedule: port A device/interface → port B device/interface, cable type (DAC/AOC/LC-LC), length (1m/3m/5m), quantity, part number
-- [ ] **Optics catalog** [#5](https://github.com/Amit33-design/Network-Automation/issues/5): Add optics to PRODUCTS or a separate OPTICS catalog — SFP-10G-SR, QSFP-100G-SR4, QSFP-DD-400G-DR4, etc. with vendor (Cisco OEM, Finisar, Lumentum), reach, cost, and compatibility matrix
+- [x] **Optics catalog** [#5](https://github.com/Amit33-design/Network-Automation/issues/5): Add optics to PRODUCTS or a separate OPTICS catalog — SFP-10G-SR, QSFP-100G-SR4, QSFP-DD-400G-DR4, etc. with vendor (Cisco OEM, Finisar, Lumentum), reach, cost, and compatibility matrix
 - [x] **Price database** [#6](https://github.com/Amit33-design/Network-Automation/issues/6): Add `estimatedCostUSD` to all PRODUCTS entries (currently missing on most). Pull reference pricing from public sources. Add total BOM cost estimate in the BOM footer
 - [x] **Device naming convention** [#7](https://github.com/Amit33-design/Network-Automation/issues/7): Systematic hostname generator — `{site}-{role}-{rack}-{idx}` e.g. `IAD-LEAF-A01-01` based on STATE.orgName, numSites, role
 - [ ] **Rack unit planning**: Add `rackU` field to PRODUCTS. Generate rack diagram data showing U consumption per device
@@ -98,14 +98,14 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [ ] **interface descriptions**: Auto-generate `description` lines from the cabling matrix (e.g. `description TO: IAD-SPINE-01 Eth1/1`)
 
 #### ZTP (Zero Touch Provisioning)
-- [ ] **DHCP option 67 + Netmiko** [#12](https://github.com/Amit33-design/Network-Automation/issues/12): Generate ISC DHCP / Cisco IOS DHCP config for ZTP boot file delivery + Netmiko onboarding script
+- [x] **DHCP option 67 + Netmiko** [#12](https://github.com/Amit33-design/Network-Automation/issues/12): Generate ISC DHCP / Cisco IOS DHCP config for ZTP boot file delivery + Netmiko onboarding script
 - [ ] **Ansible playbook** [#13](https://github.com/Amit33-design/Network-Automation/issues/13): Generate `site.yml` + roles for pushing generated configs via NAPALM/netconf
 - [ ] **Serial number → hostname mapping**: ZTP lookup table (CSV/YAML) mapping serial numbers to hostnames for Cisco ZTP / Arista ZTP
 - [ ] **POAP (Cisco)**: Generate Cisco POAP Python script
 - [ ] **EOS ZTP**: Generate Arista EOS ZTP script
 
 #### Policy Management
-- [ ] **ACL generator** [#14](https://github.com/Amit33-design/Network-Automation/issues/14): Generate named ACLs / prefix-lists from compliance selections (PCI, HIPAA zones)
+- [x] **ACL generator** [#14](https://github.com/Amit33-design/Network-Automation/issues/14): Generate named ACLs / prefix-lists from compliance selections (PCI, HIPAA zones)
 - [ ] **BGP route-policy validator**: Check generated BGP policies for common mistakes (missing default deny, wrong community syntax)
 - [ ] **Firewall rule consistency check**: Cross-check FW rules with network segmentation design — flag any policy that contradicts the HLD
 - [ ] **Policy diff**: Show what changed between two policy versions (already have diffengine.js — extend it for policies)
@@ -117,8 +117,8 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 ### TIER 2 — Monitoring & Observability
 
-- [ ] **Prometheus alert rules** [#16](https://github.com/Amit33-design/Network-Automation/issues/16): Generate `alert.rules.yml` for device-specific alerts (BGP session down, interface error rate, CPU > 80%)
-- [ ] **Grafana dashboard JSON** [#17](https://github.com/Amit33-design/Network-Automation/issues/17): Generate Grafana dashboard for the designed topology (panels per device/layer)
+- [x] **Prometheus alert rules** [#16](https://github.com/Amit33-design/Network-Automation/issues/16): Generate `alert.rules.yml` for device-specific alerts (BGP session down, interface error rate, CPU > 80%)
+- [x] **Grafana dashboard JSON** [#17](https://github.com/Amit33-design/Network-Automation/issues/17): Generate Grafana dashboard for the designed topology (panels per device/layer)
 - [ ] **SNMP MIB mapping**: Map key SNMP OIDs to human-readable labels for each vendor in the product catalog
 - [ ] **Syslog parsing rules**: Generate Logstash/Fluentd parsing rules for vendor-specific syslog formats
 - [ ] **Netflow/sFlow collector config**: Generate nfcapd / pmacct config for flow collection from designed devices
@@ -183,6 +183,11 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 ## Agent Log
 
 <!-- The agent appends entries here after each run -->
+
+### Run 2026-05-19 (manual — interactive session)
+**Implemented**: Optics catalog (#5), ZTP DHCP+Netmiko (#12), ACL generator (#14), Prometheus alerts (#16), Grafana dashboard (#17)
+**Files changed**: src/js/optics.js (new), src/js/ztp.js, src/js/policyengine.js, src/js/observability.js, src/js/recommendations.js, index.html
+**Summary**: Added 16-SKU optics catalog (1G–400G, auto-selected by layer/distance) with BOM table and CSV export. Added ISC DHCP config generator (option 43/67 for all vendors) and Python Netmiko script with inventory CSV support to ZTP panel. Added named ACL generator for PCI/HIPAA/SOC2 compliance covering all 4 vendors. Added Prometheus alert rules (BGP, interface, CPU, memory, error rate) and Grafana dashboard JSON (per-device panels per BOM layer) with download buttons.
 
 ### 2026-05-19
 
