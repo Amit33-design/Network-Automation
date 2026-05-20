@@ -99,20 +99,20 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 #### ZTP (Zero Touch Provisioning)
 - [x] **DHCP option 67 + Netmiko** [#12](https://github.com/Amit33-design/Network-Automation/issues/12): Generate ISC DHCP / Cisco IOS DHCP config for ZTP boot file delivery + Netmiko onboarding script
-- [ ] **Ansible playbook** [#13](https://github.com/Amit33-design/Network-Automation/issues/13): Generate `site.yml` + roles for pushing generated configs via NAPALM/netconf
-- [ ] **Serial number → hostname mapping**: ZTP lookup table (CSV/YAML) mapping serial numbers to hostnames for Cisco ZTP / Arista ZTP
-- [ ] **POAP (Cisco)**: Generate Cisco POAP Python script
-- [ ] **EOS ZTP**: Generate Arista EOS ZTP script
+- [x] **Ansible playbook** [#13](https://github.com/Amit33-design/Network-Automation/issues/13): Generate `site.yml` + roles for pushing generated configs via NAPALM/netconf
+- [x] **Serial number → hostname mapping**: ZTP lookup table (CSV/YAML) mapping serial numbers to hostnames for Cisco ZTP / Arista ZTP
+- [x] **POAP (Cisco)**: Generate Cisco POAP Python script
+- [x] **EOS ZTP**: Generate Arista EOS ZTP script
 
 #### Policy Management
 - [x] **ACL generator** [#14](https://github.com/Amit33-design/Network-Automation/issues/14): Generate named ACLs / prefix-lists from compliance selections (PCI, HIPAA zones)
-- [ ] **BGP route-policy validator**: Check generated BGP policies for common mistakes (missing default deny, wrong community syntax)
+- [x] **BGP route-policy validator**: Check generated BGP policies for common mistakes (missing default deny, wrong community syntax)
 - [ ] **Firewall rule consistency check**: Cross-check FW rules with network segmentation design — flag any policy that contradicts the HLD
 - [ ] **Policy diff**: Show what changed between two policy versions (already have diffengine.js — extend it for policies)
 
 #### Pre/Post Deployment Checks
 - [x] **Pre/Post-check scripts** [#15](https://github.com/Amit33-design/Network-Automation/issues/15): Generate Python/Bash scripts that SSH to devices and verify: interface states, BGP neighbor count, routing table prefixes, LLDP neighbors match expected topology
-- [ ] **NetBox sync** [#20](https://github.com/Amit33-design/Network-Automation/issues/20): Generate Python script to sync deployed topology to NetBox (using pynetbox)
+- [x] **NetBox sync** [#20](https://github.com/Amit33-design/Network-Automation/issues/20): Generate Python script to sync deployed topology to NetBox (using pynetbox)
 - [ ] **Change window validator**: Check if proposed changes violate any maintenance window rules
 
 ### TIER 2 — Monitoring & Observability
@@ -127,9 +127,9 @@ https://github.com/Amit33-design/Network-Automation/issues
 ### TIER 3 — ML-Based Troubleshooting & RCA
 
 - [ ] **Symptom classifier**: Train/embed a simple nearest-neighbor classifier over a dataset of (symptom, root cause) pairs for common network issues. Use it in ts_engine.js to suggest root causes from free-text symptoms
-- [ ] **BGP convergence predictor** [#19](https://github.com/Amit33-design/Network-Automation/issues/19): Given the topology (AS count, path count, policy complexity), estimate convergence time and flag risks
+- [x] **BGP convergence predictor** [#19](https://github.com/Amit33-design/Network-Automation/issues/19): Given the topology (AS count, path count, policy complexity), estimate convergence time and flag risks
 - [ ] **Anomaly detection**: Add a time-series anomaly detector in observability.js — flag metrics deviating > 2σ from rolling baseline
-- [ ] **RCA playbook generator** [#18](https://github.com/Amit33-design/Network-Automation/issues/18): Given an alert type (e.g. "BGP neighbor down"), generate a step-by-step RCA playbook as a downloadable Markdown/PDF
+- [x] **RCA playbook generator** [#18](https://github.com/Amit33-design/Network-Automation/issues/18): Given an alert type (e.g. "BGP neighbor down"), generate a step-by-step RCA playbook as a downloadable Markdown/PDF
 - [ ] **Historical incident database**: Embed a JSONL of common network incident patterns with resolution steps; use cosine similarity to find relevant past incidents
 - [ ] **Confidence scoring**: Each RCA suggestion should include a confidence %, reasoning chain, and evidence references
 
@@ -308,3 +308,8 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - `main.css`: 10 `.checks-*` rule blocks for panel styling.
 
 **Issues closed:** #9, #15
+
+### Run 2026-05-19 (manual — interactive session, batch 2)
+**Implemented**: Ansible (#13), ZTP serial/POAP/EOS ZTP, BGP validator, RCA playbooks (#18), BGP convergence (#19), NetBox sync (#20)
+**Files changed**: src/js/ansible.js (new), src/js/ztp.js, src/js/policyengine.js, src/js/ts_engine.js, src/js/observability.js, index.html
+**Summary**: Ansible playbook generator produces 10+ files (site.yml, roles, inventory, host_vars). ZTP panel now has serial→hostname CSV, Cisco POAP script, Arista EOS ZTP script. BGP validator checks 6 common policy mistakes. RCA playbook generator covers 4 alert types with vendor-specific verify commands. BGP convergence predictor estimates failover time with BFD/no-BFD and flags risks. NetBox sync script uses pynetbox with DRY_RUN mode.
