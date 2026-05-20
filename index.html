@@ -2811,6 +2811,23 @@ rules:
   </div>
 
   <!-- RCA within TS Engine -->
+  <!-- Symptom Classifier (client-side nearest-neighbor) -->
+  <div class="ts-section">
+    <div class="ts-section-hdr">🧠 Symptom Classifier</div>
+    <p style="font-size:.75rem;color:var(--txt3);margin:.1rem 0 .65rem">
+      Nearest-neighbor classifier over 35 curated symptom→root-cause pairs.
+      Runs fully in-browser — no backend required. Enter a free-text symptom description.
+    </p>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem">
+      <input id="sc-symptom-input" class="ts-input" type="text"
+        placeholder="e.g. BGP session keeps resetting, hold-timer expired on spine-01…"
+        style="flex:2;min-width:220px"
+        onkeydown="if(event.key==='Enter')renderSymptomClassifier()">
+      <button class="btn btn-primary" style="font-size:.82rem" onclick="renderSymptomClassifier()">🧠 Classify</button>
+    </div>
+    <div id="sc-results"><div class="obs-placeholder">Enter a symptom description and click Classify.</div></div>
+  </div>
+
   <div class="ts-section">
     <div class="ts-section-hdr">🔬 AI Root Cause Analysis</div>
     <div style="margin-bottom:.55rem">
