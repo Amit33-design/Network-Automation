@@ -783,6 +783,226 @@ interface Ethernet116
 }
 
 /* ════════════════════════════════════════════════════════════════
+   QoS POLICY HELPER BLOCKS
+   DSCP 46/EF = Voice (priority queue 15 %), DSCP 34/AF41 = Video,
+   DSCP 26/AF31 = Critical Data, default = Best-Effort
+════════════════════════════════════════════════════════════════ */
+function _genQoS(vendor, state) {
+  if (vendor === 'ios-xe') {
+    return `!
+! ── QoS Policy ──────────────────────────────────────────────
+class-map match-any VOICE
+ match dscp ef
+class-map match-any VIDEO
+ match dscp af41
+class-map match-any CRITICAL-DATA
+ match dscp af31
+!
+policy-map MARK-INGRESS
+ class VOICE
+  set dscp ef
+ class VIDEO
+  set dscp af41
+ class CRITICAL-DATA
+  set dscp af31
+ class class-default
+  set dscp default
+!
+policy-map QUEUING-POLICY
+ class VOICE
+  priority percent 15
+ class VIDEO
+  bandwidth percent 20
+ class CRITICAL-DATA
+  bandwidth percent 25
+ class class-default
+  fair-queue
+!
+interface range GigabitEthernet1/0/1 - 48
+ service-policy input MARK-INGRESS
+ service-policy output QUEUING-POLICY
+!
+`;
+  }
+  if (vendor === 'nxos') {
+    return `!
+! ── QoS Policy ──────────────────────────────────────────────
+class-map type qos match-any VOICE
+  match dscp ef
+class-map type qos match-any VIDEO
+  match dscp af41
+class-map type qos match-any CRITICAL-DATA
+  match dscp af31
+!
+policy-map type qos CLASSIFY
+  class VOICE
+    set qos-group 5
+  class VIDEO
+    set qos-group 4
+  class CRITICAL-DATA
+    set qos-group 3
+  class class-default
+    set qos-group 0
+!
+class-map type queuing VOICE-Q
+  match qos-group 5
+class-map type queuing VIDEO-Q
+  match qos-group 4
+class-map type queuing DATA-Q
+  match qos-group 3
+!
+policy-map type queuing QUEUING-POLICY
+  class type queuing VOICE-Q
+    priority
+    bandwidth percent 15
+  class type queuing VIDEO-Q
+    bandwidth percent 20
+  class type queuing DATA-Q
+    bandwidth percent 25
+  class type queuing class-default
+    bandwidth percent 40
+!
+system qos
+  service-policy type qos input CLASSIFY
+  service-policy type queuing output QUEUING-POLICY
+!
+`;
+  }
+  if (vendor === 'eos') {
+    return `!
+! ── QoS Policy ──────────────────────────────────────────────
+class-map type traffic match-any VOICE
+   match dscp ef
+class-map type traffic match-any VIDEO
+   match dscp af41
+class-map type traffic match-any CRITICAL-DATA
+   match dscp af31
+!
+policy-map type quality-of-service QUEUING-POLICY
+   class VOICE
+      priority
+      shape rate 15 percent
+   class VIDEO
+      bandwidth percent 20
+   class CRITICAL-DATA
+      bandwidth percent 25
+   class default
+      fair-queue
+!
+qos rewrite dscp
+qos map dscp to traffic-class 46 to 6
+qos map dscp to traffic-class 34 to 4
+qos map dscp to traffic-class 26 to 3
+!
+interface Ethernet1-48
+   service-policy type qos input QUEUING-POLICY
+!
+`;
+  }
+  if (vendor === 'junos') {
+    return `## ── QoS (Class of Service) ────────────────────────────────
+class-of-service {
+    forwarding-classes {
+        queue 5 voice;
+        queue 4 video;
+        queue 3 critical-data;
+        queue 0 best-effort;
+    }
+    classifiers {
+        dscp NETDESIGN-DSCP-CLASSIFIER {
+            import default;
+            forwarding-class voice {
+                loss-priority low code-points [ ef ];
+            }
+            forwarding-class video {
+                loss-priority low code-points [ af41 ];
+            }
+            forwarding-class critical-data {
+                loss-priority low code-points [ af31 ];
+            }
+        }
+    }
+    schedulers {
+        VOICE-SCHED {
+            transmit-rate percent 15;
+            buffer-size percent 5;
+            priority strict-high;
+        }
+        VIDEO-SCHED {
+            transmit-rate percent 20;
+            buffer-size percent 10;
+            priority low;
+        }
+        DATA-SCHED {
+            transmit-rate percent 25;
+            buffer-size percent 15;
+        }
+        BE-SCHED {
+            transmit-rate remainder;
+            buffer-size remainder;
+        }
+    }
+    scheduler-maps {
+        NETDESIGN-SCHED-MAP {
+            forwarding-class voice scheduler VOICE-SCHED;
+            forwarding-class video scheduler VIDEO-SCHED;
+            forwarding-class critical-data scheduler DATA-SCHED;
+            forwarding-class best-effort scheduler BE-SCHED;
+        }
+    }
+    interfaces {
+        <*> {
+            scheduler-map NETDESIGN-SCHED-MAP;
+            unit 0 {
+                classifiers {
+                    dscp NETDESIGN-DSCP-CLASSIFIER;
+                }
+            }
+        }
+    }
+}
+`;
+  }
+  if (vendor === 'sonic') {
+    return `# ── QoS DSCP Classification ──────────────────────────────
+# /etc/sonic/qos.json  (DSCP-to-TC mapping — merge with base)
+{
+  "DSCP_TO_TC_MAP": {
+    "NETDESIGN_DSCP_MAP": {
+      "46": "5",
+      "34": "4",
+      "26": "3",
+      "0":  "0"
+    }
+  },
+  "TC_TO_QUEUE_MAP": {
+    "NETDESIGN_TC_Q": {
+      "5": "5",
+      "4": "4",
+      "3": "3",
+      "0": "0"
+    }
+  },
+  "SCHEDULER": {
+    "VOICE_SCHED":  { "type": "STRICT",   "weight": "15" },
+    "VIDEO_SCHED":  { "type": "WRR",      "weight": "20" },
+    "DATA_SCHED":   { "type": "WRR",      "weight": "25" },
+    "BE_SCHED":     { "type": "WRR",      "weight": "40" }
+  },
+  "QUEUE": {
+    "Ethernet0|5": { "scheduler": "VOICE_SCHED" },
+    "Ethernet0|4": { "scheduler": "VIDEO_SCHED" },
+    "Ethernet0|3": { "scheduler": "DATA_SCHED"  },
+    "Ethernet0|0": { "scheduler": "BE_SCHED"    }
+  }
+}
+# Apply: sudo config qos reload && sudo config save -y
+`;
+  }
+  return '';
+}
+
+/* ════════════════════════════════════════════════════════════════
    CONFIG GENERATION TEMPLATES
 ════════════════════════════════════════════════════════════════ */
 function generateConfig(dev, os) {
@@ -1222,6 +1442,7 @@ ${hasBGP ? `router bgp 65100
   }
 
   // Common footer for all IOS-XE
+  cfg += _genQoS('ios-xe', STATE);
   cfg += _genNTP('ios-xe');
   cfg += _genSNMPv3('ios-xe');
   cfg += _genAAA('ios-xe', STATE);
@@ -1659,6 +1880,7 @@ interface mgmt0
 !
 ip route 0.0.0.0/0 10.0.0.1 vrf management
 `;
+  cfg += _genQoS('nxos', STATE);
   cfg += _genNTP('nxos');
   cfg += _genSNMPv3('nxos');
   cfg += _genAAA('nxos', STATE);
@@ -1818,6 +2040,7 @@ ${hasVxlan && !isSpine ? `   vlan 100
       ${hasVxlan && !isSpine ? `network ${vtepIP}/32` : ''}
 !
 ${hasOSPF && !isTOR ? _genOSPFUnderlay('eos', STATE, dev, layer, idx) : ''}
+${_genQoS('eos', STATE)}
 ${_genNTP('eos')}
 ${_genSNMPv3('eos')}
 ${_genAAA('eos', STATE)}
@@ -1924,6 +2147,7 @@ protocols {
     rstp { bridge-priority 32768; }
 }
 ${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
+${_genQoS('junos', STATE)}
 ${_genAAA('junos', STATE)}
 `;
 }
@@ -1999,6 +2223,7 @@ function genSONiC(dev, layer, idx) {
 }
 
 ${hasOSPF ? _genOSPFUnderlay('sonic', STATE, dev, layer, idx) : ''}
+${_genQoS('sonic', STATE)}
 ${_genNTP('sonic')}
 ${_genSNMPv3('sonic')}
 ${_genAAA('sonic', STATE)}
