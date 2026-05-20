@@ -3229,3 +3229,17 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .pre-all-clear      { font-size: .82rem; color: var(--green); padding: .3rem .5rem; }
 .pre-parse-errors   { font-size: .8rem; color: var(--red); }
 .pre-parse-errors ul{ margin: .4rem 0 0 1rem; padding: 0; }
+
+/* ── Pre/Post Check Script Download Panel ───────────────────── */
+.checks-panel-inner      { background: var(--bg1); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; }
+.checks-panel-header     { display: flex; align-items: flex-start; gap: .75rem; margin-bottom: .9rem; }
+.checks-panel-icon       { font-size: 1.4rem; line-height: 1; }
+.checks-panel-sub        { font-size: .78rem; color: var(--txt2); margin-top: .15rem; }
+.checks-panel-body       { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: .85rem; }
+@media (max-width: 640px) { .checks-panel-body { grid-template-columns: 1fr; } }
+.checks-card             { background: var(--bg2); border: 1px solid var(--bg3); border-radius: 8px; padding: .75rem 1rem; }
+.checks-card-title       { font-size: .84rem; font-weight: 700; color: var(--txt0); margin-bottom: .3rem; }
+.checks-card-desc        { font-size: .75rem; color: var(--txt2); margin-bottom: .65rem; line-height: 1.45; }
+.checks-dl-btn           { font-size: .78rem; padding: .3rem .7rem; }
+.checks-panel-usage      { background: var(--bg3); border-radius: 6px; padding: .5rem .75rem; font-size: .74rem; color: var(--txt2); line-height: 1.7; }
+.checks-panel-usage code { color: var(--blue); font-family: monospace; }

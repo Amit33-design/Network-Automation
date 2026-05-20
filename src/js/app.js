@@ -62,8 +62,9 @@ function jumpStep(n) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (typeof renderIntentPanel === 'function') renderIntentPanel();
   if (n === 6) {
-    if (typeof initGate === 'function')         initGate();
+    if (typeof initGate === 'function')          initGate();
     if (typeof renderPolicyPanel === 'function') renderPolicyPanel();
+    if (typeof renderChecksPanel === 'function') renderChecksPanel();
   }
   // Analytics funnel
   if (window.Funnel) {

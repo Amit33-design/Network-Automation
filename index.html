@@ -1773,6 +1773,9 @@
     <!-- Delta deploy summary (shown when config diff exists) -->
     <div id="delta-summary" class="delta-summary" style="display:none"></div>
 
+    <!-- Pre/Post check script download panel -->
+    <div id="checks-download-panel" style="margin-bottom:1.5rem"></div>
+
     <!-- Action bar -->
     <div style="display:flex;gap:.85rem;flex-wrap:wrap;margin-bottom:1.75rem" id="deploy-action-bar">
       <button class="btn btn-ghost" id="btn-precheck" onclick="runPreChecks()">🔍 Run Pre-Checks</button>
@@ -3143,6 +3146,7 @@ rules:
 <script src="src/js/simulation.js"></script>
 <script src="src/js/observability.js"></script>
 <script src="src/js/ztp.js"></script>
+<script src="src/js/checks.js"></script>
 <script src="src/js/export.js"></script>
 <script src="src/js/deploy.js"></script>
 <script src="src/js/storage.js"></script>
