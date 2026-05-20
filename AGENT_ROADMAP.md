@@ -128,10 +128,10 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 - [x] **Symptom classifier**: Train/embed a simple nearest-neighbor classifier over a dataset of (symptom, root cause) pairs for common network issues. Use it in ts_engine.js to suggest root causes from free-text symptoms
 - [x] **BGP convergence predictor** [#19](https://github.com/Amit33-design/Network-Automation/issues/19): Given the topology (AS count, path count, policy complexity), estimate convergence time and flag risks
-- [ ] **Anomaly detection**: Add a time-series anomaly detector in observability.js — flag metrics deviating > 2σ from rolling baseline
+- [x] **Anomaly detection**: Add a time-series anomaly detector in observability.js — flag metrics deviating > 2σ from rolling baseline
 - [x] **RCA playbook generator** [#18](https://github.com/Amit33-design/Network-Automation/issues/18): Given an alert type (e.g. "BGP neighbor down"), generate a step-by-step RCA playbook as a downloadable Markdown/PDF
-- [ ] **Historical incident database**: Embed a JSONL of common network incident patterns with resolution steps; use cosine similarity to find relevant past incidents
-- [ ] **Confidence scoring**: Each RCA suggestion should include a confidence %, reasoning chain, and evidence references
+- [x] **Historical incident database**: Embed a JSONL of common network incident patterns with resolution steps; use cosine similarity to find relevant past incidents
+- [x] **Confidence scoring**: Each RCA suggestion should include a confidence %, reasoning chain, and evidence references
 
 ### TIER 4 — Integrations
 
@@ -419,3 +419,27 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - No backend required — runs entirely in the browser; index pre-built lazily on first call (~35 dot-products per query).
 
 **Issues closed:** none (no GitHub issue number for symptom classifier)
+
+### 2026-05-20 (run 10)
+
+**Features completed this run:**
+
+1. **Anomaly detection** — `889bb3c`
+   - Added `_ANOMALY` state object + `detectAnomalies()` + `renderAnomalyPanel()` to `observability.js`.
+   - 30-sample sliding window per device; seeded with 25 stable baseline readings on first call.
+   - Metrics tracked: CPU %, memory %, interface error rate /s, BGP peer count.
+   - CRITICAL (>3σ) / WARNING (>2σ) severity with z-score badge, colored bar, layer label.
+   - `#anomaly-detection-panel` obs-block added to Step 6 obs-section; `renderAnomalyPanel()` auto-called in `jumpStep(6)` + Scan button.
+
+2. **Historical incident database** — `889bb3c`
+   - Added `_INCIDENT_DB` (20 curated incidents, INC-001..INC-020) to `ts_engine.js`.
+   - Covers: BGP full-table OOM, STP loop, VXLAN MAC flap, OSPF partition, PFC storm, TACACS+ lockout, BGP RR SPOF, DHCP exhaustion, MTU black hole, IPSec mismatch, NTP drift, LACP flap, SNMP engine ID, asymmetric routing, DNS loop, QoS mis-marking, OSPF EXSTART, TCAM exhaustion, multicast RP failure, ZTP POAP failure.
+   - `searchIncidentDB(query, topN)` reuses cosine similarity engine; returns similarity %, impact, MTTR, lastSeen, reasoning chain, resolution steps.
+   - `renderIncidentSearch()` renders expandable result cards with similarity bars.
+   - `#inc-search-results` panel added before NetBox Sync in troubleshooting engine section.
+
+3. **Confidence scoring** — `889bb3c`
+   - Enhanced `classifySymptom()` in `ts_engine.js` to return `reasoning[]` (top-5 token contributions with weights) and `evidence[]` (category + verify command references).
+   - Updated `renderSymptomClassifier()`: confidence progress bar, collapsible Reasoning chain panel, collapsible Evidence & references panel per result card.
+
+**Issues closed:** none (Tier 3 items had no GitHub issue numbers)
