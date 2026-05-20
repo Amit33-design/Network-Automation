@@ -2016,6 +2016,47 @@
         </div>
         <div id="obs-rca-results"></div>
       </div>
+
+      <!-- SNMP MIB Reference -->
+      <div class="obs-block">
+        <div class="obs-block-hdr" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem">
+          <span>📋 SNMP MIB Reference</span>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+            <button class="btn-cfg-action" onclick="renderSNMPMIBPanel()" style="font-size:.72rem">Refresh</button>
+            <button class="btn-cfg-action" onclick="downloadSNMPMIBMapping()" style="font-size:.72rem">⬇ MIB Map CSV</button>
+          </div>
+        </div>
+        <p style="font-size:.75rem;color:var(--txt3);margin:.25rem 0 .6rem">Key SNMP OIDs for IF-MIB, BGP4-MIB, OSPF-MIB, ENTITY-MIB and vendor-private MIBs (Cisco / Arista / Juniper / SONiC). Use the CSV with snmp_exporter / LibreNMS / Zabbix.</p>
+        <div id="obs-mib-table"><div class="obs-placeholder">Click Refresh to load the MIB mapping table.</div></div>
+      </div>
+
+      <!-- Syslog + NetFlow Downloads -->
+      <div class="obs-block">
+        <div class="obs-block-hdr">📥 Log Pipeline &amp; Flow Collector</div>
+        <p style="font-size:.75rem;color:var(--txt3);margin:.25rem 0 .65rem">Download pre-built parsing configs for your log stack and NetFlow collector — per-vendor grok / regexp patterns and device exporter snippets.</p>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+          <button class="btn-cfg-action" onclick="downloadSyslogParsingRules()" style="font-size:.72rem">⬇ Logstash/Fluentd Syslog Rules</button>
+          <button class="btn-cfg-action" onclick="downloadNetflowConfig()"      style="font-size:.72rem">⬇ NetFlow/sFlow Collector Config</button>
+        </div>
+        <ul style="margin:.65rem 0 0 1.1rem;font-size:.74rem;color:var(--txt2);line-height:1.65">
+          <li><strong>Syslog rules</strong>: Logstash grok + Fluentd regexp for IOS-XE, NX-OS, EOS, JunOS, SONiC. Includes device syslog client snippets.</li>
+          <li><strong>NetFlow config</strong>: nfcapd + pmacct nfacctd (v5/v9/IPFIX) + sfacctd (sFlow). Includes per-device exporter config for all vendors in your BOM.</li>
+        </ul>
+      </div>
+
+      <!-- Real-time Topology Sync -->
+      <div class="obs-block">
+        <div class="obs-block-hdr" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem">
+          <span>🔄 Real-time Topology Sync</span>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">
+            <span id="obs-topo-ts" style="font-size:.7rem;color:var(--txt3)"></span>
+            <button id="obs-topo-start-btn" class="btn-cfg-action" onclick="startTopoSync()" style="font-size:.72rem">▶ Start</button>
+            <button id="obs-topo-stop-btn"  class="btn-cfg-action" onclick="stopTopoSync()"  style="font-size:.72rem" disabled>⏹ Stop</button>
+          </div>
+        </div>
+        <p style="font-size:.75rem;color:var(--txt3);margin:.25rem 0 .6rem">Polls <code style="font-size:.72rem;background:var(--bg2);padding:.1rem .3rem;border-radius:3px">/api/topology/health</code> every 15 s and shows live device up/down status. Requires Live Mode + backend with <code style="font-size:.72rem;background:var(--bg2);padding:.1rem .3rem;border-radius:3px">ENABLE_TELEMETRY=true</code>.</p>
+        <div id="obs-topo-sync"><div class="obs-placeholder">Click ▶ Start to begin polling device health.</div></div>
+      </div>
     </div>
 
     <!-- ══ ZTP — Zero Touch Provisioning Panel ══ -->
