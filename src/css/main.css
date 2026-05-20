@@ -3278,3 +3278,24 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .pdiff-row-add .pdiff-prefix  { color: var(--green); }
 .pdiff-row-del .pdiff-prefix  { color: var(--red);   }
 .pdiff-content       { flex: 1; }
+
+/* ── Change window validator ─────────────────────────────────── */
+.cw-status-bar    { display: flex; gap: .65rem; align-items: center; padding: .55rem .8rem;
+                    background: var(--bg2); border-radius: 7px; margin-bottom: .75rem; }
+.cw-status-msg    { font-size: .82rem; font-weight: 600; }
+.cw-status-sub    { font-size: .73rem; color: var(--txt3); margin-top: .1rem; }
+.cw-table         { width: 100%; border-collapse: collapse; font-size: .78rem; }
+.cw-table th      { text-align: left; padding: .3rem .5rem; color: var(--txt3);
+                    font-size: .72rem; font-weight: 600; border-bottom: 1px solid var(--border); }
+.cw-table td      { padding: .4rem .5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.cw-row-active    { background: rgba(0,232,122,.05); }
+.cw-name          { font-weight: 600; color: var(--txt0); }
+.cw-schedule      { font-family: monospace; font-size: .73rem; color: var(--txt2); }
+.cw-toggle-badge  { padding: .15rem .45rem; border-radius: 4px; font-size: .7rem;
+                    font-weight: 700; cursor: pointer; user-select: none; }
+.cw-badge-on      { background: rgba(0,232,122,.15); color: var(--green); }
+.cw-badge-off     { background: rgba(255,51,85,.12);  color: var(--red);   }
+.cw-active-label  { font-size: .68rem; font-weight: 700; color: var(--green); margin-left: .3rem; }
+.cw-del-btn       { background: none; border: none; color: var(--txt3); cursor: pointer;
+                    font-size: .8rem; padding: .1rem .35rem; border-radius: 4px; }
+.cw-del-btn:hover { color: var(--red); background: rgba(255,51,85,.1); }

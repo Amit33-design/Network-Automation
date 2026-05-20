@@ -217,7 +217,14 @@ function simulateCheck(c) {
   const r = Math.random();
   if (r > 0.85 && c.cat==='health')     return { status:'warn', detail:'CPU at 68% — within threshold', val:'CPU: 68%' };
   if (r > 0.90 && c.cat==='compliance') return { status:'warn', detail:'Minor sub-version mismatch', val:'17.09.4a vs 17.09.4' };
-  if (c.name==='Change window')         return { status:'pass', detail:'Within approved maintenance window', val:'Sat 00:00–04:00 UTC' };
+  if (c.name==='Change window') {
+    if (typeof checkChangeWindow === 'function') {
+      var cw = checkChangeWindow();
+      if (cw.status === 'in-window')     return { status:'pass', detail:cw.message, val:cw.window ? (cw.window.name) : 'Approved' };
+      if (cw.status === 'out-of-window') return { status:'fail', detail:cw.message, val:'Out of window' };
+    }
+    return { status:'pass', detail:'No change windows configured — deployment unrestricted', val:'Unrestricted' };
+  }
   return { status:'pass', detail:'Check passed successfully', val:
     c.cat==='connectivity'?'RTT avg 1.2ms':c.cat==='baseline'?'Baseline captured':c.cat==='config'?'No errors found':'OK' };
 }

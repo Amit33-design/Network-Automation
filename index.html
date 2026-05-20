@@ -1907,6 +1907,22 @@
       </div>
     </div>
 
+    <!-- Change Window Validator -->
+    <div class="policy-panel-section" style="margin-top:1rem">
+      <div class="divider-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>🕒 Change Window Validator</span>
+        <button class="btn-cfg-action" onclick="renderChangeWindowPanel()" style="font-size:.72rem">↺ Refresh</button>
+      </div>
+      <div id="change-window-panel">
+        <div class="policy-pass">
+          <span style="font-size:1.2rem">⏳</span>
+          <div><strong>Change window check pending</strong>
+            <div style="font-size:.78rem;color:var(--txt3);margin-top:.1rem">Navigate to step 6 to validate against your maintenance windows</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Results dashboard (hidden until checks run) -->
     <div id="check-dashboard" style="display:none">
       <div class="divider-label">Validation Results</div>
@@ -3249,6 +3265,7 @@ rules:
 <script src="src/js/diffengine.js"></script>
 <script src="src/js/backend.js"></script>
 <script src="src/js/policyengine.js"></script>
+<script src="src/js/changewindow.js"></script>
 <script src="src/js/gate.js"></script>
 <script src="src/js/simulation.js"></script>
 <script src="src/js/observability.js"></script>

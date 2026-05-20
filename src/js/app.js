@@ -65,7 +65,8 @@ function jumpStep(n) {
     if (typeof initGate === 'function')          initGate();
     if (typeof renderPolicyPanel === 'function')        renderPolicyPanel();
     if (typeof renderChecksPanel === 'function')        renderChecksPanel();
-    if (typeof renderFWConsistencyPanel === 'function') renderFWConsistencyPanel();
+    if (typeof renderFWConsistencyPanel === 'function')  renderFWConsistencyPanel();
+    if (typeof renderChangeWindowPanel === 'function')   renderChangeWindowPanel();
   }
   // Analytics funnel
   if (window.Funnel) {
