@@ -111,7 +111,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [ ] **Policy diff**: Show what changed between two policy versions (already have diffengine.js — extend it for policies)
 
 #### Pre/Post Deployment Checks
-- [ ] **Pre/Post-check scripts** [#15](https://github.com/Amit33-design/Network-Automation/issues/15): Generate Python/Bash scripts that SSH to devices and verify: interface states, BGP neighbor count, routing table prefixes, LLDP neighbors match expected topology
+- [x] **Pre/Post-check scripts** [#15](https://github.com/Amit33-design/Network-Automation/issues/15): Generate Python/Bash scripts that SSH to devices and verify: interface states, BGP neighbor count, routing table prefixes, LLDP neighbors match expected topology
 - [ ] **NetBox sync** [#20](https://github.com/Amit33-design/Network-Automation/issues/20): Generate Python script to sync deployed topology to NetBox (using pynetbox)
 - [ ] **Change window validator**: Check if proposed changes violate any maintenance window rules
 
@@ -283,3 +283,23 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - `'QoS'` was already in `SECTION_MARKERS`; section-nav jump button works without additional changes.
 
 **Issues closed:** #9
+
+### 2026-05-20 (run 6, continued)
+
+**Features completed this run:**
+
+1. **QoS policies (#9)** — `02c70c2` *(logged above)*
+
+2. **Pre/Post-check scripts (#15)** — `98637e3`
+   - Created `src/js/checks.js` with five `window.*` public functions.
+   - `genPreCheckScript(state)` — Python+Netmiko script: SSHs to all BOM devices (inventory auto-built from `buildDeviceList()`), captures baseline interface states, BGP peer count, routing table summary, LLDP neighbors; saves `pre_check_baseline_<ts>.json`.
+   - `genPostCheckScript(state)` — SSHs post-deploy, diffs against baseline; flags BGP peer drop, interface loss, route count shrinkage; exits 1 on failures; JSON report saved.
+   - Per-vendor show commands for ios-xe, nxos, eos, junos, sonic (6 commands each).
+   - Device inventory uses same mgmt IP convention (`10.0.0.3x`) and `getOS()` as configgen.js.
+   - `downloadPreCheckScript()` / `downloadPostCheckScript()` trigger browser download.
+   - `renderChecksPanel()` renders a 2-card download panel into `#checks-download-panel`.
+   - `index.html`: `#checks-download-panel` div added above deploy action bar; `<script>` tag added after `ztp.js`.
+   - `app.js`: `renderChecksPanel()` called in `jumpStep(6)` init block.
+   - `main.css`: 10 `.checks-*` rule blocks for panel styling.
+
+**Issues closed:** #9, #15
