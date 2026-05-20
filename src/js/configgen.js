@@ -1150,6 +1150,7 @@ function genIOSXE(dev, layer, idx) {
   const isDist = layer === 'campus-dist';
   const isAcc  = layer === 'campus-access';
   const isFW   = layer === 'fw';
+  const _ud    = (typeof getUplinkDescs === 'function') ? getUplinkDescs(name) : [];
 
   // Read from RESOLVED_STATE (policy-engine resolved) → fallback to STATE
   const hasVxlan = _rs('vxlanEnabled', () => (STATE.overlayProto || []).some(o=>o.includes('VXLAN')));
@@ -1213,7 +1214,7 @@ vlan 99
     cfg += `!
 ! ── INTERFACES — Uplinks ───────────────────────────────────
 interface GigabitEthernet0/1
- description UPLINK-TO-DIST-0${idx+1}-Po${idx+1}
+ description ${_ud[0] || 'UPLINK-TO-DIST-0' + (idx+1) + '-Po' + (idx+1)}
  switchport mode trunk
  switchport trunk native vlan 99
  switchport trunk allowed vlan 10,20,21,30,40,41,50
@@ -1221,7 +1222,7 @@ interface GigabitEthernet0/1
  no shutdown
 !
 interface GigabitEthernet0/2
- description UPLINK-TO-DIST-0${idx+1}-Po${idx+1} (LAG member 2)
+ description ${_ud[1] || 'UPLINK-TO-DIST-0' + (idx+1) + '-Po' + (idx+1) + ' (LAG member 2)'}
  switchport mode trunk
  switchport trunk native vlan 99
  switchport trunk allowed vlan 10,20,21,30,40,41,50
@@ -1300,27 +1301,27 @@ ip radius source-interface Vlan10` : '! 802.1X not enabled'}
     cfg += `!
 ! ── INTERFACES — Core Uplinks ──────────────────────────────
 interface TenGigabitEthernet1/1
- description UPLINK-TO-CORE-01-Po1
+ description ${_ud[0] || 'UPLINK-TO-CORE-01-Po1'}
  no switchport
  ip address ${p2p} ${p2pMask}
  no shutdown
 !
 interface TenGigabitEthernet1/2
- description UPLINK-TO-CORE-02-Po2
+ description ${_ud[1] || 'UPLINK-TO-CORE-02-Po2'}
  no switchport
  ip address 10.100.0.${idx*2+4} ${p2pMask}
  no shutdown
 !
 ! ── INTERFACES — Access Downlinks ──────────────────────────
 interface GigabitEthernet0/1
- description DOWNLINK-TO-ACC-0${idx*2+1}
+ description ${_ud[2] || 'DOWNLINK-TO-ACC-0' + (idx*2+1)}
  switchport mode trunk
  switchport trunk native vlan 99
  switchport trunk allowed vlan 10,20,21,30,40,41,50
  no shutdown
 !
 interface GigabitEthernet0/2
- description DOWNLINK-TO-ACC-0${idx*2+2}
+ description ${_ud[3] || 'DOWNLINK-TO-ACC-0' + (idx*2+2)}
  switchport mode trunk
  switchport trunk native vlan 99
  switchport trunk allowed vlan 10,20,21,30,40,41,50
@@ -1417,25 +1418,25 @@ interface TenGigabitEthernet1/1
 !
 ! ── INTERFACES — Distribution Downlinks ────────────────────
 interface TenGigabitEthernet2/1
- description DOWNLINK-TO-DIST-01
+ description ${_ud[0] || 'DOWNLINK-TO-DIST-01'}
  no switchport
  ip address 10.100.0.0 255.255.255.254
  no shutdown
 !
 interface TenGigabitEthernet2/2
- description DOWNLINK-TO-DIST-02
+ description ${_ud[1] || 'DOWNLINK-TO-DIST-02'}
  no switchport
  ip address 10.100.0.2 255.255.255.254
  no shutdown
 !
 interface TenGigabitEthernet2/3
- description DOWNLINK-TO-DIST-03
+ description ${_ud[2] || 'DOWNLINK-TO-DIST-03'}
  no switchport
  ip address 10.100.0.4 255.255.255.254
  no shutdown
 !
 interface TenGigabitEthernet2/4
- description DOWNLINK-TO-DIST-04
+ description ${_ud[3] || 'DOWNLINK-TO-DIST-04'}
  no switchport
  ip address 10.100.0.6 255.255.255.254
  no shutdown
@@ -1557,6 +1558,7 @@ function genNXOS(dev, layer, idx) {
   const loIP    = isSpine ? `10.255.1.${idx+1}` : (isTOR ? `10.255.5.${idx+1}` : `10.255.2.${idx+1}`);
   const vtepIP  = `10.255.3.${idx+1}`;
   const mgmtIP  = `10.0.0.${isSpine ? 5+idx : 11+idx}`;
+  const _ud     = (typeof getUplinkDescs === 'function') ? getUplinkDescs(name) : [];
   // Use RESOLVED_STATE when available (policy engine may have AUTO_FIX'd EVPN→BGP or PFC)
   const hasVxlan= _rs('vxlanEnabled', () => STATE.overlayProto.some(o=>o.includes('VXLAN'))) && !isTOR;
   const hasEVPN = _rs('evpnEnabled',  () => hasVxlan);
@@ -1631,7 +1633,7 @@ ${hasVxlan ? `interface loopback1
 
   if (isSpine) {
     cfg += `interface Ethernet1/1
-  description TO-LEAF-01-Eth49/1
+  description ${_ud[0] || 'TO-LEAF-01-Eth49/1'}
   no switchport
   mtu 9216
   ip address 10.1.0.${idx*8}/31
@@ -1639,7 +1641,7 @@ ${hasVxlan ? `interface loopback1
   no shutdown
 !
 interface Ethernet1/2
-  description TO-LEAF-02-Eth49/1
+  description ${_ud[1] || 'TO-LEAF-02-Eth49/1'}
   no switchport
   mtu 9216
   ip address 10.1.0.${idx*8+2}/31
@@ -1647,7 +1649,7 @@ interface Ethernet1/2
   no shutdown
 !
 interface Ethernet1/3
-  description TO-LEAF-03-Eth49/1
+  description ${_ud[2] || 'TO-LEAF-03-Eth49/1'}
   no switchport
   mtu 9216
   ip address 10.1.0.${idx*8+4}/31
@@ -1655,7 +1657,7 @@ interface Ethernet1/3
   no shutdown
 !
 interface Ethernet1/4
-  description TO-LEAF-04-Eth49/1
+  description ${_ud[3] || 'TO-LEAF-04-Eth49/1'}
   no switchport
   mtu 9216
   ip address 10.1.0.${idx*8+6}/31
@@ -1721,7 +1723,7 @@ router bgp ${asn}
 
   if (isLeaf) {
     cfg += `interface Ethernet1/49
-  description TO-SPINE-01-Eth1/${idx+1}
+  description ${_ud[0] || 'TO-SPINE-01-Eth1/' + (idx+1)}
   no switchport
   mtu 9216
   ip address 10.1.0.${idx*2+1}/31
@@ -1729,7 +1731,7 @@ router bgp ${asn}
   no shutdown
 !
 interface Ethernet1/50
-  description TO-SPINE-02-Eth1/${idx+1}
+  description ${_ud[1] || 'TO-SPINE-02-Eth1/' + (idx+1)}
   no switchport
   mtu 9216
   ip address 10.1.0.${idx*2+9}/31
@@ -1994,6 +1996,7 @@ function genEOS(dev, layer, idx) {
   const asn     = isSpine ? 65000 : 65001 + idx;
   const loIP    = isSpine ? `10.255.1.${idx+1}` : `10.255.2.${idx+1}`;
   const vtepIP  = `10.255.3.${idx+1}`;
+  const _ud     = (typeof getUplinkDescs === 'function') ? getUplinkDescs(name) : [];
   // Use RESOLVED_STATE when available (policy engine may have AUTO_FIX'd EVPN→BGP or PFC)
   const hasVxlan= _rs('vxlanEnabled', () => STATE.overlayProto.some(o=>o.includes('VXLAN'))) && !isTOR;
   const hasPFC  = _rs('pfcEnabled',   () => (STATE.gpuSpecifics || []).includes('pfc'));
@@ -2049,13 +2052,13 @@ ${hasVxlan ? `interface Loopback1
    ip address ${vtepIP}/32
 !` : ''}
 interface Ethernet49/1
-   description TO-${isSpine ? 'LEAF' : 'SPINE'}-01
+   description ${_ud[0] || ('TO-' + (isSpine ? 'LEAF' : 'SPINE') + '-01')}
    no switchport
    ip address 10.1.0.${isSpine ? idx*8 : idx*2+1}/31
    no shutdown
 !
 interface Ethernet50/1
-   description TO-${isSpine ? 'LEAF' : 'SPINE'}-02
+   description ${_ud[1] || ('TO-' + (isSpine ? 'LEAF' : 'SPINE') + '-02')}
    no switchport
    ip address 10.1.0.${isSpine ? idx*8+2 : idx*2+9}/31
    no shutdown
@@ -2136,6 +2139,7 @@ function genJunos(dev, layer, idx) {
   const loIP    = `10.255.2.${idx+1}`;
   const mgmt    = `10.0.0.${20+idx}`;
   const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
+  const _ud     = (typeof getUplinkDescs === 'function') ? getUplinkDescs(dev.name) : [];
   return `## ═══════════════════════════════════════════════════════════
 ## Device : ${dev.name}  Role: ${dev.role}
 ## OS     : Juniper Junos 23.x
@@ -2177,13 +2181,13 @@ interfaces {
     }
     et-0/0/48 {
         unit 0 {
-            description "TO-SPINE-01";
+            description "${_ud[0] || 'TO-SPINE-01'}";
             family inet { address 10.1.0.${idx*2+1}/31; }
         }
     }
     et-0/0/49 {
         unit 0 {
-            description "TO-SPINE-02";
+            description "${_ud[1] || 'TO-SPINE-02'}";
             family inet { address 10.1.0.${idx*2+9}/31; }
         }
     }

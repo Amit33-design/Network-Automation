@@ -302,7 +302,45 @@ function getCablingCSVSection() {
   return '\n' + lines.join('\n');
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   INTERFACE DESCRIPTION HELPERS
+   buildInterfaceDescMap() → { deviceName: [ { remote, remotePort }, … ] }
+   getUplinkDescs(devName) → ordered array of 'TO: <remote> <port>' strings
+   Called by configgen.js to produce description lines from cabling data.
+══════════════════════════════════════════════════════════════════ */
+
+function buildInterfaceDescMap() {
+  var map = {};  /* devName → [{ remote, remotePort }, …] */
+  var rows;
+  try {
+    rows = generateCablingMatrix(
+      typeof getLayersForUC === 'function' ? getLayersForUC() : [],
+      typeof STATE !== 'undefined' ? STATE : {}
+    );
+  } catch(e) { return map; }
+
+  rows.forEach(function(row) {
+    row.details.forEach(function(d) {
+      if (!map[d.deviceA]) map[d.deviceA] = [];
+      if (!map[d.deviceB]) map[d.deviceB] = [];
+      map[d.deviceA].push({ remote: d.deviceB, remotePort: d.portB });
+      map[d.deviceB].push({ remote: d.deviceA, remotePort: d.portA });
+    });
+  });
+  return map;
+}
+
+/* Returns array of description strings for a device's uplinks, ordered by
+   cabling matrix position.  Index 0 = first uplink, 1 = second uplink, etc. */
+function getUplinkDescs(devName) {
+  var map = buildInterfaceDescMap();
+  var conns = map[devName] || [];
+  return conns.map(function(c) { return 'TO: ' + c.remote + ' ' + c.remotePort; });
+}
+
 window.generateCablingMatrix = generateCablingMatrix;
 window.updateCablingMatrix   = updateCablingMatrix;
 window.toggleCablingSection  = toggleCablingSection;
 window.getCablingCSVSection  = getCablingCSVSection;
+window.buildInterfaceDescMap = buildInterfaceDescMap;
+window.getUplinkDescs        = getUplinkDescs;
