@@ -92,7 +92,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 #### Config Generation Gaps
 - [x] **OSPF underlay** [#8](https://github.com/Amit33-design/Network-Automation/issues/8): Currently BGP-only. Add OSPF area 0 underlay config for campus and DC use cases
 - [ ] **STP/RSTP config**: Add Rapid-PVST+/MST config blocks for campus switches (port types, portfast, BPDU guard)
-- [ ] **QoS policies** [#9](https://github.com/Amit33-design/Network-Automation/issues/9): Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
+- [x] **QoS policies** [#9](https://github.com/Amit33-design/Network-Automation/issues/9): Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
 - [x] **AAA/TACACS+** [#10](https://github.com/Amit33-design/Network-Automation/issues/10): Add TACACS+ / RADIUS config blocks for all vendors
 - [x] **NTP + SNMP v3** [#11](https://github.com/Amit33-design/Network-Automation/issues/11): Add NTP server hierarchy + SNMP v3 auth+priv config to all vendors
 - [ ] **interface descriptions**: Auto-generate `description` lines from the cabling matrix (e.g. `description TO: IAD-SPINE-01 Eth1/1`)
@@ -267,3 +267,19 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - `'OSPF'` added to `SECTION_MARKERS` for section-nav jump bar.
 
 **Issues closed:** #8
+
+### 2026-05-20 (run 6)
+
+**Features completed this run:**
+
+1. **QoS policies (#9)** — `02c70c2`
+   - Added `_genQoS(vendor, state)` helper in `configgen.js` covering all 5 vendors.
+   - **IOS-XE**: `class-map match-any VOICE/VIDEO/CRITICAL-DATA` (DSCP ef/af41/af31); `policy-map MARK-INGRESS` + `QUEUING-POLICY` (priority 15%, bandwidth 20%/25%); applied to `interface range Gi1/0/1-48`.
+   - **NX-OS**: `class-map type qos` CLASSIFY mapping to qos-groups 5/4/3; `class-map type queuing` + `policy-map type queuing QUEUING-POLICY` applied via `system qos`.
+   - **EOS**: `class-map type traffic` + `policy-map type quality-of-service QUEUING-POLICY`; explicit `qos map dscp to traffic-class` lines (46→6, 34→4, 26→3); applied to `interface Ethernet1-48`.
+   - **JunOS**: full `class-of-service {}` block — `forwarding-classes`, DSCP `classifiers`, per-class `schedulers` (strict-high for voice, WRR for others), `scheduler-maps`, interface `<*>` binding.
+   - **SONiC**: `config_db.json` excerpt with `DSCP_TO_TC_MAP`, `TC_TO_QUEUE_MAP`, `SCHEDULER` (STRICT for voice, WRR for rest), `QUEUE` entries; apply via `sudo config qos reload`.
+   - `_genQoS` injected before NTP/SNMP/AAA in every vendor's config footer.
+   - `'QoS'` was already in `SECTION_MARKERS`; section-nav jump button works without additional changes.
+
+**Issues closed:** #9
