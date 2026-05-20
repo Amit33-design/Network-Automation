@@ -119,10 +119,10 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 - [x] **Prometheus alert rules** [#16](https://github.com/Amit33-design/Network-Automation/issues/16): Generate `alert.rules.yml` for device-specific alerts (BGP session down, interface error rate, CPU > 80%)
 - [x] **Grafana dashboard JSON** [#17](https://github.com/Amit33-design/Network-Automation/issues/17): Generate Grafana dashboard for the designed topology (panels per device/layer)
-- [ ] **SNMP MIB mapping**: Map key SNMP OIDs to human-readable labels for each vendor in the product catalog
-- [ ] **Syslog parsing rules**: Generate Logstash/Fluentd parsing rules for vendor-specific syslog formats
-- [ ] **Netflow/sFlow collector config**: Generate nfcapd / pmacct config for flow collection from designed devices
-- [ ] **Real-time topology sync**: observability.js poll loop that refreshes topology from backend health-check API
+- [x] **SNMP MIB mapping**: Map key SNMP OIDs to human-readable labels for each vendor in the product catalog
+- [x] **Syslog parsing rules**: Generate Logstash/Fluentd parsing rules for vendor-specific syslog formats
+- [x] **Netflow/sFlow collector config**: Generate nfcapd / pmacct config for flow collection from designed devices
+- [x] **Real-time topology sync**: observability.js poll loop that refreshes topology from backend health-check API
 
 ### TIER 3 — ML-Based Troubleshooting & RCA
 
@@ -375,3 +375,33 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - CSS: `.cw-*` rules for status bar, table, badges, and delete button.
 
 **Issues closed:** none (these items had no GitHub issue numbers)
+
+### 2026-05-20 (run 9)
+
+**Features completed this run:**
+
+1. **SNMP MIB mapping** — `7232ce6`
+   - Added `SNMP_MIBS` static array (55 entries) to `observability.js` covering: SNMPv2-MIB (sysDescr/sysUpTime/sysName), IF-MIB (32-bit + 64-bit counters, ifAdminStatus/ifOperStatus, ifAlias), BGP4-MIB (peer state/FSM time/prefixes/updates), OSPF-MIB (neighbor state + interface state), ENTITY-MIB (physical description/name/serial).
+   - Vendor-private: Cisco CISCO-PROCESS-MIB (cpmCPUTotal5minRev, cpmCPUMemory*), CISCO-MEMORY-POOL-MIB, CISCO-ENVMON-MIB (temp + fan), CISCO-BGP4-MIB (cbgpPeer2State + cbgpPeer2PrefixAccepted), CISCO-VTP-MIB, CISCO-STACKWISE-MIB; Arista ARISTA-BGP4V2-MIB, ARISTA-PROCESS-MIB, ARISTA-SYSDB-MIB, ARISTA-ENVMON-MIB; Juniper JUNIPER-MIB (CPU/mem/temp/state), JUNIPER-BGP-TYPES, JUNIPER-ALARM-MIB; SONiC HOST-RESOURCES-MIB (hrProcessorLoad, hrStorageUsed/Size, hrSystemUptime).
+   - `genSNMPMIBMapping(state)` filters by `STATE.vendor` and generates annotated CSV + `snmp_exporter` walk config comments.
+   - `renderSNMPMIBPanel()` builds a striped HTML table with vendor color coding; auto-called via `jumpStep(6)`.
+   - Download button: `⬇ MIB Map CSV` in the new "📋 SNMP MIB Reference" obs-block.
+
+2. **Syslog parsing rules** — `7232ce6`
+   - Added `_SYSLOG_PATTERNS` map covering IOS-XE, NX-OS, EOS, JunOS, SONiC with example log lines, Logstash grok patterns, and Fluentd regexp patterns.
+   - `genSyslogParsingRules(state)` produces a 3-part config file: (1) Logstash `network-syslog.conf` (input UDP/TCP 514, per-vendor conditional grok, severity normalisation, date parsing, Elasticsearch output); (2) Fluentd `td-agent` config (syslog source UDP+TCP, per-vendor parser filter, record_transformer for severity_text, Elasticsearch match); (3) Device syslog client snippets for all 5 vendors.
+   - Download button: `⬇ Logstash/Fluentd Syslog Rules` in the new "📥 Log Pipeline & Flow Collector" obs-block.
+
+3. **NetFlow/sFlow collector config** — `7232ce6`
+   - `genNetflowConfig(state)` produces a 4-part config: (1) nfcapd startup command + systemd unit (NFDUMP suite, NetFlow v5/v9/IPFIX on UDP 9995); (2) pmacct nfacctd.conf (Prometheus memory plugin + CSV rotation every 5 min); (3) pmacct sfacctd.conf (sFlow on UDP 6343); (4) per-device exporter snippets auto-generated from BOM — IOS-XE IPFIX `flow exporter`/`flow monitor`, NX-OS `feature netflow` + v9 exporter, EOS `flow tracking hardware` IPFIX, JunOS `forwarding-options sampling` inline-jflow, SONiC hsflowd.conf snippet.
+   - Download button: `⬇ NetFlow/sFlow Collector Config`.
+
+4. **Real-time topology sync** — `7232ce6`
+   - `_TOPO_SYNC` object with handle, interval (15 s), and cached data.
+   - `startTopoSync()` / `stopTopoSync()` manage `setInterval`; start button disables on start, stop button enables.
+   - `_fetchTopoHealth()` calls `/api/topology/health`, caches response, calls `_renderTopoSync()`.
+   - `_renderTopoSync()` renders a responsive device-card grid (up=green / down=red) with summary badges and latency labels; graceful placeholders for no-backend / API-error states.
+   - `renderTopoSyncPanel()` called from `jumpStep(6)` to paint initial placeholder.
+   - Last-polled timestamp shown next to Start/Stop buttons.
+
+**Issues closed:** none (Tier 2 items had no GitHub issue numbers)
