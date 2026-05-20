@@ -5,10 +5,11 @@
    Each product: { id, vendor, vlClass, model, series, layer,
      subLayer, ports, uplinks, speed, upSpeed, powerW, asic,
      bufferGB, latencyNs, priceRange, userScale, estimatedCostUSD,
-     features[], useCases[], detail{} }
+     rackU, features[], useCases[], detail{} }
    priceRange : 'smb' | 'mid' | 'enterprise' | 'hyperscale'
    userScale  : [minUsers, maxUsers]  (per switch, not total)
    estimatedCostUSD : rough street price (USD, no license)
+   rackU      : rack units consumed (1U fixed/pizza-box, 2U, 4U, 7–14U for chassis)
 ════════════════════════════════════════════════════════════════ */
 const PRODUCTS = {
 
@@ -25,6 +26,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'1G', powerW:370, bufferGB:0.016,
     latencyNs:4000, asic:'Marvell',
     priceRange:'smb', userScale:[10,80], estimatedCostUSD:1200,
+    rackU:1,
     features:['PoE+ 375W','VLAN','QoS','ACL','Web UI','CLI','Limited L3'],
     useCases:['campus','wan'],
     detail:{
@@ -42,6 +44,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:740, bufferGB:0.016,
     latencyNs:3200, asic:'Broadcom',
     priceRange:'smb', userScale:[20,100], estimatedCostUSD:2200,
+    rackU:1,
     features:['PoE+ 740W','Security Fabric integration','FortiLink','802.1X','VLAN','FortiManager/FortiGate integration','ZTP'],
     useCases:['campus','hybrid'],
     detail:{
@@ -59,6 +62,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:370, bufferGB:0.008,
     latencyNs:3200, asic:'Broadcom',
     priceRange:'smb', userScale:[10,50], estimatedCostUSD:1400,
+    rackU:1,
     features:['PoE+ 370W','Security Fabric','FortiLink','802.1X','FortiGate managed','ZTP','VLAN'],
     useCases:['campus','wan'],
     detail:{
@@ -76,6 +80,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:370, bufferGB:0.012,
     latencyNs:3500, asic:'Broadcom',
     priceRange:'smb', userScale:[10,60], estimatedCostUSD:1800,
+    rackU:1,
     features:['PoE+ 370W','ArubaOS-Switch','AirWave','802.1X','ClearPass-ready','VLAN','QoS','SNMPv3'],
     useCases:['campus','hybrid'],
     detail:{
@@ -93,6 +98,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:370, bufferGB:0.016,
     latencyNs:3000, asic:'Marvell Prestera',
     priceRange:'smb', userScale:[10,60], estimatedCostUSD:1600,
+    rackU:1,
     features:['PoE+ 370W','ExtremeXOS','ExtremeCloud IQ','802.1X','VLAN','Universal Port','ZTP'],
     useCases:['campus'],
     detail:{
@@ -112,6 +118,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:890, bufferGB:0.032,
     latencyNs:3500, asic:'UADP 2.0',
     priceRange:'mid', userScale:[50,200], estimatedCostUSD:6500,
+    rackU:1,
     features:['PoE+ 740W','802.1X','MACSEC','Stacking (StackWise-320)','SD-Access','DNA Center','NETCONF/YANG'],
     useCases:['campus','hybrid'],
     detail:{
@@ -130,6 +137,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:1100, bufferGB:0.032,
     latencyNs:3500, asic:'UADP 2.0',
     priceRange:'mid', userScale:[100,400], estimatedCostUSD:8500,
+    rackU:1,
     features:['PoE+ 740W','802.1X','MACSEC','Stacking','SD-Access','NETCONF/YANG','Trustworthy Systems'],
     useCases:['campus','hybrid'],
     detail:{
@@ -147,6 +155,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'25G', powerW:1100, bufferGB:0.064,
     latencyNs:2500, asic:'Broadcom Trident3',
     priceRange:'mid', userScale:[100,400], estimatedCostUSD:7200,
+    rackU:1,
     features:['PoE++ 720W','ArubaOS-CX','ClearPass NAC','VSX stacking','802.1X','Analytics','NETCONF/YANG','REST API'],
     useCases:['campus','hybrid'],
     detail:{
@@ -164,6 +173,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:1440, bufferGB:0.016,
     latencyNs:3000, asic:'Broadcom',
     priceRange:'mid', userScale:[80,300], estimatedCostUSD:3800,
+    rackU:1,
     features:['PoE+ 1440W full-budget','Security Fabric','FortiLink','802.1X','FortiManager','VLAN','QoS','LLDP-MED'],
     useCases:['campus','hybrid'],
     detail:{
@@ -181,6 +191,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'25G', powerW:1100, bufferGB:0.032,
     latencyNs:2800, asic:'Broadcom Trident3',
     priceRange:'mid', userScale:[100,400], estimatedCostUSD:5500,
+    rackU:1,
     features:['PoE+ 780W','ExtremeXOS','ExtremeCloud IQ','802.1X','SLX stacking','VXLAN access','Universal Port'],
     useCases:['campus','hybrid'],
     detail:{
@@ -198,6 +209,7 @@ const PRODUCTS = {
     speed:'2.5G', upSpeed:'100G', powerW:2000, bufferGB:0.064,
     latencyNs:2000, asic:'Broadcom Trident3',
     priceRange:'enterprise', userScale:[200,600], estimatedCostUSD:14000,
+    rackU:1,
     features:['PoE++ 90W per port','Multi-gig (mGig)','VXLAN access','EOS','CloudVision','ZTP','RESTCONF'],
     useCases:['campus','hybrid'],
     detail:{
@@ -215,6 +227,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:820, bufferGB:0.016,
     latencyNs:3000, asic:'Marvell Prestera',
     priceRange:'mid', userScale:[100,400], estimatedCostUSD:5800,
+    rackU:1,
     features:['PoE+ 370W','802.1X','Virtual Chassis (VC)','Junos','NETCONF/YANG','ZTP','Mist AI-ready'],
     useCases:['campus','hybrid'],
     detail:{
@@ -236,6 +249,7 @@ const PRODUCTS = {
     speed:'10G', upSpeed:'40G', powerW:550, bufferGB:0.032,
     latencyNs:2000, asic:'Broadcom Trident2',
     priceRange:'smb', userScale:[50,300], estimatedCostUSD:4500,
+    rackU:1,
     features:['Security Fabric','FortiLink','BGP/OSPF','VLAN','RSTP','FortiManager','802.1Q','QoS'],
     useCases:['campus','hybrid'],
     detail:{
@@ -253,6 +267,7 @@ const PRODUCTS = {
     speed:'10G', upSpeed:'40G', powerW:650, bufferGB:0.064,
     latencyNs:1800, asic:'Broadcom Trident2+',
     priceRange:'mid', userScale:[200,800], estimatedCostUSD:7500,
+    rackU:1,
     features:['Security Fabric','FortiLink','Full L3','BGP/OSPF/VRRP','VXLAN','FortiManager','Analytics','NETCONF'],
     useCases:['campus','hybrid'],
     detail:{
@@ -270,6 +285,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:1200, bufferGB:0.256,
     latencyNs:1500, asic:'Broadcom Jericho+',
     priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:32000,
+    rackU:7,
     features:['Modular 5-slot','VSX HA','BGP/OSPF/IS-IS','VXLAN/EVPN','ArubaOS-CX','Hitless failover','NETCONF/YANG','Analytics'],
     useCases:['campus','hybrid'],
     detail:{
@@ -287,6 +303,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:850, bufferGB:0.096,
     latencyNs:1800, asic:'UADP 3.0',
     priceRange:'enterprise', userScale:[500,3000], estimatedCostUSD:28000,
+    rackU:1,
     features:['MACSEC-256','SD-Access border','VXLAN','BGP','ECMP','NetFlow','NETCONF/YANG','StackWise-T'],
     useCases:['campus','hybrid'],
     detail:{
@@ -304,6 +321,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'400G', powerW:750, bufferGB:0.512,
     latencyNs:900, asic:'Broadcom Jericho2',
     priceRange:'enterprise', userScale:[1000,5000], estimatedCostUSD:35000,
+    rackU:2,
     features:['Deep buffer 512MB','BGP-LU','MPLS','VXLAN/EVPN','CloudVision','RESTCONF','gNMI'],
     useCases:['campus','hybrid','dc'],
     detail:{
@@ -321,6 +339,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:680, bufferGB:0.064,
     latencyNs:1500, asic:'Broadcom Trident3 X5',
     priceRange:'enterprise', userScale:[500,3000], estimatedCostUSD:22000,
+    rackU:1,
     features:['Virtual Chassis','EVPN-VXLAN','BGP','Mist AI','NETCONF/YANG','Analytics'],
     useCases:['campus','hybrid'],
     detail:{
@@ -342,6 +361,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'400G', powerW:1400, bufferGB:0.256,
     latencyNs:1200, asic:'UADP 3.0',
     priceRange:'enterprise', userScale:[2000,20000], estimatedCostUSD:95000,
+    rackU:10,
     features:['Non-blocking','MACSEC-256','BGP','MPLS','SD-Access core','NetFlow','NETCONF/YANG','In-Service Upgrade'],
     useCases:['campus','hybrid'],
     detail:{
@@ -359,6 +379,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'400G', powerW:3200, bufferGB:2.0,
     latencyNs:800, asic:'Broadcom Jericho2 / Petra2',
     priceRange:'hyperscale', userScale:[5000,50000], estimatedCostUSD:180000,
+    rackU:14,
     features:['Deep buffer 2GB','VXLAN/EVPN','BGP SR-MPLS','CloudVision','gNMI/gRPC','Hot-swap LC','Hitless ISSU'],
     useCases:['campus','dc','hybrid'],
     detail:{
@@ -380,6 +401,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:650, bufferGB:0.04,
     latencyNs:1100, asic:'Cisco Cloud Scale (Algo Boost)',
     priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:22000,
+    rackU:1,
     features:['VXLAN/EVPN','FabricPath','ACI-ready','NX-OS','NETCONF/YANG','Telemetry streaming','MACSEC'],
     useCases:['dc','hybrid'],
     detail:{
@@ -397,6 +419,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:900, bufferGB:0.064,
     latencyNs:1100, asic:'Cisco Cloud Scale',
     priceRange:'enterprise', userScale:[1000,8000], estimatedCostUSD:35000,
+    rackU:2,
     features:['VXLAN/EVPN','96-port density','vPC','NX-OS','Streaming telemetry','MACSEC','NetFlow'],
     useCases:['dc','hybrid'],
     detail:{
@@ -414,6 +437,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'400G', powerW:550, bufferGB:0.032,
     latencyNs:900, asic:'Broadcom Trident3',
     priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:20000,
+    rackU:1,
     features:['VXLAN/EVPN','BGP EVPN','CloudVision','EOS','gNMI/gRPC','ZTP','RESTCONF'],
     useCases:['dc','hybrid'],
     detail:{
@@ -431,6 +455,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:650, bufferGB:0.032,
     latencyNs:1000, asic:'Broadcom Trident3',
     priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:19000,
+    rackU:1,
     features:['VXLAN/EVPN','BGP','Junos','NETCONF/YANG','Analytics','ZTP','Multi-chassis LAG'],
     useCases:['dc','hybrid'],
     detail:{
@@ -448,6 +473,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:600, bufferGB:0.032,
     latencyNs:1000, asic:'Broadcom Trident3',
     priceRange:'mid', userScale:[200,2000], estimatedCostUSD:12000,
+    rackU:1,
     features:['SONiC / OS10','Open Networking','VXLAN/EVPN','BGP','ONIE','ZTP','SmartFabric','Dell EMC fabric'],
     useCases:['dc','hybrid'],
     detail:{
@@ -469,6 +495,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'400G', powerW:650, bufferGB:0.04,
     latencyNs:900, asic:'Cisco Cloud Scale',
     priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:28000,
+    rackU:1,
     features:['VXLAN/EVPN spine','BGP RR','IS-IS underlay','NX-OS','Streaming telemetry','MACSEC','ECMP 64-way'],
     useCases:['dc','hybrid'],
     detail:{
@@ -486,6 +513,7 @@ const PRODUCTS = {
     speed:'400G', upSpeed:'—', powerW:2200, bufferGB:0.256,
     latencyNs:800, asic:'Cisco Cloud Scale NEXT',
     priceRange:'hyperscale', userScale:[5000,50000], estimatedCostUSD:120000,
+    rackU:2,
     features:['400G spine','VXLAN/EVPN','BGP RR','ECMP 128-way','NX-OS','Streaming telemetry','MACSEC-256'],
     useCases:['dc','hybrid','gpu'],
     detail:{
@@ -503,6 +531,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'400G', powerW:700, bufferGB:0.512,
     latencyNs:850, asic:'Broadcom Jericho2',
     priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:38000,
+    rackU:2,
     features:['Deep buffer 512MB','VXLAN/EVPN','BGP RR','SR-MPLS','CloudVision','gNMI','ECMP'],
     useCases:['dc','hybrid'],
     detail:{
@@ -520,6 +549,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'—', powerW:1200, bufferGB:2.0,
     latencyNs:900, asic:'Juniper Express 2',
     priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:42000,
+    rackU:2,
     features:['Deep buffer 2GB','VXLAN/EVPN','BGP RR','Segment Routing','Apstra','NETCONF/YANG','Analytics'],
     useCases:['dc','hybrid'],
     detail:{
@@ -541,6 +571,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'400G', powerW:650, bufferGB:0.04,
     latencyNs:900, asic:'Cisco Cloud Scale',
     priceRange:'enterprise', userScale:[100,1000], estimatedCostUSD:28000,
+    rackU:1,
     features:['RoCEv2','PFC/ECN','DCQCN','Lossless queuing','NX-OS','Streaming telemetry','ECMP'],
     useCases:['gpu'],
     detail:{
@@ -558,6 +589,7 @@ const PRODUCTS = {
     speed:'400G', upSpeed:'800G', powerW:1050, bufferGB:0.064,
     latencyNs:650, asic:'Broadcom Trident4',
     priceRange:'hyperscale', userScale:[500,5000], estimatedCostUSD:65000,
+    rackU:1,
     features:['400G native','RoCEv2','PFC/ECN','DCQCN','Ultra-low latency','EOS','CloudVision','gNMI'],
     useCases:['gpu'],
     detail:{
@@ -575,6 +607,7 @@ const PRODUCTS = {
     speed:'400G', upSpeed:'800G', powerW:1200, bufferGB:0.128,
     latencyNs:300, asic:'NVIDIA Spectrum-3',
     priceRange:'hyperscale', userScale:[500,5000], estimatedCostUSD:75000,
+    rackU:1,
     features:['Ultra-low 300ns latency','RoCEv2 native','Adaptive Routing','PFC/ECN','SHARP in-network computing','ConnectX integration'],
     useCases:['gpu'],
     detail:{
@@ -592,6 +625,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'—', powerW:450, bufferGB:0.016,
     latencyNs:500, asic:'NVIDIA Spectrum',
     priceRange:'enterprise', userScale:[100,500], estimatedCostUSD:18000,
+    rackU:1,
     features:['RoCEv2','PFC/ECN','Low latency','Open Ethernet','Cumulus Linux','SONiC compatible'],
     useCases:['gpu'],
     detail:{
@@ -613,6 +647,7 @@ const PRODUCTS = {
     speed:'400G', upSpeed:'—', powerW:4000, bufferGB:0.512,
     latencyNs:300, asic:'NVIDIA Spectrum-3',
     priceRange:'hyperscale', userScale:[2000,20000], estimatedCostUSD:250000,
+    rackU:14,
     features:['SHARP collective offload','Adaptive Routing','Lossless RoCEv2','In-network computing','Modular chassis','Hot-swap'],
     useCases:['gpu'],
     detail:{
@@ -630,6 +665,7 @@ const PRODUCTS = {
     speed:'400G', upSpeed:'—', powerW:3500, bufferGB:2.0,
     latencyNs:700, asic:'Broadcom Jericho2',
     priceRange:'hyperscale', userScale:[2000,20000], estimatedCostUSD:200000,
+    rackU:14,
     features:['Deep buffer 2GB','RoCEv2','PFC/ECN','CloudVision','BGP EVPN','Hitless ISSU','ECMP 512-way'],
     useCases:['gpu','dc'],
     detail:{
@@ -651,6 +687,7 @@ const PRODUCTS = {
     speed:'10G', upSpeed:'40G', powerW:800, bufferGB:0,
     latencyNs:0, asic:'Intel CPU + FPGA',
     priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:55000,
+    rackU:1,
     features:['IPS/IDS','TLS 1.3 inspection','AMP','URL filtering','RA VPN','FMC managed','FTD software','Zero-Trust ready'],
     useCases:['campus','dc','hybrid','wan'],
     detail:{
@@ -668,6 +705,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:600, bufferGB:0,
     latencyNs:0, asic:'Custom DPDK',
     priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:45000,
+    rackU:2,
     features:['App-ID','User-ID','ML-based IPS','TLS inspection','DNS Security','Panorama managed','SD-WAN','ZTNA'],
     useCases:['campus','dc','hybrid'],
     detail:{
@@ -685,6 +723,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'400G', powerW:1500, bufferGB:0,
     latencyNs:0, asic:'Custom CN-NGFW',
     priceRange:'hyperscale', userScale:[5000,50000], estimatedCostUSD:185000,
+    rackU:4,
     features:['100G+ throughput','App-ID','ML IPS','TLS 1.3','CN-Series Kubernetes','Panorama','ZTNA 2.0'],
     useCases:['dc','hybrid','gpu'],
     detail:{
@@ -702,6 +741,7 @@ const PRODUCTS = {
     speed:'1G', upSpeed:'10G', powerW:50, bufferGB:0,
     latencyNs:0, asic:'NP6lite ASIC',
     priceRange:'smb', userScale:[10,200], estimatedCostUSD:2800,
+    rackU:1,
     features:['NP6lite ASIC offload','IPS','SSL inspection','SD-WAN built-in','FortiManager','Security Fabric','ZTNA','FortiSwitch integration'],
     useCases:['campus','wan'],
     detail:{
@@ -719,6 +759,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:200, bufferGB:0,
     latencyNs:0, asic:'NP7 + CP9 ASIC',
     priceRange:'mid', userScale:[200,1000], estimatedCostUSD:12000,
+    rackU:1,
     features:['NP7 ASIC offload','IPS','SSL inspection','SD-WAN','Security Fabric','ZTNA','FortiManager','SASE-ready'],
     useCases:['campus','dc','hybrid','wan'],
     detail:{
@@ -736,6 +777,7 @@ const PRODUCTS = {
     speed:'25G', upSpeed:'100G', powerW:750, bufferGB:0,
     latencyNs:0, asic:'NP7 + CP9 ASIC',
     priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:48000,
+    rackU:2,
     features:['NP7 ASIC offload','IPS','SSL inspection','SD-WAN built-in','FortiManager','Security Fabric','ZTNA','SASE'],
     useCases:['campus','dc','hybrid','wan'],
     detail:{
@@ -753,6 +795,7 @@ const PRODUCTS = {
     speed:'100G', upSpeed:'—', powerW:850, bufferGB:0,
     latencyNs:0, asic:'Juniper Penta',
     priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:52000,
+    rackU:2,
     features:['Junos UTM','IDP','AppSecure','Sky ATP','JSA SIEM','NETCONF/YANG','Sky Enterprise'],
     useCases:['dc','hybrid'],
     detail:{

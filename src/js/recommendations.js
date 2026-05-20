@@ -108,7 +108,7 @@ function openBOM() {
 function updateBOMTable(layers) {
   const tbody = document.getElementById('bom-tbody');
   if (!tbody) return;
-  let rows = '', totalDev = 0, totalPorts = 0, totalCost = 0;
+  let rows = '', totalDev = 0, totalPorts = 0, totalCost = 0, totalRackU = 0;
 
   // Build hostname map per layer (requires naming.js + configgen.js)
   const hostnamesByLayer = {};
@@ -127,9 +127,11 @@ function updateBOMTable(layers) {
     const portCount = parseInt(prod.ports) || 24;
     const unitCost  = prod.estimatedCostUSD || 0;
     const extCost   = unitCost * qty;
+    const ru        = prod.rackU || 1;
     totalDev   += qty;
     totalPorts += qty * portCount;
     totalCost  += extCost;
+    totalRackU += ru * qty;
 
     const names = hostnamesByLayer[layer.key] || [];
     const hostnameCell = names.length === 0 ? '—'
@@ -144,6 +146,7 @@ function updateBOMTable(layers) {
       <td>${prod.ports}</td>
       <td style="color:var(--txt2);font-size:.78rem">${prod.features.slice(0,2).join(', ')}</td>
       <td style="color:var(--txt2);font-size:.73rem;font-family:monospace">${hostnameCell}</td>
+      <td style="text-align:right;color:var(--txt2)">${ru}U × ${qty}</td>
       <td style="text-align:right;color:var(--txt2)">${unitCost ? '$' + unitCost.toLocaleString() : '—'}</td>
       <td style="text-align:right;color:var(--green);font-weight:600">${extCost ? '$' + extCost.toLocaleString() : '—'}</td>
     </tr>`;
@@ -152,6 +155,9 @@ function updateBOMTable(layers) {
   tbody.innerHTML = rows;
   document.getElementById('bom-total-dev').textContent   = totalDev;
   document.getElementById('bom-total-ports').textContent = totalPorts.toLocaleString();
+  document.getElementById('bom-total-racku').textContent = totalRackU + 'U';
+  const racksEl = document.getElementById('bom-total-racks');
+  if (racksEl) racksEl.textContent = Math.ceil(totalRackU / (42 * 0.8)) + ' × 42U';
   const costEl = document.getElementById('bom-total-cost');
   if (costEl) costEl.textContent = totalCost ? '$' + totalCost.toLocaleString() : '—';
 
@@ -160,12 +166,70 @@ function updateBOMTable(layers) {
 
   /* Refresh optics recommendations */
   if (typeof renderOpticsSection === 'function') renderOpticsSection(layers, STATE);
+
+  /* Refresh rack plan */
+  _updateRackPlanSection(layers);
 }
+
+/* ── Rack plan section ──────────────────────────────────────────── */
+function _updateRackPlanSection(layers) {
+  const el = document.getElementById('rack-plan-section');
+  if (!el) return;
+
+  var rows = '', totalU = 0;
+  layers.forEach(function(layer) {
+    var selId = STATE.selectedProducts[layer.key];
+    var prod  = PRODUCTS[selId];
+    if (!prod) return;
+    var qty = estimateCounts(layer.key);
+    var ru  = prod.rackU || 1;
+    var layerU = ru * qty;
+    totalU += layerU;
+    var fillPct = Math.min(100, Math.round((layerU / 42) * 100));
+    rows += '<tr>' +
+      '<td><span class="layer-tag">' + layer.label + '</span></td>' +
+      '<td>' + prod.model + '</td>' +
+      '<td style="text-align:center">' + ru + 'U</td>' +
+      '<td style="text-align:center">× ' + qty + '</td>' +
+      '<td style="text-align:center;font-weight:600">' + layerU + 'U</td>' +
+      '<td style="min-width:120px">' +
+        '<div class="rack-fill-bar"><div class="rack-fill-inner" style="width:' + fillPct + '%"></div></div>' +
+        '<span style="font-size:.7rem;color:var(--txt2)">' + fillPct + '% of 42U rack</span>' +
+      '</td>' +
+    '</tr>';
+  });
+
+  var racksNeeded = Math.ceil(totalU / (42 * 0.8));
+  el.style.display = '';
+  el.innerHTML = '<div class="section-toggle-hdr" onclick="toggleRackPlan()">' +
+    '<span>🗄️ Rack Unit Planning</span><span class="toggle-caret" id="rack-plan-caret">▼</span></div>' +
+    '<div>' +
+    '<table class="bom-table" style="margin-top:.5rem">' +
+      '<thead><tr><th>Layer</th><th>Device</th><th>Rack U each</th><th>Qty</th><th>Total U</th><th>Rack fill (42U)</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>' +
+    '<div class="bom-footer" style="margin-top:.6rem">' +
+      '<span>Total rack U: <strong>' + totalU + 'U</strong></span>' +
+      '<span>Standard racks needed (80% fill): <strong>' + racksNeeded + ' × 42U rack' + (racksNeeded !== 1 ? 's' : '') + '</strong></span>' +
+      '<span style="color:var(--txt2);font-size:.78rem">Patch panels, cable managers, PDUs not included in U count</span>' +
+    '</div></div>';
+}
+window._updateRackPlanSection = _updateRackPlanSection;
+
+function toggleRackPlan() {
+  var body = document.querySelector('#rack-plan-section > div:last-child');
+  var caret = document.getElementById('rack-plan-caret');
+  if (!body) return;
+  var hidden = body.style.display === 'none';
+  body.style.display  = hidden ? '' : 'none';
+  if (caret) caret.textContent = hidden ? '▼' : '▶';
+}
+window.toggleRackPlan = toggleRackPlan;
 
 function exportBOM() {
   const layers = getLayersForUC();
-  let csv = 'Layer,Vendor,Model,Quantity,Ports,Uplinks,Speed,Key Features,Hostnames,Unit Price (USD),Extended Cost (USD)\n';
-  let totalCost = 0;
+  let csv = 'Layer,Vendor,Model,Quantity,Ports,Uplinks,Speed,Key Features,Hostnames,Rack U each,Total Rack U,Unit Price (USD),Extended Cost (USD)\n';
+  let totalCost = 0, totalRackU = 0;
 
   const hostnamesByLayer = {};
   try {
@@ -181,12 +245,16 @@ function exportBOM() {
     const qty      = estimateCounts(layer.key);
     const unitCost = prod.estimatedCostUSD || 0;
     const extCost  = unitCost * qty;
-    totalCost += extCost;
+    const ru       = prod.rackU || 1;
+    totalCost   += extCost;
+    totalRackU  += ru * qty;
     const names = hostnamesByLayer[layer.key] || [];
     const hnCell = names.join(' ');
-    csv += `"${layer.label}","${prod.vendor}","${prod.model}",${qty},"${prod.ports}","${prod.uplinks}","${prod.speed}","${prod.features.slice(0,4).join('; ')}","${hnCell}",${unitCost},${extCost}\n`;
+    csv += `"${layer.label}","${prod.vendor}","${prod.model}",${qty},"${prod.ports}","${prod.uplinks}","${prod.speed}","${prod.features.slice(0,4).join('; ')}","${hnCell}",${ru},${ru * qty},${unitCost},${extCost}\n`;
   });
-  csv += `"TOTAL",,,,,,,,,,"${totalCost}"\n`;
+  const racksNeeded = Math.ceil(totalRackU / (42 * 0.8));
+  csv += `"TOTAL",,,,,,,,,,${totalRackU},,"${totalCost}"\n`;
+  csv += `"RACKS NEEDED (80% fill)",,,,,,,,,,${racksNeeded},,\n`;
   if (typeof getCablingCSVSection === 'function') csv += getCablingCSVSection();
   if (typeof getOpticsCSVSection === 'function') csv += getOpticsCSVSection(layers, STATE);
   const blob = new Blob([csv], { type:'text/csv' });

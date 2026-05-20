@@ -3243,3 +3243,7 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .checks-dl-btn           { font-size: .78rem; padding: .3rem .7rem; }
 .checks-panel-usage      { background: var(--bg3); border-radius: 6px; padding: .5rem .75rem; font-size: .74rem; color: var(--txt2); line-height: 1.7; }
 .checks-panel-usage code { color: var(--blue); font-family: monospace; }
+
+/* ── Rack plan ────────────────────────────────────────────────── */
+.rack-fill-bar  { height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; margin-bottom: 2px; }
+.rack-fill-inner { height: 100%; background: linear-gradient(90deg, var(--blue) 0%, var(--cyan) 100%); border-radius: 4px; transition: width .4s ease; }

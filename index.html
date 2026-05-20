@@ -1382,6 +1382,7 @@
             <th>Port Config</th>
             <th>Notes</th>
             <th>Hostnames</th>
+            <th style="text-align:right">Rack U</th>
             <th style="text-align:right">Unit Price</th>
             <th style="text-align:right">Extended Cost</th>
           </tr>
@@ -1391,11 +1392,16 @@
       <div class="bom-footer">
         <span>Total device count: <strong id="bom-total-dev">—</strong></span>
         <span>Total port capacity: <strong id="bom-total-ports">—</strong></span>
+        <span>Rack U consumed: <strong id="bom-total-racku">—</strong></span>
+        <span>Racks needed: <strong id="bom-total-racks">—</strong></span>
         <span>Total BOM cost: <strong id="bom-total-cost" style="color:var(--green)">—</strong></span>
       </div>
 
       <!-- Cabling matrix — rendered by cabling.js -->
       <div id="cabling-section" style="display:none"></div>
+
+      <!-- Rack plan — rendered by recommendations.js -->
+      <div id="rack-plan-section" style="display:none;margin-top:1.2rem"></div>
 
       <!-- Optics recommendations — rendered by optics.js -->
       <div id="optics-section" style="display:none;margin-top:1.2rem">

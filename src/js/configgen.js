@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -361,6 +361,91 @@ function downloadConfig() {
   a.click();
   toast(`${ACTIVE_DEV.name} config downloaded`, 'success');
 }
+
+/* ════════════════════════════════════════════════════════════════
+   STP / RSTP HELPER BLOCKS  (campus switches — access/dist/core)
+   Root bridge priority: core=4096 (primary), dist=8192 (secondary),
+   access=32768 (defer). BPDU guard + portfast on edge ports.
+════════════════════════════════════════════════════════════════ */
+
+function _genSTP(vendor, layer) {
+  const isCore   = layer === 'campus-core';
+  const isDist   = layer === 'campus-dist';
+  const isAccess = layer === 'campus-access';
+  if (!isCore && !isDist && !isAccess) return '';
+
+  const vlanList = '10,20,21,30,40,41,50,60,99';
+  const priority = isCore ? 4096 : isDist ? 8192 : 32768;
+
+  if (vendor === 'ios-xe') {
+    return `!
+! ── STP / Rapid-PVST+ ───────────────────────────────────────
+spanning-tree mode rapid-pvst
+spanning-tree extend system-id
+spanning-tree pathcost method long
+spanning-tree loopguard default
+spanning-tree portfast bpduguard default
+spanning-tree vlan ${vlanList} priority ${priority}
+${isCore ? `spanning-tree vlan ${vlanList} root primary` :
+  isDist  ? `spanning-tree vlan ${vlanList} root secondary` :
+            `spanning-tree portfast default
+spanning-tree portfast bpduguard default`}
+`;
+  }
+
+  if (vendor === 'eos') {
+    return `!
+! ── STP / Rapid-PVST+ ───────────────────────────────────────
+spanning-tree mode rapid-pvst
+spanning-tree vlan-id ${vlanList} priority ${priority}
+spanning-tree loopguard default
+${isCore ? `spanning-tree vlan-id ${vlanList} root primary` :
+  isDist  ? `spanning-tree vlan-id ${vlanList} root secondary` :
+            `spanning-tree portfast default
+spanning-tree portfast bpduguard default`}
+`;
+  }
+
+  if (vendor === 'junos') {
+    const bridgePri = priority;
+    return `
+# ── STP / RSTP ──────────────────────────────────────────────
+protocols {
+    rstp {
+        bridge-priority ${bridgePri};
+        interface all {
+            edge;
+            no-root-port;
+        }
+        ${isAccess ? `interface ge-0/0/47 {
+            no-root-port;
+        }
+        interface ge-0/0/48 {
+            no-root-port;
+        }` : ''}
+        bpdu-block-on-edge;
+    }
+}
+`;
+  }
+
+  if (vendor === 'nxos') {
+    return `!
+! ── STP / Rapid-PVST+ ───────────────────────────────────────
+spanning-tree mode rapid-pvst
+spanning-tree loopguard default
+spanning-tree port type network default
+spanning-tree vlan ${vlanList} priority ${priority}
+${isCore ? `spanning-tree vlan ${vlanList} root primary` :
+  isDist  ? `spanning-tree vlan ${vlanList} root secondary` :
+            `spanning-tree port type edge default
+spanning-tree port type edge bpduguard default`}
+`;
+  }
+
+  return '';
+}
+window._genSTP = _genSTP;
 
 /* ════════════════════════════════════════════════════════════════
    NTP + SNMP v3 HELPER BLOCKS  (appended to every vendor config)
@@ -1124,12 +1209,8 @@ vlan 99
 `;
 
   if (isAcc) {
+    cfg += _genSTP('ios-xe', 'campus-access');
     cfg += `!
-! ── SPANNING TREE ──────────────────────────────────────────
-spanning-tree mode rapid-pvst
-spanning-tree extend system-id
-spanning-tree vlan 10,20,21,30,40,41,50 priority 32768
-!
 ! ── INTERFACES — Uplinks ───────────────────────────────────
 interface GigabitEthernet0/1
  description UPLINK-TO-DIST-0${idx+1}-Po${idx+1}
@@ -1215,12 +1296,8 @@ ip radius source-interface Vlan10` : '! 802.1X not enabled'}
   }
 
   if (isDist) {
+    cfg += _genSTP('ios-xe', 'campus-dist');
     cfg += `!
-! ── SPANNING TREE ──────────────────────────────────────────
-spanning-tree mode rapid-pvst
-spanning-tree extend system-id
-spanning-tree vlan 10,20,21,30,40,41,50 priority 4096
-!
 ! ── INTERFACES — Core Uplinks ──────────────────────────────
 interface TenGigabitEthernet1/1
  description UPLINK-TO-CORE-01-Po1
@@ -1329,6 +1406,7 @@ ${hasBGP ? `router bgp 65100
   }
 
   if (isCore) {
+    cfg += _genSTP('ios-xe', 'campus-core');
     cfg += `!
 ! ── INTERFACES — FW / WAN Uplinks ─────────────────────────
 interface TenGigabitEthernet1/1
@@ -1880,6 +1958,7 @@ interface mgmt0
 !
 ip route 0.0.0.0/0 10.0.0.1 vrf management
 `;
+  cfg += _genSTP('nxos', layer);
   cfg += _genQoS('nxos', STATE);
   cfg += _genNTP('nxos');
   cfg += _genSNMPv3('nxos');
@@ -2040,6 +2119,7 @@ ${hasVxlan && !isSpine ? `   vlan 100
       ${hasVxlan && !isSpine ? `network ${vtepIP}/32` : ''}
 !
 ${hasOSPF && !isTOR ? _genOSPFUnderlay('eos', STATE, dev, layer, idx) : ''}
+${_genSTP('eos', layer)}
 ${_genQoS('eos', STATE)}
 ${_genNTP('eos')}
 ${_genSNMPv3('eos')}
@@ -2144,9 +2224,9 @@ protocols {
     }
     evpn { encapsulation vxlan; extended-vni-list all; }
     lldp { interface all; }
-    rstp { bridge-priority 32768; }
 }
 ${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
+${_genSTP('junos', layer)}
 ${_genQoS('junos', STATE)}
 ${_genAAA('junos', STATE)}
 `;
