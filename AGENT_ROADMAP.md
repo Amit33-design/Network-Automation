@@ -126,7 +126,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 ### TIER 3 — ML-Based Troubleshooting & RCA
 
-- [ ] **Symptom classifier**: Train/embed a simple nearest-neighbor classifier over a dataset of (symptom, root cause) pairs for common network issues. Use it in ts_engine.js to suggest root causes from free-text symptoms
+- [x] **Symptom classifier**: Train/embed a simple nearest-neighbor classifier over a dataset of (symptom, root cause) pairs for common network issues. Use it in ts_engine.js to suggest root causes from free-text symptoms
 - [x] **BGP convergence predictor** [#19](https://github.com/Amit33-design/Network-Automation/issues/19): Given the topology (AS count, path count, policy complexity), estimate convergence time and flag risks
 - [ ] **Anomaly detection**: Add a time-series anomaly detector in observability.js — flag metrics deviating > 2σ from rolling baseline
 - [x] **RCA playbook generator** [#18](https://github.com/Amit33-design/Network-Automation/issues/18): Given an alert type (e.g. "BGP neighbor down"), generate a step-by-step RCA playbook as a downloadable Markdown/PDF
@@ -405,3 +405,17 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - Last-polled timestamp shown next to Start/Stop buttons.
 
 **Issues closed:** none (Tier 2 items had no GitHub issue numbers)
+
+### 2026-05-20 (run 10)
+
+**Features completed this run:**
+
+1. **Symptom classifier** (Tier 3) — `e2d4fc5`
+   - Added 35-entry curated training dataset (`_SC_DATASET`) covering BGP (session/prefix/flap/AS-path/community), OSPF (adjacency/LSA), routing (loop/MTU/asymmetric/IPSec), interface (flapping/CRC/duplex/LACP/VLAN), STP (loop/BPDU-guard), hardware (CPU/memory/thermal/PSU), overlay (VXLAN/EVPN/PFC), QoS (queue-drops/microbursts), management (DHCP/DNS/NTP/SNMP/ZTP/syslog), security (ACL/port-security).
+   - Pure client-side TF cosine-similarity engine: `_scTokenize()` (stopword filtering), `_scUnitVec()` (TF normalization), `_scCosine()` (dot-product on unit vectors), `_scBuildIndex()` (lazy pre-computation of training vectors).
+   - `classifySymptom(text, topN)` public API — returns top-N ranked results with `{ rootCause, category, confidence%, verify[], fix[] }`.
+   - `renderSymptomClassifier()` — renders collapsible result cards with BEST MATCH badge, color-coded category, confidence bar, ▸ Verify commands (code blocks), ▸ Fix steps (ordered list).
+   - `"🧠 Symptom Classifier"` ts-section added before "🔬 AI Root Cause Analysis" — Enter key triggers classification.
+   - No backend required — runs entirely in the browser; index pre-built lazily on first call (~35 dot-products per query).
+
+**Issues closed:** none (no GitHub issue number for symptom classifier)
