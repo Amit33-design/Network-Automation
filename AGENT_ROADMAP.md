@@ -87,11 +87,11 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [x] **Optics catalog** [#5](https://github.com/Amit33-design/Network-Automation/issues/5): Add optics to PRODUCTS or a separate OPTICS catalog — SFP-10G-SR, QSFP-100G-SR4, QSFP-DD-400G-DR4, etc. with vendor (Cisco OEM, Finisar, Lumentum), reach, cost, and compatibility matrix
 - [x] **Price database** [#6](https://github.com/Amit33-design/Network-Automation/issues/6): Add `estimatedCostUSD` to all PRODUCTS entries (currently missing on most). Pull reference pricing from public sources. Add total BOM cost estimate in the BOM footer
 - [x] **Device naming convention** [#7](https://github.com/Amit33-design/Network-Automation/issues/7): Systematic hostname generator — `{site}-{role}-{rack}-{idx}` e.g. `IAD-LEAF-A01-01` based on STATE.orgName, numSites, role
-- [ ] **Rack unit planning**: Add `rackU` field to PRODUCTS. Generate rack diagram data showing U consumption per device
+- [x] **Rack unit planning**: Add `rackU` field to PRODUCTS. Generate rack diagram data showing U consumption per device
 
 #### Config Generation Gaps
 - [x] **OSPF underlay** [#8](https://github.com/Amit33-design/Network-Automation/issues/8): Currently BGP-only. Add OSPF area 0 underlay config for campus and DC use cases
-- [ ] **STP/RSTP config**: Add Rapid-PVST+/MST config blocks for campus switches (port types, portfast, BPDU guard)
+- [x] **STP/RSTP config**: Add Rapid-PVST+/MST config blocks for campus switches (port types, portfast, BPDU guard)
 - [x] **QoS policies** [#9](https://github.com/Amit33-design/Network-Automation/issues/9): Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
 - [x] **AAA/TACACS+** [#10](https://github.com/Amit33-design/Network-Automation/issues/10): Add TACACS+ / RADIUS config blocks for all vendors
 - [x] **NTP + SNMP v3** [#11](https://github.com/Amit33-design/Network-Automation/issues/11): Add NTP server hierarchy + SNMP v3 auth+priv config to all vendors
@@ -313,3 +313,28 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 **Implemented**: Ansible (#13), ZTP serial/POAP/EOS ZTP, BGP validator, RCA playbooks (#18), BGP convergence (#19), NetBox sync (#20)
 **Files changed**: src/js/ansible.js (new), src/js/ztp.js, src/js/policyengine.js, src/js/ts_engine.js, src/js/observability.js, index.html
 **Summary**: Ansible playbook generator produces 10+ files (site.yml, roles, inventory, host_vars). ZTP panel now has serial→hostname CSV, Cisco POAP script, Arista EOS ZTP script. BGP validator checks 6 common policy mistakes. RCA playbook generator covers 4 alert types with vendor-specific verify commands. BGP convergence predictor estimates failover time with BFD/no-BFD and flags risks. NetBox sync script uses pynetbox with DRY_RUN mode.
+
+### 2026-05-20 (run 7)
+
+**Features completed this run:**
+
+1. **Rack unit planning** — `b5c67ee`
+   - Added `rackU` field to all 42 PRODUCTS entries via Python script: 1U for fixed/pizza-box, 2U for 2RU devices, 4U for PA-5445, 7U for Aruba CX 6405 (5-slot chassis), 10U for Cat 9600 (7-slot), 14U for Arista 7500R3 / NVIDIA SN4800 / Arista 7800R3 (8-slot chassis).
+   - Updated products.js header comment to document `rackU` field.
+   - BOM table gains a "Rack U" column displaying `{rackU}U × {qty}` per layer.
+   - BOM footer extended with: "Rack U consumed: XU" and "Racks needed: N × 42U" (80% fill rule).
+   - Collapsible `#rack-plan-section` rendered below cabling matrix: per-layer table with fill bar (% of 42U rack) and summary footer.
+   - `exportBOM()` CSV updated: "Rack U each", "Total Rack U" columns plus "RACKS NEEDED" summary row.
+   - CSS: `.rack-fill-bar` + `.rack-fill-inner` with blue→cyan gradient for fill bars.
+
+2. **STP/RSTP config** — `b5c67ee`
+   - Added `_genSTP(vendor, layer)` helper in `configgen.js` covering IOS-XE, EOS, JunOS, NX-OS.
+   - Root bridge priority: campus-core=4096 (root primary), campus-dist=8192 (root secondary), campus-access=32768 (defer) — correct Cisco STP best practice hierarchy.
+   - **IOS-XE**: Rapid-PVST+, extend system-id, pathcost long, loopguard default, BPDU guard default; also fixes pre-existing bug where dist had priority 4096 instead of 8192.
+   - **EOS**: spanning-tree mode rapid-pvst, vlan-id priority, loopguard default, portfast/bpduguard default on access.
+   - **JunOS**: Full `protocols { rstp { bridge-priority N; interface all { edge; no-root-port; } bpdu-block-on-edge; } }` block; replaces the previous stub `rstp { bridge-priority 32768; }` inline.
+   - **NX-OS**: Rapid-PVST+, port type network default (dist/core), port type edge bpduguard default (access).
+   - Called from genIOSXE (access/dist/core blocks), genEOS footer, genJunos footer, genNXOS footer; returns `''` for non-campus layers (DC/GPU/WAN) — no-op.
+   - `'STP'` added to `SECTION_MARKERS` for section-nav jump bar.
+
+**Issues closed:** none (no GitHub issue numbers for these backlog items)
