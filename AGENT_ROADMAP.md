@@ -95,7 +95,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [x] **QoS policies** [#9](https://github.com/Amit33-design/Network-Automation/issues/9): Add QoS classification + marking + queuing configs per vendor (DSCP 46 for voice, 34 for video, etc.)
 - [x] **AAA/TACACS+** [#10](https://github.com/Amit33-design/Network-Automation/issues/10): Add TACACS+ / RADIUS config blocks for all vendors
 - [x] **NTP + SNMP v3** [#11](https://github.com/Amit33-design/Network-Automation/issues/11): Add NTP server hierarchy + SNMP v3 auth+priv config to all vendors
-- [ ] **interface descriptions**: Auto-generate `description` lines from the cabling matrix (e.g. `description TO: IAD-SPINE-01 Eth1/1`)
+- [x] **interface descriptions**: Auto-generate `description` lines from the cabling matrix (e.g. `description TO: IAD-SPINE-01 Eth1/1`)
 
 #### ZTP (Zero Touch Provisioning)
 - [x] **DHCP option 67 + Netmiko** [#12](https://github.com/Amit33-design/Network-Automation/issues/12): Generate ISC DHCP / Cisco IOS DHCP config for ZTP boot file delivery + Netmiko onboarding script
@@ -338,3 +338,12 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - `'STP'` added to `SECTION_MARKERS` for section-nav jump bar.
 
 **Issues closed:** none (no GitHub issue numbers for these backlog items)
+
+3. **Interface descriptions from cabling matrix** — `b894b33`
+   - Added `buildInterfaceDescMap()` to `cabling.js`: builds `{ deviceName: [{ remote, remotePort }, …] }` from `generateCablingMatrix()`.
+   - Added `getUplinkDescs(devName)` → ordered `['TO: <remote> <port>', …]` strings; both exposed via `window.*`.
+   - **IOS-XE**: GigabitEthernet0/1-2 (access uplinks), TenGigE uplinks to core + Gi downlinks to access (dist), TenGigE2/1-4 (core downlinks to dist) all use cabling-derived descriptions with fallback.
+   - **NX-OS**: Ethernet1/1-4 spine downlinks + Ethernet1/49-50 leaf uplinks → cabling-derived.
+   - **EOS**: Ethernet49/1, Ethernet50/1 uplinks → cabling-derived.
+   - **JunOS**: et-0/0/48, et-0/0/49 uplinks → cabling-derived.
+   - Fallback to original hardcoded string if cabling data not ready (STATE/BOM not yet selected).
