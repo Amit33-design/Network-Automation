@@ -1877,6 +1877,36 @@
       </div>
     </div>
 
+    <!-- Firewall Consistency Checker -->
+    <div class="policy-panel-section" style="margin-top:1rem">
+      <div class="divider-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>🔥 Firewall Rule Consistency Check</span>
+        <button class="btn-cfg-action" onclick="renderFWConsistencyPanel()" style="font-size:.72rem">Re-check</button>
+      </div>
+      <div id="fw-consistency-panel">
+        <div class="policy-pass">
+          <span style="font-size:1.2rem">⏳</span>
+          <div><strong>Consistency check pending</strong>
+            <div style="font-size:.78rem;color:var(--txt3);margin-top:.1rem">Navigate to step 6 to cross-check FW rules against segmentation design</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Policy Diff -->
+    <div class="policy-panel-section" style="margin-top:1rem">
+      <div class="divider-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>⊕ Policy Diff</span>
+        <div style="display:flex;gap:.4rem">
+          <button id="btn-policy-snapshot" class="btn-cfg-action" onclick="takePolicySnapshot()" style="font-size:.72rem">📷 Take Snapshot</button>
+          <button class="btn-cfg-action" onclick="renderPolicyDiff()" style="font-size:.72rem">Show Diff</button>
+        </div>
+      </div>
+      <div id="policy-diff-panel">
+        <div class="obs-placeholder">Take a snapshot, change your design, re-run policies, then click Show Diff to see what changed.</div>
+      </div>
+    </div>
+
     <!-- Results dashboard (hidden until checks run) -->
     <div id="check-dashboard" style="display:none">
       <div class="divider-label">Validation Results</div>

@@ -844,3 +844,303 @@ function runBGPValidator() {
 
 window.validateBGPPolicies = validateBGPPolicies;
 window.runBGPValidator     = runBGPValidator;
+
+
+/* ════════════════════════════════════════════════════════════════
+   FIREWALL RULE CONSISTENCY CHECKER
+   Cross-checks FW model + compliance selection vs network
+   segmentation design. Flags contradictions between:
+     • STATE.fwModel / STATE.compliance / STATE.uc / STATE.appTypes
+     • HLD segmentation intent implied by those choices
+════════════════════════════════════════════════════════════════ */
+
+var _FW_CHECKS = [
+  {
+    id:       'fw-required-for-compliance',
+    label:    'Compliance framework requires a firewall',
+    severity: 'error',
+    test: function(s) {
+      return (s.compliance || []).length > 0 && (!s.fwModel || s.fwModel === 'none');
+    },
+    detail: function(s) {
+      return 'Selected compliance (' + (s.compliance || []).join(', ') + ') mandates ' +
+        'network segmentation enforced by a firewall. Set a firewall model in Step 2 → Security.';
+    },
+  },
+  {
+    id:       'pci-chd-zone-no-fw',
+    label:    'PCI DSS cardholder zone lacks firewall enforcement',
+    severity: 'error',
+    test: function(s) {
+      return (s.compliance || []).some(function(c) { return /pci/i.test(c); }) &&
+             (!s.fwModel || s.fwModel === 'none');
+    },
+    detail: function() {
+      return 'PCI DSS Requirement 1.2 mandates a firewall between the cardholder data environment ' +
+        'and untrusted networks. Without a FW the CDE scope cannot be defined.';
+    },
+  },
+  {
+    id:       'hipaa-phi-no-fw',
+    label:    'HIPAA PHI zone has no firewall protecting ePHI',
+    severity: 'error',
+    test: function(s) {
+      return (s.compliance || []).some(function(c) { return /hipaa/i.test(c); }) &&
+             (!s.fwModel || s.fwModel === 'none');
+    },
+    detail: function() {
+      return 'HIPAA Security Rule § 164.312(e) requires technical safeguards protecting ePHI in transit. ' +
+        'Deploy a stateful FW between PHI network segments and untrusted zones.';
+    },
+  },
+  {
+    id:       'wan-edge-no-fw',
+    label:    'WAN edge design has no perimeter firewall',
+    severity: 'warning',
+    test: function(s) {
+      return (s.uc === 'wan' || s.uc === 'multisite') && (!s.fwModel || s.fwModel === 'none');
+    },
+    detail: function() {
+      return 'WAN edge without a firewall exposes the internal network to untrusted transit paths. ' +
+        'Add a stateful FW or NGFW at all WAN edge points.';
+    },
+  },
+  {
+    id:       'campus-internet-no-fw',
+    label:    'Campus design with internet access has no perimeter firewall',
+    severity: 'warning',
+    test: function(s) {
+      var isCampus = (s.uc === 'campus' || s.uc === 'hybrid');
+      var noFW     = !s.fwModel || s.fwModel === 'none';
+      var hasBGP   = (s.underlayProto || []).some(function(p) { return /bgp|wan|internet/i.test(p); });
+      return isCampus && noFW && (hasBGP || s.uc === 'hybrid');
+    },
+    detail: function() {
+      return 'Internet-connected campus without a perimeter firewall leaves north-south traffic unfiltered. ' +
+        'Add a stateful FW or UTM at the campus edge.';
+    },
+  },
+  {
+    id:       'dc-east-west-no-fw',
+    label:    'Data center with compliance controls has no east-west segmentation firewall',
+    severity: 'warning',
+    test: function(s) {
+      var isDC     = ['dc', 'datacenter', 'gpu', 'hybrid', 'multisite'].indexOf(s.uc) !== -1;
+      var noFW     = !s.fwModel || s.fwModel === 'none';
+      var hasComp  = (s.compliance || []).length > 0;
+      return isDC && noFW && hasComp;
+    },
+    detail: function() {
+      return 'Data center with compliance requirements but no east-west firewall. ' +
+        'Add an NGFW or distributed micro-segmentation FW between application tiers.';
+    },
+  },
+  {
+    id:       'multicloud-no-fw',
+    label:    'Multicloud architecture without cloud-edge NGFW',
+    severity: 'warning',
+    test: function(s) {
+      return s.uc === 'multicloud' && (!s.fwModel || s.fwModel === 'none');
+    },
+    detail: function() {
+      return 'Multicloud without an NGFW at the cloud edge. Add a Palo Alto VM-Series, ' +
+        'Fortinet FortiGate-VM, or cloud-native FW for inter-cloud and internet segmentation.';
+    },
+  },
+  {
+    id:       'iot-no-fw-isolation',
+    label:    'IoT/OT devices lack firewall-enforced isolation from corporate network',
+    severity: 'warning',
+    test: function(s) {
+      var hasIoT = (s.appTypes || []).some(function(a) { return /iot|ot|bms|scada/i.test(a); });
+      var noFW   = !s.fwModel || s.fwModel === 'none';
+      return hasIoT && noFW;
+    },
+    detail: function() {
+      return 'IoT/OT devices must be separated from corporate network by a stateful FW to prevent ' +
+        'lateral movement. Add a FW between the IoT VLAN and all corporate segments.';
+    },
+  },
+  {
+    id:       'fw-no-zone-segmentation',
+    label:    'Firewall present but no VLAN-based security zones configured',
+    severity: 'info',
+    test: function(s) {
+      var hasFW    = s.fwModel && s.fwModel !== 'none';
+      var hasComp  = (s.compliance || []).length > 0;
+      var noVlans  = !s.vlans || !(s.vlans.length);
+      return hasFW && hasComp && noVlans;
+    },
+    detail: function(s) {
+      return 'Firewall model (' + (s.fwModel || 'selected') + ') deployed but no VLAN-based security zones ' +
+        'are defined for ' + (s.compliance || []).join('/') + '. Create compliance VLANs and map them to FW interfaces/zones.';
+    },
+  },
+  {
+    id:       'fw-no-compliance-framework',
+    label:    'Firewall deployed without compliance framework — ACLs may be incomplete',
+    severity: 'info',
+    test: function(s) {
+      var hasFW    = s.fwModel && s.fwModel !== 'none';
+      var noComp   = !(s.compliance || []).length;
+      var isProd   = ['campus','dc','datacenter','hybrid','wan','multisite'].indexOf(s.uc) !== -1;
+      return hasFW && noComp && isProd;
+    },
+    detail: function() {
+      return 'Firewall deployed without a compliance framework — generated ACLs may be generic. ' +
+        'Select PCI-DSS, HIPAA, or SOC 2 to enable compliance-mapped zone policies.';
+    },
+  },
+];
+
+function checkFWConsistency(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var results = [];
+  _FW_CHECKS.forEach(function(check) {
+    try {
+      if (check.test(s)) {
+        results.push({
+          id:       check.id,
+          label:    check.label,
+          severity: check.severity,
+          detail:   check.detail(s),
+        });
+      }
+    } catch(_) {}
+  });
+  return results;
+}
+
+function renderFWConsistencyPanel() {
+  var el = document.getElementById('fw-consistency-panel');
+  if (!el) return;
+
+  var s      = typeof STATE !== 'undefined' ? STATE : {};
+  var issues = checkFWConsistency(s);
+
+  if (!issues.length) {
+    el.innerHTML =
+      '<div class="fw-check-pass">' +
+        '<span style="font-size:1.2rem">✅</span>' +
+        '<div><strong>Firewall configuration consistent with design</strong>' +
+          '<div style="font-size:.78rem;color:var(--txt3);margin-top:.1rem">No segmentation contradictions detected</div>' +
+        '</div>' +
+      '</div>';
+    return;
+  }
+
+  var icons  = { error: '❌', warning: '⚠️', info: 'ℹ️' };
+  var clsMap = { error: 'fw-check-row-error', warning: 'fw-check-row-warn', info: 'fw-check-row-info' };
+
+  var errCount  = issues.filter(function(i) { return i.severity === 'error';   }).length;
+  var warnCount = issues.filter(function(i) { return i.severity === 'warning'; }).length;
+
+  var summary = '<div class="fw-check-summary">';
+  if (errCount)  summary += '<span style="color:var(--red)">❌ ' + errCount + ' conflict(s)</span>  ';
+  if (warnCount) summary += '<span style="color:var(--yellow)">⚠️ ' + warnCount + ' warning(s)</span>';
+  summary += '</div>';
+
+  el.innerHTML = summary + issues.map(function(iss) {
+    return '<div class="fw-check-row ' + (clsMap[iss.severity] || '') + '">' +
+      '<span class="fw-check-icon">' + (icons[iss.severity] || '') + '</span>' +
+      '<div class="fw-check-content">' +
+        '<div class="fw-check-label">' + iss.label + '</div>' +
+        '<div class="fw-check-detail">' + iss.detail + '</div>' +
+      '</div></div>';
+  }).join('');
+}
+
+window.checkFWConsistency       = checkFWConsistency;
+window.renderFWConsistencyPanel = renderFWConsistencyPanel;
+
+
+/* ════════════════════════════════════════════════════════════════
+   POLICY DIFF
+   Snapshots POLICY_RESULTS so engineers can compare what changed
+   between two policy evaluation runs (e.g. before/after a design
+   change in Step 2 or Step 3).
+════════════════════════════════════════════════════════════════ */
+
+var _POLICY_SNAPSHOT = null;   // last snapshot taken by the user
+
+function takePolicySnapshot() {
+  _POLICY_SNAPSHOT = JSON.parse(JSON.stringify(POLICY_RESULTS));
+  if (typeof toast === 'function') toast('Policy snapshot taken — change your design and click Show Diff', 'info', 3500);
+  // Update button label
+  var btn = document.getElementById('btn-policy-snapshot');
+  if (btn) btn.textContent = '📷 Re-snapshot';
+  var diffEl = document.getElementById('policy-diff-panel');
+  if (diffEl) diffEl.innerHTML = '<div class="obs-placeholder">Snapshot captured at ' +
+    new Date().toLocaleTimeString() + '. Change your design in Step 2/3, re-run policies, then click Show Diff.</div>';
+}
+
+function _policyEntryKey(e) {
+  return e.id || e.description || (e.label + ':' + e.severity) || JSON.stringify(e).slice(0, 80);
+}
+
+function renderPolicyDiff() {
+  var el = document.getElementById('policy-diff-panel');
+  if (!el) return;
+
+  if (!_POLICY_SNAPSHOT) {
+    el.innerHTML = '<div class="obs-placeholder">Click "Take Snapshot" first, then change your design and click "Show Diff".</div>';
+    return;
+  }
+
+  // Refresh current policy results
+  if (typeof runPolicies === 'function') runPolicies();
+
+  function allEntries(pr) {
+    return [].concat(pr.blocks || [], pr.violations || [], pr.warnings || [], pr.infos || [], pr.fixes || []);
+  }
+
+  var oldAll = allEntries(_POLICY_SNAPSHOT);
+  var newAll = allEntries(POLICY_RESULTS);
+
+  var oldMap = {};
+  oldAll.forEach(function(e) { oldMap[_policyEntryKey(e)] = e; });
+  var newMap = {};
+  newAll.forEach(function(e) { newMap[_policyEntryKey(e)] = e; });
+
+  var added   = newAll.filter(function(e) { return !oldMap[_policyEntryKey(e)]; });
+  var removed = oldAll.filter(function(e) { return !newMap[_policyEntryKey(e)]; });
+  var same    = newAll.filter(function(e) { return !!oldMap[_policyEntryKey(e)]; });
+
+  if (!added.length && !removed.length) {
+    el.innerHTML = '<div style="color:var(--green);padding:.75rem 0">No changes between snapshots — policy results are identical.</div>';
+    return;
+  }
+
+  function sevBadge(e) {
+    var sev = e.severity || '';
+    if (!sev) return '';
+    var cls = sev === 'FAIL' ? 'pol-badge-fail' : sev === 'WARN' ? 'pol-badge-warn' : 'pol-badge-info';
+    return '<span class="pol-badge ' + cls + '" style="font-size:.67rem;padding:.1rem .35rem">' + sev + '</span> ';
+  }
+
+  function mkRow(e, type) {
+    var cls = type === 'add' ? 'pdiff-row-add' : type === 'del' ? 'pdiff-row-del' : 'pdiff-row-same';
+    var pfx = type === 'add' ? '+' : type === 'del' ? '−' : ' ';
+    return '<div class="pdiff-row ' + cls + '">' +
+      '<span class="pdiff-prefix">' + pfx + '</span>' +
+      sevBadge(e) +
+      '<div class="pdiff-content">' +
+        '<div style="font-size:.8rem;font-weight:600">' + (e.description || e.label || e.id || '') + '</div>' +
+        (e.message ? '<div style="font-size:.74rem;color:var(--txt2);margin-top:.15rem">' + e.message + '</div>' : '') +
+      '</div></div>';
+  }
+
+  var stats =
+    '<div class="pdiff-stats">' +
+      '<span class="pdiff-stat-add">+' + added.length + ' new</span>' +
+      '<span class="pdiff-stat-del">−' + removed.length + ' resolved</span>' +
+      '<span class="pdiff-stat-same"> ' + same.length + ' unchanged</span>' +
+    '</div>';
+
+  el.innerHTML = stats +
+    removed.map(function(e) { return mkRow(e, 'del'); }).join('') +
+    added.map(function(e)   { return mkRow(e, 'add'); }).join('');
+}
+
+window.takePolicySnapshot = takePolicySnapshot;
+window.renderPolicyDiff   = renderPolicyDiff;
