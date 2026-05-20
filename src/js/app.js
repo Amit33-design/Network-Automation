@@ -69,6 +69,7 @@ function jumpStep(n) {
     if (typeof renderChangeWindowPanel === 'function')   renderChangeWindowPanel();
     if (typeof renderSNMPMIBPanel === 'function')        renderSNMPMIBPanel();
     if (typeof renderTopoSyncPanel === 'function')       renderTopoSyncPanel();
+    if (typeof renderAnomalyPanel === 'function')        renderAnomalyPanel();
   }
   // Analytics funnel
   if (window.Funnel) {

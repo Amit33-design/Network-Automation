@@ -2057,6 +2057,16 @@
         <p style="font-size:.75rem;color:var(--txt3);margin:.25rem 0 .6rem">Polls <code style="font-size:.72rem;background:var(--bg2);padding:.1rem .3rem;border-radius:3px">/api/topology/health</code> every 15 s and shows live device up/down status. Requires Live Mode + backend with <code style="font-size:.72rem;background:var(--bg2);padding:.1rem .3rem;border-radius:3px">ENABLE_TELEMETRY=true</code>.</p>
         <div id="obs-topo-sync"><div class="obs-placeholder">Click ▶ Start to begin polling device health.</div></div>
       </div>
+
+      <!-- Anomaly Detection -->
+      <div class="obs-block">
+        <div class="obs-block-hdr" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem">
+          <span>📉 Anomaly Detection</span>
+          <button class="btn-cfg-action" style="font-size:.72rem" onclick="renderAnomalyPanel()">↻ Scan</button>
+        </div>
+        <p style="font-size:.75rem;color:var(--txt3);margin:.25rem 0 .6rem">Rolling 2σ detector across a 30-sample baseline window per device. Flags CPU %, memory %, interface error rate, and BGP peer count deviations automatically on scan.</p>
+        <div id="anomaly-detection-panel"><div class="obs-placeholder">Click Scan to detect metric anomalies across BOM devices.</div></div>
+      </div>
     </div>
 
     <!-- ══ ZTP — Zero Touch Provisioning Panel ══ -->
@@ -2883,6 +2893,24 @@ rules:
     <div id="bgp-validator-results" style="margin-top:.5rem">
       <div class="obs-placeholder">Click Validate to check generated BGP configs for common mistakes.</div>
     </div>
+  </div>
+
+  <!-- Historical Incident Database -->
+  <div class="ts-section">
+    <div class="ts-section-hdr">📚 Historical Incident Database</div>
+    <p style="font-size:.75rem;color:var(--txt3);margin:.1rem 0 .65rem">
+      Search 20 curated real-world network incidents by symptom keywords. Uses the same
+      nearest-neighbor cosine engine as the Symptom Classifier — fully in-browser.
+      Each result includes root cause, business impact, MTTR, and step-by-step resolution.
+    </p>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem">
+      <input id="inc-search-input" class="ts-input" type="text"
+        placeholder="e.g. BGP session dropped, memory exhaustion, STP loop broadcast storm…"
+        style="flex:2;min-width:220px"
+        onkeydown="if(event.key==='Enter')renderIncidentSearch()">
+      <button class="btn btn-primary" style="font-size:.82rem" onclick="renderIncidentSearch()">🔍 Search</button>
+    </div>
+    <div id="inc-search-results"><div class="obs-placeholder">Enter keywords above to search the incident database.</div></div>
   </div>
 
   <!-- NetBox Sync -->

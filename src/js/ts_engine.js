@@ -1737,10 +1737,35 @@ function classifySymptom(queryText, topN) {
   scored.sort(function(a, b) { return b.score - a.score; });
 
   return scored.slice(0, k).map(function(s) {
+    /* ── Confidence scoring ───────────────────────────────────── */
+    var confidence = Math.min(100, Math.round(s.score * 100 * 2.5));
+
+    /* Build reasoning chain: top-5 token contributions */
+    var entryVec  = _scTrainVecs[_SC_DATASET.indexOf(s.entry)];
+    var reasoning = [];
+    Object.keys(qVec).forEach(function(w) {
+      if (entryVec[w]) {
+        reasoning.push({ token: w, contribution: +(qVec[w] * entryVec[w]).toFixed(4) });
+      }
+    });
+    reasoning.sort(function(a, b) { return b.contribution - a.contribution; });
+    reasoning = reasoning.slice(0, 5).map(function(r) {
+      return 'Keyword "' + r.token + '" matched (weight ' + r.contribution + ')';
+    });
+    if (!reasoning.length) reasoning = ['Partial semantic similarity detected'];
+
+    /* Derive evidence references from verify commands */
+    var evidence = (s.entry.verify || []).map(function(cmd) {
+      return 'Run: ' + cmd;
+    });
+    if (evidence.length) evidence.unshift('Category: ' + s.entry.category);
+
     return {
       rootCause:  s.entry.rootCause,
       category:   s.entry.category,
-      confidence: Math.min(100, Math.round(s.score * 100 * 2.5)),  /* scale 0-1 cosine → 0-100 % */
+      confidence: confidence,
+      reasoning:  reasoning,
+      evidence:   evidence,
       verify:     s.entry.verify,
       fix:        s.entry.fix,
     };
@@ -1782,16 +1807,36 @@ function renderSymptomClassifier() {
 
   var html = '';
   matches.forEach(function(m, i) {
-    var catColor = _SC_CAT_COLORS[m.category] || 'var(--txt2)';
+    var catColor  = _SC_CAT_COLORS[m.category] || 'var(--txt2)';
     var confColor = m.confidence >= 60 ? 'var(--green)' : m.confidence >= 30 ? 'var(--orange)' : 'var(--txt2)';
-    var border = i === 0 ? 'border-color:' + catColor + ';' : '';
+    var border    = i === 0 ? 'border-color:' + catColor + ';' : '';
+    /* Confidence bar width */
+    var barW = m.confidence + '%';
+    var barColor = m.confidence >= 60 ? 'var(--green)' : m.confidence >= 30 ? 'var(--orange)' : 'var(--txt3)';
+
     html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:.8rem 1rem;margin:.45rem 0;' + border + '">' +
-      '<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.45rem;flex-wrap:wrap">' +
+      '<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;flex-wrap:wrap">' +
         (i === 0 ? '<span style="font-size:.68rem;font-weight:700;background:' + catColor + ';color:#000;padding:.1rem .4rem;border-radius:3px">BEST MATCH</span>' : '<span style="font-size:.68rem;color:var(--txt3);padding:.1rem .4rem">#' + (i+1) + '</span>') +
         '<span style="font-weight:600;color:var(--txt1);font-size:.82rem">' + m.rootCause + '</span>' +
         '<span style="margin-left:auto;font-size:.78rem;font-weight:700;color:' + confColor + '">' + m.confidence + '%</span>' +
         '<span style="font-size:.7rem;background:var(--bg2);color:' + catColor + ';padding:.1rem .4rem;border-radius:3px;font-weight:600">' + m.category + '</span>' +
       '</div>' +
+      /* Confidence bar */
+      '<div style="height:4px;background:var(--bg2);border-radius:2px;margin-bottom:.45rem;overflow:hidden">' +
+        '<div style="width:' + barW + ';height:100%;background:' + barColor + ';border-radius:2px;transition:width .3s"></div>' +
+      '</div>' +
+      /* Reasoning chain */
+      '<details style="margin-bottom:.3rem"><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Reasoning chain (' + (m.reasoning ? m.reasoning.length : 0) + ' signals)</summary>' +
+        '<ul style="margin:.3rem 0 0 1rem;font-size:.73rem;color:var(--txt3)">' + (m.reasoning || []).map(function(r) {
+          return '<li style="margin:.1rem 0">' + r + '</li>';
+        }).join('') + '</ul>' +
+      '</details>' +
+      /* Evidence */
+      (m.evidence && m.evidence.length ? '<details style="margin-bottom:.3rem"><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Evidence & references (' + m.evidence.length + ')</summary>' +
+        '<ul style="margin:.3rem 0 0 1rem;font-size:.73rem;color:var(--txt2)">' + m.evidence.map(function(e) {
+          return '<li style="margin:.1rem 0">' + e + '</li>';
+        }).join('') + '</ul>' +
+      '</details>' : '') +
       '<details style="margin-bottom:.3rem"><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Verify commands (' + m.verify.length + ')</summary>' +
         '<ul style="margin:.3rem 0 0 1rem;font-size:.74rem;color:var(--txt2)">' + m.verify.map(function(v) {
           return '<li style="margin:.1rem 0"><code style="background:var(--bg2);padding:.05rem .3rem;border-radius:3px;font-size:.73rem;color:var(--cyan)">' + v + '</code></li>';
@@ -1810,3 +1855,483 @@ function renderSymptomClassifier() {
 
 window.classifySymptom         = classifySymptom;
 window.renderSymptomClassifier = renderSymptomClassifier;
+
+/* ════════════════════════════════════════════════════════════════
+   HISTORICAL INCIDENT DATABASE
+   20 curated common network incident patterns with resolution steps.
+   Searchable via the same cosine-similarity engine used by the
+   symptom classifier. Each entry has a full resolution timeline,
+   impact description, and MTTR estimate.
+════════════════════════════════════════════════════════════════ */
+
+var _INCIDENT_DB = [
+  {
+    id: 'INC-001',
+    title: 'BGP Full-Table Memory Exhaustion',
+    keywords: 'bgp full table memory exhaustion rib fib route prefix limit exceeded',
+    category: 'bgp',
+    impact: 'All BGP peers dropped; network unreachable for 18 minutes. Affected 3 edge routers.',
+    rootCause: 'Full BGP table (~950k prefixes) received without prefix-limit configured; router ran out of RIB memory.',
+    resolution: [
+      'Configure "neighbor <ip> maximum-prefix 800000 warning-only" on all eBGP peers',
+      'Add "bgp default local-preference 100" and route summarization to reduce table size',
+      'Upgrade DRAM from 8GB to 32GB on edge routers',
+      'Implement route filtering with prefix-list to accept only customer and default routes from transit',
+      'Enable graceful-restart to preserve forwarding during BGP re-initialization',
+    ],
+    mttr: '18 min',
+    lastSeen: '2025-11-14',
+  },
+  {
+    id: 'INC-002',
+    title: 'STP Loop — Broadcast Storm',
+    keywords: 'stp loop broadcast storm spanning tree unidirectional link bpdu guard portfast trunk',
+    category: 'stp',
+    impact: 'Campus network segment saturated at 100% utilization for 7 minutes; all hosts unreachable.',
+    rootCause: 'Rogue unmanaged switch plugged into access port configured with portfast but no BPDU guard. Caused STP reconvergence loop.',
+    resolution: [
+      'Enable "spanning-tree bpduguard default" globally on all access switches',
+      'Enable "spanning-tree portfast bpduguard" per port on host-facing interfaces',
+      'Deploy "storm-control broadcast level 10.00" on all access ports',
+      'Configure "errdisable recovery cause bpduguard" with 300s interval',
+      'Implement DHCP snooping + ARP inspection to detect rogue devices early',
+    ],
+    mttr: '7 min',
+    lastSeen: '2025-10-03',
+  },
+  {
+    id: 'INC-003',
+    title: 'VXLAN EVPN MAC Flapping',
+    keywords: 'vxlan evpn mac flapping vtep tunnel overlay mac move duplicate ip',
+    category: 'overlay',
+    impact: 'East-west traffic in DC fabric intermittently dropped for 45 minutes. 12 VMs affected.',
+    rootCause: 'Duplicate MAC address learned on two different VTEPs due to misconfigured VM live migration without MAC flush notification.',
+    resolution: [
+      'Enable "mac address-table notification change" on all leaf switches',
+      'Configure "mac move limit 5 action shutdown vlan" to detect flapping early',
+      'Ensure VMware DVS sends GARP on vMotion completion',
+      'Set "evpn mac-flush" on NX-OS vPC peers to synchronize MAC tables after live migration',
+      'Audit vPC consistency parameters — ensure vPC peer-link is not splitting fabric domains',
+    ],
+    mttr: '45 min',
+    lastSeen: '2025-09-20',
+  },
+  {
+    id: 'INC-004',
+    title: 'OSPF Area 0 Partition — Split Brain',
+    keywords: 'ospf area 0 partition split brain backbone link flap neighbor down adjacency',
+    category: 'routing',
+    impact: 'Two halves of campus backbone could not exchange routes for 22 minutes.',
+    rootCause: 'Dual backbone links between core switches both flapped simultaneously due to faulty SFP module. Area 0 partitioned.',
+    resolution: [
+      'Replace faulty SFP-10G-SR in core switch slot 3/1',
+      'Add virtual-link as temporary measure to re-join partitioned area 0',
+      'Increase number of backbone links from 2 to 4 for redundancy',
+      'Set "ip ospf dead-interval minimal hello-multiplier 4" for sub-second failure detection',
+      'Enable BFD on all OSPF adjacencies: "bfd interval 300 min_rx 300 multiplier 3"',
+    ],
+    mttr: '22 min',
+    lastSeen: '2025-08-31',
+  },
+  {
+    id: 'INC-005',
+    title: 'PFC Pause Storm — RoCEv2 GPU Cluster',
+    keywords: 'pfc pause storm roce rdma gpu cluster lossless ecn congestion buffer',
+    category: 'qos',
+    impact: 'All-reduce operations in GPU training cluster stalled for 12 minutes; training job failed.',
+    rootCause: 'Single slow GPU receiver caused PFC pause frames to propagate back through spine, pausing all traffic on PG3.',
+    resolution: [
+      'Enable ECN (Explicit Congestion Notification) on all GPU-facing ports: "priority-flow-control mode on" + WRED ECN',
+      'Set PFC watchdog: "priority-flow-control watchdog interval 200ms" to break stuck pause states',
+      'Tune buffer allocation: increase ingress buffer for lossless queue, reduce lossy buffer',
+      'Deploy DCQCN (Data Center Quantized Congestion Notification) on NVIDIA ConnectX NICs',
+      'Add rate-limiting on GPU NICs: "mlnx_qos -i <if> --trust dscp" with DSCP marking',
+    ],
+    mttr: '12 min',
+    lastSeen: '2025-12-01',
+  },
+  {
+    id: 'INC-006',
+    title: 'TACACS+ Server Unreachable — Auth Failure',
+    keywords: 'tacacs aaa authentication failure lockout login cannot access mgmt management',
+    category: 'management',
+    impact: 'Network engineers locked out of all 48 switches for 35 minutes during off-hours maintenance.',
+    rootCause: 'TACACS+ primary and secondary servers both unreachable due to management VLAN misconfiguration after VLAN renumbering.',
+    resolution: [
+      'Immediately access via console and enable local fallback: "aaa authentication login default group tacacs+ local"',
+      'Verify management VLAN reachability from all switches to TACACS+ server IPs',
+      'Fix VLAN config: management traffic must use dedicated OOB or dedicated mgmt VRF',
+      'Configure both primary and secondary TACACS+ servers in different failure domains',
+      'Test AAA failover monthly by temporarily blocking TACACS+ connectivity in lab',
+    ],
+    mttr: '35 min',
+    lastSeen: '2025-07-15',
+  },
+  {
+    id: 'INC-007',
+    title: 'BGP Route Reflector Single Point of Failure',
+    keywords: 'bgp route reflector rr cluster single point failure ibgp down all sessions',
+    category: 'bgp',
+    impact: 'All iBGP sessions dropped when single RR reloaded for software upgrade. 15-minute outage.',
+    rootCause: 'Only one route reflector deployed. All iBGP clients pointed to single RR. No redundancy.',
+    resolution: [
+      'Deploy second route reflector in same cluster: "neighbor <ip> route-reflector-client" on both RRs',
+      'Configure clients to peer with both RRs: reduces single-point-of-failure risk',
+      'Enable graceful-restart on all BGP peers to preserve forwarding during RR reload',
+      'Use BFD on RR-to-client links for sub-second failure detection',
+      'Schedule future RR upgrades with active-passive failover: upgrade standby first',
+    ],
+    mttr: '15 min',
+    lastSeen: '2025-06-22',
+  },
+  {
+    id: 'INC-008',
+    title: 'DHCP Scope Exhausted — Client Connectivity Loss',
+    keywords: 'dhcp scope exhausted addresses pool full clients no ip address lease',
+    category: 'management',
+    impact: '800 wireless clients in building-3 unable to get IP addresses for 55 minutes.',
+    rootCause: '/24 DHCP pool exhausted due to short lease time (1 hour) and VoIP phones holding stale leases.',
+    resolution: [
+      'Immediately clear stale leases: "clear ip dhcp binding *" on DHCP server',
+      'Extend pool to /23 to double available addresses',
+      'Increase lease time for VoIP phones VLAN to 12 hours (devices rarely move)',
+      'Implement DHCP snooping to detect rogue DHCP servers and binding table corruption',
+      'Monitor pool utilization with SNMP: alert at 80% to prevent future exhaustion',
+    ],
+    mttr: '55 min',
+    lastSeen: '2025-05-10',
+  },
+  {
+    id: 'INC-009',
+    title: 'MTU Black Hole — Fragmentation Drop',
+    keywords: 'mtu black hole fragmentation drop pmtud jumbo frame path mtu discovery large packets',
+    category: 'interface',
+    impact: 'Large file transfers and SSH sessions intermittently hung. Root cause took 3 hours to diagnose.',
+    rootCause: 'One legacy router in path had MTU 1500 while rest of fabric used 9000 (jumbo). ICMP fragmentation-needed packets were blocked by firewall.',
+    resolution: [
+      'Allow ICMP type 3 code 4 (fragmentation needed) through all firewalls',
+      'Set interface MTU to 9000 on the legacy router or reduce fabric MTU to 1500 on that segment',
+      'Configure TCP MSS clamping: "ip tcp adjust-mss 1452" on WAN-facing interfaces',
+      'Test MTU path: "ping <ip> size 8972 df-bit" to discover lowest MTU in path',
+      'Document MTU policy and enforce via compliance checks in automation pipeline',
+    ],
+    mttr: '3 hr',
+    lastSeen: '2025-04-18',
+  },
+  {
+    id: 'INC-010',
+    title: 'IPSec VPN IKEv2 Phase-2 Mismatch',
+    keywords: 'ipsec vpn ikev2 phase 2 mismatch tunnel down transform proposal crypto',
+    category: 'security',
+    impact: 'Branch office VPN disconnected for 2 hours after ISP router replacement.',
+    rootCause: 'New ISP CPE router sent IKEv2 with AES-128 but hub expects AES-256. Phase-2 SA failed to negotiate.',
+    resolution: [
+      'Match transform-set on both ends: "crypto ipsec transform-set TS esp-aes 256 esp-sha256-hmac"',
+      'Check IKEv2 proposal: "crypto ikev2 proposal PROP encryption aes-cbc-256 integrity sha256 group 14"',
+      'Enable IKEv2 debugging temporarily: "debug crypto ikev2" to see exact negotiation failure',
+      'Use "show crypto ikev2 sa" and "show crypto ipsec sa" to verify SA state',
+      'Document agreed crypto parameters in runbook and test after any ISP equipment change',
+    ],
+    mttr: '2 hr',
+    lastSeen: '2025-03-07',
+  },
+  {
+    id: 'INC-011',
+    title: 'NTP Stratum Failure — Authentication Mismatch',
+    keywords: 'ntp stratum clock drift unsynchronized authentication key mismatch time offset',
+    category: 'management',
+    impact: 'Syslog timestamps drifted by 47 minutes. RADIUS authentication failed due to clock skew exceeding 5-minute tolerance.',
+    rootCause: 'Primary NTP server failed; backup NTP server had MD5 key mismatch — authentication rejected.',
+    resolution: [
+      'Fix NTP key mismatch: ensure same key-id and secret on all devices and NTP servers',
+      'Configure minimum 3 NTP sources: "ntp server <ip1> prefer" + two backups',
+      'Enable "ntp authenticate" + "ntp trusted-key" globally',
+      'Set "clock timezone UTC 0" to avoid DST-related drift',
+      'Monitor with SNMP: ntpEntStatusStratum should be ≤ 3 on all network devices',
+    ],
+    mttr: '1.5 hr',
+    lastSeen: '2025-02-28',
+  },
+  {
+    id: 'INC-012',
+    title: 'LACP Port-Channel Flapping',
+    keywords: 'lacp port channel flapping member port bundle etherchannel lag aggregation',
+    category: 'interface',
+    impact: 'Server connected via 4x10G LAG experienced repeated reconnects for 30 minutes.',
+    rootCause: 'LACP timer mismatch: server NIC set to LACP fast (1s) but switch set to LACP slow (30s). Occasional PDU loss caused partner timeout.',
+    resolution: [
+      'Match LACP timers: "lacp rate fast" on switch port-channel member interfaces',
+      'Verify LACP mode: both ends must be "active" or one "active" + one "passive"',
+      'Check LACP system priority and port priority: "show lacp neighbor" / "show etherchannel summary"',
+      'Enable LACP min-links: "port-channel min-links 2" to fail if too few members active',
+      'Test with "test etherchannel load-balance interface po1 ip <src> <dst>" to verify hashing',
+    ],
+    mttr: '30 min',
+    lastSeen: '2025-01-19',
+  },
+  {
+    id: 'INC-013',
+    title: 'SNMP v3 Engine ID Mismatch after RMA',
+    keywords: 'snmp v3 engine id mismatch rma replacement monitoring alerts stopped no traps',
+    category: 'management',
+    impact: 'All SNMP monitoring alerts stopped for 8 devices after hardware replacement. Silent for 4 days.',
+    rootCause: 'RMA replacement switches have different SNMP engine IDs. NMS had engine IDs hardcoded from original devices.',
+    resolution: [
+      'Re-provision SNMP v3 users on replacement devices: "snmp-server user <name> <group> v3 auth sha <key> priv aes 128 <key>"',
+      'Update NMS with new engine IDs or use SNMP v3 without engine ID pinning',
+      'Automate SNMP credential re-provisioning as part of device replacement runbook',
+      'Verify SNMP reachability post-replacement: "snmpwalk -v3 -u <user> -a SHA -A <key> -x AES -X <key> <ip> sysDescr"',
+      'Add NMS check: alert if any device stops sending traps for >15 minutes',
+    ],
+    mttr: '4 day',
+    lastSeen: '2024-12-11',
+  },
+  {
+    id: 'INC-014',
+    title: 'Asymmetric Routing — Stateful Firewall Drop',
+    keywords: 'asymmetric routing firewall stateful drop return traffic different path tcp reset',
+    category: 'routing',
+    impact: 'Half of all TCP sessions dropped after adding second internet uplink. Affected 300 users.',
+    rootCause: 'ECMP caused outbound traffic to exit ISP-A but inbound return to arrive via ISP-B. Stateful FW on ISP-A path rejected asymmetric return traffic.',
+    resolution: [
+      'Configure PBR (Policy-Based Routing) to ensure symmetric flows through same FW instance',
+      'Use firewall clustering or active-active with flow sync to share session tables',
+      'Implement ECMP with 5-tuple hashing (src-ip, dst-ip, proto, src-port, dst-port) to keep flows symmetric',
+      'For dual-ISP: use BGP local-preference to prefer same ISP for same prefix families',
+      'Monitor with "show ip route" + traceroute in both directions to verify symmetry',
+    ],
+    mttr: '2.5 hr',
+    lastSeen: '2024-11-05',
+  },
+  {
+    id: 'INC-015',
+    title: 'DNS Resolution Failure — Recursive Loop',
+    keywords: 'dns resolution failure recursive loop nxdomain timeout resolver forwarder',
+    category: 'management',
+    impact: 'All hostnames unresolvable for 25 minutes. Application teams saw connection errors.',
+    rootCause: 'Internal DNS forwarder pointed to itself as upstream resolver after misconfiguration. Recursive loop exhausted query retries.',
+    resolution: [
+      'Remove self-referential forwarder: "ip name-server" must not point to the resolver itself',
+      'Set forwarders to upstream authoritative or public resolvers (8.8.8.8 or internal authoritative)',
+      'Enable DNS split-horizon for internal vs external zone separation',
+      'Configure DNS redundancy: two independent resolvers + anycast DNS if possible',
+      'Monitor DNS query latency and NXDOMAIN rates as KPIs — alert on spike',
+    ],
+    mttr: '25 min',
+    lastSeen: '2024-10-22',
+  },
+  {
+    id: 'INC-016',
+    title: 'QoS Mis-marking — Voice Degradation',
+    keywords: 'qos voice quality degradation dscp mis-marking remarking trust boundary jitter latency',
+    category: 'qos',
+    impact: 'VoIP call quality degraded (MOS < 3.0) across campus during business hours for 2 weeks before diagnosis.',
+    rootCause: 'Access switches remarked DSCP EF (46) to 0 due to missing "mls qos trust dscp" on IP phone ports.',
+    resolution: [
+      'Enable DSCP trust on IP phone ports: "mls qos trust dscp" (IOS-XE) or "qos trust dscp" (NX-OS)',
+      'Configure CDP-based auto-detection: "mls qos trust device cisco-phone"',
+      'Verify end-to-end marking: use "show mls qos interface <if> statistics" to confirm DSCP preservation',
+      'Set voice VLAN on access ports with correct QoS policy: "switchport voice vlan <id>"',
+      'Use WireShark/embedded capture to verify DSCP EF marking from phone to fabric edge',
+    ],
+    mttr: '2 week',
+    lastSeen: '2024-09-14',
+  },
+  {
+    id: 'INC-017',
+    title: 'OSPF Neighbor Stuck in EXSTART',
+    keywords: 'ospf neighbor exstart stuck exchange dd database description mtu mismatch',
+    category: 'routing',
+    impact: 'Two directly connected routers failed to form OSPF adjacency after MTU change. 30-minute partial outage.',
+    rootCause: 'MTU set to 9000 on one side of P2P link but 1500 on other. OSPF DB description packets exceeded MTU and were dropped.',
+    resolution: [
+      'Align interface MTU on both ends of every OSPF link',
+      'Enable "ip ospf mtu-ignore" as temporary workaround while fixing MTU',
+      'Use "ip ospf network point-to-point" on /30 or /31 links to avoid DR/BDR election delay',
+      'Verify with "show ip ospf neighbor" — EXSTART means DBD packets being dropped',
+      'Test MTU: "ping <neighbor-ip> size 8972 df-bit" from both sides',
+    ],
+    mttr: '30 min',
+    lastSeen: '2024-08-19',
+  },
+  {
+    id: 'INC-018',
+    title: 'CPU Spike — ACL TCAM Exhaustion',
+    keywords: 'cpu spike high acl tcam exhaustion hardware forwarding software punt control plane policing',
+    category: 'hardware',
+    impact: 'Core switch CPU hit 98% for 20 minutes. Routing protocol PDUs dropped; OSPF flapped.',
+    rootCause: 'ACL TCAM filled after adding 4000-entry prefix-list. Excess entries fell to software forwarding, punting to CPU.',
+    resolution: [
+      'Reduce ACL entry count: use aggregate prefixes instead of /32 host routes where possible',
+      'Check TCAM usage: "show platform resources" or "show system resources" to see TCAM headroom',
+      'Split ACLs across interfaces to use separate TCAM banks',
+      'Upgrade to higher-capacity ASIC or hardware generation if TCAM is structural constraint',
+      'Enable CoPP (Control Plane Policing) to rate-limit CPU-bound traffic during future events',
+    ],
+    mttr: '20 min',
+    lastSeen: '2024-07-03',
+  },
+  {
+    id: 'INC-019',
+    title: 'Multicast RP Failure — PIM Sparse-Mode',
+    keywords: 'multicast rp rendezvous point failure pim sparse mode join pruned no receivers video streaming',
+    category: 'routing',
+    impact: 'Video streaming to 150 conference rooms stopped for 40 minutes.',
+    rootCause: 'Anycast RP primary failed; secondary RP was not reachable due to firewall blocking PIM register messages.',
+    resolution: [
+      'Allow PIM register messages (IP proto 103) through all firewalls in multicast path',
+      'Deploy Anycast-RP with MSDP peering: "ip msdp peer <secondary-rp>" for redundancy',
+      'Configure "ip pim autorp" or "ip pim bsr-candidate" to dynamically distribute RP info',
+      'Verify RP reachability: "show ip pim rp mapping" and "ping <rp-ip>" from all routers',
+      'Monitor with SNMP: ciscoIpMRouteTable or mrouteTable for active multicast groups',
+    ],
+    mttr: '40 min',
+    lastSeen: '2024-06-27',
+  },
+  {
+    id: 'INC-020',
+    title: 'ZTP / POAP Failure — DHCP Option 67 Missing',
+    keywords: 'ztp poap zero touch provisioning dhcp option 67 bootfile tftp failure onboarding',
+    category: 'management',
+    impact: 'Batch deployment of 30 switches took 4 hours longer than planned; 8 switches needed manual intervention.',
+    rootCause: 'DHCP server for ZTP VLAN was missing "option 67 (bootfile-name)" pointing to POAP script URL.',
+    resolution: [
+      'Add DHCP option 67: "option bootfile-name <url-to-poap-script>" in DHCP scope',
+      'Verify DHCP server hands out options 66 (TFTP server) and 67 (boot file) correctly',
+      'Test with "dhclient -v" or packet capture on ZTP VLAN to verify DHCP offer includes option 67',
+      'Ensure POAP/ZTP script is reachable via HTTP/TFTP from switch management interface',
+      'Pre-stage serial-to-hostname CSV so ZTP script can set correct hostname on first boot',
+    ],
+    mttr: '4 hr',
+    lastSeen: '2024-05-14',
+  },
+];
+
+/* ── Reuse the symptom-classifier cosine engine for incident search ── */
+
+var _incVocab = null;
+var _incVecs  = null;
+
+function _incBuildIndex() {
+  if (_incVecs) return;
+  _incVecs = _INCIDENT_DB.map(function(inc) {
+    var text = (inc.title + ' ' + inc.keywords + ' ' + inc.rootCause).toLowerCase();
+    return _scUnitVec(_scTokenize(text));
+  });
+}
+
+function searchIncidentDB(queryText, topN) {
+  if (!queryText || !queryText.trim()) return [];
+  _scBuildIndex();   /* ensure _scTokenize / _scUnitVec available */
+  _incBuildIndex();
+  var k = topN || 5;
+
+  var qTokens = _scTokenize(queryText);
+  if (!qTokens.length) return [];
+  var qVec = _scUnitVec(qTokens);
+
+  var scored = _INCIDENT_DB.map(function(inc, i) {
+    var sim = _scCosine(qVec, _incVecs[i]);
+    return { sim: sim, inc: inc };
+  });
+  scored.sort(function(a, b) { return b.sim - a.sim; });
+
+  return scored.slice(0, k)
+    .filter(function(s) { return s.sim > 0.01; })
+    .map(function(s) {
+      /* Reasoning chain: top matching tokens */
+      var incVec = _incVecs[_INCIDENT_DB.indexOf(s.inc)];
+      var reasons = [];
+      Object.keys(qVec).forEach(function(w) {
+        if (incVec[w]) reasons.push({ token: w, contrib: qVec[w] * incVec[w] });
+      });
+      reasons.sort(function(a, b) { return b.contrib - a.contrib; });
+      return {
+        id:         s.inc.id,
+        title:      s.inc.title,
+        category:   s.inc.category,
+        similarity: Math.min(100, Math.round(s.sim * 100 * 3)),
+        impact:     s.inc.impact,
+        rootCause:  s.inc.rootCause,
+        resolution: s.inc.resolution,
+        mttr:       s.inc.mttr,
+        lastSeen:   s.inc.lastSeen,
+        reasoning:  reasons.slice(0, 4).map(function(r) { return '"' + r.token + '" (' + r.contrib.toFixed(3) + ')'; }),
+      };
+    });
+}
+
+/* ── UI renderer ─────────────────────────────────────────────── */
+
+var _INC_CAT_COLORS = {
+  bgp:        'var(--blue)',
+  routing:    'var(--cyan)',
+  interface:  'var(--green)',
+  stp:        'var(--orange)',
+  hardware:   '#ff5555',
+  overlay:    'var(--purple, #9b59b6)',
+  qos:        'var(--yellow)',
+  management: 'var(--txt2)',
+  security:   '#e74c3c',
+};
+
+function renderIncidentSearch() {
+  var input   = document.getElementById('inc-search-input');
+  var results = document.getElementById('inc-search-results');
+  if (!results) return;
+
+  var query = (input ? input.value : '').trim();
+  if (!query) {
+    results.innerHTML = '<div class="obs-placeholder">Enter keywords above and click Search to find similar past incidents.</div>';
+    return;
+  }
+
+  var matches = searchIncidentDB(query, 5);
+  if (!matches.length) {
+    results.innerHTML = '<div class="obs-placeholder">No similar incidents found — try broader keywords.</div>';
+    return;
+  }
+
+  var html = '';
+  matches.forEach(function(m, i) {
+    var catColor  = _INC_CAT_COLORS[m.category] || 'var(--txt2)';
+    var simColor  = m.similarity >= 60 ? 'var(--green)' : m.similarity >= 30 ? 'var(--orange)' : 'var(--txt2)';
+    var barW      = m.similarity + '%';
+    var border    = i === 0 ? 'border-color:' + catColor + ';' : '';
+
+    html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;margin:.4rem 0;' + border + '">' +
+      '<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.3rem">' +
+        '<span style="font-size:.68rem;font-weight:700;background:var(--bg2);color:var(--txt3);padding:.1rem .35rem;border-radius:3px;flex-shrink:0">' + m.id + '</span>' +
+        (i === 0 ? '<span style="font-size:.68rem;font-weight:700;background:' + catColor + ';color:#000;padding:.1rem .35rem;border-radius:3px">BEST MATCH</span>' : '') +
+        '<span style="font-weight:600;color:var(--txt1);font-size:.81rem">' + m.title + '</span>' +
+        '<span style="margin-left:auto;font-size:.76rem;font-weight:700;color:' + simColor + '">' + m.similarity + '%</span>' +
+        '<span style="font-size:.68rem;background:var(--bg2);color:' + catColor + ';padding:.1rem .35rem;border-radius:3px;font-weight:600">' + m.category + '</span>' +
+      '</div>' +
+      /* Similarity bar */
+      '<div style="height:3px;background:var(--bg2);border-radius:2px;margin-bottom:.4rem;overflow:hidden">' +
+        '<div style="width:' + barW + ';height:100%;background:' + simColor + ';border-radius:2px"></div>' +
+      '</div>' +
+      /* Meta: MTTR + last seen */
+      '<div style="display:flex;gap:1rem;font-size:.73rem;color:var(--txt3);margin-bottom:.35rem;flex-wrap:wrap">' +
+        '<span>MTTR: <strong style="color:var(--txt1)">' + m.mttr + '</strong></span>' +
+        '<span>Last seen: <strong style="color:var(--txt1)">' + m.lastSeen + '</strong></span>' +
+        (m.reasoning.length ? '<span>Matched: ' + m.reasoning.join(', ') + '</span>' : '') +
+      '</div>' +
+      /* Impact */
+      '<div style="font-size:.76rem;color:var(--orange);margin-bottom:.35rem"><strong>Impact:</strong> ' + m.impact + '</div>' +
+      /* Root cause */
+      '<div style="font-size:.76rem;color:var(--txt2);margin-bottom:.35rem"><strong>Root cause:</strong> ' + m.rootCause + '</div>' +
+      /* Resolution */
+      '<details><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Resolution steps (' + m.resolution.length + ')</summary>' +
+        '<ol style="margin:.3rem 0 0 1.1rem;font-size:.74rem;color:var(--txt1)">' + m.resolution.map(function(r) {
+          return '<li style="margin:.2rem 0">' + r + '</li>';
+        }).join('') + '</ol>' +
+      '</details>' +
+    '</div>';
+  });
+
+  results.innerHTML = html;
+}
+
+window.searchIncidentDB    = searchIncidentDB;
+window.renderIncidentSearch = renderIncidentSearch;

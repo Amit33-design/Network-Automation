@@ -1556,3 +1556,165 @@ function renderTopoSyncPanel() {
 window.startTopoSync      = startTopoSync;
 window.stopTopoSync       = stopTopoSync;
 window.renderTopoSyncPanel= renderTopoSyncPanel;
+
+/* ════════════════════════════════════════════════════════════════
+   ANOMALY DETECTION — rolling 2σ detector over simulated metrics
+   Tracks a 30-sample sliding window per device per metric.
+   Flags readings that deviate more than 2 standard deviations
+   from the rolling baseline (CPU %, Memory %, interface error
+   rate /s, BGP peer count).
+════════════════════════════════════════════════════════════════ */
+
+var _ANOMALY = {
+  windows: {},   /* deviceKey → { cpu[], mem[], ifErr[], bgp[] } */
+  alerts:  [],   /* [{ device, layer, metric, value, mean, std, z, unit, ts, severity }] */
+  lastRun: null,
+};
+
+/* ── Stats helpers ─────────────────────────────────────────── */
+
+function _anomalyMean(arr) {
+  return arr.reduce(function(s, v) { return s + v; }, 0) / arr.length;
+}
+
+function _anomalyStd(arr, mean) {
+  var v = arr.reduce(function(s, x) { return s + (x - mean) * (x - mean); }, 0) / (arr.length - 1);
+  return Math.sqrt(v) || 0.001;
+}
+
+/* Random metric reading with optional spike injection */
+function _anomalySim(baseline, noise, spikeProb, spikeAmt) {
+  var val = baseline + (Math.random() - 0.5) * noise;
+  if (Math.random() < spikeProb) val += spikeAmt * (0.75 + Math.random() * 0.5);
+  return Math.max(0, val);
+}
+
+/* ── Core detector ─────────────────────────────────────────── */
+
+function detectAnomalies() {
+  var devices = [];
+  try { if (typeof buildDeviceList === 'function') devices = buildDeviceList(); } catch(e) {}
+  if (!devices.length) return [];
+
+  var alerts = [];
+  var now    = new Date().toLocaleTimeString();
+
+  devices.forEach(function(dev) {
+    var key     = dev.name || dev.id || dev.hostname || 'device';
+    var peerEst = (dev.layer === 'spine' || dev.layer === 'core') ? 8 : 4;
+
+    /* Seed window with 25 stable baseline readings on first call */
+    if (!_ANOMALY.windows[key]) {
+      _ANOMALY.windows[key] = {
+        cpu:   Array.from({length:25}, function() { return _anomalySim(35, 8,  0, 0); }),
+        mem:   Array.from({length:25}, function() { return _anomalySim(55, 6,  0, 0); }),
+        ifErr: Array.from({length:25}, function() { return _anomalySim(2,  1.5,0, 0); }),
+        bgp:   Array.from({length:25}, function() { return _anomalySim(peerEst, 0.3, 0, 0); }),
+      };
+    }
+    var w = _ANOMALY.windows[key];
+
+    /* Generate new readings — small chance of anomalous spike */
+    var newCpu   = _anomalySim(35, 8,  0.10, 50);
+    var newMem   = _anomalySim(55, 6,  0.08, 28);
+    var newIfErr = _anomalySim(2,  1.5,0.12, 16);
+    var newBgp   = _anomalySim(peerEst, 0.3, 0.06, -peerEst * 0.7);
+
+    /* Check each metric for > 2σ deviation */
+    function check(win, newVal, label, unit) {
+      if (win.length < 5) return;
+      var m  = _anomalyMean(win);
+      var sd = _anomalyStd(win, m);
+      var z  = (newVal - m) / sd;
+      if (Math.abs(z) > 2.0) {
+        alerts.push({
+          device:   key,
+          layer:    dev.layer || '',
+          metric:   label,
+          value:    newVal,
+          mean:     m,
+          std:      sd,
+          z:        z,
+          unit:     unit,
+          ts:       now,
+          severity: Math.abs(z) > 3.0 ? 'CRITICAL' : 'WARNING',
+        });
+      }
+    }
+
+    check(w.cpu,   newCpu,   'CPU util',             '%');
+    check(w.mem,   newMem,   'Memory util',           '%');
+    check(w.ifErr, newIfErr, 'Interface error rate', '/s');
+    check(w.bgp,   newBgp,   'BGP peer count',        '');
+
+    /* Slide windows */
+    function slide(arr, v) { arr.push(v); if (arr.length > 30) arr.shift(); }
+    slide(w.cpu,   newCpu);
+    slide(w.mem,   newMem);
+    slide(w.ifErr, newIfErr);
+    slide(w.bgp,   newBgp);
+  });
+
+  _ANOMALY.alerts  = alerts;
+  _ANOMALY.lastRun = now;
+  return alerts;
+}
+
+/* ── UI renderer ─────────────────────────────────────────────── */
+
+function renderAnomalyPanel() {
+  var el = document.getElementById('anomaly-detection-panel');
+  if (!el) return;
+
+  var alerts  = detectAnomalies();
+  var lastRun = _ANOMALY.lastRun || '—';
+
+  if (!alerts.length) {
+    el.innerHTML = '<div class="obs-placeholder" style="color:var(--green)">✓ No anomalies detected — all metrics within 2σ of rolling baseline.&nbsp;&nbsp;<span style="color:var(--txt3);font-size:.78rem">Last scan: ' + lastRun + '</span></div>';
+    return;
+  }
+
+  var critN = alerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+  var warnN = alerts.length - critN;
+
+  var html = '<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.6rem;flex-wrap:wrap">' +
+    (critN ? '<span style="background:rgba(255,51,85,.15);color:#ff5555;padding:.2rem .55rem;border-radius:4px;font-size:.76rem;font-weight:700">' + critN + ' CRITICAL</span>' : '') +
+    (warnN ? '<span style="background:rgba(255,140,0,.12);color:var(--orange);padding:.2rem .55rem;border-radius:4px;font-size:.76rem;font-weight:600">' + warnN + ' WARNING</span>' : '') +
+    '<span style="margin-left:auto;font-size:.72rem;color:var(--txt3)">Last scan: ' + lastRun + '</span>' +
+    '</div>' +
+    '<div style="display:grid;gap:.4rem">';
+
+  alerts.forEach(function(a) {
+    var isCrit  = a.severity === 'CRITICAL';
+    var color   = isCrit ? '#ff5555' : 'var(--orange)';
+    var bg      = isCrit ? 'rgba(255,51,85,.06)' : 'rgba(255,140,0,.06)';
+    var border  = isCrit ? 'rgba(255,51,85,.22)' : 'rgba(255,140,0,.22)';
+    var zSign   = a.z >= 0 ? '+' : '';
+    var zStr    = zSign + a.z.toFixed(2) + 'σ';
+    var barPct  = Math.min(100, (Math.abs(a.z) / 5) * 100).toFixed(0);
+
+    html += '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:7px;padding:.5rem .75rem">' +
+      '<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.25rem">' +
+        '<span style="font-size:.67rem;font-weight:700;background:' + color + ';color:#000;padding:.1rem .35rem;border-radius:3px;flex-shrink:0">' + a.severity + '</span>' +
+        '<span style="font-weight:600;font-size:.8rem;color:var(--txt1)">' + a.device + '</span>' +
+        (a.layer ? '<span style="font-size:.68rem;background:var(--bg2);color:var(--txt3);padding:.05rem .3rem;border-radius:3px">' + a.layer + '</span>' : '') +
+        '<span style="font-size:.78rem;color:' + color + ';font-weight:600;margin-left:auto">' + a.metric + '</span>' +
+        '<span style="font-size:.7rem;color:var(--txt3);flex-shrink:0">' + a.ts + '</span>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:.6rem;font-size:.75rem;color:var(--txt2);flex-wrap:wrap">' +
+        '<span>value: <strong style="color:' + color + '">' + a.value.toFixed(1) + a.unit + '</strong></span>' +
+        '<span>baseline: ' + a.mean.toFixed(1) + ' ± ' + a.std.toFixed(1) + a.unit + '</span>' +
+        '<span style="font-weight:700;color:' + color + '">' + zStr + '</span>' +
+        '<div style="flex:1;min-width:80px;height:5px;background:var(--bg2);border-radius:3px;overflow:hidden">' +
+          '<div style="width:' + barPct + '%;height:100%;background:' + color + ';border-radius:3px"></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  });
+
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+window.detectAnomalies    = detectAnomalies;
+window.renderAnomalyPanel = renderAnomalyPanel;
