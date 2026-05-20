@@ -107,13 +107,13 @@ https://github.com/Amit33-design/Network-Automation/issues
 #### Policy Management
 - [x] **ACL generator** [#14](https://github.com/Amit33-design/Network-Automation/issues/14): Generate named ACLs / prefix-lists from compliance selections (PCI, HIPAA zones)
 - [x] **BGP route-policy validator**: Check generated BGP policies for common mistakes (missing default deny, wrong community syntax)
-- [ ] **Firewall rule consistency check**: Cross-check FW rules with network segmentation design — flag any policy that contradicts the HLD
-- [ ] **Policy diff**: Show what changed between two policy versions (already have diffengine.js — extend it for policies)
+- [x] **Firewall rule consistency check**: Cross-check FW rules with network segmentation design — flag any policy that contradicts the HLD
+- [x] **Policy diff**: Show what changed between two policy versions (already have diffengine.js — extend it for policies)
 
 #### Pre/Post Deployment Checks
 - [x] **Pre/Post-check scripts** [#15](https://github.com/Amit33-design/Network-Automation/issues/15): Generate Python/Bash scripts that SSH to devices and verify: interface states, BGP neighbor count, routing table prefixes, LLDP neighbors match expected topology
 - [x] **NetBox sync** [#20](https://github.com/Amit33-design/Network-Automation/issues/20): Generate Python script to sync deployed topology to NetBox (using pynetbox)
-- [ ] **Change window validator**: Check if proposed changes violate any maintenance window rules
+- [x] **Change window validator**: Check if proposed changes violate any maintenance window rules
 
 ### TIER 2 — Monitoring & Observability
 
@@ -347,3 +347,31 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - **EOS**: Ethernet49/1, Ethernet50/1 uplinks → cabling-derived.
    - **JunOS**: et-0/0/48, et-0/0/49 uplinks → cabling-derived.
    - Fallback to original hardcoded string if cabling data not ready (STATE/BOM not yet selected).
+
+### 2026-05-20 (run 8)
+
+**Features completed this run:**
+
+1. **Firewall rule consistency check** — `7823c5f`
+   - Added `checkFWConsistency(state)` + `renderFWConsistencyPanel()` to `policyengine.js`.
+   - 10 checks: compliance→FW required, PCI CHD zone, HIPAA PHI zone, WAN edge, campus internet edge, DC east-west, multicloud, IoT/OT isolation, FW-without-zones, FW-without-compliance.
+   - Severity levels: error (contradictions) / warning (best practice) / info (advisory).
+   - Renders as colored rows (red/yellow/grey) in `#fw-consistency-panel` inside Step 6.
+   - Auto-called by `jumpStep(6)` via app.js hook.
+
+2. **Policy diff** — `7823c5f`
+   - Added `takePolicySnapshot()` and `renderPolicyDiff()` to `policyengine.js`.
+   - `takePolicySnapshot()` deep-copies `POLICY_RESULTS` into `_POLICY_SNAPSHOT`.
+   - `renderPolicyDiff()` re-runs policies, computes added/removed/unchanged entries, renders green/red diff rows.
+   - `#policy-diff-panel` section in Step 6 with Take Snapshot + Show Diff buttons.
+
+3. **Change window validator** — `6fe729c`
+   - Created `src/js/changewindow.js` (215 lines) with `window.*` public API.
+   - `CHANGE_WINDOWS` config array persisted in `localStorage` (key: `netdesign_change_windows`).
+   - Defaults: Weekend (Sat/Sun all-day) + Weeknight Off-Hours (Mon–Fri 22:00–06:00).
+   - `checkChangeWindow()` handles overnight windows (e.g. 22:00→06:00 next-day).
+   - `renderChangeWindowPanel()` shows live status bar + config table; per-row toggle (ON/OFF), ACTIVE NOW badge, delete; Add Window / Reset Defaults / Refresh buttons.
+   - `deploy.js simulateCheck('Change window')` now calls real `checkChangeWindow()` — returns FAIL when outside window, PASS when inside, info when unconfigured (previously always hardcoded PASS).
+   - CSS: `.cw-*` rules for status bar, table, badges, and delete button.
+
+**Issues closed:** none (these items had no GitHub issue numbers)
