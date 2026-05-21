@@ -135,8 +135,8 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 ### TIER 4 — Integrations
 
-- [ ] **NetBox API**: Read existing inventory from NetBox to pre-fill STATE fields
-- [ ] **Nautobot**: Same as NetBox
+- [x] **NetBox API**: Read existing inventory from NetBox to pre-fill STATE fields
+- [x] **Nautobot**: Same as NetBox
 - [ ] **DNAC / Catalyst Center**: Push configs via DNAC intent API
 - [ ] **Ansible Tower / AWX**: Generate and launch AWX job templates via API
 - [ ] **ServiceNow CMDB**: Push BOM + topology to ServiceNow CMDB
@@ -443,3 +443,28 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - Updated `renderSymptomClassifier()`: confidence progress bar, collapsible Reasoning chain panel, collapsible Evidence & references panel per result card.
 
 **Issues closed:** none (Tier 3 items had no GitHub issue numbers)
+
+### 2026-05-21 (run 11)
+
+**Features completed this run:**
+
+1. **NetBox API + Nautobot (#Tier4-1, #Tier4-2)** — `a9a5ea5`
+   - Created `src/js/netbox.js` (330 lines) with full public API:
+   - `fetchNetboxInventory(url, token)` — browser fetch to NetBox/Nautobot REST v3/v4;
+     paginated (200/page) for sites, devices, prefixes, tenants; parallel page fetching.
+   - `applyNetboxToState(inventory)` — maps data → STATE.orgName, numSites, orgSize,
+     preferredVendors; fills `#org-name`, `#org-size`, `#num-sites` inputs; toggles vendor chips.
+   - `renderNetboxImportPanel()` — "Import from NetBox / Nautobot" form-card in Step 1
+     with URL + token inputs, Connect & Preview button, preview table, Apply / Clear buttons.
+   - Vendor slug normalization covers 12 manufacturer mappings (Cisco, Arista, Juniper,
+     Fortinet, HPE Aruba, Dell EMC, NVIDIA, Extreme Networks).
+   - Org-size heuristic: device count → small / medium / large / enterprise thresholds.
+   - Use-case heuristic: device role votes → campus / dc / gpu / wan (advisory, not auto-set).
+   - CORS advisory note shown automatically on fetch failure.
+   - Credentials persisted in localStorage (`netdesign_netbox_creds`).
+   - Nautobot uses the same /api/dcim/ and /api/ipam/ paths as NetBox — same code covers both.
+   - `#netbox-import-panel` div added before org-details form in Step 1 of index.html.
+   - Script tag added after naming.js; `renderNetboxImportPanel()` called in app.js init block.
+   - 15 `.nb-*` CSS rules added to main.css (card border, badge, inputs, preview table, actions).
+
+**Issues closed:** none (Tier 4 items have no GitHub issue numbers in this repo)
