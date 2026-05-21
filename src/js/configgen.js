@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'FHRP', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -446,6 +446,95 @@ spanning-tree port type edge bpduguard default`}
   return '';
 }
 window._genSTP = _genSTP;
+
+/* ════════════════════════════════════════════════════════════════
+   _genFHRP — First Hop Redundancy Protocol
+   • IOS-XE campus-dist: HSRPv2 on all campus SVIs.
+     Dist-01 (idx=0): ACTIVE, priority 110, preempt, tracks uplink.
+     Dist-02 (idx=1): STANDBY, priority 100.
+     Sub-second timers (250 ms / 750 ms), MD5 auth.
+   • Returns '' for non-applicable vendor/layer combos.
+════════════════════════════════════════════════════════════════ */
+function _genFHRP(vendor, layer, idx) {
+  if (layer !== 'campus-dist') return '';
+
+  const isActive = (idx === 0);
+  const prio     = isActive ? 110 : 100;
+
+  function _hsrpIface(group, vip) {
+    return `interface Vlan${group}
+ standby version 2
+ standby ${group} ip ${vip}
+ standby ${group} priority ${prio}
+${isActive ? ` standby ${group} preempt\n` : ''} standby ${group} authentication md5 key-string HSRP_NetD@2024
+ standby ${group} timers msec 250 msec 750
+${isActive ? ` standby ${group} track 1 decrement 20\n` : ''}!`;
+  }
+
+  if (vendor === 'ios-xe') {
+    return `!
+! ── FHRP — HSRP v2 (sub-second failover) ───────────────────
+! Dist-${idx + 1} role: ${isActive
+  ? 'ACTIVE  — priority 110, preempt, tracks TenGig1/1 uplink'
+  : 'STANDBY — priority 100 (takes over if Dist-01 uplink fails)'}
+! Virtual IPs (.1 / .254) are the default gateways for all hosts
+!
+track 1 interface TenGigabitEthernet1/1 line-protocol
+!
+${_hsrpIface(10, '10.0.0.1'  )}
+${_hsrpIface(20, '10.10.0.254')}
+${_hsrpIface(30, '10.20.0.254')}
+${_hsrpIface(40, '10.30.0.254')}
+`;
+  }
+
+  if (vendor === 'eos') {
+    function _vrrpIface(group, vip) {
+      return `interface Vlan${group}
+   vrrp ${group} ipv4 ${vip}
+   vrrp ${group} priority-level ${prio}
+${isActive ? `   vrrp ${group} preempt\n` : ''}   vrrp ${group} authentication md5 key-string VRRP_NetD@2024
+   vrrp ${group} timers advertise 1
+!`;
+    }
+    return `!
+! ── FHRP — VRRP v3 (sub-second failover) ───────────────────
+! Dist-${idx + 1} role: ${isActive ? 'MASTER (priority 110)' : 'BACKUP (priority 100)'}
+!
+${_vrrpIface(10, '10.0.0.1'  )}
+${_vrrpIface(20, '10.10.0.254')}
+${_vrrpIface(30, '10.20.0.254')}
+${_vrrpIface(40, '10.30.0.254')}
+`;
+  }
+
+  if (vendor === 'nxos') {
+    function _hsrpNxIface(group, vip) {
+      return `interface Vlan${group}
+  hsrp version 2
+  hsrp ${group}
+    ip ${vip}
+    priority ${prio}
+${isActive ? `    preempt\n` : ''}    authentication md5 key-string HSRP_NetD@2024
+    timers msec 250 msec 750
+${isActive ? `    track 1 decrement 20\n` : ''}!`;
+    }
+    return `!
+! ── FHRP — HSRP v2 ──────────────────────────────────────────
+! Dist-${idx + 1} role: ${isActive ? 'ACTIVE (priority 110)' : 'STANDBY (priority 100)'}
+!
+track 1 interface TenGigabitEthernet1/1 line-protocol
+!
+${_hsrpNxIface(10, '10.0.0.1'  )}
+${_hsrpNxIface(20, '10.10.0.254')}
+${_hsrpNxIface(30, '10.20.0.254')}
+${_hsrpNxIface(40, '10.30.0.254')}
+`;
+  }
+
+  return '';
+}
+window._genFHRP = _genFHRP;
 
 /* ════════════════════════════════════════════════════════════════
    NTP + SNMP v3 HELPER BLOCKS  (appended to every vendor config)
@@ -1404,6 +1493,7 @@ ${hasBGP ? `router bgp 65100
   network 10.10.${idx}.0 mask 255.255.252.0
   network 10.20.${idx}.0 mask 255.255.254.0` : ''}
 `;
+    cfg += _genFHRP('ios-xe', layer, idx);
   }
 
   if (isCore) {
