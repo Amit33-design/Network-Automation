@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'IPv6', 'NTP', 'SNMP', 'AAA'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -1804,6 +1804,204 @@ security {
 }
 
 /* ════════════════════════════════════════════════════════════════
+   IPv6 DUAL-STACK HELPER
+   Appended to each vendor config when STATE.protoFeatures includes
+   'IPv6 Dual-Stack'.  Adds ULA loopback addresses, P2P IPv6,
+   OSPFv3 / BGP IPv6 address-family per vendor.
+════════════════════════════════════════════════════════════════ */
+function _genIPv6Underlay(vendor, layer, idx) {
+  const isCampus = ['campus-access','campus-dist','campus-core'].includes(layer);
+  const isSpine  = layer === 'dc-spine' || layer === 'gpu-spine';
+  const isTOR    = layer === 'gpu-tor';
+  const loOctet  = idx + 1;
+
+  if (vendor === 'ios-xe' && isCampus) {
+    const isAcc  = layer === 'campus-access';
+    const isDist = layer === 'campus-dist';
+    const isCore = layer === 'campus-core';
+    return `!
+! ── IPv6 DUAL-STACK ────────────────────────────────────────
+ipv6 unicast-routing
+ipv6 cef
+!
+${(isCore || isDist) ? `interface Loopback0
+ ipv6 address FD00:0:0:${loOctet}::1/128
+ ipv6 ospf 1 area 0
+!` : ''}
+${isDist ? `interface TenGigabitEthernet1/1
+ ipv6 address 2001:DB8:100:${idx*2}::1/127
+ ipv6 ospf 1 area 0
+ ipv6 ospf network point-to-point
+!
+interface TenGigabitEthernet1/2
+ ipv6 address 2001:DB8:100:${idx*2+1}::1/127
+ ipv6 ospf 1 area 0
+ ipv6 ospf network point-to-point
+!
+interface Vlan20
+ ipv6 address 2001:DB8:10:${idx}::1/48
+ ipv6 nd ra-interval 30
+ ipv6 nd ra-lifetime 120
+!
+interface Vlan30
+ ipv6 address 2001:DB8:20:${idx}::1/48
+ ipv6 nd suppress-ra
+!
+ipv6 router ospf 1
+ router-id 10.255.0.${20+idx}
+ passive-interface default
+ no passive-interface TenGigabitEthernet1/1
+ no passive-interface TenGigabitEthernet1/2
+ area 0 authentication ipsec spi 256 md5 0102030405060708090A0B0C0D0E0F10
+!` : ''}
+${isCore ? `interface TenGigabitEthernet2/1
+ ipv6 address 2001:DB8:100:${idx*4}::1/127
+ ipv6 ospf 1 area 0
+ ipv6 ospf network point-to-point
+!
+ipv6 router ospf 1
+ router-id 10.255.0.${20+idx}
+ passive-interface default
+ no passive-interface TenGigabitEthernet2/1
+ no passive-interface TenGigabitEthernet2/2
+ no passive-interface TenGigabitEthernet2/3
+ no passive-interface TenGigabitEthernet2/4
+!` : ''}
+${isAcc ? `interface Vlan20
+ ipv6 nd ra-interval 30
+ ipv6 nd prefix 2001:DB8:10:${idx}::/48
+!` : ''}
+`;
+  }
+
+  if (vendor === 'nxos') {
+    const asn    = isSpine ? 65000 : 65001 + idx;
+    const pfx    = isSpine ? `2001:DB8:1:${idx*8}` : `2001:DB8:1:${idx*2+1}`;
+    const uplinkIntf = isSpine ? 'Ethernet1/1' : 'Ethernet1/49';
+    const loIPv4 = isSpine ? `10.255.1.${idx+1}` : `10.255.2.${idx+1}`;
+    return `!
+! ── IPv6 DUAL-STACK ────────────────────────────────────────
+feature ipv6
+!
+interface loopback0
+  ipv6 address FD00:0:0:${loOctet}::1/128
+  ipv6 router ospf UNDERLAY-V6 area 0.0.0.0
+!
+interface ${uplinkIntf}
+  ipv6 address ${pfx}::1/127
+  ipv6 router ospf UNDERLAY-V6 area 0.0.0.0
+  ipv6 ospf network point-to-point
+!
+ipv6 router ospf UNDERLAY-V6
+  router-id ${loIPv4}
+  passive-interface default
+  no passive-interface loopback0
+  no passive-interface ${uplinkIntf}
+!
+router bgp ${asn}
+  address-family ipv6 unicast
+    maximum-paths 4
+    maximum-paths ibgp 4
+    network FD00:0:0:${loOctet}::1/128
+!
+`;
+  }
+
+  if (vendor === 'eos') {
+    const asn  = isSpine ? 65000 : 65001 + idx;
+    const loIP = isSpine ? `10.255.1.${idx+1}` : `10.255.2.${idx+1}`;
+    return `!
+! ── IPv6 DUAL-STACK ────────────────────────────────────────
+interface Loopback0
+   ipv6 address FD00:0:0:${loOctet}::1/128
+!
+interface Ethernet49/1
+   ipv6 address 2001:DB8:1:${isSpine ? idx*8 : idx*2+1}::${isSpine ? 0 : 1}/127
+!
+router ospf 1
+   address-family ipv6
+      area 0.0.0.0
+         network Loopback0/128
+      bfd all-interfaces
+!
+router bgp ${asn}
+   address-family ipv6
+      ${isSpine ? 'neighbor LEAVES activate' : 'neighbor SPINES activate'}
+      network FD00:0:0:${loOctet}::1/128
+      maximum-paths 4
+!
+`;
+  }
+
+  if (vendor === 'junos') {
+    return `## ── IPv6 DUAL-STACK ────────────────────────────────────
+interfaces {
+    lo0 {
+        unit 0 {
+            family inet6 { address fd00:0:0:${loOctet}::1/128; }
+        }
+    }
+    et-0/0/48 {
+        unit 0 {
+            family inet6 { address 2001:db8:1:${idx*2}::1/127; }
+        }
+    }
+    et-0/0/49 {
+        unit 0 {
+            family inet6 { address 2001:db8:1:${idx*2+8}::1/127; }
+        }
+    }
+}
+protocols {
+    ospf3 {
+        reference-bandwidth 100g;
+        area 0.0.0.0 {
+            interface lo0.0     { passive; }
+            interface et-0/0/48.0 { interface-type p2p; }
+            interface et-0/0/49.0 { interface-type p2p; }
+        }
+    }
+    bgp {
+        group SPINES-V6 {
+            type external;
+            peer-as 65000;
+            family inet6 { unicast; }
+            neighbor 2001:db8:1:${idx*2}::;
+            neighbor 2001:db8:1:${idx*2+8}::;
+        }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic') {
+    return `# ── IPv6 DUAL-STACK ────────────────────────────────────
+# /etc/sonic/config_db.json  (IPv6 — merge with base config)
+{
+  "LOOPBACK_INTERFACE": {
+    "Loopback0|fd00:0:0:${loOctet}::1/128": {}
+  },
+  "INTERFACE": {
+    "Ethernet112|2001:db8:1:${idx*4}::1/127": { "scope": "global", "family": "IPv6" },
+    "Ethernet116|2001:db8:1:${idx*4+2}::1/127": { "scope": "global", "family": "IPv6" }
+  }
+}
+# FRRouting OSPFv3 — /etc/frr/frr.conf (append):
+# ipv6 router ospf6
+#   ospf6 router-id 10.255.5.${loOctet}
+#   area 0.0.0.0 range fd00::/8
+# interface Ethernet112
+#   ipv6 ospf6 area 0.0.0.0
+# interface Ethernet116
+#   ipv6 ospf6 area 0.0.0.0
+# Apply: sudo vtysh -f /etc/frr/frr.conf && sudo systemctl restart frr
+`;
+  }
+
+  return '';
+}
+
+/* ════════════════════════════════════════════════════════════════
    CONFIG GENERATION TEMPLATES
 ════════════════════════════════════════════════════════════════ */
 function generateConfig(dev, os) {
@@ -2242,6 +2440,7 @@ ${hasBGP ? `router bgp 65100
   }
 
   // Common footer for all IOS-XE
+  if ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack')) cfg += _genIPv6Underlay('ios-xe', layer, idx);
   cfg += _genIGMP('ios-xe', layer);
   cfg += _genQoS('ios-xe', STATE);
   cfg += _genNTP('ios-xe');
@@ -2685,6 +2884,7 @@ interface mgmt0
 !
 ip route 0.0.0.0/0 10.0.0.1 vrf management
 `;
+  if ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack')) cfg += _genIPv6Underlay('nxos', layer, idx);
   cfg += _genIGMP('nxos', layer);
   cfg += _genSTP('nxos', layer);
   cfg += _genQoS('nxos', STATE);
@@ -2851,6 +3051,7 @@ ${hasVxlan && !isSpine ? `   vlan 100
       ${hasVxlan && !isSpine ? `network ${vtepIP}/32` : ''}
 !
 ${hasOSPF && !isTOR ? _genOSPFUnderlay('eos', STATE, dev, layer, idx) : ''}
+${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('eos', layer, idx) : ''}
 ${_genIGMP('eos', layer)}
 ${_genSTP('eos', layer)}
 ${_genQoS('eos', STATE)}
@@ -2964,6 +3165,7 @@ protocols {
     lldp { interface all; }
 }
 ${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
+${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('junos', layer, idx) : ''}
 ${_genIGMP('junos', layer)}
 ${_genSTP('junos', layer)}
 ${_genQoS('junos', STATE)}
@@ -3045,6 +3247,7 @@ function genSONiC(dev, layer, idx) {
 }
 
 ${hasOSPF ? _genOSPFUnderlay('sonic', STATE, dev, layer, idx) : ''}
+${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : ''}
 ${_genQoS('sonic', STATE)}
 ${_genNTP('sonic')}
 ${_genSNMPv3('sonic')}
