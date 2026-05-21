@@ -3324,3 +3324,14 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .nb-table tr:last-child td { border-bottom: none; }
 .nb-table td:first-child   { color: var(--txt0); font-weight: 500; }
 .nb-preview-actions { display: flex; align-items: center; gap: .5rem; }
+
+/* ── PeeringDB Panel ──────────────────────────────────────────── */
+.pdb-card         { border: 1px solid rgba(255,160,50,.25); }
+.pdb-summary      { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: .4rem 0; }
+.pdb-meta         { font-size: .75rem; color: var(--txt3); background: var(--bg3);
+                    padding: .1rem .4rem; border-radius: 4px; }
+.pdb-asn-badge    { display: inline-block; font-size: .7rem; font-family: monospace;
+                    background: rgba(26,127,255,.12); color: var(--blue);
+                    border: 1px solid rgba(26,127,255,.25); border-radius: 4px;
+                    padding: .05rem .3rem; margin: .05rem; }
+.pdb-table td:last-child { max-width: 280px; word-break: break-word; }

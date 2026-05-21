@@ -58,7 +58,10 @@ function jumpStep(n) {
   updateBottomNav();
   updateSummary();
   // Keep multicloud panel in sync when navigating between steps
-  if (n === 2) _showMCReq(STATE.uc === 'multicloud');
+  if (n === 2) {
+    _showMCReq(STATE.uc === 'multicloud');
+    if (typeof renderPeeringPanel === 'function') renderPeeringPanel();
+  }
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (typeof renderIntentPanel === 'function') renderIntentPanel();
   if (n === 6) {
@@ -67,6 +70,7 @@ function jumpStep(n) {
     if (typeof renderChecksPanel === 'function')        renderChecksPanel();
     if (typeof renderDNACPanel === 'function')          renderDNACPanel();
     if (typeof renderAWXPanel === 'function')           renderAWXPanel();
+    if (typeof renderServiceNowPanel === 'function')    renderServiceNowPanel();
     if (typeof renderFWConsistencyPanel === 'function')  renderFWConsistencyPanel();
     if (typeof renderChangeWindowPanel === 'function')   renderChangeWindowPanel();
     if (typeof renderSNMPMIBPanel === 'function')        renderSNMPMIBPanel();
