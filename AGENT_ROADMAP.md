@@ -139,9 +139,9 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [x] **Nautobot**: Same as NetBox
 - [x] **DNAC / Catalyst Center**: Push configs via DNAC intent API
 - [x] **Ansible Tower / AWX**: Generate and launch AWX job templates via API
-- [ ] **ServiceNow CMDB**: Push BOM + topology to ServiceNow CMDB
-- [ ] **PeeringDB**: Pull IX peering data for WAN/multicloud use cases
-- [ ] **Cisco EoL / EoS API**: Flag any product in BOM that is end-of-life or end-of-sale
+- [x] **ServiceNow CMDB**: Push BOM + topology to ServiceNow CMDB
+- [x] **PeeringDB**: Pull IX peering data for WAN/multicloud use cases
+- [x] **Cisco EoL / EoS API**: Flag any product in BOM that is end-of-life or end-of-sale
 
 ---
 
@@ -468,3 +468,42 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - 15 `.nb-*` CSS rules added to main.css (card border, badge, inputs, preview table, actions).
 
 **Issues closed:** none (Tier 4 items have no GitHub issue numbers in this repo)
+
+2. **DNAC / Catalyst Center (#T4-3)** — `35adabf`
+   - Created `src/js/dnac.js` with `genDNACPushScript()`, `downloadDNACScript()`, `renderDNACPanel()`.
+   - Python script: OAuth via `/dna/system/api/v1/auth/token`, device lookup, Template Programmer
+     create/commit/deploy/poll workflow; DNAC 2.2+ / Catalyst Center 2.3+.
+   - `#dnac-panel` div in Step 6; rendered in `jumpStep(6)`.
+
+3. **Ansible Tower / AWX (#T4-4)** — `d6503d4`
+   - Created `src/js/awx.js` with `genAWXScript()`, `downloadAWXScript()`, `renderAWXPanel()`.
+   - Python script: Bearer token auth, get-or-create inventory + platform groups + hosts +
+     SSH credential + job template; job launch + 5s poll; AWX 21+ / Tower 3.8+.
+   - `#awx-panel` div in Step 6; rendered in `jumpStep(6)`.
+
+4. **ServiceNow CMDB (#T4-5)** — `714a046`
+   - Created `src/js/servicenow.js` with `genServiceNowScript()`, `downloadServiceNowScript()`, `renderServiceNowPanel()`.
+   - Python script: Table API upsert to cmdb_ci_netgear / cmdb_ci_ip_router CIs,
+     cmdb_rel_ci topology relationships (access→dist→core, leaf→spine, etc.); dry-run mode.
+   - `#snow-panel` div in Step 6; rendered in `jumpStep(6)`.
+
+5. **PeeringDB (#T4-6)** — `714a046`
+   - Created `src/js/peeringdb.js` with `fetchPeeringData(asn)`, `renderPeeringPanel()`,
+     `peeringSearch()`, `downloadPeeringReport()`.
+   - Browser fetch to PeeringDB public CORS API; paginated netixlan lookup; parallel peer
+     fetches for first 5 IXPs; IXP table + CSV export.
+   - `#peeringdb-panel` div in Step 2 (visible for WAN/multicloud/multisite UCs);
+     rendered in `jumpStep(2)`.
+
+6. **Cisco EoL / EoS API (#T4-7)** — `dd37f82`
+   - Created `src/js/eol.js` with static `_EOL_DB` (10 Cisco products from catalog),
+     `checkEoL()`, `renderEoLPanel()`, `genCiscoEoLScript()`, `downloadCiscoEoLScript()`.
+   - `renderEoLPanel()` called from `updateBOMTable()` — live feedback as user selects products.
+   - Nexus 93180YC-FX flagged as End-of-Sale (static data).
+   - Python script: Cisco Support EoX v4 API with OAuth 2.0 for live data.
+   - `#eol-panel` div in BOM section above cabling matrix.
+
+**All 7 Tier 4 integration items complete. All tiers (1-4) now fully implemented.**
+
+**Files added this run**: src/js/netbox.js, src/js/dnac.js, src/js/awx.js, src/js/servicenow.js, src/js/peeringdb.js, src/js/eol.js
+**Files modified**: index.html, src/css/main.css, src/js/app.js, src/js/recommendations.js
