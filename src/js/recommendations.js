@@ -164,6 +164,9 @@ function updateBOMTable(layers) {
   /* Refresh cable schedule whenever the BOM updates */
   if (typeof updateCablingMatrix === 'function') updateCablingMatrix(layers, STATE);
 
+  /* Refresh EoL / EoS flags */
+  if (typeof renderEoLPanel === 'function') renderEoLPanel();
+
   /* Refresh optics recommendations */
   if (typeof renderOpticsSection === 'function') renderOpticsSection(layers, STATE);
 

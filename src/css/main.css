@@ -3335,3 +3335,17 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
                     border: 1px solid rgba(26,127,255,.25); border-radius: 4px;
                     padding: .05rem .3rem; margin: .05rem; }
 .pdb-table td:last-child { max-width: 280px; word-break: break-word; }
+
+/* ── EoL / EoS Panel ──────────────────────────────────────────── */
+.eol-banner         { display: flex; align-items: flex-start; gap: .75rem; padding: .65rem .9rem;
+                      border-radius: 8px; border: 1px solid; margin-bottom: .6rem; }
+.eol-banner-ok      { background: rgba(0,232,122,.08); border-color: rgba(0,232,122,.3); }
+.eol-banner-warn    { background: rgba(255,160,50,.08); border-color: rgba(255,160,50,.3); }
+.eol-ico            { font-size: 1.25rem; line-height: 1.1; }
+.eol-sub            { font-size: .75rem; color: var(--txt2); margin-top: .15rem; }
+.eol-table          { margin-bottom: .25rem; }
+.eol-badge          { padding: .12rem .45rem; border-radius: 4px; font-size: .7rem; font-weight: 700; }
+.eol-active         { background: rgba(0,232,122,.15); color: var(--green); }
+.eol-announced      { background: rgba(255,160,50,.15); color: #fa0; }
+.eol-eos            { background: rgba(255,100,0,.15);  color: #f60; }
+.eol-eol            { background: rgba(255,51,85,.15);  color: var(--red); }

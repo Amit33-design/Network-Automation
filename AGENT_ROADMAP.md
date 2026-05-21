@@ -137,8 +137,8 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 - [x] **NetBox API**: Read existing inventory from NetBox to pre-fill STATE fields
 - [x] **Nautobot**: Same as NetBox
-- [ ] **DNAC / Catalyst Center**: Push configs via DNAC intent API
-- [ ] **Ansible Tower / AWX**: Generate and launch AWX job templates via API
+- [x] **DNAC / Catalyst Center**: Push configs via DNAC intent API
+- [x] **Ansible Tower / AWX**: Generate and launch AWX job templates via API
 - [ ] **ServiceNow CMDB**: Push BOM + topology to ServiceNow CMDB
 - [ ] **PeeringDB**: Pull IX peering data for WAN/multicloud use cases
 - [ ] **Cisco EoL / EoS API**: Flag any product in BOM that is end-of-life or end-of-sale
