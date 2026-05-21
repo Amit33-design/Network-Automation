@@ -552,3 +552,15 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - **Why**: WAN is one of the 6 core use cases; generating L2 switch configs for routers was a complete functional gap.
 
 **Issues closed:** None (no GitHub issue number for this gap; self-identified audit)
+
+2. **IPv6 dual-stack config for all 5 vendors** — `a0365c1`
+   - **Root cause**: `STATE.protoFeatures` can include `'IPv6 Dual-Stack'` (Step 2 proto-card toggle, also set by DC/GPU demo presets), but no config generator used it. IPv6 configs were completely missing from all vendor outputs.
+   - Added `_genIPv6Underlay(vendor, layer, idx)` helper (~180 lines) covering all 5 vendors:
+     - **IOS-XE campus**: `ipv6 unicast-routing` + `ipv6 cef`, ULA loopbacks (`FD00:0:0:N::1/128`), `/127` P2P on distribution TenGig uplinks, SLAAC RA on Vlan20 (data) + suppress-ra on Vlan30 (voice), `ipv6 router ospf 1` with passive-interface default, no-passive on uplinks, OSPFv3 area 0 IPSec auth.
+     - **NX-OS DC/GPU**: `feature ipv6`, ULA loopback, P2P on Ethernet1/49, `ipv6 router ospf UNDERLAY-V6` (named OSPF instance, same style as IPv4 UNDERLAY), BGP IPv6 address-family with `maximum-paths 4`.
+     - **EOS DC/GPU**: IPv6 on Loopback0 + Ethernet49/1, `router ospf 1 address-family ipv6`, `router bgp N address-family ipv6` with `neighbor SPINES/LEAVES activate`.
+     - **JunOS DC/GPU**: `family inet6` on lo0 + et-0/0/48-49, `ospf3` area 0, BGP `group SPINES-V6` with `family inet6 unicast`.
+     - **SONiC DC/GPU**: `LOOPBACK_INTERFACE` + `INTERFACE` IPv6 entries in `config_db.json`, FRRouting `ipv6 router ospf6` stanza as comments (apply via vtysh).
+   - Guard: `(STATE.protoFeatures || []).includes('IPv6 Dual-Stack')` — zero impact unless IPv6 is toggled on in Step 2.
+   - Added `'IPv6'` to `SECTION_MARKERS` for section-nav jump bar.
+   - **Why**: IPv6 dual-stack is standard practice in modern DC/campus; the proto-card UI already offered it but silently had no effect on generated configs.
