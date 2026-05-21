@@ -533,3 +533,22 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - **Why**: Without IGMP snooping, all multicast (IP phones, video conferencing, wireless AP discovery) is flooded as unknown unicast — a production correctness gap for voice/video campuses.
 
 **Issues closed:** None (no GitHub issue numbers; these were Tier 5 infrastructure gaps found during audit)
+
+### 2026-05-21 (run 13)
+
+**Features completed this run:**
+
+1. **WAN router config — DMVPN hub/spoke (IOS-XE) + GRE/IPSec (JunOS)** — `45a62c2`
+   - **Root cause**: WAN use case assigned `layer:'campus-access'` to Branch CPE and `layer:'campus-core'` to HQ Core Router. Both generated campus switch configs (VLANs, PoE, DHCP snooping) — completely wrong for WAN routers.
+   - Added `_genWANRouterIOSXE(dev, isHub, idx)` (~250 lines):
+     - **HQ Hub**: dual-ISP GigabitEthernet WAN interfaces (DHCP from ISP), LAN downlink, `Tunnel0` as DMVPN Phase 3 mGRE hub (IKEv2 keyring/proposal/profile, IPSec transform-set + ipsec-profile, NHRP multicast-dynamic + redirect), OSPFv2 area 0 with `default-information originate always`, eBGP toward ISP with `prefix-list DENY-RFC1918-OUT`, IP SLA 1/2 with `track`-based dual-ISP failover static routes, NAT overload.
+     - **Branch CPE**: ISP DHCP WAN, LAN (users + voice subnets), `Tunnel0` as mGRE spoke (NHRP map/nhs/shortcut, priority 0 non-DR), OSPFv2, NAT overload, `WAN-IN` ACL + CBAC `ip inspect` for stateful WAN protection.
+   - Added `_genWANRouterJunOS(dev, isHub, idx)` (~200 lines):
+     - **HQ Hub**: `ge-0/0/0/1` ISP interfaces (DHCP), `ge-0/0/2` LAN, `gr-0/0/0` GRE tunnel sourced from Loopback0, OSPFv2, eBGP with `DENY-RFC1918-OUT` policy-statement, SRX `source-nat interface` + `security policies` trust↔untrust.
+     - **Branch CPE**: DHCP WAN, LAN, GRE spoke to hub, OSPF, NAT, deny-inbound security policy.
+   - `genIOSXE` / `genJunos`: check `dev.role` at entry and delegate — zero impact on campus/DC/GPU configs.
+   - `genNXOS` / `genEOS` / `genSONiC`: return advisory note redirecting users to IOS-XE/JunOS for WAN (DC OSes lack DMVPN/NHRP support).
+   - Added `'WAN'`, `'DMVPN'`, `'NAT'` to `SECTION_MARKERS` for section-nav jump bar.
+   - **Why**: WAN is one of the 6 core use cases; generating L2 switch configs for routers was a complete functional gap.
+
+**Issues closed:** None (no GitHub issue number for this gap; self-identified audit)
