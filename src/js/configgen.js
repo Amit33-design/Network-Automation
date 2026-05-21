@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'FHRP', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'NTP', 'SNMP', 'AAA'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -535,6 +535,101 @@ ${_hsrpNxIface(40, '10.30.0.254')}
   return '';
 }
 window._genFHRP = _genFHRP;
+
+/* ════════════════════════════════════════════════════════════════
+   _genIGMP — IGMP snooping for campus / DC switches
+   • Emitted when STATE.appTypes includes 'voice' or 'video', or
+     when overlayProto includes 'VXLAN' (DC fabric needs it too).
+   • Distribution/core get the IGMP querier role (they own the L3
+     SVIs / default gateways — RFC 4541 §2.1.1).
+   • Access/leaf get per-VLAN snooping + immediate-leave.
+   • Returns '' for non-campus, non-DC layers.
+════════════════════════════════════════════════════════════════ */
+function _genIGMP(vendor, layer) {
+  const isCampus = ['campus-access','campus-dist','campus-core'].includes(layer);
+  const isDCLeaf = layer === 'dc-leaf';
+  if (!isCampus && !isDCLeaf) return '';
+
+  const isDist  = layer === 'campus-dist';
+  const isAcc   = layer === 'campus-access';
+  const isCore  = layer === 'campus-core';
+  const hasVoice = (_rs('appTypesVoice',  () => (STATE.appTypes  || []).includes('voice')));
+  const hasVideo = (_rs('appTypesVideo',  () => (STATE.appTypes  || []).includes('video')));
+  const hasVxlan = (_rs('vxlanEnabled',   () => (STATE.overlayProto || []).some(o=>o.includes('VXLAN'))));
+
+  if (!hasVoice && !hasVideo && !hasVxlan && !isDCLeaf) return '';
+
+  const userVlans = '20,21,30,40,41';
+  const dcVlans   = '100,101';
+  const vlans     = isDCLeaf ? dcVlans : userVlans;
+
+  if (vendor === 'ios-xe') {
+    return `!
+! ── IGMP SNOOPING ───────────────────────────────────────────
+ip igmp snooping
+ip igmp snooping vlan ${vlans}
+${(isDist || isCore) ? `ip igmp snooping vlan 20 querier
+ip igmp snooping vlan 21 querier
+ip igmp snooping vlan 30 querier
+ip igmp snooping vlan 40 querier
+ip igmp snooping vlan 41 querier` : ''}
+${isAcc ? `ip igmp snooping vlan 20,21,30,40,41 immediate-leave` : ''}
+ip igmp snooping report-suppression
+`;
+  }
+
+  if (vendor === 'nxos') {
+    return `!
+! ── IGMP SNOOPING ───────────────────────────────────────────
+ip igmp snooping
+ip igmp snooping vlan ${vlans}
+${isDCLeaf ? `ip igmp snooping vlan ${dcVlans} querier
+ip igmp snooping vlan ${dcVlans} immediate-leave` : ''}
+`;
+  }
+
+  if (vendor === 'eos') {
+    return `!
+! ── IGMP SNOOPING ───────────────────────────────────────────
+ip igmp snooping
+${isDCLeaf ? `vlan 100
+   ip igmp snooping querier
+   ip igmp snooping immediate-leave
+!
+vlan 101
+   ip igmp snooping querier
+   ip igmp snooping immediate-leave
+!` : ''}
+`;
+  }
+
+  if (vendor === 'junos') {
+    return `
+# ── IGMP Snooping ────────────────────────────────────────────
+protocols {
+    igmp-snooping {
+        vlan all {
+            immediate-leave;
+            proxy;
+        }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic') {
+    return `
+# ── IGMP Snooping (/etc/sonic/config_db.json excerpt) ────────
+  "CFG_DEVICE_METADATA": {},
+  "VLAN_MEMBER|${isDCLeaf ? 'Vlan100' : 'Vlan20'}|Ethernet0": {
+      "tagging_mode": "untagged"
+  },
+`;
+  }
+
+  return '';
+}
+window._genIGMP = _genIGMP;
 
 /* ════════════════════════════════════════════════════════════════
    NTP + SNMP v3 HELPER BLOCKS  (appended to every vendor config)
@@ -1611,6 +1706,7 @@ ${hasBGP ? `router bgp 65100
   }
 
   // Common footer for all IOS-XE
+  cfg += _genIGMP('ios-xe', layer);
   cfg += _genQoS('ios-xe', STATE);
   cfg += _genNTP('ios-xe');
   cfg += _genSNMPv3('ios-xe');
@@ -2050,6 +2146,7 @@ interface mgmt0
 !
 ip route 0.0.0.0/0 10.0.0.1 vrf management
 `;
+  cfg += _genIGMP('nxos', layer);
   cfg += _genSTP('nxos', layer);
   cfg += _genQoS('nxos', STATE);
   cfg += _genNTP('nxos');
@@ -2212,6 +2309,7 @@ ${hasVxlan && !isSpine ? `   vlan 100
       ${hasVxlan && !isSpine ? `network ${vtepIP}/32` : ''}
 !
 ${hasOSPF && !isTOR ? _genOSPFUnderlay('eos', STATE, dev, layer, idx) : ''}
+${_genIGMP('eos', layer)}
 ${_genSTP('eos', layer)}
 ${_genQoS('eos', STATE)}
 ${_genNTP('eos')}
@@ -2320,6 +2418,7 @@ protocols {
     lldp { interface all; }
 }
 ${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
+${_genIGMP('junos', layer)}
 ${_genSTP('junos', layer)}
 ${_genQoS('junos', STATE)}
 ${_genAAA('junos', STATE)}
