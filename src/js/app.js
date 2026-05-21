@@ -340,6 +340,7 @@ renderProgress();
 renderSidebar();
 updateBottomNav();
 updateSummary();
+if (typeof renderNetboxImportPanel === 'function') renderNetboxImportPanel();
 
 /* Welcome toast */
 setTimeout(() => toast('Welcome! Start by selecting your network use case below.', 'info', 4000), 600);

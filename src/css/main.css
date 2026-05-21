@@ -3299,3 +3299,28 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .cw-del-btn       { background: none; border: none; color: var(--txt3); cursor: pointer;
                     font-size: .8rem; padding: .1rem .35rem; border-radius: 4px; }
 .cw-del-btn:hover { color: var(--red); background: rgba(255,51,85,.1); }
+
+/* ── NetBox Import Panel ──────────────────────────────────────── */
+.nb-card            { border: 1px solid rgba(0,212,255,.25); }
+.nb-badge-optional  { font-size: .7rem; font-weight: 400; color: var(--txt3);
+                      background: var(--bg3); padding: .1rem .4rem; border-radius: 4px;
+                      margin-left: .4rem; vertical-align: middle; }
+.nb-form-row        { display: flex; gap: .75rem; align-items: flex-end; flex-wrap: wrap; }
+.nb-btn-field       { flex: 0 0 auto; }
+.nb-input           { width: 100%; background: var(--bg1); border: 1px solid var(--border);
+                      border-radius: 6px; color: var(--txt0); padding: .45rem .65rem;
+                      font-size: .83rem; }
+.nb-input:focus     { outline: none; border-color: var(--blue); }
+.nb-connect-btn     { white-space: nowrap; }
+.nb-note            { margin-top: .75rem; font-size: .75rem; color: var(--txt2);
+                      background: rgba(255,160,50,.1); border: 1px solid rgba(255,160,50,.25);
+                      border-radius: 6px; padding: .5rem .75rem; }
+.nb-note code       { color: var(--blue); font-family: monospace; font-size: .78rem; }
+.nb-preview         { margin-top: .9rem; }
+.nb-table           { width: 100%; border-collapse: collapse; font-size: .78rem; margin-bottom: .75rem; }
+.nb-table th        { text-align: left; padding: .3rem .5rem; color: var(--txt3);
+                      border-bottom: 1px solid var(--border); font-weight: 600; }
+.nb-table td        { padding: .4rem .5rem; border-bottom: 1px solid var(--border); color: var(--txt1); }
+.nb-table tr:last-child td { border-bottom: none; }
+.nb-table td:first-child   { color: var(--txt0); font-weight: 500; }
+.nb-preview-actions { display: flex; align-items: center; gap: .5rem; }
