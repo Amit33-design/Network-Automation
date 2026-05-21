@@ -507,3 +507,29 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 
 **Files added this run**: src/js/netbox.js, src/js/dnac.js, src/js/awx.js, src/js/servicenow.js, src/js/peeringdb.js, src/js/eol.js
 **Files modified**: index.html, src/css/main.css, src/js/app.js, src/js/recommendations.js
+
+### 2026-05-21 (run 12)
+
+**Features completed this run:**
+
+1. **HSRP v2 / VRRP — First Hop Redundancy Protocol (FHRP)** — `3f3a6db`
+   - Added `_genFHRP(vendor, layer, idx)` helper to `configgen.js` covering IOS-XE, EOS, NX-OS.
+   - **IOS-XE campus-dist**: HSRPv2 on Vlan10/20/30/40; Dist-01 (idx=0) is ACTIVE with priority 110, preempt, and `track 1 TenGig1/1 decrement 20` (failover on uplink loss). Dist-02 (idx=1) is STANDBY with priority 100. Both use MD5 key `HSRP_NetD@2024`, sub-second timers (250 ms hello / 750 ms hold).
+   - **EOS campus-dist**: VRRPv3 equivalent on same VLAN groups, same priority model.
+   - **NX-OS campus-dist**: HSRPv2 per-SVI in NX-OS nested-command style.
+   - Called automatically from `genIOSXE()` `isDist` block; returns '' for all other layers.
+   - `'FHRP'` added to `SECTION_MARKERS` for section-nav jump bar.
+   - **Why**: Without FHRP, dual-distribution campus designs have duplicate gateway IPs and no election — a critical correctness gap.
+
+2. **IGMP snooping — campus / DC fabric multicast** — `8e0f921`
+   - Added `_genIGMP(vendor, layer)` helper to `configgen.js` covering IOS-XE, NX-OS, EOS, JunOS, SONiC.
+   - Conditional on `STATE.appTypes` including 'voice' or 'video', or VXLAN enabled.
+   - **IOS-XE campus-dist/core**: querier role (owns L3 SVIs); access gets immediate-leave; report-suppression global.
+   - **NX-OS dc-leaf**: per-tenant-VLAN snooping + querier + immediate-leave.
+   - **EOS dc-leaf**: vlan-config-block IGMP snooping + querier.
+   - **JunOS**: `protocols { igmp-snooping { vlan all; immediate-leave; proxy; } }`.
+   - Wired into common footer of all 4 vendor generators.
+   - `'IGMP'` added to `SECTION_MARKERS` for section-nav jump bar.
+   - **Why**: Without IGMP snooping, all multicast (IP phones, video conferencing, wireless AP discovery) is flooded as unknown unicast — a production correctness gap for voice/video campuses.
+
+**Issues closed:** None (no GitHub issue numbers; these were Tier 5 infrastructure gaps found during audit)
