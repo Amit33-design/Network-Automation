@@ -625,3 +625,42 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 **Files changed**: `src/js/configgen.js`, `src/js/telemetry.js` (new), `src/js/app.js`, `index.html`, `src/css/main.css`
 
 **Issues closed:** None (no GitHub issue; self-identified gap — device-side gNMI was completely missing from all vendor configs)
+
+### 2026-05-22 (run 16)
+
+**Features completed this run:**
+
+1. **IS-IS underlay for EOS, JunOS, and SONiC** — `3d1fa34`
+   - Added `_isisNet(ip)` helper: converts dotted-decimal IP to IS-IS NET address (format `49.0001.XXYY.ZZZZ.WWWW.00`).
+   - Added `_genISISUnderlay(vendor, layer, idx)` helper after `_genOSPFUnderlay`:
+     - **EOS**: `router isis UNDERLAY`, `level-2-only`, TI-LFA enabled, `fast-reroute ti-lfa mode link-protection`, `maximum-paths 4`; per-uplink `isis enable UNDERLAY` + `isis network point-to-point` + `isis circuit-type level-2`; Loopback0 passive. Uplinks: Ethernet49/1+50/1 (leaf) or Ethernet1/1–4 (spine).
+     - **JunOS**: `interfaces { lo0 { unit 0 { family iso { address <net>; } } } }` merge stanza + `protocols { isis { level 1 disable; per-interface p2p with MD5 auth; lo0.0 passive; fxp0.0 disable; } }`.
+     - **SONiC**: FRRouting `/etc/frr/frr.conf` stanza: `router isis UNDERLAY`, `metric-style wide`, Ethernet112/116 activated, `isis passive` on Loopback0.
+   - Added `const hasISIS = _rs('isisEnabled', ...)` in `genEOS`, `genJunos`, and `genSONiC`; zero-impact if IS-IS not selected.
+   - `'IS-IS'` added to `SECTION_MARKERS` for section-nav jump bar.
+   - **Why**: IS-IS is one of the most common DC fabric underlay protocols (often preferred over OSPF at scale); NX-OS already had IS-IS inline but EOS/JunOS/SONiC were missing it entirely.
+
+2. **MLAG peer-link for Arista EOS DC leaf** — `3d1fa34`
+   - Added `_genMLAG(layer, idx)` helper (EOS `dc-leaf` only):
+     - `vlan 4094` with `trunk group MLAG-PEER-LINK`.
+     - `Ethernet51/1` + `Ethernet52/1` as `channel-group 1000 mode active` (peer-link members).
+     - `Port-Channel1000` as the MLAG peer-link trunk.
+     - `interface Vlan4094` with `ip address 10.254.<pairIdx>.<1-or-2>/30`, `no autostate` (MLAG peering SVI).
+     - `mlag configuration` block: `domain-id DC-MLAG-PAIR-<N>`, `local-interface Vlan4094`, `peer-address <peer-IP>`, `reload-delay mlag 300`, `reload-delay non-mlag 330`.
+     - Example dual-homed server ports with `channel-group N mode active` + `mlag N`.
+   - MLAG pair assignment: Leaf-0/1 = pair 1 (10.254.0.1/2), Leaf-2/3 = pair 2 (10.254.1.1/2).
+   - Always generated for `dc-leaf` — matches how NX-OS always generates vPC for every leaf.
+   - `'MLAG'` added to `SECTION_MARKERS`.
+   - **Why**: Arista MLAG is mandatory for dual-homed server connectivity in any production EOS DC fabric; the config was completely missing it.
+
+3. **NX-OS DC leaf server ports: vPC port-channels** — `56c14ed`
+   - Fixed `isLeaf` block in `genNXOS`: server-facing ports now use LACP + vPC bindings:
+     - `Ethernet1/1` → `channel-group 1 mode active` (SERVER-01-Bond0-eth0)
+     - `Ethernet1/2` → `channel-group 2 mode active` (SERVER-02-Bond0-eth0)
+     - `port-channel1` + `vpc 1` (SERVER-01-Bond0), `port-channel2` + `vpc 2` (SERVER-02-Bond0).
+   - Matches real production NX-OS vPC deployments where servers use bonded NICs.
+   - Consistent with EOS MLAG server port style added above.
+
+**Files changed**: `src/js/configgen.js` only
+
+**Issues closed:** None (self-identified production correctness gaps)
