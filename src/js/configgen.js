@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'IPv6', 'NTP', 'SNMP', 'AAA'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -634,6 +634,131 @@ window._genIGMP = _genIGMP;
 /* ════════════════════════════════════════════════════════════════
    NTP + SNMP v3 HELPER BLOCKS  (appended to every vendor config)
 ════════════════════════════════════════════════════════════════ */
+
+/* ── Per-vendor gNMI / Streaming Telemetry device-side config ─────────
+   Generates the configuration required to ENABLE gNMI on each device
+   so that collectors (gnmic, Telegraf, OpenConfig gNMIc) can subscribe.
+
+   IOS-XE  → gnmi-yang daemon + YANG-Push subscriptions  (port 9339)
+   NX-OS   → model-driven telemetry with OpenConfig paths (port 50051)
+   EOS     → management gnmi transport grpc               (port 6030)
+   JunOS   → extension-service gRPC + netconf             (port 32767)
+   SONiC   → sonic-gnmi service config_db.json entry      (port 8080)
+──────────────────────────────────────────────────────────────────────── */
+function _genGNMI(vendor) {
+  if (vendor === 'ios-xe') {
+    return `!
+! ── gNMI / YANG-Push (IOS-XE 17.x) ───────────────────────
+netconf-yang
+restconf
+gnmi-yang
+gnmi-yang port 9339
+gnmi-yang secure-server
+!
+telemetry ietf subscription 101
+ encoding encode-kvgpb
+ filter xpath /interfaces/interface/state
+ stream yang-push
+ update-policy periodic 10000
+ receiver ip address 10.0.0.210 57500 protocol grpc-tcp profile default
+!
+telemetry ietf subscription 102
+ encoding encode-kvgpb
+ filter xpath /interfaces/interface/state/counters
+ stream yang-push
+ update-policy periodic 10000
+ receiver ip address 10.0.0.210 57500 protocol grpc-tcp profile default
+!
+telemetry ietf subscription 103
+ encoding encode-kvgpb
+ filter xpath /network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state
+ stream yang-push
+ update-policy periodic 30000
+ receiver ip address 10.0.0.210 57500 protocol grpc-tcp profile default
+!
+telemetry ietf subscription 104
+ encoding encode-kvgpb
+ filter xpath /components/component/cpu/utilization/state
+ stream yang-push
+ update-policy periodic 30000
+ receiver ip address 10.0.0.210 57500 protocol grpc-tcp profile default
+`;
+  }
+  if (vendor === 'nxos') {
+    return `!
+! ── gNMI / Telemetry (NX-OS 9.3+) ────────────────────────
+telemetry
+  destination-group 1
+    ip address 10.0.0.210 port 50051 protocol gRPC encoding GPB
+  sensor-group 1
+    data-source YANG
+    path openconfig-interfaces:interfaces depth unbounded
+    path openconfig-network-instance:network-instances depth unbounded
+    path openconfig-platform:components depth unbounded
+  sensor-group 2
+    data-source NX-API
+    path sys/intf depth unbounded
+    path sys/bgp depth unbounded
+  subscription 1
+    dst-grp 1
+    snsr-grp 1 sample-interval 10000
+    snsr-grp 2 sample-interval 30000
+`;
+  }
+  if (vendor === 'eos') {
+    return `!
+! ── gNMI / OpenConfig (EOS 4.22+) ─────────────────────────
+management gnmi
+   transport grpc default
+      port 6030
+      vrf MGMT
+!
+management api gnmi
+   transport grpc default
+   no shutdown
+`;
+  }
+  if (vendor === 'junos') {
+    return `
+## ── gNMI / gRPC (JunOS 21.x+) ─────────────────────────────
+## Merge-append this stanza (junos merges on load):
+system {
+    services {
+        extension-service {
+            request-response {
+                grpc {
+                    clear-text {
+                        port 32767;
+                    }
+                    max-connections 30;
+                    routing-instance mgmt_junos;
+                }
+            }
+        }
+        netconf {
+            rfc-compliant;
+        }
+    }
+}
+`;
+  }
+  if (vendor === 'sonic') {
+    return `
+# ── gNMI (sonic-gnmi 202311+) ──────────────────────────────
+# Add to /etc/sonic/config_db.json:
+# {
+#   "GNMI": {
+#     "gnmi": { "port": "8080", "log_level": "2" }
+#   }
+# }
+# Apply:
+#   sudo systemctl enable sonic-gnmi
+#   sudo systemctl start sonic-gnmi
+#   systemctl status sonic-gnmi
+`;
+  }
+  return '';
+}
 
 function _genNTP(vendor) {
   if (vendor === 'ios-xe') {
@@ -1557,6 +1682,7 @@ ip access-list extended WAN-IN
   cfg += _genNTP('ios-xe');
   cfg += _genSNMPv3('ios-xe');
   cfg += _genAAA('ios-xe', STATE);
+  cfg += _genGNMI('ios-xe');
   cfg += `!
 ! ── SSH ─────────────────────────────────────────────────────
 crypto key generate rsa modulus 2048
@@ -1800,6 +1926,7 @@ security {
   }
 
   cfg += _genAAA('junos', STATE);
+  cfg += _genGNMI('junos');
   return cfg;
 }
 
@@ -2446,6 +2573,7 @@ ${hasBGP ? `router bgp 65100
   cfg += _genNTP('ios-xe');
   cfg += _genSNMPv3('ios-xe');
   cfg += _genAAA('ios-xe', STATE);
+  cfg += _genGNMI('ios-xe');
   cfg += `!
 ! ── SSH ─────────────────────────────────────────────────────
 crypto key generate rsa modulus 2048
@@ -2896,19 +3024,9 @@ ip route 0.0.0.0/0 10.0.0.1 vrf management
 ssh key rsa 2048
 feature ssh
 username admin password 0 NetDesign@2024 role network-admin
-!
-! ── TELEMETRY ───────────────────────────────────────────────
-telemetry
-  destination-group 1
-    ip address 10.0.0.210 port 50051 protocol gRPC encoding GPB
-  sensor-group 1
-    data-source NX-API
-    path sys/intf depth unbounded
-    path sys/bgp depth unbounded
-  subscription 1
-    dst-grp 1
-    snsr-grp 1 sample-interval 30000
-!
+`;
+  cfg += _genGNMI('nxos');
+  cfg += `!
 end
 `;
   return cfg;
@@ -3058,6 +3176,7 @@ ${_genQoS('eos', STATE)}
 ${_genNTP('eos')}
 ${_genSNMPv3('eos')}
 ${_genAAA('eos', STATE)}
+${_genGNMI('eos')}
 ip route vrf MGMT 0.0.0.0/0 10.0.0.1
 !
 end
@@ -3170,6 +3289,7 @@ ${_genIGMP('junos', layer)}
 ${_genSTP('junos', layer)}
 ${_genQoS('junos', STATE)}
 ${_genAAA('junos', STATE)}
+${_genGNMI('junos')}
 `;
 }
 
@@ -3252,6 +3372,7 @@ ${_genQoS('sonic', STATE)}
 ${_genNTP('sonic')}
 ${_genSNMPv3('sonic')}
 ${_genAAA('sonic', STATE)}
+${_genGNMI('sonic')}
 `;
 }
 

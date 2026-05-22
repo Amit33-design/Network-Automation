@@ -3365,3 +3365,17 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .eol-announced      { background: rgba(255,160,50,.15); color: #fa0; }
 .eol-eos            { background: rgba(255,100,0,.15);  color: #f60; }
 .eol-eol            { background: rgba(255,51,85,.15);  color: var(--red); }
+
+/* ── Streaming Telemetry / gNMI Panel ─────────────────────────────── */
+.telemetry-panel-inner   { background: var(--bg1); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; }
+.telemetry-panel-header  { display: flex; align-items: flex-start; gap: .75rem; margin-bottom: .9rem; }
+.telemetry-panel-icon    { font-size: 1.4rem; line-height: 1; }
+.telemetry-panel-sub     { font-size: .78rem; color: var(--txt2); margin-top: .15rem; }
+.telemetry-panel-body    { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: .85rem; }
+@media (max-width: 640px) { .telemetry-panel-body { grid-template-columns: 1fr; } }
+.telemetry-card          { background: var(--bg2); border: 1px solid var(--bg3); border-radius: 8px; padding: .75rem 1rem; }
+.telemetry-card-title    { font-size: .84rem; font-weight: 700; color: var(--txt0); margin-bottom: .3rem; }
+.telemetry-card-desc     { font-size: .75rem; color: var(--txt2); margin-bottom: .65rem; line-height: 1.45; }
+.telemetry-dl-btn        { font-size: .78rem; padding: .3rem .7rem; }
+.telemetry-panel-usage   { background: var(--bg3); border-radius: 6px; padding: .5rem .75rem; font-size: .74rem; color: var(--txt2); line-height: 1.7; }
+.telemetry-panel-usage code { color: var(--blue); font-family: monospace; }
