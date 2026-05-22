@@ -3392,6 +3392,7 @@ function genJunos(dev, layer, idx) {
   const mgmt    = `10.0.0.${20+idx}`;
   const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
   const hasISIS = _rs('isisEnabled', () => (STATE.underlayProto || []).includes('IS-IS'));
+  const hasVxlan= _rs('vxlanEnabled', () => (STATE.overlayProto || []).some(function(o){return o.includes('VXLAN');}));
   const _ud     = (typeof getUplinkDescs === 'function') ? getUplinkDescs(dev.name) : [];
   return `## ═══════════════════════════════════════════════════════════
 ## Device : ${dev.name}  Role: ${dev.role}
@@ -3452,9 +3453,9 @@ interfaces {
     }
 }
 vlans {
-    MGMT      { vlan-id 10; }
-    TENANT-A  { vlan-id 100; vxlan { vni 100000; } }
-    TENANT-B  { vlan-id 101; vxlan { vni 100001; } }
+    MGMT      { vlan-id 10; }${hasVxlan ? `
+    TENANT-A  { vlan-id 100; vxlan { vni 100000; ingress-node-replication; } }
+    TENANT-B  { vlan-id 101; vxlan { vni 100001; ingress-node-replication; } }` : ''}
 }
 routing-options {
     router-id ${loIP};
@@ -3467,21 +3468,76 @@ policy-options {
     }
     policy-statement CONNECTED {
         term direct { from protocol direct; then accept; }
-    }
+    }${hasVxlan ? `
+    policy-statement VTEP-LOOPBACK {
+        term lo { from { route-filter ${loIP}/32 exact; } then accept; }
+        term reject { then reject; }
+    }` : ''}
 }
-protocols {
+${hasVxlan ? `switch-options {
+    vtep-source-interface lo0.0;
+    route-distinguisher ${loIP}:1;
+    vrf-target target:65000:1;
+    vrf-table-label;
+}
+` : ''}protocols {
     bgp {
         group SPINES {
             type external;
-            export CONNECTED;
+            ${hasVxlan ? `family inet unicast;
+            family evpn signaling;
+            export [ CONNECTED VTEP-LOOPBACK ];` : `export CONNECTED;`}
             multipath { multiple-as; }
             neighbor 10.1.0.${idx*2} { peer-as 65000; description "SPINE-01"; }
             neighbor 10.1.0.${idx*2+8} { peer-as 65000; description "SPINE-02"; }
         }
     }
-    evpn { encapsulation vxlan; extended-vni-list all; }
+${hasVxlan ? `    evpn {
+        encapsulation vxlan;
+        extended-vni-list all;
+        vni-options {
+            vni 100000 {
+                vrf-target export target:100000:1;
+                vrf-target import target:100000:1;
+            }
+            vni 100001 {
+                vrf-target export target:100001:1;
+                vrf-target import target:100001:1;
+            }
+        }
+    }` : ''}
     lldp { interface all; }
 }
+${hasVxlan ? `## ── IRB Interfaces (L3VNI / Anycast GW) ──────────────────────
+interfaces {
+    irb {
+        unit 100 {
+            description "TENANT-A-IRB";
+            family inet { address 10.200.0.${idx+1}/22; }
+        }
+        unit 101 {
+            description "TENANT-B-IRB";
+            family inet { address 10.200.4.${idx+1}/22; }
+        }
+    }
+}
+## ── L3VNI Routing Instances ────────────────────────────────
+routing-instances {
+    TENANT-A {
+        instance-type vrf;
+        route-distinguisher ${loIP}:9000;
+        vrf-target target:9000:1;
+        routing-options { multipath; }
+        interface irb.100;
+    }
+    TENANT-B {
+        instance-type vrf;
+        route-distinguisher ${loIP}:9001;
+        vrf-target target:9001:1;
+        routing-options { multipath; }
+        interface irb.101;
+    }
+}` : ''}
 ${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
 ${hasISIS ? _genISISUnderlay('junos', layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('junos', layer, idx) : ''}
@@ -3493,6 +3549,178 @@ ${_genGNMI('junos')}
 `;
 }
 
+/* ── SONiC DC Fabric (leaf/spine) ───────────────────────────────── */
+function _genSONiCDCFabric(dev, layer, idx, hasVxlan) {
+  var name    = dev.name;
+  var isSpine = layer === 'dc-spine';
+  var isLeaf  = layer === 'dc-leaf';
+  var loIP    = isSpine ? ('10.255.5.' + (idx+1)) : ('10.255.6.' + (idx+1));
+  var vtepIP  = '10.255.7.' + (idx+1);
+  var myASN   = isSpine ? 65000 : (65001 + idx);
+  var spASN   = 65000;
+
+  /* ── config_db.json ── */
+  var iface = isLeaf
+    ? ('    "Ethernet48|10.1.0.' + (idx*2+1) + '/31": { "scope": "global", "family": "IPv4" },\n' +
+       '    "Ethernet50|10.1.0.' + (idx*2+9) + '/31": { "scope": "global", "family": "IPv4" }')
+    : (function(){
+        var rows = [];
+        for (var i=0; i<8; i++) {
+          /* spine idx gets block idx*8; each leaf link is a /31, step 2 */
+          rows.push('    "Ethernet' + (i*4) + '|10.1.0.' + (idx*8+i*2) + '/31": { "scope": "global", "family": "IPv4" }');
+        }
+        return rows.join(',\n');
+      }());
+
+  var bgpNeigh = isLeaf
+    ? ('    "10.1.0.' + (idx*2)   + '": { "asn": "' + spASN + '", "name": "SPINE-01", "local_addr": "10.1.0.' + (idx*2+1) + '" },\n' +
+       '    "10.1.0.' + (idx*2+8) + '": { "asn": "' + spASN + '", "name": "SPINE-02", "local_addr": "10.1.0.' + (idx*2+9) + '" }')
+    : (function(){
+        var rows = [];
+        for (var i=0; i<8; i++) {
+          /* leaf peer is the .odd address of each spine /31 */
+          rows.push('    "10.1.0.' + (idx*8+i*2+1) + '": { "asn": "' + (65001+i) + '", "name": "LEAF-' + String(i+1).padStart(2,'0') + '", "local_addr": "10.1.0.' + (idx*8+i*2) + '" }');
+        }
+        return rows.join(',\n');
+      }());
+
+  var vxlanStanza = (hasVxlan && isLeaf) ? (',\n' +
+    '  "VXLAN_TUNNEL": {\n' +
+    '    "vtep0": { "src_ip": "' + vtepIP + '", "dst_ip": "0.0.0.0" }\n' +
+    '  },\n' +
+    '  "VXLAN_TUNNEL_MAP": {\n' +
+    '    "vtep0|map_100000_Vlan100": { "vlan": "Vlan100", "vni": "100000" },\n' +
+    '    "vtep0|map_100001_Vlan101": { "vlan": "Vlan101", "vni": "100001" }\n' +
+    '  },\n' +
+    '  "VLAN": {\n' +
+    '    "Vlan100": { "vlanid": "100" },\n' +
+    '    "Vlan101": { "vlanid": "101" }\n' +
+    '  },\n' +
+    '  "VRF": {\n' +
+    '    "TENANT-A": { "vni": "999000" },\n' +
+    '    "TENANT-B": { "vni": "999001" }\n' +
+    '  }') : '';
+
+  var cfg = `# ═══════════════════════════════════════════════════════════
+# Device : ${name}  Layer: ${layer}  Role: ${dev.role}
+# OS     : NVIDIA SONiC 202311 (${isSpine ? 'DC Spine' : 'DC Leaf'})
+# Generated by NetDesign AI — ${new Date().toISOString().slice(0,10)}
+# ═══════════════════════════════════════════════════════════
+
+# ── /etc/sonic/config_db.json ──────────────────────────────
+{
+  "DEVICE_METADATA": {
+    "localhost": {
+      "hostname": "${name}",
+      "type": "${isSpine ? 'SpineRouter' : 'LeafRouter'}",
+      "bgp_asn": "${myASN}",
+      "platform": "${isSpine ? 'x86_64-nvidia_sn4800c-r0' : 'x86_64-dell_s5248f_c3538-r0'}",
+      "mac": "aa:bb:cc:00:${String(idx+1).padStart(2,'0')}:01"
+    }
+  },
+  "LOOPBACK_INTERFACE": {
+    "Loopback0|${loIP}/32": {}${hasVxlan && isLeaf ? `,
+    "Loopback1|${vtepIP}/32": {}` : ''}
+  },
+  "INTERFACE": {
+${iface}
+  },
+  "BGP_NEIGHBOR": {
+${bgpNeigh}
+  }${vxlanStanza}
+}
+
+`;
+
+  /* ── FRRouting frr.conf ── */
+  if (isLeaf) {
+    cfg += `# ── /etc/frr/frr.conf ──────────────────────────────────────
+# ── EVPN / BGP underlay (apply: sudo systemctl restart frr) ────
+frr version 9.0
+frr defaults datacenter
+hostname ${name}
+log syslog informational
+!
+router bgp ${myASN}
+  bgp router-id ${loIP}
+  no bgp default ipv4-unicast
+  bgp bestpath as-path multipath-relax
+  !
+  neighbor SPINES peer-group
+  neighbor SPINES remote-as ${spASN}
+  neighbor SPINES bfd
+  neighbor SPINES update-source Loopback0
+  neighbor SPINES capability extended-nexthop
+  neighbor 10.1.0.${idx*2} peer-group SPINES
+  neighbor 10.1.0.${idx*2} description SPINE-01
+  neighbor 10.1.0.${idx*2+8} peer-group SPINES
+  neighbor 10.1.0.${idx*2+8} description SPINE-02
+  !
+  address-family ipv4 unicast
+    network ${loIP}/32
+${hasVxlan ? `    network ${vtepIP}/32` : ''}
+    neighbor SPINES activate
+    maximum-paths 4
+    maximum-paths ibgp 4
+  exit-address-family
+  !
+${hasVxlan ? `  address-family l2vpn evpn
+    neighbor SPINES activate
+    advertise-all-vni
+    advertise-svi-ip
+  exit-address-family
+  !
+` : ''}!
+line vty
+`;
+  } else {
+    /* Spine FRRouting */
+    var leafNeighLines = [];
+    for (var li = 0; li < 8; li++) {
+      var leafPeerIP = 'neighbor 10.1.0.' + (idx*8+li*2+1);
+      leafNeighLines.push(
+        '  ' + leafPeerIP + ' peer-group LEAVES\n' +
+        '  ' + leafPeerIP + ' description LEAF-' + String(li+1).padStart(2,'0')
+      );
+    }
+    cfg += `# ── /etc/frr/frr.conf ──────────────────────────────────────
+# ── BGP spine (apply: sudo systemctl restart frr) ──────────────
+frr version 9.0
+frr defaults datacenter
+hostname ${name}
+log syslog informational
+!
+router bgp ${myASN}
+  bgp router-id ${loIP}
+  no bgp default ipv4-unicast
+  bgp bestpath as-path multipath-relax
+  !
+  neighbor LEAVES peer-group
+  neighbor LEAVES remote-as external
+  neighbor LEAVES bfd
+  neighbor LEAVES update-source Loopback0
+  neighbor LEAVES capability extended-nexthop
+${leafNeighLines.join('\n')}
+  !
+  address-family ipv4 unicast
+    network ${loIP}/32
+    neighbor LEAVES activate
+    maximum-paths 64
+  exit-address-family
+  !
+${hasVxlan ? `  address-family l2vpn evpn
+    neighbor LEAVES activate
+    neighbor LEAVES route-server-client
+  exit-address-family
+  !
+` : ''}!
+line vty
+`;
+  }
+
+  return cfg;
+}
+
 /* ── SONiC ──────────────────────────────────────────────────────── */
 function genSONiC(dev, layer, idx) {
   if (dev.role === 'HQ Core Router' || dev.role === 'Branch CPE') {
@@ -3501,6 +3729,19 @@ function genSONiC(dev, layer, idx) {
   const name    = dev.name;
   const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
   const hasISIS = _rs('isisEnabled', () => (STATE.underlayProto || []).includes('IS-IS'));
+  const hasVxlan= _rs('vxlanEnabled', () => (STATE.overlayProto || []).some(function(o){return o.includes('VXLAN');}));
+
+  /* DC leaf/spine: proper leaf-spine config (not GPU-TOR style) */
+  if (layer === 'dc-leaf' || layer === 'dc-spine') {
+    return _genSONiCDCFabric(dev, layer, idx, hasVxlan) +
+      (hasOSPF ? _genOSPFUnderlay('sonic', STATE, dev, layer, idx) : '') +
+      (hasISIS ? _genISISUnderlay('sonic', layer, idx) : '') +
+      ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : '') +
+      _genQoS('sonic', STATE) + _genNTP('sonic') + _genSNMPv3('sonic') +
+      _genAAA('sonic', STATE) + _genGNMI('sonic');
+  }
+
+  /* GPU TOR / GPU spine: keep RoCEv2/PFC-oriented config */
   return `# ═══════════════════════════════════════════════════════════
 # Device : ${name}  Role: ${dev.role}
 # OS     : NVIDIA SONiC 202311
