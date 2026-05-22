@@ -2963,23 +2963,44 @@ interface Ethernet1/50
   ip router isis 1
   no shutdown
 !
+! ── SERVER PORTS (dual-homed via vPC) ───────────────────────
 interface Ethernet1/1
-  description SERVER-01-eth0
+  description SERVER-01-Bond0-eth0
   switchport
   switchport mode trunk
   switchport trunk allowed vlan 100,101
   mtu 9216
   spanning-tree port type edge trunk
+  channel-group 1 mode active
   no shutdown
 !
 interface Ethernet1/2
-  description SERVER-02-eth0
+  description SERVER-02-Bond0-eth0
   switchport
   switchport mode trunk
   switchport trunk allowed vlan 100,101
   mtu 9216
   spanning-tree port type edge trunk
+  channel-group 2 mode active
   no shutdown
+!
+interface port-channel1
+  description SERVER-01-Bond0
+  switchport
+  switchport mode trunk
+  switchport trunk allowed vlan 100,101
+  mtu 9216
+  spanning-tree port type edge trunk
+  vpc 1
+!
+interface port-channel2
+  description SERVER-02-Bond0
+  switchport
+  switchport mode trunk
+  switchport trunk allowed vlan 100,101
+  mtu 9216
+  spanning-tree port type edge trunk
+  vpc 2
 !
 ${hasVxlan ? `interface Vlan100
   description TENANT-A-ANYCAST-GW
