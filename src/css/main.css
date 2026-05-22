@@ -3244,6 +3244,22 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .checks-panel-usage      { background: var(--bg3); border-radius: 6px; padding: .5rem .75rem; font-size: .74rem; color: var(--txt2); line-height: 1.7; }
 .checks-panel-usage code { color: var(--blue); font-family: monospace; }
 
+/* ── Day-2 Operations Toolkit ────────────────────────────────── */
+.d2ops-panel-inner  { background: var(--bg1); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; }
+.d2ops-panel-header { display: flex; align-items: flex-start; gap: .75rem; margin-bottom: .9rem; }
+.d2ops-panel-icon   { font-size: 1.4rem; line-height: 1; }
+.d2ops-panel-sub    { font-size: .78rem; color: var(--txt2); margin-top: .15rem; }
+.d2ops-cards        { display: grid; grid-template-columns: repeat(3,1fr); gap: .75rem; margin-bottom: .85rem; }
+@media (max-width: 860px) { .d2ops-cards { grid-template-columns: 1fr; } }
+.d2ops-card         { background: var(--bg2); border: 1px solid var(--bg3); border-radius: 8px; padding: .75rem 1rem; display: flex; flex-direction: column; gap: .35rem; }
+.d2ops-card-icon    { font-size: 1.3rem; line-height: 1; }
+.d2ops-card-title   { font-size: .84rem; font-weight: 700; color: var(--txt0); }
+.d2ops-card-desc    { font-size: .74rem; color: var(--txt2); line-height: 1.45; flex: 1; }
+.d2ops-card-desc code { color: var(--blue); font-family: monospace; font-size: .72rem; }
+.d2ops-dl-btn       { font-size: .77rem; padding: .3rem .65rem; margin-top: auto; }
+.d2ops-usage        { background: var(--bg3); border-radius: 6px; padding: .5rem .75rem; font-size: .73rem; color: var(--txt2); line-height: 1.75; }
+.d2ops-usage code   { color: var(--blue); font-family: monospace; display: inline-block; }
+
 /* ── Rack plan ────────────────────────────────────────────────── */
 .rack-fill-bar  { height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; margin-bottom: 2px; }
 .rack-fill-inner { height: 100%; background: linear-gradient(90deg, var(--blue) 0%, var(--cyan) 100%); border-radius: 4px; transition: width .4s ease; }

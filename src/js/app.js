@@ -68,6 +68,7 @@ function jumpStep(n) {
     if (typeof initGate === 'function')          initGate();
     if (typeof renderPolicyPanel === 'function')        renderPolicyPanel();
     if (typeof renderChecksPanel === 'function')        renderChecksPanel();
+    if (typeof renderDay2OpsPanel === 'function')       renderDay2OpsPanel();
     if (typeof renderDNACPanel === 'function')          renderDNACPanel();
     if (typeof renderAWXPanel === 'function')           renderAWXPanel();
     if (typeof renderServiceNowPanel === 'function')    renderServiceNowPanel();
