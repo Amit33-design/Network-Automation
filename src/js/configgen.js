@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -1174,6 +1174,179 @@ interface Ethernet116
 `;
   }
   return '';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   IS-IS UNDERLAY HELPER
+   Generates IS-IS level-2-only underlay for EOS, JunOS, and SONiC.
+   NX-OS IS-IS is inlined directly in genNXOS (legacy).
+   Triggered when STATE.underlayProto includes 'IS-IS'.
+════════════════════════════════════════════════════════════════ */
+function _isisNet(ip) {
+  /* Convert dotted-decimal IP to IS-IS NET: 49.0001.AABB.CCDD.EEFF.00 */
+  var p = ip.split('.').map(function(n) { return ('000' + n).slice(-3); });
+  var s = p.join('');
+  return '49.0001.' + s.slice(0,4) + '.' + s.slice(4,8) + '.' + s.slice(8,12) + '.00';
+}
+
+function _genISISUnderlay(vendor, layer, idx) {
+  var isSpine = layer === 'dc-spine' || layer === 'gpu-spine';
+  var isTOR   = layer === 'gpu-tor';
+  var loIP    = isSpine ? ('10.255.1.' + (idx+1)) : (isTOR ? ('10.255.5.' + (idx+1)) : ('10.255.2.' + (idx+1)));
+  var net     = _isisNet(loIP);
+
+  if (vendor === 'eos') {
+    var uplinks = isSpine
+      ? ['Ethernet1/1', 'Ethernet1/2', 'Ethernet1/3', 'Ethernet1/4']
+      : ['Ethernet49/1', 'Ethernet50/1'];
+    var uplinkCfg = uplinks.map(function(i) {
+      return 'interface ' + i + '\n   isis enable UNDERLAY\n   isis network point-to-point\n   isis circuit-type level-2\n!';
+    }).join('\n');
+    return `!
+! ── IS-IS UNDERLAY ─────────────────────────────────────────
+router isis UNDERLAY
+   net ${net}
+   is-type level-2-only
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      fast-reroute ti-lfa mode link-protection
+      maximum-paths 4
+!
+interface Loopback0
+   isis enable UNDERLAY
+   isis passive
+!
+${uplinkCfg}
+`;
+  }
+
+  if (vendor === 'junos') {
+    var uplinks_j = isSpine
+      ? ['et-0/0/48', 'et-0/0/49', 'et-0/0/50', 'et-0/0/51']
+      : ['et-0/0/48', 'et-0/0/49'];
+    var intfBlocks = uplinks_j.map(function(i) {
+      return `        interface ${i}.0 {
+            point-to-point;
+            level 2 hello-authentication-type md5;
+            level 2 hello-authentication-key "IsisUnder@2024";
+        }`;
+    }).join('\n');
+    return `## ── IS-IS UNDERLAY ────────────────────────────────────────
+interfaces {
+    lo0 {
+        unit 0 {
+            family iso {
+                address ${net};
+            }
+        }
+    }
+}
+protocols {
+    isis {
+        level 1 disable;
+${intfBlocks}
+        interface lo0.0 { passive; }
+        interface fxp0.0 { disable; }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic') {
+    return `# ── IS-IS UNDERLAY (FRRouting) ─────────────────────────────
+# /etc/frr/frr.conf  (append to existing frr config)
+router isis UNDERLAY
+  net ${net}
+  is-type level-2-only
+  metric-style wide
+  log-adjacency-changes
+!
+interface Ethernet112
+  ip router isis UNDERLAY
+  isis circuit-type level-2-only
+  isis network point-to-point
+  isis metric 10
+!
+interface Ethernet116
+  ip router isis UNDERLAY
+  isis circuit-type level-2-only
+  isis network point-to-point
+  isis metric 10
+!
+interface Loopback0
+  ip router isis UNDERLAY
+  isis passive
+!
+# Apply: sudo vtysh -f /etc/frr/frr.conf && sudo systemctl restart frr
+`;
+  }
+  return '';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MLAG PEER-LINK HELPER (Arista EOS DC leaf only)
+   Generates MLAG domain, peer-link port-channel, and example
+   dual-homed server ports.  Always generated for dc-leaf so that
+   servers can bond across a leaf pair — matches how NX-OS generates
+   vPC for every leaf.
+════════════════════════════════════════════════════════════════ */
+function _genMLAG(layer, idx) {
+  if (layer !== 'dc-leaf') return '';
+  var pairIdx    = Math.floor(idx / 2);
+  var pairMember = idx % 2;                  /* 0 = primary, 1 = secondary */
+  var myIP       = '10.254.' + pairIdx + '.' + (pairMember === 0 ? 1 : 2);
+  var peerIP     = '10.254.' + pairIdx + '.' + (pairMember === 0 ? 2 : 1);
+  var svr1       = idx * 8 + 1;
+  var svr2       = idx * 8 + 2;
+  return `!
+! ── MLAG PEER-LINK ──────────────────────────────────────────
+vlan 4094
+   name MLAG-IBGP-PEERING
+   trunk group MLAG-PEER-LINK
+!
+interface Ethernet51/1
+   description MLAG-PEER-LINK-1
+   channel-group 1000 mode active
+   no shutdown
+!
+interface Ethernet52/1
+   description MLAG-PEER-LINK-2
+   channel-group 1000 mode active
+   no shutdown
+!
+interface Port-Channel1000
+   description MLAG-PEER-LINK
+   switchport mode trunk
+   switchport trunk group MLAG-PEER-LINK
+!
+interface Vlan4094
+   description MLAG-IBGP-PEERING
+   ip address ${myIP}/30
+   no autostate
+!
+mlag configuration
+   domain-id DC-MLAG-PAIR-${pairIdx + 1}
+   local-interface Vlan4094
+   peer-address ${peerIP}
+   peer-link Port-Channel1000
+   reload-delay mlag 300
+   reload-delay non-mlag 330
+!
+! ── MLAG SERVER PORTS (dual-homed server examples) ──────────
+interface Ethernet1
+   description DUAL-HOMED-SVR-${svr1}-Bond0
+   channel-group 1 mode active
+   mlag 1
+   no shutdown
+!
+interface Ethernet2
+   description DUAL-HOMED-SVR-${svr2}-Bond0
+   channel-group 2 mode active
+   mlag 2
+   no shutdown
+!
+`;
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -3045,10 +3218,12 @@ function genEOS(dev, layer, idx) {
   const vtepIP  = `10.255.3.${idx+1}`;
   const _ud     = (typeof getUplinkDescs === 'function') ? getUplinkDescs(name) : [];
   // Use RESOLVED_STATE when available (policy engine may have AUTO_FIX'd EVPN→BGP or PFC)
+  const isLeaf  = layer === 'dc-leaf';
   const hasVxlan= _rs('vxlanEnabled', () => STATE.overlayProto.some(o=>o.includes('VXLAN'))) && !isTOR;
   const hasPFC  = _rs('pfcEnabled',   () => (STATE.gpuSpecifics || []).includes('pfc'));
   const hasRoCE = _rs('roceEnabled',  () => (STATE.gpuSpecifics || []).includes('rocev2'));
   const hasOSPF = _rs('ospfEnabled',  () => (STATE.underlayProto || []).includes('OSPF'));
+  const hasISIS = _rs('isisEnabled',  () => (STATE.underlayProto || []).includes('IS-IS'));
 
   return `! ═══════════════════════════════════════════════════════════
 ! Device : ${name}
@@ -3169,6 +3344,8 @@ ${hasVxlan && !isSpine ? `   vlan 100
       ${hasVxlan && !isSpine ? `network ${vtepIP}/32` : ''}
 !
 ${hasOSPF && !isTOR ? _genOSPFUnderlay('eos', STATE, dev, layer, idx) : ''}
+${hasISIS && !isTOR ? _genISISUnderlay('eos', layer, idx) : ''}
+${isLeaf ? _genMLAG(layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('eos', layer, idx) : ''}
 ${_genIGMP('eos', layer)}
 ${_genSTP('eos', layer)}
@@ -3193,6 +3370,7 @@ function genJunos(dev, layer, idx) {
   const loIP    = `10.255.2.${idx+1}`;
   const mgmt    = `10.0.0.${20+idx}`;
   const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
+  const hasISIS = _rs('isisEnabled', () => (STATE.underlayProto || []).includes('IS-IS'));
   const _ud     = (typeof getUplinkDescs === 'function') ? getUplinkDescs(dev.name) : [];
   return `## ═══════════════════════════════════════════════════════════
 ## Device : ${dev.name}  Role: ${dev.role}
@@ -3284,6 +3462,7 @@ protocols {
     lldp { interface all; }
 }
 ${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
+${hasISIS ? _genISISUnderlay('junos', layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('junos', layer, idx) : ''}
 ${_genIGMP('junos', layer)}
 ${_genSTP('junos', layer)}
@@ -3300,6 +3479,7 @@ function genSONiC(dev, layer, idx) {
   }
   const name    = dev.name;
   const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
+  const hasISIS = _rs('isisEnabled', () => (STATE.underlayProto || []).includes('IS-IS'));
   return `# ═══════════════════════════════════════════════════════════
 # Device : ${name}  Role: ${dev.role}
 # OS     : NVIDIA SONiC 202311
@@ -3367,6 +3547,7 @@ function genSONiC(dev, layer, idx) {
 }
 
 ${hasOSPF ? _genOSPFUnderlay('sonic', STATE, dev, layer, idx) : ''}
+${hasISIS ? _genISISUnderlay('sonic', layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : ''}
 ${_genQoS('sonic', STATE)}
 ${_genNTP('sonic')}
