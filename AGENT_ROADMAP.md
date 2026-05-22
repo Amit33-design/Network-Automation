@@ -664,3 +664,27 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 **Files changed**: `src/js/configgen.js` only
 
 **Issues closed:** None (self-identified production correctness gaps)
+
+### 2026-05-22 (run 17)
+
+**Features completed this run:**
+
+1. **SONiC DC fabric config (dc-leaf / dc-spine)** — `3c5b52f`
+   - Added `_genSONiCDCFabric(dev, layer, idx, hasVxlan)` helper (~170 lines) before `genSONiC`.
+   - `genSONiC()` now branches: `dc-leaf` and `dc-spine` layers use the new DC helper; `gpu-tor`/`gpu-spine` keep the existing RoCEv2/PFC-focused config unchanged.
+   - **DC leaf config_db.json**: `"type": "LeafRouter"`, Dell S5248F platform, Loopback0 (router-id) + Loopback1 (VTEP source when VXLAN selected), Ethernet48/50 uplinks to spines, `VXLAN_TUNNEL` + `VXLAN_TUNNEL_MAP` + `VRF` (L3VNI) when VXLAN/EVPN overlay selected.
+   - **DC leaf FRRouting frr.conf**: `SPINES` peer-group (eBGP to AS 65000), BFD, `address-family ipv4 unicast` with Loopback0 + Loopback1 networks, `address-family l2vpn evpn` with `advertise-all-vni` + `advertise-svi-ip` when VXLAN selected.
+   - **DC spine config_db.json**: `"type": "SpineRouter"`, NVIDIA SN4800C platform, 8 leaf downlinks (Ethernet0/4/8… with consistent /31 addressing).
+   - **DC spine FRRouting frr.conf**: `LEAVES` peer-group (`remote-as external` eBGP), BFD, `address-family l2vpn evpn` with `route-server-client` when VXLAN selected.
+   - **IP addressing consistency**: SPINE-01 (idx=0) uses 10.1.0.0/2/4…; SPINE-02 (idx=1) uses 10.1.0.8/10/12…; exactly matches leaf uplink addresses (`idx*2+1` for SPINE-01, `idx*2+9` for SPINE-02).
+
+2. **JunOS complete EVPN/VXLAN** — `3c5b52f`
+   - Added `hasVxlan` guard — VXLAN vlans and EVPN config are now conditional on overlay protocol selection (were unconditionally generated before, even for non-VXLAN designs).
+   - Added `switch-options { vtep-source-interface lo0.0; route-distinguisher; vrf-target; vrf-table-label; }` when VXLAN selected.
+   - Added `VTEP-LOOPBACK` policy-statement for BGP loopback advertisement.
+   - BGP group `SPINES`: now includes `family inet unicast` + `family evpn signaling` + `export [CONNECTED VTEP-LOOPBACK]` when VXLAN selected.
+   - `protocols evpn`: added `ingress-node-replication` per vlan, `vni-options` with per-VNI import/export route-targets (target:100000:1, target:100001:1).
+   - Added IRB interfaces (`irb.100`/`irb.101`) with per-leaf anycast gateway IPs for L3VNI.
+   - Added `routing-instances TENANT-A`/`TENANT-B` (vrf type) with RD/RT and IRB bindings.
+
+**Files changed**: `src/js/configgen.js` only
