@@ -599,3 +599,29 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - All 3 generated Python scripts validated with `python3 -m py_compile`.
 
 **Issues closed:** N/A (new Tier-5 feature, no pre-existing issue)
+
+### 2026-05-22 (run 15)
+
+**Features completed this run:**
+
+1. **Streaming Telemetry / gNMI** — `366ac17`
+   - Added `_genGNMI(vendor)` helper to `configgen.js`; appended to ALL 5 vendor footers and both WAN router generators.
+   - **IOS-XE**: `netconf-yang` + `restconf` + `gnmi-yang` (port 9339, secure-server); 4 YANG-Push subscriptions (interface/state, interface/counters, BGP neighbor state, CPU utilization) → collector at 10.0.0.210:57500.
+   - **NX-OS**: replaced the previous NX-API-only inline `telemetry {}` block with an upgraded block using `data-source YANG` + OpenConfig paths (openconfig-interfaces, openconfig-network-instance, openconfig-platform) in sensor-group 1; NX-API paths retained in sensor-group 2. Port 50051. `feature grpc` note included.
+   - **EOS**: `management gnmi` transport grpc port 6030 vrf MGMT + `management api gnmi` no shutdown.
+   - **JunOS**: `system { services { extension-service { request-response { grpc { clear-text { port 32767; } max-connections 30; routing-instance mgmt_junos; } } } } }` merge stanza + `netconf { rfc-compliant; }`.
+   - **SONiC**: `GNMI` key in config_db.json + `systemctl enable/start sonic-gnmi` instructions.
+   - `'gNMI'` added to `SECTION_MARKERS` so section-nav jump bar gains a gNMI button.
+   - Created `src/js/telemetry.js` (400 lines) with 5 public functions:
+     - `genGNMICCollectorConfig(state)` → `gnmic.yml` (gnmic YAML): per-device targets with layer-aware mgmt IPs + gNMI ports per vendor, 5 OpenConfig subscription paths (interface state/counters, BGP neighbors, CPU, memory, OSPF), Prometheus output on :9804, hot-reload file loader.
+     - `genTelegrafGNMIConfig(state)` → `telegraf-gnmi.conf` (TOML): per-OS [[inputs.gnmi]] blocks (separate block per NOS), prometheus_client output, 5 subscription paths per OS group.
+     - `downloadGNMICConfig()` / `downloadTelegrafGNMIConfig()` — browser download triggers.
+     - `renderTelemetryPanel()` — 2-card download panel with device count, gNMI port info, and quick-start instructions.
+   - `#telemetry-panel` div added after `#day2ops-panel` in Step 6 of `index.html`.
+   - `<script src="src/js/telemetry.js">` added after `day2ops.js`.
+   - `renderTelemetryPanel()` called in `jumpStep(6)` in `app.js`.
+   - 12 `.telemetry-*` CSS rules added to `main.css` (matches `.checks-*` panel style).
+
+**Files changed**: `src/js/configgen.js`, `src/js/telemetry.js` (new), `src/js/app.js`, `index.html`, `src/css/main.css`
+
+**Issues closed:** None (no GitHub issue; self-identified gap — device-side gNMI was completely missing from all vendor configs)
