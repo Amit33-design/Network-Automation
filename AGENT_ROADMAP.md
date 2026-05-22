@@ -143,6 +143,10 @@ https://github.com/Amit33-design/Network-Automation/issues
 - [x] **PeeringDB**: Pull IX peering data for WAN/multicloud use cases
 - [x] **Cisco EoL / EoS API**: Flag any product in BOM that is end-of-life or end-of-sale
 
+### TIER 5 — Day-2 Operations
+
+- [x] **Day-2 Operations Toolkit**: Config backup (git + rotation), rolling firmware upgrade (health-gated, per-vendor), maintenance-mode drain (OSPF max-metric + BGP graceful-shutdown) scripts for all 5 NOS
+
 ---
 
 ## Coding Conventions (agent must follow exactly)
@@ -564,3 +568,34 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - Guard: `(STATE.protoFeatures || []).includes('IPv6 Dual-Stack')` — zero impact unless IPv6 is toggled on in Step 2.
    - Added `'IPv6'` to `SECTION_MARKERS` for section-nav jump bar.
    - **Why**: IPv6 dual-stack is standard practice in modern DC/campus; the proto-card UI already offered it but silently had no effect on generated configs.
+
+### 2026-05-22 (run 14)
+
+**Features completed this run:**
+
+1. **Day-2 Operations Toolkit** — `10e5fc5`
+   - Created `src/js/day2ops.js` (860 lines) with three public generator functions and a rendered download panel.
+   - **`genConfigBackupScript(state)` → `backup_configs.py`**:
+     - SSH to all BOM devices, fetch running config (per-vendor: IOS-XE/NX-OS/EOS: `show running-config`; JunOS: `show configuration | display set | no-more`; SONiC: `show runningconfiguration all` via vtysh).
+     - Archives to `backups/YYYYMMDD/<hostname>_<HHMMSS>.cfg`.
+     - Git auto-commit after successful run (`git add backups/<date>/ && git commit -m "chore: config backup ..."`).
+     - Rotation: deletes per-day directories older than `--retention` days (default 30).
+     - `--dry-run` flag skips SSH; `--no-git` skips auto-commit; rich table summary + JSON report.
+   - **`genRollingUpgradeScript(state)` → `rolling_upgrade.py`**:
+     - Per-vendor upgrade dispatch: IOS-XE `install add file <tftp> activate commit` (install mode); NX-OS `copy tftp: bootflash: + install all nxos`; EOS `copy tftp: flash: + boot system + reload`; JunOS `request system software add + request system reboot`; SONiC `sonic-installer install + sudo reboot`.
+     - Rolling loop: one device at a time — trigger upgrade → wait for reload (configurable 180 s + 20 reconnect tries × 30 s) → BGP health gate (`BGP_MIN_PEERS`, default 1) → next device.
+     - Aborts rollout on first health-gate failure and logs rollback instructions.
+     - `--dry-run` simulates without SSH; `--skip-health` bypasses BGP gate; JSON upgrade log.
+   - **`genMaintenanceModeScript(state)` → `maintenance_mode.py`**:
+     - `--enter`: IOS-XE `router ospf 1 / max-metric router-lsa` + `bgp graceful-shutdown all neighbors 300`; NX-OS same pattern with `UNDERLAY` ospf process; EOS `max-metric router-lsa + bgp graceful-shutdown`; JunOS routing policy `MAINTENANCE-DRAIN` with metric 65535 applied to OSPF + BGP export; SONiC `vtysh router ospf max-metric router-lsa + router bgp graceful-shutdown`.
+     - Waits `DRAIN_WAIT` (default 60 s) then prints live BGP peer count table to verify drain.
+     - `--exit`: reverses all maintenance config (`no max-metric`, `no graceful-shutdown`, JunOS `delete` policy).
+     - `--status`: show-only mode, prints reachability + BGP peer count table.
+     - `--device <hostname>` targets a single device; persists `maintenance_state.json` for audit trail.
+   - All three scripts: env-var credentials, rich console tables, JSON output/log files.
+   - `renderDay2OpsPanel()` injects 3-card responsive grid into `#day2ops-panel` in Step 6.
+   - `#day2ops-panel` div added to `index.html` after `#snow-panel`; `<script src="src/js/day2ops.js">` added after `checks.js`; `renderDay2OpsPanel()` called in `jumpStep(6)` in `app.js`.
+   - CSS: `.d2ops-*` 16 rules — 3-col responsive grid, card layout, usage code block.
+   - All 3 generated Python scripts validated with `python3 -m py_compile`.
+
+**Issues closed:** N/A (new Tier-5 feature, no pre-existing issue)
