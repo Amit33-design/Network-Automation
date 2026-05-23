@@ -791,3 +791,17 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 
 **Files changed**: `src/js/configgen.js`
 **Issues closed**: None (no GitHub issue numbers; self-identified proto-card no-op gaps)
+
+2. **MPLS/SR (Segment Routing) overlay chip** — `c2b657b`
+   - **Root cause**: "MPLS / SR" overlay chip in Step 2 was a complete UI no-op — zero config was generated regardless of selection.
+   - Added `_genMPLSSR(vendor, layer, idx)` covering all 5 vendors and both SONiC paths (dc and GPU).
+   - **IOS-XE campus-core/dist**: `segment-routing mpls` global block + SRGB prefix-SID `absolute ${16000+idx}` on Loopback0 + `router ospf 1 segment-routing mpls + fast-reroute per-prefix ti-lfa` or `router isis CAMPUS-FABRIC address-family ipv4 unicast segment-routing mpls + TI-LFA`.
+   - **NX-OS dc-leaf/spine**: `feature segment-routing-mpls` + `isis prefix-sid absolute ${16000+idx}` on loopback0 + `router isis UNDERLAY address-family ipv4 unicast segment-routing mpls + fast-reroute ti-lfa level-2`.
+   - **EOS dc-leaf/spine**: `mpls ip` + `interface Loopback0 node-segment ipv4 index ${idx}` + `router isis UNDERLAY segment-routing mpls + fast-reroute ti-lfa mode link-protection`.
+   - **JunOS dc-leaf/spine**: `interfaces family mpls` on uplinks + lo0 + `protocols mpls` + `isis source-packet-routing { srgb start-label 16000 index-range 8000; node-segment ipv4-index ${idx}; }` — appended as merge stanzas.
+   - **SONiC dc/GPU**: FRR `segment-routing global-block 16000 23999` + `node ${idx} prefix ${loIP}/32 index ${idx}` stub + `sysctl net.mpls.conf.*input=1 + platform_labels=100000` kernel instructions.
+   - Guard: returns advisory note when OSPF/IS-IS not selected (SR-MPLS requires IGP underlay). Skipped for campus-access, gpu-tor, gpu-spine.
+   - `SECTION_MARKERS` extended with `'SR-MPLS'` and `'SEGMENT'`.
+
+**Files changed**: `src/js/configgen.js`
+**Issues closed**: None (no GitHub issue number; self-identified overlay chip no-op gap)
