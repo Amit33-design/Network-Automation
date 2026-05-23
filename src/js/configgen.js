@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'PIM', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'BFD', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI', 'MACSEC', 'UNNUMBERED'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'PIM', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'BFD', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI', 'MACSEC', 'UNNUMBERED', 'RR', 'PBR', 'FLOWSPEC'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -2089,6 +2089,407 @@ class-of-service {
 }
 
 /* ════════════════════════════════════════════════════════════════
+   ROUTE REFLECTOR HELPER
+   Adds iBGP Route Reflector server config when the "Route Reflectors"
+   proto-feature card is selected in Step 2.
+   • IOS-XE campus-core: adds route-reflector-client for DIST peers
+   • JunOS dc-spine: adds cluster-id + client-only for leaf peers
+   • NX-OS / EOS spines: RR is already hardcoded in their BGP block
+     (it is mandatory for EVPN). Emit an advisory note so users know
+     the feature is active.
+   • SONiC dc-spine: adds neighbor route-reflector-client in FRR stub
+════════════════════════════════════════════════════════════════ */
+function _genRouteReflector(vendor, layer, idx) {
+  if (!(STATE.protoFeatures || []).includes('Route Reflectors')) return '';
+  const loIP  = vendor === 'junos'
+    ? '10.255.2.' + (idx + 1)
+    : '10.255.0.' + (20 + idx);
+
+  if (vendor === 'ios-xe' && layer === 'campus-core') {
+    return `!
+! ── ROUTE REFLECTORS (iBGP RR Server) ──────────────────────
+! This core is an iBGP Route Reflector — DIST switches are clients.
+router bgp 65100
+ bgp cluster-id ${loIP}
+ !
+ address-family ipv4
+  neighbor 10.100.0.1 route-reflector-client
+  neighbor 10.100.0.3 route-reflector-client
+`;
+  }
+
+  if (vendor === 'nxos' && (layer === 'dc-spine' || layer === 'gpu-spine')) {
+    return `!
+! ── ROUTE REFLECTORS ────────────────────────────────────────
+! RR is already active on this spine (neighbor LEAF route-reflector-client
+! lines above).  BGP cluster-id ensures loop prevention between RR peers.
+router bgp 65000
+  cluster-id ${loIP}
+`;
+  }
+
+  if (vendor === 'eos' && (layer === 'dc-spine' || layer === 'gpu-spine')) {
+    return `!
+! ── ROUTE REFLECTORS ────────────────────────────────────────
+! RR is already active on this spine (neighbor LEAVES route-reflector-client).
+! Adding cluster-id for dual-RR loop prevention.
+router bgp 65000
+   bgp cluster-id ${loIP}
+!`;
+  }
+
+  if (vendor === 'junos' && (layer === 'dc-spine' || layer === 'gpu-spine')) {
+    return `
+## ── ROUTE REFLECTORS (iBGP RR Server) ──────────────────────
+protocols {
+    bgp {
+        cluster ${loIP};
+        group LEAVES-RR {
+            type internal;
+            cluster ${loIP};
+            family inet unicast { rib-group RR-RIB; }
+            family evpn signaling;
+            neighbor 10.255.2.10 { description "LEAF-01 RR-CLIENT"; }
+            neighbor 10.255.2.11 { description "LEAF-02 RR-CLIENT"; }
+            neighbor 10.255.2.12 { description "LEAF-03 RR-CLIENT"; }
+            neighbor 10.255.2.13 { description "LEAF-04 RR-CLIENT"; }
+        }
+    }
+}
+routing-options {
+    rib-groups {
+        RR-RIB {
+            import-rib [ inet.0 ];
+        }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic' && (layer === 'dc-spine' || layer === 'gpu-spine')) {
+    return `
+# ── ROUTE REFLECTORS (FRRouting) ────────────────────────────
+# Append to /etc/frr/frr.conf:
+#
+# router bgp 65000
+#   bgp cluster-id ${loIP}
+#   neighbor LEAVES peer-group
+#   neighbor LEAVES remote-as internal
+#   neighbor LEAVES route-reflector-client
+#   neighbor LEAVES update-source lo
+#   neighbor 10.255.2.10 peer-group LEAVES
+#   neighbor 10.255.2.11 peer-group LEAVES
+#   neighbor 10.255.2.12 peer-group LEAVES
+#   neighbor 10.255.2.13 peer-group LEAVES
+#   address-family l2vpn evpn
+#     neighbor LEAVES route-reflector-client
+#     advertise-all-vni
+# Apply: sudo systemctl restart frr
+`;
+  }
+  return '';
+}
+window._genRouteReflector = _genRouteReflector;
+
+/* ════════════════════════════════════════════════════════════════
+   POLICY ROUTING (PBR) HELPER
+   Adds IP Policy Based Routing config when "Policy Routing (PBR)"
+   proto-feature card is selected in Step 2.
+   Use case: steer voice/video traffic to preferred next-hop,
+   bypass normal routing for high-priority flows.
+   Targets: campus-dist, dc-leaf (ingress from servers).
+════════════════════════════════════════════════════════════════ */
+function _genPBR(vendor, layer, idx) {
+  if (!(STATE.protoFeatures || []).includes('Policy Routing (PBR)')) return '';
+  const nexthop = '10.0.0.2';  /* preferred next-hop (WAN/FW uplink) */
+
+  if (vendor === 'ios-xe' && (layer === 'campus-dist' || layer === 'campus-core')) {
+    return `!
+! ── POLICY ROUTING (PBR) ────────────────────────────────────
+! Voice (10.20.0.0/15) and video (10.30.0.0/15) steered to ${nexthop}
+ip access-list extended PBR-VOICE-ACL
+ 10 permit ip 10.20.0.0 0.1.255.255 any
+!
+ip access-list extended PBR-VIDEO-ACL
+ 10 permit ip 10.30.0.0 0.1.255.255 any
+!
+route-map PBR-PRIORITY permit 10
+ description Steer voice to primary WAN uplink
+ match ip address PBR-VOICE-ACL
+ set ip next-hop verify-availability ${nexthop} track 10
+ set ip next-hop ${nexthop}
+!
+route-map PBR-PRIORITY permit 20
+ description Steer video to primary WAN uplink
+ match ip address PBR-VIDEO-ACL
+ set ip next-hop verify-availability ${nexthop} track 10
+ set ip next-hop ${nexthop}
+!
+route-map PBR-PRIORITY permit 30
+ description All other traffic follows normal routing
+!
+! Apply on SVI facing campus users
+interface Vlan20
+ ip policy route-map PBR-PRIORITY
+interface Vlan30
+ ip policy route-map PBR-PRIORITY
+interface Vlan40
+ ip policy route-map PBR-PRIORITY
+!
+ip sla 10
+ icmp-echo ${nexthop} source-interface TenGigabitEthernet1/1
+ frequency 5
+ip sla schedule 10 life forever start-time now
+track 10 ip sla 10 reachability
+`;
+  }
+
+  if (vendor === 'nxos' && (layer === 'dc-leaf' || layer === 'dc-spine')) {
+    return `!
+! ── POLICY ROUTING (PBR) ────────────────────────────────────
+ip access-list PBR-VOICE-ACL
+  10 permit ip 10.20.0.0/15 any
+ip access-list PBR-VIDEO-ACL
+  10 permit ip 10.30.0.0/15 any
+!
+route-map PBR-PRIORITY permit 10
+  match ip address PBR-VOICE-ACL
+  set ip next-hop ${nexthop}
+  set dscp ef
+route-map PBR-PRIORITY permit 20
+  match ip address PBR-VIDEO-ACL
+  set ip next-hop ${nexthop}
+  set dscp af41
+route-map PBR-PRIORITY permit 30
+!
+interface Ethernet1/1
+  ip policy route-map PBR-PRIORITY
+`;
+  }
+
+  if (vendor === 'eos' && (layer === 'dc-leaf' || layer === 'campus-dist')) {
+    return `!
+! ── POLICY ROUTING (PBR) ────────────────────────────────────
+ip access-list PBR-VOICE-ACL
+   10 permit ip 10.20.0.0/15 any
+!
+ip access-list PBR-VIDEO-ACL
+   10 permit ip 10.30.0.0/15 any
+!
+route-map PBR-PRIORITY permit 10
+   match ip address access-list PBR-VOICE-ACL
+   set ip nexthop ${nexthop}
+!
+route-map PBR-PRIORITY permit 20
+   match ip address access-list PBR-VIDEO-ACL
+   set ip nexthop ${nexthop}
+!
+route-map PBR-PRIORITY permit 30
+!
+interface Ethernet1
+   ip policy route-map PBR-PRIORITY
+!`;
+  }
+
+  if (vendor === 'junos' && (layer === 'dc-leaf' || layer === 'dc-spine')) {
+    return `
+## ── POLICY ROUTING (Filter-Based Forwarding) ───────────────
+routing-instances {
+    PBR-PRIORITY {
+        instance-type forwarding;
+        routing-options {
+            static {
+                route 0.0.0.0/0 next-hop ${nexthop};
+            }
+        }
+    }
+}
+firewall {
+    family inet {
+        filter PBR-CLASSIFY {
+            term VOICE {
+                from { source-address { 10.20.0.0/15; } }
+                then { routing-instance PBR-PRIORITY; }
+            }
+            term VIDEO {
+                from { source-address { 10.30.0.0/15; } }
+                then { routing-instance PBR-PRIORITY; }
+            }
+            term DEFAULT { then accept; }
+        }
+    }
+}
+interfaces {
+    et-0/0/48 {
+        unit 0 { family inet { filter { input PBR-CLASSIFY; } } }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic' && (layer === 'dc-leaf' || layer === 'dc-spine')) {
+    return `
+# ── POLICY ROUTING (PBR via iproute2 + FRRouting) ────────────
+# Append to /etc/frr/frr.conf:
+#
+# ip prefix-list PBR-VOICE seq 10 permit 10.20.0.0/15
+# ip prefix-list PBR-VIDEO seq 10 permit 10.30.0.0/15
+#
+# route-map PBR-PRIORITY permit 10
+#   match ip address prefix-list PBR-VOICE
+#   set ip nexthop ${nexthop}
+# route-map PBR-PRIORITY permit 20
+#   match ip address prefix-list PBR-VIDEO
+#   set ip nexthop ${nexthop}
+# route-map PBR-PRIORITY permit 30
+#
+# Apply at OS level:
+# sudo ip rule add pref 100 iif Ethernet0 lookup 200
+# sudo ip route add 10.20.0.0/15 via ${nexthop} table 200
+# sudo ip route add 10.30.0.0/15 via ${nexthop} table 200
+# sudo sysctl net.ipv4.conf.Ethernet0.rp_filter=0
+`;
+  }
+  return '';
+}
+window._genPBR = _genPBR;
+
+/* ════════════════════════════════════════════════════════════════
+   BGP FLOWSPEC (BGP-FS) HELPER
+   Generates BGP FlowSpec configuration when "FlowSpec / BGP-FS"
+   proto-feature card is selected in Step 2.
+   FlowSpec (RFC 5575 / RFC 8955) distributes traffic-filtering rules
+   via BGP — used for DDoS mitigation, traffic redirect, rate-limiting.
+   Rules are pushed by a FlowSpec controller (ExaBGP, GoBGP, BIRD2).
+   Applicable: campus-core / dc-spine (route reflector role).
+════════════════════════════════════════════════════════════════ */
+function _genFlowSpec(vendor, layer, idx) {
+  if (!(STATE.protoFeatures || []).includes('FlowSpec / BGP-FS')) return '';
+  const ctlIP  = '10.0.0.210';   /* FlowSpec controller IP */
+  const asn    = '65000';
+  const loIP   = '10.255.0.' + (20 + idx);
+
+  if (vendor === 'ios-xe' && (layer === 'campus-core' || layer === 'dc-spine')) {
+    return `!
+! ── BGP FLOWSPEC (BGP-FS) ───────────────────────────────────
+! RFC 5575 / RFC 8955 — rules pushed by controller at ${ctlIP}
+! Controller options: ExaBGP, GoBGP, BIRD2, Cisco NSO
+router bgp ${asn}
+ bgp flowspec redirect ip
+ !
+ neighbor ${ctlIP} remote-as ${asn}
+ neighbor ${ctlIP} description FLOWSPEC-CONTROLLER
+ neighbor ${ctlIP} update-source Loopback0
+ !
+ address-family ipv4 flowspec
+  neighbor ${ctlIP} activate
+  client-to-client reflection
+  bgp dampening
+ !
+! Enable FlowSpec enforcement on WAN/uplink interfaces
+interface TenGigabitEthernet1/1
+ ip flowspec enable
+!
+`;
+  }
+
+  if (vendor === 'nxos' && (layer === 'dc-spine' || layer === 'campus-core')) {
+    return `!
+! ── BGP FLOWSPEC (BGP-FS) ───────────────────────────────────
+! NX-OS 9.3+ supports BGP FlowSpec (RFC 5575)
+feature bgp
+!
+router bgp ${asn}
+  neighbor ${ctlIP}
+    remote-as ${asn}
+    description FLOWSPEC-CONTROLLER
+    update-source loopback0
+    address-family ipv4 flowspec
+      send-community extended
+!
+flowspec external interface Ethernet1/1 address-family ipv4
+flowspec external interface Ethernet1/2 address-family ipv4
+`;
+  }
+
+  if (vendor === 'eos' && (layer === 'dc-spine' || layer === 'campus-dist')) {
+    return `!
+! ── BGP FLOWSPEC (BGP-FS) ───────────────────────────────────
+! Arista EOS 4.23+ supports BGP FlowSpec
+router bgp ${asn}
+   !
+   neighbor FLOWSPEC-CTL peer group
+   neighbor FLOWSPEC-CTL remote-as ${asn}
+   neighbor FLOWSPEC-CTL update-source Loopback0
+   neighbor FLOWSPEC-CTL send-community extended
+   neighbor ${ctlIP} peer group FLOWSPEC-CTL
+   neighbor ${ctlIP} description FLOWSPEC-CONTROLLER
+   !
+   address-family flow-spec ipv4
+      neighbor FLOWSPEC-CTL activate
+   !
+!`;
+  }
+
+  if (vendor === 'junos' && (layer === 'dc-spine' || layer === 'campus-dist')) {
+    return `
+## ── BGP FLOWSPEC (BGP-FS / RFC 5575) ───────────────────────
+routing-options {
+    flow {
+        interface-specific;
+        route-distinguisher ${loIP}:1;
+        term-order standard;
+    }
+}
+protocols {
+    bgp {
+        group FLOWSPEC-CTL {
+            type internal;
+            local-address ${loIP};
+            family inet {
+                flow;
+            }
+            neighbor ${ctlIP} {
+                description "FLOWSPEC-CONTROLLER (ExaBGP/GoBGP)";
+            }
+        }
+    }
+}
+policy-options {
+    policy-statement FLOWSPEC-ACCEPT {
+        term accept-flow {
+            from family inet flow;
+            then accept;
+        }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic' && (layer === 'dc-spine' || layer === 'dc-leaf')) {
+    return `
+# ── BGP FLOWSPEC (BGP-FS / RFC 5575) ────────────────────────
+# FRRouting 7.5+ supports BGP FlowSpec. Append to /etc/frr/frr.conf:
+#
+# router bgp ${asn}
+#   neighbor ${ctlIP} remote-as ${asn}
+#   neighbor ${ctlIP} description FLOWSPEC-CONTROLLER
+#   neighbor ${ctlIP} update-source lo
+#   address-family ipv4 flowspec
+#     neighbor ${ctlIP} activate
+#   exit-address-family
+#
+# Enable flowspec kernel route installation:
+# sudo sysctl net.ipv4.conf.all.rp_filter=0
+# sudo sysctl net.ipv4.conf.default.rp_filter=0
+# Apply: sudo systemctl restart frr
+`;
+  }
+  return '';
+}
+window._genFlowSpec = _genFlowSpec;
+
+/* ════════════════════════════════════════════════════════════════
    WAN ROUTER HELPERS
    Dedicated configs for HQ Core Router (DMVPN hub) and Branch CPE
    (DMVPN spoke).  Called from genIOSXE / genJunos when dev.role
@@ -3263,6 +3664,9 @@ ${hasBGP ? `router bgp 65100
   cfg += _genIGMP('ios-xe', layer);
   cfg += _genPIM('ios-xe', layer, idx);
   cfg += _genBFD('ios-xe', layer);
+  cfg += _genRouteReflector('ios-xe', layer, idx);
+  cfg += _genPBR('ios-xe', layer, idx);
+  cfg += _genFlowSpec('ios-xe', layer, idx);
   cfg += _genQoS('ios-xe', STATE);
   cfg += _genNTP('ios-xe');
   cfg += _genSNMPv3('ios-xe');
@@ -3731,6 +4135,9 @@ ip route 0.0.0.0/0 10.0.0.1 vrf management
   cfg += _genIGMP('nxos', layer);
   cfg += _genPIM('nxos', layer, idx);
   cfg += _genBFD('nxos', layer);
+  cfg += _genRouteReflector('nxos', layer, idx);
+  cfg += _genPBR('nxos', layer, idx);
+  cfg += _genFlowSpec('nxos', layer, idx);
   cfg += _genSTP('nxos', layer);
   cfg += _genQoS('nxos', STATE);
   cfg += _genNTP('nxos');
@@ -3899,6 +4306,9 @@ ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('eo
 ${hasMACSec ? _genMACSec('eos', layer, idx) : ''}
 ${_genIGMP('eos', layer)}
 ${_genPIM('eos', layer, idx)}
+${_genRouteReflector('eos', layer, idx)}
+${_genPBR('eos', layer, idx)}
+${_genFlowSpec('eos', layer, idx)}
 ${_genSTP('eos', layer)}
 ${_genQoS('eos', STATE)}
 ${_genNTP('eos')}
@@ -4090,6 +4500,9 @@ ${hasMACSec ? _genMACSec('junos', layer, idx) : ''}
 ${_genIGMP('junos', layer)}
 ${_genPIM('junos', layer, idx)}
 ${_genBFD('junos', layer)}
+${_genRouteReflector('junos', layer, idx)}
+${_genPBR('junos', layer, idx)}
+${_genFlowSpec('junos', layer, idx)}
 ${_genSTP('junos', layer)}
 ${_genQoS('junos', STATE)}
 ${_genAAA('junos', STATE)}
@@ -4568,6 +4981,9 @@ function genSONiC(dev, layer, idx) {
       (hasISIS ? _genISISUnderlay('sonic', layer, idx) : '') +
       ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : '') +
       _genPIM('sonic', layer, idx) +
+      _genRouteReflector('sonic', layer, idx) +
+      _genPBR('sonic', layer, idx) +
+      _genFlowSpec('sonic', layer, idx) +
       _genQoS('sonic', STATE) + _genNTP('sonic') + _genSNMPv3('sonic') +
       _genAAA('sonic', STATE) + _genGNMI('sonic') +
       ((STATE.protoFeatures || []).includes('MACSec Link Encryption') ? _genMACSec('sonic', layer, idx) : '') +
@@ -4644,6 +5060,9 @@ function genSONiC(dev, layer, idx) {
 ${hasOSPF ? _genOSPFUnderlay('sonic', STATE, dev, layer, idx) : ''}
 ${hasISIS ? _genISISUnderlay('sonic', layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : ''}
+${_genRouteReflector('sonic', layer, idx)}
+${_genPBR('sonic', layer, idx)}
+${_genFlowSpec('sonic', layer, idx)}
 ${_genQoS('sonic', STATE)}
 ${_genNTP('sonic')}
 ${_genSNMPv3('sonic')}
