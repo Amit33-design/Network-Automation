@@ -758,3 +758,36 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 
 **Files changed**: `src/js/configgen.js`, `index.html`
 **Issues closed**: None (new feature — no pre-existing issue number)
+
+### 2026-05-23 (run 21)
+
+**Features completed this run:**
+
+1. **Route Reflectors, Policy Routing (PBR), FlowSpec/BGP-FS proto-cards** — `d78cf20`
+   - **Root cause**: Three proto-feature cards in Step 2 ("Route Reflectors", "Policy Routing (PBR)", "FlowSpec / BGP-FS") were complete UI no-ops — selecting them produced zero change in any generated vendor config. This was a silent correctness gap for users who toggled these features expecting actual config output.
+   - Added `_genRouteReflector(vendor, layer, idx)`:
+     - **IOS-XE campus-core**: `bgp cluster-id ${loIP}` + `neighbor 10.100.0.1/3 route-reflector-client` in `address-family ipv4` — turns the campus core into an iBGP RR server for both DIST peers.
+     - **NX-OS dc-spine**: Appends `cluster-id ${loIP}` advisory block noting RR is already active (spine BGP was already hardcoded with `route-reflector-client` for all leaves).
+     - **EOS dc-spine**: Same advisory + `bgp cluster-id` for dual-RR loop prevention.
+     - **JunOS dc-spine**: Full `cluster ${loIP}` + `group LEAVES-RR { type internal; cluster; family inet unicast; family evpn signaling; neighbor ... }` BGP merge stanza + `rib-groups RR-RIB`.
+     - **SONiC dc-spine**: Commented FRRouting stub with `bgp cluster-id`, `LEAVES` peer-group, `route-reflector-client`, and l2vpn evpn AF activation.
+   - Added `_genPBR(vendor, layer, idx)`:
+     - Policy-Based Routing for voice (10.20.0.0/15) and video (10.30.0.0/15) traffic steering to preferred WAN/FW uplink.
+     - **IOS-XE campus-dist/core**: `ip access-list extended PBR-VOICE/VIDEO-ACL` + `route-map PBR-PRIORITY` with `set ip next-hop verify-availability ... track 10` + applied on Vlan20/30/40 SVIs + `ip sla 10` reachability tracking.
+     - **NX-OS dc-leaf/spine**: NX-OS `ip access-list` + `route-map PBR-PRIORITY` + `ip policy route-map` on Ethernet1/1.
+     - **EOS dc-leaf/campus-dist**: `ip access-list` + `route-map PBR-PRIORITY permit 10/20/30` + `ip policy route-map` on Ethernet1.
+     - **JunOS dc-leaf/spine**: Filter-Based Forwarding — `routing-instances PBR-PRIORITY { instance-type forwarding; static default }` + `firewall family inet filter PBR-CLASSIFY { term VOICE/VIDEO/DEFAULT }` applied as input filter on et-0/0/48.
+     - **SONiC dc-leaf/spine**: FRR prefix-list + route-map + `ip rule` + `ip route table 200` iproute2 instructions.
+   - Added `_genFlowSpec(vendor, layer, idx)`:
+     - BGP FlowSpec (RFC 5575 / RFC 8955) for DDoS mitigation and traffic redirect via a FlowSpec controller (ExaBGP/GoBGP/BIRD2) at 10.0.0.210.
+     - **IOS-XE campus-core/dc-spine**: `bgp flowspec redirect ip` + `address-family ipv4 flowspec` with neighbor activation + `ip flowspec enable` on WAN uplink.
+     - **NX-OS dc-spine**: `address-family ipv4 flowspec` + `flowspec external interface Ethernet1/1-2 address-family ipv4`.
+     - **EOS dc-spine/campus-dist**: `neighbor FLOWSPEC-CTL peer group` + `address-family flow-spec ipv4` neighbor activation.
+     - **JunOS dc-spine/campus-dist**: `routing-options { flow { interface-specific; route-distinguisher; term-order standard; } }` + `protocols bgp group FLOWSPEC-CTL { family inet { flow; } }` + `policy-statement FLOWSPEC-ACCEPT`.
+     - **SONiC dc-spine/leaf**: FRR `address-family ipv4 flowspec` stub + `sysctl rp_filter` instructions.
+   - All three helpers guarded by `STATE.protoFeatures.includes(...)` — zero output when not selected.
+   - `SECTION_MARKERS` extended with `'RR'`, `'PBR'`, `'FLOWSPEC'` — section-nav jump bar gains three new buttons.
+   - All JS files pass `node --check`; no ES module imports.
+
+**Files changed**: `src/js/configgen.js`
+**Issues closed**: None (no GitHub issue numbers; self-identified proto-card no-op gaps)
