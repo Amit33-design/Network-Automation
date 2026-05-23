@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'PIM', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'BFD', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI', 'MACSEC', 'UNNUMBERED', 'RR', 'PBR', 'FLOWSPEC'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'PIM', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'BFD', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI', 'MACSEC', 'UNNUMBERED', 'RR', 'PBR', 'FLOWSPEC', 'SR-MPLS', 'SEGMENT'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -2490,6 +2490,181 @@ policy-options {
 window._genFlowSpec = _genFlowSpec;
 
 /* ════════════════════════════════════════════════════════════════
+   MPLS SEGMENT ROUTING (SR-MPLS) HELPER
+   Generates SR-MPLS underlay config when "MPLS / SR" overlay chip
+   is selected in Step 2.  SR-MPLS requires IS-IS or OSPF underlay.
+   SRGB: 16000–23999 (RFC 8402).  Per-device prefix-SID = 16000 + idx.
+   TI-LFA enabled for sub-50ms fast-reroute on all vendors that support it.
+   Skipped for: campus-access (no L3), GPU TOR, WAN routers (handled
+   separately in _genWANRouterIOSXE / _genWANRouterJunOS).
+════════════════════════════════════════════════════════════════ */
+function _genMPLSSR(vendor, layer, idx) {
+  if (!(STATE.overlayProto || []).some(function(o){return o.includes('MPLS');})) return '';
+  const skipLayers = ['campus-access', 'gpu-tor', 'gpu-spine'];
+  if (skipLayers.indexOf(layer) !== -1) return '';
+
+  const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
+  const hasISIS = _rs('isisEnabled', () => (STATE.underlayProto || []).includes('IS-IS'));
+  if (!hasOSPF && !hasISIS) {
+    return (vendor === 'ios-xe' || vendor === 'nxos')
+      ? `!\n! ── SR-MPLS NOTE ────────────────────────────────────────────\n! SR-MPLS requires OSPF or IS-IS underlay. Select OSPF or IS-IS\n! in Step 2 to enable SR-MPLS prefix-SID assignment.\n`
+      : '';
+  }
+
+  const prefixSid = 16000 + idx;   /* SRGB base 16000, per-device offset = idx */
+  const loIP = (vendor === 'junos')
+    ? '10.255.2.' + (idx + 1)
+    : '10.255.0.' + (20 + idx);
+
+  if (vendor === 'ios-xe') {
+    const ospfSR = hasOSPF ? `router ospf 1
+ segment-routing mpls
+ segment-routing forwarding mpls
+ fast-reroute per-prefix enable
+ fast-reroute per-prefix ti-lfa
+!` : '';
+    const isisSR = hasISIS ? `router isis CAMPUS-FABRIC
+ address-family ipv4 unicast
+  metric-style wide
+  segment-routing mpls
+  fast-reroute per-prefix enable
+  fast-reroute per-prefix ti-lfa
+!` : '';
+    return `!
+! ── SEGMENT ROUTING MPLS (SR-MPLS) ─────────────────────────
+! SRGB: 16000–23999  |  This device prefix-SID: ${prefixSid}
+segment-routing mpls
+ set-attributes address-family ipv4
+  sr-label-preferred
+!
+interface Loopback0
+ ip address ${loIP} 255.255.255.255
+ segment-routing mpls prefix-sid absolute ${prefixSid}
+!
+${ospfSR}${isisSR}! Verify: show segment-routing mpls lb-summary
+`;
+  }
+
+  if (vendor === 'nxos') {
+    const isSpine = layer === 'dc-spine';
+    const isisP  = hasISIS
+      ? `router isis UNDERLAY\n  address-family ipv4 unicast\n    segment-routing mpls\n    maximum-paths 64\n    fast-reroute ti-lfa level-2\n`
+      : '';
+    const ospfP  = hasOSPF
+      ? `router ospf UNDERLAY\n  segment-routing mpls\n  segment-routing forwarding mpls\n`
+      : '';
+    return `!
+! ── SEGMENT ROUTING MPLS (SR-MPLS) ─────────────────────────
+! SRGB: 16000–23999  |  prefix-SID: ${prefixSid}  |  NX-OS 9.3(1)+
+feature segment-routing-mpls
+!
+interface loopback0
+  ip address ${loIP}/32
+  ip router isis UNDERLAY
+  isis prefix-sid absolute ${prefixSid}
+!
+${isisP}${ospfP}! Verify: show segment-routing mpls forwarding
+`;
+  }
+
+  if (vendor === 'eos') {
+    const isSpine = layer === 'dc-spine';
+    const isisSR  = hasISIS ? `router isis UNDERLAY
+   segment-routing mpls
+   !
+   address-family ipv4 unicast
+      fast-reroute ti-lfa mode link-protection
+!` : '';
+    const ospfSR  = hasOSPF ? `router ospf 1
+   segment-routing mpls
+   segment-routing forwarding mpls
+   fast-reroute per-prefix all
+!` : '';
+    return `!
+! ── SEGMENT ROUTING MPLS (SR-MPLS) ─────────────────────────
+! SRGB: 16000–23999  |  node-segment index: ${idx}  (SID = 16000 + ${idx})
+mpls ip
+!
+interface Loopback0
+   node-segment ipv4 index ${idx}
+!
+${isisSR}${ospfSR}! Verify: show mpls segment-routing bindings
+`;
+  }
+
+  if (vendor === 'junos') {
+    const isisSR = hasISIS ? `    isis {
+        interface et-0/0/48.0 { level 2 { metric 10; } }
+        interface et-0/0/49.0 { level 2 { metric 10; } }
+        source-packet-routing {
+            srgb start-label 16000 index-range 8000;
+            node-segment ipv4-index ${idx};
+        }
+        level 1 disable;
+    }` : '';
+    const ospfSR = hasOSPF ? `    ospf {
+        traffic-engineering;
+        area 0.0.0.0 {
+            interface lo0.0 { passive; }
+            interface et-0/0/48.0 { interface-type p2p; }
+            interface et-0/0/49.0 { interface-type p2p; }
+        }
+        source-packet-routing {
+            srgb start-label 16000 index-range 8000;
+            node-segment ipv4-index ${idx};
+        }
+    }` : '';
+    return `
+## ── SEGMENT ROUTING MPLS (SR-MPLS) ─────────────────────────
+## SRGB: 16000–23999  |  node-segment index: ${idx}  (SID = 16000+${idx})
+interfaces {
+    et-0/0/48 { unit 0 { family mpls; } }
+    et-0/0/49 { unit 0 { family mpls; } }
+    lo0 { unit 0 { family mpls; } }
+}
+protocols {
+    mpls {
+        interface et-0/0/48.0;
+        interface et-0/0/49.0;
+        interface lo0.0;
+    }
+${isisSR}${ospfSR}}
+routing-options {
+    source-packet-routing {
+        srgb start-label 16000 index-range 8000;
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic') {
+    return `
+# ── SEGMENT ROUTING MPLS (SR-MPLS) ────────────────────────
+# FRRouting 8.0+ supports SR-MPLS. Append to /etc/frr/frr.conf:
+#
+# mpls enable
+#
+# segment-routing
+#  global-block 16000 23999
+#  !
+#  node ${idx}
+#   prefix ${loIP}/32
+#   index ${idx}
+#  !
+# !
+#
+# Enable MPLS forwarding on uplink interfaces:
+# sudo sysctl net.mpls.conf.Ethernet48.input=1
+# sudo sysctl net.mpls.conf.Ethernet52.input=1
+# sudo sysctl net.mpls.platform_labels=100000
+# Apply: sudo systemctl restart frr
+`;
+  }
+  return '';
+}
+window._genMPLSSR = _genMPLSSR;
+
+/* ════════════════════════════════════════════════════════════════
    WAN ROUTER HELPERS
    Dedicated configs for HQ Core Router (DMVPN hub) and Branch CPE
    (DMVPN spoke).  Called from genIOSXE / genJunos when dev.role
@@ -3664,6 +3839,7 @@ ${hasBGP ? `router bgp 65100
   cfg += _genIGMP('ios-xe', layer);
   cfg += _genPIM('ios-xe', layer, idx);
   cfg += _genBFD('ios-xe', layer);
+  cfg += _genMPLSSR('ios-xe', layer, idx);
   cfg += _genRouteReflector('ios-xe', layer, idx);
   cfg += _genPBR('ios-xe', layer, idx);
   cfg += _genFlowSpec('ios-xe', layer, idx);
@@ -4135,6 +4311,7 @@ ip route 0.0.0.0/0 10.0.0.1 vrf management
   cfg += _genIGMP('nxos', layer);
   cfg += _genPIM('nxos', layer, idx);
   cfg += _genBFD('nxos', layer);
+  cfg += _genMPLSSR('nxos', layer, idx);
   cfg += _genRouteReflector('nxos', layer, idx);
   cfg += _genPBR('nxos', layer, idx);
   cfg += _genFlowSpec('nxos', layer, idx);
@@ -4306,6 +4483,7 @@ ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('eo
 ${hasMACSec ? _genMACSec('eos', layer, idx) : ''}
 ${_genIGMP('eos', layer)}
 ${_genPIM('eos', layer, idx)}
+${_genMPLSSR('eos', layer, idx)}
 ${_genRouteReflector('eos', layer, idx)}
 ${_genPBR('eos', layer, idx)}
 ${_genFlowSpec('eos', layer, idx)}
@@ -4500,6 +4678,7 @@ ${hasMACSec ? _genMACSec('junos', layer, idx) : ''}
 ${_genIGMP('junos', layer)}
 ${_genPIM('junos', layer, idx)}
 ${_genBFD('junos', layer)}
+${_genMPLSSR('junos', layer, idx)}
 ${_genRouteReflector('junos', layer, idx)}
 ${_genPBR('junos', layer, idx)}
 ${_genFlowSpec('junos', layer, idx)}
@@ -4981,6 +5160,7 @@ function genSONiC(dev, layer, idx) {
       (hasISIS ? _genISISUnderlay('sonic', layer, idx) : '') +
       ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : '') +
       _genPIM('sonic', layer, idx) +
+      _genMPLSSR('sonic', layer, idx) +
       _genRouteReflector('sonic', layer, idx) +
       _genPBR('sonic', layer, idx) +
       _genFlowSpec('sonic', layer, idx) +
@@ -5060,6 +5240,7 @@ function genSONiC(dev, layer, idx) {
 ${hasOSPF ? _genOSPFUnderlay('sonic', STATE, dev, layer, idx) : ''}
 ${hasISIS ? _genISISUnderlay('sonic', layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : ''}
+${_genMPLSSR('sonic', layer, idx)}
 ${_genRouteReflector('sonic', layer, idx)}
 ${_genPBR('sonic', layer, idx)}
 ${_genFlowSpec('sonic', layer, idx)}
