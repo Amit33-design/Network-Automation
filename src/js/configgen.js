@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'PIM', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'BFD', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'PIM', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'BFD', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI', 'MACSEC', 'UNNUMBERED'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -837,6 +837,8 @@ ${ospfBFD}${isisBFD}`;
   return '';
 }
 window._genBFD = _genBFD;
+window._genBGPUnnumbered = _genBGPUnnumbered;
+window._genMACSec = _genMACSec;
 
 /* ════════════════════════════════════════════════════════════════
    NTP + SNMP v3 HELPER BLOCKS  (appended to every vendor config)
@@ -1488,6 +1490,316 @@ interface Loopback0
 # Apply: sudo vtysh -f /etc/frr/frr.conf && sudo systemctl restart frr
 `;
   }
+  return '';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   BGP UNNUMBERED (RFC 5549) HELPER
+   Generates unnumbered BGP peer config using IPv6 link-local
+   addresses (no /31 subnets needed on fabric links).
+   Supported: EOS, JunOS, SONiC/FRR.  NX-OS: advisory note only.
+   Guard: only active when STATE.protoFeatures includes
+          'BGP Unnumbered (RFC 5549)' AND layer is dc-leaf/dc-spine.
+════════════════════════════════════════════════════════════════ */
+function _genBGPUnnumbered(vendor, layer, idx, hasVxlan) {
+  var isSpine = layer === 'dc-spine';
+  var isLeaf  = layer === 'dc-leaf';
+  var asn     = isSpine ? 65000 : (65001 + idx);
+  var loIP    = isSpine ? ('10.255.1.' + (idx+1)) : ('10.255.2.' + (idx+1));
+  var vtepIP  = '10.255.3.' + (idx+1);
+
+  if (!isSpine && !isLeaf) return '';
+
+  if (vendor === 'eos') {
+    /* EOS: neighbor interface <intf> peer group <PG>
+       No IP address on fabric uplinks — IPv6 link-local auto-assigned. */
+    var uplinks = isSpine
+      ? ['Ethernet1/1','Ethernet1/2','Ethernet1/3','Ethernet1/4']
+      : ['Ethernet49/1','Ethernet50/1'];
+    var intfCfg = uplinks.map(function(i) {
+      return `interface ${i}\n   no switchport\n   ipv6 enable\n   no shutdown\n!`;
+    }).join('\n');
+    var peerGroup = isSpine ? 'LEAVES' : 'SPINES';
+    var intfNeigh = uplinks.map(function(i) {
+      return `   neighbor interface ${i} peer group ${peerGroup}`;
+    }).join('\n');
+    return `!
+! ── BGP UNNUMBERED (RFC 5549) — fabric uplinks ──────────────
+${intfCfg}
+! ── BGP ─────────────────────────────────────────────────────
+router bgp ${asn}
+   router-id ${loIP}
+   maximum-paths 4 ecmp 4
+   bgp bestpath as-path multipath-relax
+   !
+   neighbor ${peerGroup} peer group
+   neighbor ${peerGroup} remote-as external
+   neighbor ${peerGroup} send-community extended
+   neighbor ${peerGroup} maximum-routes 12000
+   neighbor ${peerGroup} bfd
+${intfNeigh}
+   !
+${hasVxlan && isLeaf ? `   vlan 100
+      rd auto
+      route-target both auto
+      redistribute learned
+   vlan 101
+      rd auto
+      route-target both auto
+      redistribute learned
+   !
+   address-family evpn
+      neighbor ${peerGroup} activate
+   !
+` : ''}   address-family ipv4
+      ${isSpine ? 'neighbor LEAVES activate' : 'neighbor SPINES activate'}
+      network ${loIP}/32
+      ${hasVxlan && isLeaf ? 'network ' + vtepIP + '/32' : ''}
+      redistribute connected
+!
+`;
+  }
+
+  if (vendor === 'junos') {
+    /* JunOS: family inet6 link-local + allow + passive BGP peering */
+    var jUplinks = isSpine
+      ? ['et-0/0/0','et-0/0/1','et-0/0/2','et-0/0/3']
+      : ['et-0/0/48','et-0/0/49'];
+    var jIntfBlocks = jUplinks.map(function(i) {
+      return `    ${i} {\n        unit 0 {\n            description "BGP-UNNUMBERED-UPLINK";\n            family inet6;\n        }\n    }`;
+    }).join('\n');
+    var jBgpIntfs = jUplinks.map(function(i) {
+      return `            interface ${i}.0;`;
+    }).join('\n');
+    var jPG = isSpine ? 'DC-LEAVES' : 'DC-SPINES';
+    return `## ── BGP UNNUMBERED (RFC 5549) ─────────────────────────────
+## No /31 IP addresses on fabric links — BGP peers via link-local.
+interfaces {
+${jIntfBlocks}
+}
+protocols {
+    bgp {
+        group ${jPG} {
+            type external;
+            peer-as external;
+            multipath;
+            export CONNECTED;
+            bfd-liveness-detection {
+                minimum-interval 300;
+                multiplier 3;
+            }
+            dynamic-neighbor ${jPG}-DYN {
+                peer-auto-discovery {
+                    family inet6;
+${jBgpIntfs}
+                }
+            }
+        }
+    }
+}
+routing-options {
+    autonomous-system ${asn};
+    forwarding-table {
+        export ECMP;
+    }
+}
+policy-options {
+    policy-statement ECMP {
+        then {
+            load-balance per-flow;
+        }
+    }
+    policy-statement CONNECTED {
+        term LOOPBACKS {
+            from {
+                protocol direct;
+                route-filter ${loIP}/32 exact;
+            }
+            then accept;
+        }
+        term REJECT-REST {
+            then reject;
+        }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic') {
+    /* SONiC FRRouting: neighbor <intf> interface remote-as external */
+    var sUplinks = isSpine
+      ? ['Ethernet0','Ethernet4','Ethernet8','Ethernet12',
+         'Ethernet16','Ethernet20','Ethernet24','Ethernet28']
+      : ['Ethernet48','Ethernet50'];
+    var sNeigh = sUplinks.map(function(i) {
+      return '  neighbor ' + i + ' interface remote-as external\n' +
+             '  neighbor ' + i + ' bfd\n' +
+             '  neighbor ' + i + ' description BGP-UNNUMBERED-' + (isSpine ? 'LEAF' : 'SPINE');
+    }).join('\n');
+    var sIntfCfg = sUplinks.map(function(i) {
+      return '"' + i + '": { "ipv6_use_link_local_only": "enable" }';
+    }).join(',\n#    ');
+    return `# ── BGP UNNUMBERED (RFC 5549) — SONiC / FRRouting ───────────
+# config_db.json: add to INTERFACE (no IP address on fabric links):
+# "INTERFACE": {
+#    ${sIntfCfg}
+# }
+# ── /etc/frr/frr.conf ────────────────────────────────────────
+frr version 9.0
+frr defaults datacenter
+hostname ${isSpine ? 'SPINE-0' + (idx+1) : 'LEAF-0' + (idx+1)}
+log syslog informational
+!
+router bgp ${asn}
+  bgp router-id ${loIP}
+  no bgp default ipv4-unicast
+  bgp bestpath as-path multipath-relax
+  !
+${sNeigh}
+  !
+  address-family ipv4 unicast
+    redistribute connected
+    network ${loIP}/32
+${hasVxlan && isLeaf ? '    network ' + vtepIP + '/32' : ''}
+    maximum-paths 64
+  exit-address-family
+  !
+${hasVxlan ? `  address-family l2vpn evpn
+    advertise-all-vni
+    advertise-svi-ip
+  exit-address-family
+  !
+` : ''}!
+line vty
+# Apply: sudo systemctl restart frr
+`;
+  }
+
+  if (vendor === 'nxos') {
+    return `!
+! ── BGP UNNUMBERED NOTE (RFC 5549) ─────────────────────────
+! NX-OS supports unnumbered BGP via IPv6 link-local on:
+!   NX-OS 10.2.1+ with 'feature bgp' + 'feature interface-vlan'
+!   Syntax: neighbor <intf> remote-as external
+! Example (NX-OS 10.2+):
+!   interface Ethernet1/49
+!     no ip address
+!     ipv6 address use-link-local-only
+!   router bgp ${asn}
+!     neighbor Ethernet1/49 remote-as external
+!     neighbor Ethernet1/49 update-source Ethernet1/49
+! WARNING: NX-OS BGP unnumbered requires ECMP route policy changes.
+! This design uses numbered /31 peers for NX-OS compatibility.
+`;
+  }
+
+  return '';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MACSEC LINK ENCRYPTION HELPER
+   Generates MACsec (IEEE 802.1AE) config for DC fabric inter-switch
+   links using MKA PSK (CAK/CKN static keys).
+   Supported: EOS, NX-OS, JunOS.  SONiC: advisory (kernel MACsec).
+   Guard: only active when STATE.protoFeatures includes 'MACSec Link Encryption'.
+════════════════════════════════════════════════════════════════ */
+function _genMACSec(vendor, layer, idx) {
+  var isSpine = layer === 'dc-spine' || layer === 'gpu-spine';
+  var isLeaf  = layer === 'dc-leaf';
+
+  /* Only relevant for DC/GPU fabric inter-switch links */
+  if (!isSpine && !isLeaf) return '';
+
+  var uplinks = [];
+  if (vendor === 'eos') {
+    uplinks = isSpine
+      ? ['Ethernet1/1','Ethernet1/2','Ethernet1/3','Ethernet1/4']
+      : ['Ethernet49/1','Ethernet50/1'];
+    var mkaProf = 'MKA-FABRIC-PSK';
+    var uplinkMacs = uplinks.map(function(i) {
+      return `interface ${i}\n   macsec profile ${mkaProf}\n!`;
+    }).join('\n');
+    return `!
+! ── MACSEC (IEEE 802.1AE) — MKA PSK ────────────────────────
+! CAK/CKN: replace with site-specific 32-byte hex keys
+mac security profile ${mkaProf}
+   cipher aes256-gcm
+   key 0100000000000000000000000000000000000000000000000000000000000001 ckn 00000000000000000000000000000001
+   mka session rekey-period 3600
+   traffic unprotected allow
+!
+${uplinkMacs}
+`;
+  }
+
+  if (vendor === 'nxos') {
+    uplinks = isSpine
+      ? ['Ethernet1/1','Ethernet1/2','Ethernet1/3','Ethernet1/4']
+      : ['Ethernet1/49','Ethernet1/50'];
+    var nxUplinkMacs = uplinks.map(function(i) {
+      return `interface ${i}\n  macsec\n  macsec keychain FABRIC-KS policy FABRIC-MACSEC\n!`;
+    }).join('\n');
+    return `!
+! ── MACSEC (IEEE 802.1AE) — MKA PSK ────────────────────────
+feature macsec
+!
+key chain FABRIC-KS macsec
+  key 0100000000000000000000000000000000000000000000000000000000000001
+    cryptographic-algorithm aes-256-cmac
+    key-octet-string 0100000000000000000000000000000000000000000000000000000000000002
+    send-lifetime 00:00:00 Jan 01 2024 infinite
+    accept-lifetime 00:00:00 Jan 01 2024 infinite
+!
+macsec policy FABRIC-MACSEC
+  cipher-suite GCM-AES-XPN-256
+  key-server-priority 0
+  window-size 64
+!
+${nxUplinkMacs}
+`;
+  }
+
+  if (vendor === 'junos') {
+    var jUplinks = isSpine
+      ? ['et-0/0/0','et-0/0/1','et-0/0/2','et-0/0/3']
+      : ['et-0/0/48','et-0/0/49'];
+    var jIntfMacs = jUplinks.map(function(i) {
+      return `    ${i} {\n        unit 0 {\n            security {\n                macsec {\n                    connectivity-association FABRIC-CA;\n                }\n            }\n        }\n    }`;
+    }).join('\n');
+    return `## ── MACSEC (IEEE 802.1AE) ─────────────────────────────────
+security {
+    macsec {
+        connectivity-association FABRIC-CA {
+            cipher-suite GCM-AES-XPN-256;
+            security-mode static-cak;
+            pre-shared-key {
+                ckn 00000000000000000000000000000001;
+                cak "$9$encryptedCAKhexhere";
+            }
+            mka {
+                transmit-interval 2000;
+                key-server-priority 16;
+                delay-protection;
+            }
+        }
+        interfaces {
+${jIntfMacs}
+        }
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic') {
+    return `# ── MACSEC NOTE (SONiC) ──────────────────────────────────────
+# SONiC MACSec uses Linux kernel wpa_supplicant MKA daemon.
+# Config: /etc/sonic/macsec/mka_wpa_supplicant.conf per interface
+# Apply: sudo sonic-utilities macsec enable Ethernet48 --profile FABRIC
+# Requires: SONiC 202211+ with 'FEATURE.macsec' enabled in config_db.json
+# See: https://github.com/sonic-net/SONiC/blob/master/doc/macsec/MACsec.md
+`;
+  }
+
   return '';
 }
 
@@ -3432,6 +3744,8 @@ username admin password 0 NetDesign@2024 role network-admin
 `;
   cfg += _genGNMI('nxos');
   cfg += _genDCI('nxos', dev, STATE);
+  if ((STATE.protoFeatures || []).includes('MACSec Link Encryption')) cfg += _genMACSec('nxos', layer, idx);
+  if ((STATE.protoFeatures || []).includes('BGP Unnumbered (RFC 5549)')) cfg += _genBGPUnnumbered('nxos', layer, idx, false);
   cfg += `!
 end
 `;
@@ -3457,6 +3771,8 @@ function genEOS(dev, layer, idx) {
   const hasRoCE = _rs('roceEnabled',  () => (STATE.gpuSpecifics || []).includes('rocev2'));
   const hasOSPF = _rs('ospfEnabled',  () => (STATE.underlayProto || []).includes('OSPF'));
   const hasISIS = _rs('isisEnabled',  () => (STATE.underlayProto || []).includes('IS-IS'));
+  const hasBGPUnnumbered = (STATE.protoFeatures || []).includes('BGP Unnumbered (RFC 5549)') && (isLeaf || isSpine) && !isTOR;
+  const hasMACSec = (STATE.protoFeatures || []).includes('MACSec Link Encryption') && (isLeaf || isSpine) && !isTOR;
 
   return `! ═══════════════════════════════════════════════════════════
 ! Device : ${name}
@@ -3506,7 +3822,7 @@ ${hasVxlan ? `interface Loopback1
    description VTEP-SOURCE
    ip address ${vtepIP}/32
 !` : ''}
-interface Ethernet49/1
+${hasBGPUnnumbered ? '' : `interface Ethernet49/1
    description ${_ud[0] || ('TO-' + (isSpine ? 'LEAF' : 'SPINE') + '-01')}
    no switchport
    ip address 10.1.0.${isSpine ? idx*8 : idx*2+1}/31
@@ -3517,7 +3833,7 @@ interface Ethernet50/1
    no switchport
    ip address 10.1.0.${isSpine ? idx*8+2 : idx*2+9}/31
    no shutdown
-!
+!`}
 ${hasVxlan && !isSpine ? `interface Vlan100
    description TENANT-A-IRB
    vrf TENANT-A
@@ -3538,7 +3854,7 @@ interface Vxlan1
 !
 ip virtual-router mac-address 00:00:22:22:33:33
 !` : ''}
-! ── BGP ─────────────────────────────────────────────────────
+${hasBGPUnnumbered ? _genBGPUnnumbered('eos', layer, idx, hasVxlan) : `! ── BGP ─────────────────────────────────────────────────────
 router bgp ${asn}
    router-id ${loIP}
    maximum-paths 4 ecmp 4
@@ -3575,11 +3891,12 @@ ${hasVxlan && !isSpine ? `   vlan 100
       ${isSpine ? 'neighbor LEAVES activate' : 'neighbor SPINES activate'}
       network ${loIP}/32
       ${hasVxlan && !isSpine ? `network ${vtepIP}/32` : ''}
-!
+!`}
 ${hasOSPF && !isTOR ? _genOSPFUnderlay('eos', STATE, dev, layer, idx) : ''}
 ${hasISIS && !isTOR ? _genISISUnderlay('eos', layer, idx) : ''}
 ${isLeaf ? _genMLAG(layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('eos', layer, idx) : ''}
+${hasMACSec ? _genMACSec('eos', layer, idx) : ''}
 ${_genIGMP('eos', layer)}
 ${_genPIM('eos', layer, idx)}
 ${_genSTP('eos', layer)}
@@ -3606,6 +3923,8 @@ function genJunos(dev, layer, idx) {
   const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
   const hasISIS = _rs('isisEnabled', () => (STATE.underlayProto || []).includes('IS-IS'));
   const hasVxlan= _rs('vxlanEnabled', () => (STATE.overlayProto || []).some(function(o){return o.includes('VXLAN');}));
+  const hasBGPUnnumberedJ = (STATE.protoFeatures || []).includes('BGP Unnumbered (RFC 5549)');
+  const hasMACSec = (STATE.protoFeatures || []).includes('MACSec Link Encryption');
   const _ud     = (typeof getUplinkDescs === 'function') ? getUplinkDescs(dev.name) : [];
   return `## ═══════════════════════════════════════════════════════════
 ## Device : ${dev.name}  Role: ${dev.role}
@@ -3649,13 +3968,13 @@ interfaces {
     et-0/0/48 {
         unit 0 {
             description "${_ud[0] || 'TO-SPINE-01'}";
-            family inet { address 10.1.0.${idx*2+1}/31; }
+            ${hasBGPUnnumberedJ ? 'family inet6;' : `family inet { address 10.1.0.${idx*2+1}/31; }`}
         }
     }
     et-0/0/49 {
         unit 0 {
             description "${_ud[1] || 'TO-SPINE-02'}";
-            family inet { address 10.1.0.${idx*2+9}/31; }
+            ${hasBGPUnnumberedJ ? 'family inet6;' : `family inet { address 10.1.0.${idx*2+9}/31; }`}
         }
     }
     ge-0/0/0 {
@@ -3695,7 +4014,20 @@ ${hasVxlan ? `switch-options {
 }
 ` : ''}protocols {
     bgp {
-        group SPINES {
+        ${hasBGPUnnumberedJ ? `group DC-SPINES {
+            type external;
+            peer-as external;
+            multipath { multiple-as; }
+            export CONNECTED;
+            bfd-liveness-detection { minimum-interval 300; multiplier 3; }
+            dynamic-neighbor DC-SPINES-DYN {
+                peer-auto-discovery {
+                    family inet6;
+                    interface et-0/0/48.0;
+                    interface et-0/0/49.0;
+                }
+            }
+        }` : `group SPINES {
             type external;
             ${hasVxlan ? `family inet unicast;
             family evpn signaling;
@@ -3703,7 +4035,7 @@ ${hasVxlan ? `switch-options {
             multipath { multiple-as; }
             neighbor 10.1.0.${idx*2} { peer-as 65000; description "SPINE-01"; }
             neighbor 10.1.0.${idx*2+8} { peer-as 65000; description "SPINE-02"; }
-        }
+        }`}
     }
 ${hasVxlan ? `    evpn {
         encapsulation vxlan;
@@ -3754,6 +4086,7 @@ routing-instances {
 ${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
 ${hasISIS ? _genISISUnderlay('junos', layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('junos', layer, idx) : ''}
+${hasMACSec ? _genMACSec('junos', layer, idx) : ''}
 ${_genIGMP('junos', layer)}
 ${_genPIM('junos', layer, idx)}
 ${_genBFD('junos', layer)}
@@ -4014,6 +4347,47 @@ function _genSONiCDCFabric(dev, layer, idx, hasVxlan) {
   var vtepIP  = '10.255.7.' + (idx+1);
   var myASN   = isSpine ? 65000 : (65001 + idx);
   var spASN   = 65000;
+  var hasBGPUnnumberedS = (STATE.protoFeatures || []).includes('BGP Unnumbered (RFC 5549)');
+  var hasMACSec = (STATE.protoFeatures || []).includes('MACSec Link Encryption');
+
+  /* If unnumbered BGP: delegate frr.conf entirely to _genBGPUnnumbered */
+  if (hasBGPUnnumberedS) {
+    /* config_db.json: link-local only on fabric interfaces, no /31 IPs */
+    var ulIntfs = isLeaf
+      ? '"Ethernet48": { "ipv6_use_link_local_only": "enable" },\n    "Ethernet50": { "ipv6_use_link_local_only": "enable" }'
+      : (function(){
+          var rows = [];
+          for (var i=0; i<8; i++) rows.push('"Ethernet' + (i*4) + '": { "ipv6_use_link_local_only": "enable" }');
+          return rows.join(',\n    ');
+        }());
+    return `# ═══════════════════════════════════════════════════════════
+# Device : ${name}  Layer: ${layer}
+# OS     : NVIDIA SONiC 202311  |  Mode: BGP Unnumbered (RFC 5549)
+# Generated by NetDesign AI — ${new Date().toISOString().slice(0,10)}
+# ═══════════════════════════════════════════════════════════
+
+# ── /etc/sonic/config_db.json ──────────────────────────────
+{
+  "DEVICE_METADATA": {
+    "localhost": {
+      "hostname": "${name}",
+      "type": "${isSpine ? 'SpineRouter' : 'LeafRouter'}",
+      "bgp_asn": "${myASN}",
+      "platform": "${isSpine ? 'x86_64-nvidia_sn4800c-r0' : 'x86_64-dell_s5248f_c3538-r0'}"
+    }
+  },
+  "LOOPBACK_INTERFACE": {
+    "Loopback0|${loIP}/32": {}${hasVxlan && isLeaf ? `,
+    "Loopback1|${vtepIP}/32": {}` : ''}
+  },
+  "INTERFACE": {
+    ${ulIntfs}
+  }
+}
+
+${_genBGPUnnumbered('sonic', layer, idx, hasVxlan)}
+${hasMACSec ? _genMACSec('sonic', layer, idx) : ''}`;
+  }
 
   /* ── config_db.json ── */
   var iface = isLeaf
@@ -4196,6 +4570,7 @@ function genSONiC(dev, layer, idx) {
       _genPIM('sonic', layer, idx) +
       _genQoS('sonic', STATE) + _genNTP('sonic') + _genSNMPv3('sonic') +
       _genAAA('sonic', STATE) + _genGNMI('sonic') +
+      ((STATE.protoFeatures || []).includes('MACSec Link Encryption') ? _genMACSec('sonic', layer, idx) : '') +
       (STATE.uc === 'multisite' && layer === 'dc-spine' ? _genDCI('sonic', dev, STATE) : '');
   }
 
