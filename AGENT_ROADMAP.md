@@ -688,3 +688,21 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
    - Added `routing-instances TENANT-A`/`TENANT-B` (vrf type) with RD/RT and IRB bindings.
 
 **Files changed**: `src/js/configgen.js` only
+
+### 2026-05-23 (run 18)
+
+**Features completed this run:**
+
+1. **Multi-Site DCI / EVPN Multi-Site Border Gateway** — `d00937d`
+   - All Tier 1-5 roadmap items were already complete; identified the multisite use case as having a critical functional gap: dc-spine devices got normal single-site fabric config with zero inter-site connectivity.
+   - Added `_genDCI(vendor, dev, state)` helper (~220 lines) injected into all 4 vendor generators when `STATE.uc === 'multisite' && layer === 'dc-spine'`.
+   - **IP plan**: Per-site ASNs (`DCA=65100, DCB=65200, DCC=65300, DCD=65400`) for eBGP between sites. DCI P2P /31 links in `10.201.0.0/24` (avoids conflict with JunOS IRB `10.200.x` addresses). BGW loopback `10.201.254.{siteIdx*2+spineIdx+1}/32`.
+   - **NX-OS**: `evpn multisite border-gateway {N}`, `Loopback2` DCI-VTEP, `Ethernet3/1-N` DCI links with `evpn multisite dci-tracking`, eBGP neighbors with `rewrite-evpn-rt-asn` + `delay-restore time 300`. Includes note to update spine ASN from 65000 to site ASN.
+   - **EOS**: `Loopback2` DCI-VTEP, `Ethernet51-N/1` DCI links, `DCI-PEERS` peer-group with `next-hop-unchanged`, activated in both `address-family ipv4` and `address-family evpn`. `maximum-routes 100000 warning-only` on DCI peers.
+   - **JunOS**: `et-0/2/N` DCI interfaces, `lo0 unit 2` DCI-VTEP, `DCI-PEERS` BGP group (`type external`, `family evpn signaling`), `routing-options autonomous-system {siteASN}` override.
+   - **SONiC**: Generates commented config_db.json additions (`INTERFACE`, `BGP_NEIGHBOR`) and frr.conf router bgp additions with per-site DCI neighbors and `l2vpn evpn` address-family, with apply instructions.
+   - `_DCI_LINK` IIFE builds a lookup table of all 12 /31 DCI link subnets (6 site-pairs × 2 spines) at script load time.
+   - `'DCI'` added to `SECTION_MARKERS` — jump bar gains DCI button for multisite spine configs.
+
+**Files changed**: `src/js/configgen.js`
+**Issues closed**: None (self-identified functional gap; no pre-existing issue number)
