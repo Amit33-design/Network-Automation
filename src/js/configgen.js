@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'PIM', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'BFD', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -630,6 +630,213 @@ protocols {
   return '';
 }
 window._genIGMP = _genIGMP;
+
+/* ════════════════════════════════════════════════════════════════
+   _genPIM — PIM Sparse-Mode multicast routing
+   • Campus dist/core: PIM-SM on SVIs + routed uplinks; RP = core-01
+     loopback (10.255.0.20). Guarded by voice/video appTypes.
+   • DC leaf/spine: PIM-SM on loopback + uplinks. Only generated when
+     voice/video appTypes selected (VXLAN uses ingress replication for
+     BUM by default, not PIM).
+   • campus-access: returns '' — access has no L3 routed interfaces.
+   • WAN / GPU / multicloud: not applicable.
+════════════════════════════════════════════════════════════════ */
+function _genPIM(vendor, layer, idx) {
+  const isCampusDist  = layer === 'campus-dist';
+  const isCampusCore  = layer === 'campus-core';
+  const isDCLeaf      = layer === 'dc-leaf';
+  const isDCSpine     = layer === 'dc-spine';
+  if (!isCampusDist && !isCampusCore && !isDCLeaf && !isDCSpine) return '';
+
+  const hasVoice = _rs('appTypesVoice', () => (STATE.appTypes || []).includes('voice'));
+  const hasVideo = _rs('appTypesVideo', () => (STATE.appTypes || []).includes('video'));
+  if (!hasVoice && !hasVideo) return '';
+
+  const rpIP = (isCampusDist || isCampusCore) ? '10.255.0.20' : '10.255.1.1';
+
+  if (vendor === 'ios-xe') {
+    if (!isCampusDist && !isCampusCore) return '';
+    const svis = isCampusDist
+      ? `interface Vlan20\n ip pim sparse-mode\n!\ninterface Vlan21\n ip pim sparse-mode\n!\ninterface Vlan30\n ip pim sparse-mode\n!\ninterface Vlan40\n ip pim sparse-mode\n!`
+      : '';
+    const uplinks = isCampusDist
+      ? `interface TenGigabitEthernet1/1\n ip pim sparse-mode\n!\ninterface TenGigabitEthernet1/2\n ip pim sparse-mode`
+      : `interface TenGigabitEthernet1/1\n ip pim sparse-mode\n!\ninterface TenGigabitEthernet2/1\n ip pim sparse-mode\n!\ninterface TenGigabitEthernet2/2\n ip pim sparse-mode`;
+    const rpCand = (isCampusCore && idx === 0)
+      ? `ip pim send-rp-announce Loopback0 scope 16 group-list 224.0.0.0/4\nip pim send-rp-discovery Loopback0 scope 16\n!`
+      : '';
+    return `!
+! ── PIM SPARSE-MODE ─────────────────────────────────────────
+ip multicast-routing
+ip pim rp-address ${rpIP}
+!
+${svis}
+interface Loopback0
+ ip pim sparse-mode
+!
+${uplinks}
+!
+${rpCand}`;
+  }
+
+  if (vendor === 'nxos') {
+    const uplinks = isDCLeaf
+      ? `interface Ethernet1/49\n  ip pim sparse-mode\ninterface Ethernet1/50\n  ip pim sparse-mode`
+      : `interface Ethernet1/1\n  ip pim sparse-mode\ninterface Ethernet1/2\n  ip pim sparse-mode\ninterface Ethernet1/3\n  ip pim sparse-mode\ninterface Ethernet1/4\n  ip pim sparse-mode`;
+    const rpCand = isDCSpine
+      ? `ip pim send-rp-announce loopback0 group-list 224.0.0.0/4 scope 16\nip pim send-rp-discovery loopback0 scope 16\n!`
+      : '';
+    return `!
+! ── PIM SPARSE-MODE ─────────────────────────────────────────
+feature pim
+ip pim rp-address ${rpIP} group-list 224.0.0.0/4
+!
+interface loopback0
+  ip pim sparse-mode
+!
+${uplinks}
+!
+${rpCand}`;
+  }
+
+  if (vendor === 'eos') {
+    const ifaces = isDCLeaf
+      ? [`interface Ethernet49/1`, `interface Ethernet50/1`]
+      : [`interface Ethernet1/1`, `interface Ethernet2/1`, `interface Ethernet3/1`, `interface Ethernet4/1`];
+    const rpBsr = isDCSpine
+      ? `      bsr-candidate Loopback0\n      rp-candidate Loopback0 group-list 224.0.0.0/4`
+      : '';
+    return `!
+! ── PIM SPARSE-MODE ─────────────────────────────────────────
+ip multicast-routing
+!
+router pim sparse-mode
+   ipv4
+      rp-address ${rpIP}
+${rpBsr}
+!
+interface Loopback0
+   ip pim sparse-mode
+!
+${ifaces.map(i => `${i}\n   ip pim sparse-mode`).join('\n!\n')}
+!`;
+  }
+
+  if (vendor === 'junos') {
+    const ifaces = isDCLeaf
+      ? `        interface et-0/0/48.0 { mode sparse; }\n        interface et-0/0/49.0 { mode sparse; }`
+      : `        interface et-0/0/0.0 { mode sparse; }\n        interface et-0/0/1.0 { mode sparse; }`;
+    const rpBlock = isDCSpine
+      ? `        rp {\n            local { address 10.255.1.1; }\n            bootstrap { rp-candidate 10.255.1.1; }\n        }`
+      : `        rp {\n            static { address ${rpIP}; }\n        }`;
+    return `
+# ── PIM Sparse-Mode ──────────────────────────────────────────
+protocols {
+    pim {
+${rpBlock}
+        interface lo0.0 { mode sparse; }
+${ifaces}
+    }
+}
+`;
+  }
+
+  if (vendor === 'sonic') {
+    const ifaces = isDCLeaf
+      ? `interface Ethernet48\n ip pim sparse-mode\n!\ninterface Ethernet50\n ip pim sparse-mode`
+      : `interface Ethernet0\n ip pim sparse-mode\n!\ninterface Ethernet4\n ip pim sparse-mode`;
+    const rpLine = isDCSpine
+      ? `ip pim bsr-candidate Loopback0\nip pim rp-candidate Loopback0 group-list 224.0.0.0/4`
+      : `ip pim rp ${rpIP} 224.0.0.0/4`;
+    return `
+# ── PIM Sparse-Mode (/etc/frr/frr.conf additions) ────────────
+# Enable pimd: echo "pimd=yes" | sudo tee -a /etc/frr/daemons
+!
+interface Loopback0
+ ip pim sparse-mode
+!
+${ifaces}
+!
+router pim
+ ${rpLine}
+!
+# Apply: sudo systemctl restart frr
+`;
+  }
+
+  return '';
+}
+window._genPIM = _genPIM;
+
+/* ════════════════════════════════════════════════════════════════
+   _genBFD — BFD for sub-second uplink failure detection
+   • IOS-XE : bfd slow-timers + interface bfd intervals + ospf bfd
+   • NX-OS  : feature bfd + interface bfd intervals + ospf bfd note
+   • JunOS  : bfd-liveness-detection merge stanza on OSPF/IS-IS ifaces
+   • EOS    : already has 'bfd all-interfaces' in OSPF/ISIS → ''
+   • SONiC  : already has 'neighbor bfd' in FRRouting peer-groups → ''
+   Skipped for campus-access (no L3 uplinks), GPU, WAN layers.
+════════════════════════════════════════════════════════════════ */
+function _genBFD(vendor, layer) {
+  const routed = ['campus-dist', 'campus-core', 'dc-leaf', 'dc-spine'];
+  if (!routed.includes(layer)) return '';
+  if (vendor === 'eos' || vendor === 'sonic') return '';
+
+  const hasOSPF = _rs('ospfEnabled', () => (STATE.underlayProto || []).includes('OSPF'));
+  const hasISIS = _rs('isisEnabled', () => (STATE.underlayProto || []).includes('IS-IS'));
+  const hasBGP  = _rs('bgpEnabled',  () => (STATE.underlayProto || []).includes('BGP'));
+
+  if (vendor === 'ios-xe') {
+    const isDist  = layer === 'campus-dist';
+    const uplinks = isDist
+      ? `interface TenGigabitEthernet1/1\n bfd interval 300 min_rx 300 multiplier 3\n!\ninterface TenGigabitEthernet1/2\n bfd interval 300 min_rx 300 multiplier 3`
+      : `interface TenGigabitEthernet1/1\n bfd interval 300 min_rx 300 multiplier 3\n!\ninterface TenGigabitEthernet2/1\n bfd interval 300 min_rx 300 multiplier 3\n!\ninterface TenGigabitEthernet2/2\n bfd interval 300 min_rx 300 multiplier 3`;
+    const ospfBFD = hasOSPF ? `router ospf 1\n bfd all-interfaces\n!` : '';
+    return `!
+! ── BFD (Bidirectional Forwarding Detection) ────────────────
+bfd slow-timers 5000
+!
+${uplinks}
+!
+${ospfBFD}`;
+  }
+
+  if (vendor === 'nxos') {
+    const isLeaf  = layer === 'dc-leaf';
+    const ifaces  = isLeaf
+      ? `interface Ethernet1/49\n  bfd interval 300 min_rx 300 multiplier 3\ninterface Ethernet1/50\n  bfd interval 300 min_rx 300 multiplier 3`
+      : `interface Ethernet1/1\n  bfd interval 300 min_rx 300 multiplier 3\ninterface Ethernet1/2\n  bfd interval 300 min_rx 300 multiplier 3\ninterface Ethernet1/3\n  bfd interval 300 min_rx 300 multiplier 3\ninterface Ethernet1/4\n  bfd interval 300 min_rx 300 multiplier 3`;
+    const ospfBFD = hasOSPF ? `router ospf UNDERLAY\n  bfd\n!` : '';
+    const bgpNote = hasBGP  ? `! BFD for BGP: add 'bfd' under each 'neighbor' stanza\n` : '';
+    return `!
+! ── BFD (Bidirectional Forwarding Detection) ────────────────
+feature bfd
+!
+${ifaces}
+!
+${ospfBFD}${bgpNote}`;
+  }
+
+  if (vendor === 'junos') {
+    const isLeaf   = layer === 'dc-leaf';
+    const oIfaces  = isLeaf
+      ? `            interface et-0/0/48.0 {\n                bfd-liveness-detection { minimum-interval 300; multiplier 3; }\n            }\n            interface et-0/0/49.0 {\n                bfd-liveness-detection { minimum-interval 300; multiplier 3; }\n            }`
+      : `            interface et-0/0/0.0 {\n                bfd-liveness-detection { minimum-interval 300; multiplier 3; }\n            }\n            interface et-0/0/1.0 {\n                bfd-liveness-detection { minimum-interval 300; multiplier 3; }\n            }`;
+    const ospfBFD  = hasOSPF
+      ? `protocols {\n    ospf {\n        area 0.0.0.0 {\n${oIfaces}\n        }\n    }\n}\n`
+      : '';
+    const isisBFD  = hasISIS
+      ? `protocols {\n    isis {\n        level 2 {\n            bfd-liveness-detection { minimum-interval 300; multiplier 3; }\n        }\n    }\n}\n`
+      : '';
+    if (!ospfBFD && !isisBFD) return '';
+    return `
+# ── BFD (Bidirectional Forwarding Detection) ─────────────────
+${ospfBFD}${isisBFD}`;
+  }
+
+  return '';
+}
+window._genBFD = _genBFD;
 
 /* ════════════════════════════════════════════════════════════════
    NTP + SNMP v3 HELPER BLOCKS  (appended to every vendor config)
@@ -2742,6 +2949,8 @@ ${hasBGP ? `router bgp 65100
   // Common footer for all IOS-XE
   if ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack')) cfg += _genIPv6Underlay('ios-xe', layer, idx);
   cfg += _genIGMP('ios-xe', layer);
+  cfg += _genPIM('ios-xe', layer, idx);
+  cfg += _genBFD('ios-xe', layer);
   cfg += _genQoS('ios-xe', STATE);
   cfg += _genNTP('ios-xe');
   cfg += _genSNMPv3('ios-xe');
@@ -3208,6 +3417,8 @@ ip route 0.0.0.0/0 10.0.0.1 vrf management
 `;
   if ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack')) cfg += _genIPv6Underlay('nxos', layer, idx);
   cfg += _genIGMP('nxos', layer);
+  cfg += _genPIM('nxos', layer, idx);
+  cfg += _genBFD('nxos', layer);
   cfg += _genSTP('nxos', layer);
   cfg += _genQoS('nxos', STATE);
   cfg += _genNTP('nxos');
@@ -3370,6 +3581,7 @@ ${hasISIS && !isTOR ? _genISISUnderlay('eos', layer, idx) : ''}
 ${isLeaf ? _genMLAG(layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('eos', layer, idx) : ''}
 ${_genIGMP('eos', layer)}
+${_genPIM('eos', layer, idx)}
 ${_genSTP('eos', layer)}
 ${_genQoS('eos', STATE)}
 ${_genNTP('eos')}
@@ -3543,6 +3755,8 @@ ${hasOSPF ? _genOSPFUnderlay('junos', STATE, dev, layer, idx) : ''}
 ${hasISIS ? _genISISUnderlay('junos', layer, idx) : ''}
 ${(STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('junos', layer, idx) : ''}
 ${_genIGMP('junos', layer)}
+${_genPIM('junos', layer, idx)}
+${_genBFD('junos', layer)}
 ${_genSTP('junos', layer)}
 ${_genQoS('junos', STATE)}
 ${_genAAA('junos', STATE)}
@@ -3979,6 +4193,7 @@ function genSONiC(dev, layer, idx) {
       (hasOSPF ? _genOSPFUnderlay('sonic', STATE, dev, layer, idx) : '') +
       (hasISIS ? _genISISUnderlay('sonic', layer, idx) : '') +
       ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : '') +
+      _genPIM('sonic', layer, idx) +
       _genQoS('sonic', STATE) + _genNTP('sonic') + _genSNMPv3('sonic') +
       _genAAA('sonic', STATE) + _genGNMI('sonic') +
       (STATE.uc === 'multisite' && layer === 'dc-spine' ? _genDCI('sonic', dev, STATE) : '');
