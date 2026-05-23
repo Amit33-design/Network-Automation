@@ -319,7 +319,7 @@ function selectDevice(id) {
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
-const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'STP', 'QoS', 'SECURITY', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI'];
+const SECTION_MARKERS = ['MANAGEMENT', 'VLANs', 'INTERFACES', 'WAN', 'DMVPN', 'NAT', 'FHRP', 'IGMP', 'ROUTING', 'OSPF', 'IS-IS', 'MLAG', 'BGP', 'EVPN', 'DCI', 'STP', 'QoS', 'SECURITY', 'IPv6', 'NTP', 'SNMP', 'AAA', 'gNMI'];
 function renderSectionNav(code) {
   const nav = document.getElementById('cfg-section-nav');
   const found = SECTION_MARKERS.filter(s => code.toUpperCase().includes(s.toUpperCase()));
@@ -3220,6 +3220,7 @@ feature ssh
 username admin password 0 NetDesign@2024 role network-admin
 `;
   cfg += _genGNMI('nxos');
+  cfg += _genDCI('nxos', dev, STATE);
   cfg += `!
 end
 `;
@@ -3375,7 +3376,7 @@ ${_genNTP('eos')}
 ${_genSNMPv3('eos')}
 ${_genAAA('eos', STATE)}
 ${_genGNMI('eos')}
-ip route vrf MGMT 0.0.0.0/0 10.0.0.1
+${isSpine && STATE.uc === 'multisite' ? _genDCI('eos', dev, STATE) : ''}ip route vrf MGMT 0.0.0.0/0 10.0.0.1
 !
 end
 `;
@@ -3546,7 +3547,248 @@ ${_genSTP('junos', layer)}
 ${_genQoS('junos', STATE)}
 ${_genAAA('junos', STATE)}
 ${_genGNMI('junos')}
-`;
+${dev.layer === 'dc-spine' && STATE.uc === 'multisite' ? _genDCI('junos', dev, STATE) : ''}`;
+}
+
+/* ── DCI / EVPN Multi-Site Border Gateway ───────────────────────
+ * DCI P2P link IPs (10.201.0.0/24, /31 per spine slot):
+ *   DCA↔DCB S1: 10.201.0.0/31  DCA=.0 DCB=.1
+ *   DCA↔DCB S2: 10.201.0.2/31  DCA=.2 DCB=.3
+ *   DCA↔DCC S1: 10.201.0.4/31  DCA=.4 DCC=.5 ...
+ *   DCA↔DCD S1: 10.201.0.8/31  DCB↔DCC S1: 10.201.0.12/31
+ *   DCB↔DCD S1: 10.201.0.16/31 DCC↔DCD S1: 10.201.0.20/31
+ * Per-site BGW loopback: 10.201.254.{siteIdx}/32
+ * eBGP between sites using per-site ASNs (65100/200/300/400).
+ * Appended to dc-spine config only when STATE.uc === 'multisite'.
+ */
+var _DCI_SITES = ['DCA', 'DCB', 'DCC', 'DCD'];
+var _DCI_ASNS  = { DCA: 65100, DCB: 65200, DCC: 65300, DCD: 65400 };
+
+/* Build lookup: 'DCA-DCB-0' → { DCA: '10.201.0.0', DCB: '10.201.0.1' } */
+var _DCI_LINK = (function () {
+  var t = {}, ss = _DCI_SITES, pairs = [], pi = 0;
+  for (var a = 0; a < ss.length; a++) {
+    for (var b = a + 1; b < ss.length; b++) { pairs.push([ss[a], ss[b]]); }
+  }
+  pairs.forEach(function (p, idx) {
+    for (var si = 0; si < 2; si++) {
+      var base = idx * 4 + si * 2;
+      var key  = p[0] + '-' + p[1] + '-' + si;
+      t[key] = {};
+      t[key][p[0]] = '10.201.0.' + base;
+      t[key][p[1]] = '10.201.0.' + (base + 1);
+    }
+  });
+  return t;
+}());
+
+function _dciSiteId(devName) {
+  var m = (devName || '').match(/^(DC[A-D])/i);
+  return m ? m[1].toUpperCase() : null;
+}
+function _dciSpineIdx(devName) {
+  var m = (devName || '').match(/SPINE-?0*(\d+)/i);
+  return m ? (parseInt(m[1], 10) - 1) : 0;
+}
+function _dciGetLink(mySite, remoteSite, spineIdx) {
+  var sorted = [mySite, remoteSite].sort();
+  var key    = sorted[0] + '-' + sorted[1] + '-' + spineIdx;
+  var entry  = _DCI_LINK[key] || {};
+  return { myIP: entry[mySite] || '10.201.0.0', remoteIP: entry[remoteSite] || '10.201.0.1' };
+}
+
+function _genDCI(vendor, dev, state) {
+  var uc = (state || STATE).uc;
+  if (uc !== 'multisite') return '';
+  if (dev.layer !== 'dc-spine') return '';
+
+  var mySite    = _dciSiteId(dev.name);
+  if (!mySite) return '';
+  var spineIdx  = _dciSpineIdx(dev.name);
+  var myASN     = _DCI_ASNS[mySite] || 65100;
+  var siteIdx   = _DCI_SITES.indexOf(mySite);         // 0-3
+  var numSites  = Math.min(4, Math.max(3, parseInt(((state || STATE).numSitesTopology) || 3, 10)));
+  var remotes   = _DCI_SITES.slice(0, numSites).filter(function (s) { return s !== mySite; });
+  var bgwLoIP   = '10.201.254.' + (siteIdx * 2 + spineIdx + 1);
+
+  /* ── NX-OS ── */
+  if (vendor === 'nxos') {
+    var lines = [
+      '!',
+      '! ── DCI / EVPN MULTI-SITE BORDER GATEWAY ────────────────────',
+      '! Site: ' + mySite + '  Spine-' + (spineIdx + 1) + '  BGW-ASN: ' + myASN,
+      '! NOTE: update "router bgp 65000" above to "router bgp ' + myASN + '" for multi-site eBGP.',
+      '!',
+      '! ── BGW LOOPBACK ────────────────────────────────────────────',
+      'interface loopback2',
+      '  description DCI-BGW-VTEP-SOURCE',
+      '  ip address ' + bgwLoIP + '/32',
+      '!',
+      '! ── NVE MULTI-SITE BGW ───────────────────────────────────────',
+      'interface nve1',
+      '  multisite border-gateway interface loopback2',
+      '!',
+      'evpn multisite border-gateway ' + (siteIdx + 1),
+      '  delay-restore time 300',
+      '!'
+    ];
+    remotes.forEach(function (rs, ri) {
+      var link   = _dciGetLink(mySite, rs, spineIdx);
+      var remASN = _DCI_ASNS[rs];
+      lines.push('! ── DCI LINK TO ' + rs + ' ─────────────────────────────────────');
+      lines.push('interface Ethernet3/' + (ri + 1));
+      lines.push('  description DCI-TO-' + rs + '-SPINE-' + (spineIdx + 1));
+      lines.push('  no switchport');
+      lines.push('  mtu 9216');
+      lines.push('  ip address ' + link.myIP + '/31');
+      lines.push('  evpn multisite dci-tracking');
+      lines.push('  no shutdown');
+      lines.push('!');
+      lines.push('router bgp ' + myASN);
+      lines.push('  neighbor ' + link.remoteIP);
+      lines.push('    remote-as ' + remASN);
+      lines.push('    description DCI-BGW-' + rs + '-SPINE-' + (spineIdx + 1));
+      lines.push('    update-source loopback0');
+      lines.push('    ebgp-multihop 3');
+      lines.push('    address-family l2vpn evpn');
+      lines.push('      send-community extended');
+      lines.push('      rewrite-evpn-rt-asn');
+      lines.push('!');
+    });
+    return '\n' + lines.join('\n') + '\n';
+  }
+
+  /* ── EOS ── */
+  if (vendor === 'eos') {
+    var lines = [
+      '',
+      '! ── DCI / EVPN MULTI-SITE BORDER GATEWAY ────────────────────',
+      '! Site: ' + mySite + '  Spine-' + (spineIdx + 1) + '  BGW-ASN: ' + myASN,
+      '! NOTE: update "router bgp 65000" above to "router bgp ' + myASN + '" for multi-site eBGP.',
+      '!',
+      'interface Loopback2',
+      '  description DCI-BGW-VTEP-SOURCE',
+      '  ip address ' + bgwLoIP + '/32',
+      '!'
+    ];
+    remotes.forEach(function (rs, ri) {
+      var link = _dciGetLink(mySite, rs, spineIdx);
+      lines.push('interface Ethernet' + (51 + ri) + '/1');
+      lines.push('  description DCI-TO-' + rs + '-SPINE-' + (spineIdx + 1));
+      lines.push('  no switchport');
+      lines.push('  mtu 9216');
+      lines.push('  ip address ' + link.myIP + '/31');
+      lines.push('  no shutdown');
+      lines.push('!');
+    });
+    lines.push('router bgp ' + myASN);
+    lines.push('   neighbor DCI-PEERS peer group');
+    lines.push('   neighbor DCI-PEERS remote-as external');
+    lines.push('   neighbor DCI-PEERS send-community extended');
+    lines.push('   neighbor DCI-PEERS next-hop-unchanged');
+    lines.push('   neighbor DCI-PEERS maximum-routes 100000 warning-only');
+    remotes.forEach(function (rs) {
+      var link = _dciGetLink(mySite, rs, spineIdx);
+      lines.push('   neighbor ' + link.remoteIP + ' peer group DCI-PEERS');
+      lines.push('   neighbor ' + link.remoteIP + ' description DCI-BGW-' + rs + '-SPINE-' + (spineIdx + 1));
+    });
+    lines.push('   !');
+    lines.push('   address-family ipv4');
+    lines.push('      neighbor DCI-PEERS activate');
+    lines.push('   !');
+    lines.push('   address-family evpn');
+    lines.push('      neighbor DCI-PEERS activate');
+    lines.push('      neighbor DCI-PEERS next-hop-unchanged');
+    lines.push('   !');
+    return lines.join('\n') + '\n';
+  }
+
+  /* ── JunOS ── */
+  if (vendor === 'junos') {
+    var ifStanzas = [], neighborStanzas = [];
+    remotes.forEach(function (rs, ri) {
+      var link   = _dciGetLink(mySite, rs, spineIdx);
+      var remASN = _DCI_ASNS[rs];
+      ifStanzas.push(
+        '    et-0/2/' + ri + ' {\n' +
+        '        unit 0 {\n' +
+        '            description "DCI-TO-' + rs + '-SPINE-' + (spineIdx + 1) + '";\n' +
+        '            family inet { address ' + link.myIP + '/31; }\n' +
+        '        }\n' +
+        '    }'
+      );
+      neighborStanzas.push(
+        '            ' + link.remoteIP + ' {\n' +
+        '                peer-as ' + remASN + ';\n' +
+        '                description "DCI-BGW-' + rs + '-SPINE-' + (spineIdx + 1) + '";\n' +
+        '            }'
+      );
+    });
+    return [
+      '',
+      '## ── DCI / EVPN MULTI-SITE BORDER GATEWAY ─────────────────',
+      '## Site: ' + mySite + '  Spine-' + (spineIdx + 1) + '  ASN: ' + myASN,
+      'interfaces {',
+      '    lo0 { unit 2 { description "DCI-BGW-VTEP-SOURCE"; family inet { address ' + bgwLoIP + '/32; } } }',
+      ifStanzas.join('\n'),
+      '}',
+      'routing-options { autonomous-system ' + myASN + '; }',
+      'protocols {',
+      '    bgp {',
+      '        group DCI-PEERS {',
+      '            type external;',
+      '            family inet unicast;',
+      '            family evpn signaling;',
+      '            next-hop-self;',
+      '            export CONNECTED;',
+      neighborStanzas.join('\n'),
+      '        }',
+      '    }',
+      '}',
+      ''
+    ].join('\n');
+  }
+
+  /* ── SONiC ── */
+  if (vendor === 'sonic') {
+    var ifLines = [], neighLines = [], frr1 = [], frr2 = [];
+    remotes.forEach(function (rs, ri) {
+      var link   = _dciGetLink(mySite, rs, spineIdx);
+      var remASN = _DCI_ASNS[rs];
+      ifLines.push('    "Ethernet' + (120 + ri * 4) + '|' + link.myIP + '/31": { "scope": "global", "family": "IPv4" }');
+      neighLines.push('    "' + link.remoteIP + '": { "asn": "' + remASN + '", "name": "DCI-' + rs + '-S' + (spineIdx + 1) + '", "local_addr": "' + link.myIP + '" }');
+      frr1.push(
+        '  neighbor DCI-' + rs + ' ' + link.remoteIP + '\n' +
+        '  neighbor DCI-' + rs + ' remote-as ' + remASN + '\n' +
+        '  neighbor DCI-' + rs + ' description DCI-BGW-' + rs + '-SPINE-' + (spineIdx + 1)
+      );
+      frr2.push(
+        '    neighbor DCI-' + rs + ' activate\n' +
+        '    neighbor DCI-' + rs + ' send-community extended'
+      );
+    });
+    return [
+      '',
+      '# ── DCI / EVPN MULTI-SITE BORDER GATEWAY ────────────────────',
+      '# Site: ' + mySite + '  Spine-' + (spineIdx + 1) + '  ASN: ' + myASN,
+      '# ── config_db.json additions ─────────────────────────────────',
+      '# Add to LOOPBACK_INTERFACE: "Loopback2|' + bgwLoIP + '/32": {}',
+      '# Add to INTERFACE:',
+      ifLines.join(',\n'),
+      '# Add to BGP_NEIGHBOR:',
+      neighLines.join(',\n'),
+      '# ── frr.conf additions (append to existing router bgp block) ─',
+      '# router bgp ' + myASN,
+      frr1.join('\n'),
+      '#   address-family l2vpn evpn',
+      frr2.join('\n'),
+      '#   exit-address-family',
+      '# Apply: sudo systemctl restart frr',
+      ''
+    ].join('\n');
+  }
+
+  return '';
 }
 
 /* ── SONiC DC Fabric (leaf/spine) ───────────────────────────────── */
@@ -3738,7 +3980,8 @@ function genSONiC(dev, layer, idx) {
       (hasISIS ? _genISISUnderlay('sonic', layer, idx) : '') +
       ((STATE.protoFeatures || []).includes('IPv6 Dual-Stack') ? _genIPv6Underlay('sonic', layer, idx) : '') +
       _genQoS('sonic', STATE) + _genNTP('sonic') + _genSNMPv3('sonic') +
-      _genAAA('sonic', STATE) + _genGNMI('sonic');
+      _genAAA('sonic', STATE) + _genGNMI('sonic') +
+      (STATE.uc === 'multisite' && layer === 'dc-spine' ? _genDCI('sonic', dev, STATE) : '');
   }
 
   /* GPU TOR / GPU spine: keep RoCEv2/PFC-oriented config */
