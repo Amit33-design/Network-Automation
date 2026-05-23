@@ -706,3 +706,28 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 
 **Files changed**: `src/js/configgen.js`
 **Issues closed**: None (self-identified functional gap; no pre-existing issue number)
+
+### 2026-05-23 (run 19)
+
+**Features completed this run:**
+
+1. **PIM Sparse-Mode multicast routing + BFD** — `6331576`
+   - **Root cause for PIM**: IGMP snooping was already configured on all vendors, but without PIM-SM on routed interfaces (SVIs, uplinks), inter-subnet multicast traffic (IP phones, video conferencing) silently drops. This is a real production gap for any campus with voice/video or any DC with multicast.
+   - Added `_genPIM(vendor, layer, idx)` helper covering all 5 vendors.
+   - Guard: only activates when `STATE.appTypes` includes 'voice' or 'video'. Zero-impact for all other designs.
+   - **IOS-XE** campus-dist/core: `ip multicast-routing`, `ip pim rp-address 10.255.0.20`, `ip pim sparse-mode` on all SVIs (Vlan20/21/30/40) and TenGig uplinks, Loopback0; core-01 (idx=0) auto-elected as RP via `ip pim send-rp-announce` + `send-rp-discovery`.
+   - **NX-OS** dc-leaf/spine: `feature pim`, `ip pim rp-address` on loopback0 + Ethernet1/49-50 (leaf) or 1/1-4 (spine); spine-01 announces RP via `send-rp-announce`.
+   - **EOS** dc-leaf/spine: `ip multicast-routing`, `router pim sparse-mode` with `ipv4 { rp-address N; }`, BSR + RP-candidate on dc-spine, `ip pim sparse-mode` on Loopback0 and Ethernet49/1 + 50/1 (leaf) or 1/1–4/1 (spine).
+   - **JunOS** dc-leaf/spine: `protocols { pim { rp { static/local-address + bootstrap rp-candidate }; interface lo0.0/et-0/0/48-49 mode sparse } }` merge stanza.
+   - **SONiC** dc-leaf/spine: `/etc/frr/frr.conf` PIM stanza with `pimd=yes` daemons note; spine gets `bsr-candidate` + `rp-candidate Loopback0`; leaf gets static RP address.
+   - **Root cause for BFD**: EOS already had `bfd all-interfaces` in OSPF/ISIS blocks; SONiC already had `neighbor bfd` in FRRouting peer-groups. IOS-XE, NX-OS, and JunOS had no BFD, meaning their OSPF/BGP convergence after link failure relied entirely on hold-down timers (default 40 s for OSPF).
+   - Added `_genBFD(vendor, layer)` helper for IOS-XE, NX-OS, JunOS. EOS and SONiC return '' (already have BFD inline).
+   - **IOS-XE**: `bfd slow-timers 5000`, `bfd interval 300 min_rx 300 multiplier 3` on all L3 uplinks, `router ospf 1 bfd all-interfaces`.
+   - **NX-OS**: `feature bfd`, `bfd interval 300 min_rx 300 multiplier 3` on uplinks, `router ospf UNDERLAY bfd`.
+   - **JunOS**: `bfd-liveness-detection { minimum-interval 300; multiplier 3; }` merge stanza on OSPF area 0 uplinks + IS-IS level 2.
+   - Both helpers skipped for campus-access (no L3 uplinks), GPU/WAN layers.
+   - `'PIM'` and `'BFD'` added to `SECTION_MARKERS` — section-nav jump bar gains two new buttons.
+   - 26/26 unit tests pass.
+
+**Files changed**: `src/js/configgen.js`
+**Issues closed**: None (self-identified production gaps; no pre-existing issue numbers)
