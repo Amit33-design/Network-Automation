@@ -731,3 +731,30 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 
 **Files changed**: `src/js/configgen.js`
 **Issues closed**: None (self-identified production gaps; no pre-existing issue numbers)
+
+### 2026-05-23 (run 20)
+
+**Features completed this run:**
+
+1. **BGP Unnumbered (RFC 5549) + MACSec link encryption** — `6447af4`
+   - **Root cause**: All DC fabric configs used numbered /31 subnets for eBGP peering. Modern DC fabrics (SONiC, NVIDIA Cumulus, cloud-scale) eliminate fabric link IP addressing entirely via BGP unnumbered (RFC 5549), using IPv6 link-local addresses for eBGP peer discovery. This simplifies fabric design and eliminates IP allocation overhead. MACSec was similarly absent — inter-switch links carried plaintext traffic even in high-security environments.
+   - Added `'BGP Unnumbered (RFC 5549)'` and `'MACSec Link Encryption'` proto-feature cards in Step 2 UI.
+   - Added `_genBGPUnnumbered(vendor, layer, idx, hasVxlan)` covering all 5 vendors:
+     - **EOS**: `ipv6 enable` on Ethernet49/1 + 50/1 (no IP address); `neighbor SPINES remote-as external` + `neighbor interface Ethernet49/1 peer group SPINES` — full eBGP unnumbered with EVPN support preserved.
+     - **JunOS**: `et-0/0/48.0 { family inet6; }` (no /31); `dynamic-neighbor DC-SPINES-DYN { peer-auto-discovery { family inet6; } }` for auto-peering.
+     - **SONiC/FRR**: `config_db.json` uses `ipv6_use_link_local_only` on fabric interfaces (no BGP_NEIGHBOR entries); `frr.conf` uses `neighbor Ethernet48 interface remote-as external` with BFD.
+     - **NX-OS**: Detailed advisory note with NX-OS 10.2+ equivalent syntax (NX-OS has limited unnumbered BGP support).
+   - Added `_genMACSec(vendor, layer, idx)` covering all 5 vendors:
+     - **EOS**: `mac security profile MKA-FABRIC-PSK` (AES-256-GCM, PSK CAK/CKN) + `macsec profile` applied per uplink.
+     - **NX-OS**: `feature macsec` + `key chain FABRIC-KS macsec` + `macsec policy FABRIC-MACSEC` (GCM-AES-XPN-256) + per-interface binding.
+     - **JunOS**: `security { macsec { connectivity-association FABRIC-CA { cipher-suite GCM-AES-XPN-256; security-mode static-cak; } } }` — per-uplink interface binding.
+     - **SONiC**: Advisory note pointing to wpa_supplicant MKA daemon approach (SONiC 202211+).
+   - `genEOS`: conditional on `hasBGPUnnumbered` — numbered /31 + BGP group OR unnumbered interfaces + interface-based peers.
+   - `genJunos`: same conditional on `hasBGPUnnumberedJ` — `family inet` vs `family inet6` on uplinks + numbered vs dynamic-neighbor BGP.
+   - `_genSONiCDCFabric`: early-return path for unnumbered mode with link-local-only config_db.json and FRR config delegated to helper.
+   - `genNXOS`: appends BGP unnumbered advisory + MACSec config when flags set.
+   - `SECTION_MARKERS` extended with `'MACSEC'` and `'UNNUMBERED'` for section-nav jump bar.
+   - All JS files pass `node --check` syntax validation.
+
+**Files changed**: `src/js/configgen.js`, `index.html`
+**Issues closed**: None (new feature — no pre-existing issue number)
