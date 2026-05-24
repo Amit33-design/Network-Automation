@@ -6,7 +6,19 @@ var STATE = {
   siteName: '',
   siteCode: '',         // e.g. IAD, SJC
   scale: 'small',       // small | medium | large
-  redundancy: 'dual',   // single | dual
+  redundancy: 'ha',     // none | basic | ha | full
+  vendors: [],          // cisco | arista | juniper | nvidia | fortinet | hpe | dell | extreme
+  protocols: {
+    underlay: 'bgp',    // bgp | ospf | is-is | eigrp | static
+    overlay:  [],       // vxlan_evpn | mpls_sr | gre | ipsec | geneve | otv | none
+    features: []        // flowspec | bfd | ecmp | vrf | ipv6 | multicast | qos
+  },
+  gpu: {
+    transport: 'none'   // rocev2 | ib | none
+  },
+  org: {
+    sites: 1
+  },
   linkDistances: {      // layer pair -> distance in metres
     'spine-leaf': 100,
     'dist-access': 50,
@@ -36,7 +48,11 @@ window.resetState = function() {
   STATE.siteName = '';
   STATE.siteCode = '';
   STATE.scale = 'small';
-  STATE.redundancy = 'dual';
+  STATE.redundancy = 'ha';
+  STATE.vendors = [];
+  STATE.protocols = { underlay: 'bgp', overlay: [], features: [] };
+  STATE.gpu = { transport: 'none' };
+  STATE.org = { sites: 1 };
   STATE.linkDistances = { 'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 };
   STATE.devices = [];
   STATE.cabling = [];

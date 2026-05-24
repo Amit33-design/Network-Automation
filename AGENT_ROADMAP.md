@@ -20,6 +20,15 @@ Main entry: `index.html` | JS: `src/js/` | Backend: `backend/`
 
 ## Agent Log
 
+### Run 2026-05-24 01:00Z
+**Implemented**: G-02 — Intent coherence validation
+**Files changed**:
+- `src/js/intent_constraints.js` (created) — all 7 CONSTRAINTS from CLAUDE.md §5 exactly (R-01…R-07); `window.validateIntent(state)` maps STATE → intent and returns sorted violations (errors first); `window.applyValidationHighlights(violations)` highlights affected form sections + renders validation banner; `window.clearValidationHighlights()` resets all
+- `src/js/state.js` (updated) — added `vendors`, `protocols.{underlay,overlay,features}`, `gpu.transport`, `org.sites`; redundancy options updated to none|basic|ha|full matching CLAUDE.md schema
+- `index.html` (updated) — CSS for `.field-error`/`.field-warning`/`.val-block-*`; Step 1 form expanded with: Site Identity (+ sites count), Architecture (redundancy 4-option), Vendor Preferences (8 vendors), Protocol Design (underlay select + overlay checkboxes + feature checkboxes), GPU/AI Fabric (transport select, shown only for gpu use case), `#validation-banner` div before submit
+- `src/js/init.js` (updated) — `onStep1Submit` reads all new fields; calls `validateIntent` + `applyValidationHighlights`; blocks navigation on errors, shows advisory toast on warnings; `onUseCaseChange` toggles GPU section visibility + clears stale highlights
+**Tested**: All 7 constraint rules validated via Node.js (R-01 EIGRP+VXLAN, R-02 GENEVE+Cisco, R-03 FlowSpec+non-BGP, R-04 full+static, R-05 campus+IS-IS, R-06 IB+no-NVIDIA, R-07 OTV+single-site, clean design = 0 violations). HTML structure valid.
+
 ### Run 2026-05-24 00:00Z
 **Implemented**: Pre/post check scripts + Prometheus alerts + Grafana dashboard + CLAUDE.md saved
 **Files changed**:

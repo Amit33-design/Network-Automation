@@ -35,16 +35,50 @@ window.goToStep = goToStep;
 function onUseCaseChange() {
   var val = document.getElementById('sel-usecase').value;
   STATE.useCase = val;
+  // Show GPU fabric section only for gpu use case or hpc app type
+  var gpuSection = document.getElementById('fs-gpu');
+  if (gpuSection) gpuSection.style.display = (val === 'gpu') ? '' : 'none';
+  // Clear stale validation highlights when use case changes
+  if (window.clearValidationHighlights) window.clearValidationHighlights();
 }
 window.onUseCaseChange = onUseCaseChange;
 
 function onStep1Submit(e) {
   e && e.preventDefault();
-  STATE.useCase  = document.getElementById('sel-usecase').value;
-  STATE.scale    = document.getElementById('sel-scale').value;
-  STATE.siteName = (document.getElementById('inp-sitename').value || 'HQ').trim();
-  STATE.siteCode = (document.getElementById('inp-sitecode').value || STATE.siteName.slice(0,3)).trim().toUpperCase();
+
+  // Read all form fields into STATE
+  STATE.useCase    = document.getElementById('sel-usecase').value;
+  STATE.scale      = document.getElementById('sel-scale').value;
+  STATE.siteName   = (document.getElementById('inp-sitename').value || 'HQ').trim();
+  STATE.siteCode   = (document.getElementById('inp-sitecode').value || STATE.siteName.slice(0,3)).trim().toUpperCase();
   STATE.redundancy = document.getElementById('sel-redundancy').value;
+
+  var sitesEl = document.getElementById('inp-sites');
+  STATE.org = { sites: sitesEl ? (parseInt(sitesEl.value) || 1) : 1 };
+
+  // Vendors
+  STATE.vendors = [];
+  document.querySelectorAll('.chk-vendor:checked').forEach(function(cb) {
+    STATE.vendors.push(cb.value);
+  });
+
+  // Protocols
+  var underlayEl = document.getElementById('sel-underlay');
+  STATE.protocols = {
+    underlay: underlayEl ? underlayEl.value : 'bgp',
+    overlay:  [],
+    features: []
+  };
+  document.querySelectorAll('.chk-overlay:checked').forEach(function(cb) {
+    STATE.protocols.overlay.push(cb.value);
+  });
+  document.querySelectorAll('.chk-feature:checked').forEach(function(cb) {
+    STATE.protocols.features.push(cb.value);
+  });
+
+  // GPU transport
+  var gpuEl = document.getElementById('sel-gpu-transport');
+  STATE.gpu = { transport: gpuEl ? gpuEl.value : 'none' };
 
   // Link distances
   var ld = STATE.linkDistances;
@@ -53,7 +87,7 @@ function onStep1Submit(e) {
     if (el) ld[key] = parseInt(el.value) || ld[key];
   });
 
-  // Compliance checkboxes
+  // Compliance
   STATE.compliance = [];
   document.querySelectorAll('.chk-compliance:checked').forEach(function(cb) {
     STATE.compliance.push(cb.value);
@@ -64,6 +98,24 @@ function onStep1Submit(e) {
   document.querySelectorAll('.chk-apptype:checked').forEach(function(cb) {
     STATE.appTypes.push(cb.value);
   });
+
+  // ── G-02: Intent coherence validation ─────────────────────────────────────
+  if (window.validateIntent && window.applyValidationHighlights) {
+    var violations = window.validateIntent(STATE);
+    var blocked    = window.applyValidationHighlights(violations);
+    var errCount   = violations.filter(function(v) { return v.severity === 'error'; }).length;
+    var warnCount  = violations.length - errCount;
+
+    if (blocked) {
+      showToast(errCount + ' design error' + (errCount > 1 ? 's' : '') + ' must be fixed before continuing', 'error');
+      return; // block navigation to Step 2
+    }
+    if (warnCount) {
+      showToast(warnCount + ' advisory warning' + (warnCount > 1 ? 's' : '') + ' — review the banner below', 'warning');
+    } else if (window.clearValidationHighlights) {
+      window.clearValidationHighlights(); // all clean
+    }
+  }
 
   showToast('Generating BOM for ' + STATE.useCase + ' / ' + STATE.scale + '…', 'info');
   renderStep2();

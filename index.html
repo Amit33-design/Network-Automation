@@ -309,6 +309,24 @@
     .dist-row { display: flex; align-items: center; gap: 8px; }
     .dist-row input { width: 80px; }
     .dist-row span { font-size: 12px; color: var(--text-dim); }
+
+    /* ─── Intent validation ───────────────────────────────────────────────── */
+    .field-error  { border-color: var(--danger) !important; box-shadow: 0 0 0 3px rgba(239,68,68,.12); }
+    .field-warning { border-color: var(--warn)  !important; box-shadow: 0 0 0 3px rgba(245,158,11,.12); }
+    #validation-banner { display: none; margin-bottom: 16px; }
+    .val-block { border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px; }
+    .val-block-error { background: rgba(239,68,68,.07); border: 1px solid rgba(239,68,68,.5); }
+    .val-block-warn  { background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.5); }
+    .val-block-hdr   { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
+    .val-block-error .val-block-hdr { color: var(--danger); }
+    .val-block-warn  .val-block-hdr { color: var(--warn); }
+    .val-item { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; }
+    .val-item + .val-item { border-top: 1px solid rgba(255,255,255,.05); }
+    .val-id   { font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+    .val-id-error { color: var(--danger); }
+    .val-id-warn  { color: var(--warn); }
+    .val-msg  { font-size: 13px; color: var(--text); }
+    .val-fix  { font-size: 12px; color: var(--text-dim); }
   </style>
 </head>
 <body>
@@ -343,7 +361,7 @@
     </div>
 
     <form onsubmit="window.onStep1Submit(event)">
-      <div class="form-section">
+      <div id="fs-site-identity" class="form-section">
         <h3>Site Identity</h3>
         <div class="form-grid">
           <div class="form-group">
@@ -354,10 +372,14 @@
             <label>Site Code (3-5 chars)</label>
             <input id="inp-sitecode" type="text" placeholder="e.g. IAD" maxlength="5" required>
           </div>
+          <div class="form-group">
+            <label>Number of Sites</label>
+            <input id="inp-sites" type="number" value="1" min="1" max="999">
+          </div>
         </div>
       </div>
 
-      <div class="form-section">
+      <div id="fs-architecture" class="form-section">
         <h3>Architecture</h3>
         <div class="form-grid">
           <div class="form-group">
@@ -384,8 +406,78 @@
           <div class="form-group">
             <label>Redundancy</label>
             <select id="sel-redundancy">
-              <option value="dual" selected>Dual (HA)</option>
-              <option value="single">Single (dev/lab)</option>
+              <option value="none">None (dev / lab)</option>
+              <option value="basic">Basic (single uplink)</option>
+              <option value="ha" selected>High Availability (dual)</option>
+              <option value="full">Full (dual + cross-connect)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div id="fs-vendors" class="form-section">
+        <h3>Vendor Preferences</h3>
+        <div class="checkbox-group">
+          <label class="checkbox-item"><input type="checkbox" class="chk-vendor" value="cisco" checked> Cisco</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-vendor" value="arista"> Arista</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-vendor" value="juniper"> Juniper</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-vendor" value="nvidia"> NVIDIA</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-vendor" value="fortinet"> Fortinet</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-vendor" value="hpe"> HPE</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-vendor" value="dell"> Dell</label>
+          <label class="checkbox-item"><input type="checkbox" class="chk-vendor" value="extreme"> Extreme</label>
+        </div>
+      </div>
+
+      <div id="fs-protocols" class="form-section">
+        <h3>Protocol Design</h3>
+        <div class="form-grid" style="margin-bottom:16px;">
+          <div class="form-group">
+            <label>Underlay Routing</label>
+            <select id="sel-underlay">
+              <option value="bgp" selected>BGP</option>
+              <option value="ospf">OSPF</option>
+              <option value="is-is">IS-IS</option>
+              <option value="eigrp">EIGRP</option>
+              <option value="static">Static</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Overlay / Encapsulation</label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" class="chk-overlay" value="vxlan_evpn"> VXLAN/EVPN</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-overlay" value="mpls_sr"> MPLS-SR</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-overlay" value="gre"> GRE</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-overlay" value="ipsec"> IPsec</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-overlay" value="geneve"> GENEVE</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-overlay" value="otv"> OTV</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-overlay" value="none"> None</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Protocol Features</label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="bfd"> BFD</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="ecmp"> ECMP</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="vrf"> VRF</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="flowspec"> FlowSpec</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="ipv6"> IPv6</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="multicast"> Multicast</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="qos"> QoS</label>
+          </div>
+        </div>
+      </div>
+
+      <div id="fs-gpu" class="form-section" style="display:none;">
+        <h3>GPU / AI Fabric</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>GPU Transport</label>
+            <select id="sel-gpu-transport">
+              <option value="rocev2" selected>RoCEv2 (Ethernet)</option>
+              <option value="ib">InfiniBand</option>
+              <option value="none">None</option>
             </select>
           </div>
         </div>
@@ -434,6 +526,7 @@
         </div>
       </div>
 
+      <div id="validation-banner"></div>
       <button type="submit" class="btn btn-primary">Generate BOM →</button>
     </form>
   </section>
@@ -663,6 +756,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/bom.js"></script>
 <script src="src/js/optics.js"></script>
 <script src="src/js/configgen.js"></script>
+<script src="src/js/intent_constraints.js"></script>
 <script src="src/js/checks.js"></script>
 <script src="src/js/monitoring.js"></script>
 <script src="src/js/init.js"></script>
