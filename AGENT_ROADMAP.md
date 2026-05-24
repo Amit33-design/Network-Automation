@@ -873,3 +873,34 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 
 **Files changed**: `src/js/validator.js` (new), `index.html`, `src/css/main.css`, `src/js/app.js`, `src/js/analytics.js`, `src/js/init.js`, `src/js/paywall.js`, `src/js/policy_rules_editor.js`, `src/js/similar_designs.js`
 **Issues closed:** None (self-identified UX gap + tech constraint violations)
+
+### 2026-05-24 (run 24)
+
+**Features completed this run:**
+
+1. **NETCONF / eAPI Config Push** — `cbc748a`
+   - Created `src/js/netconf.js` (520 lines) — fills the gap between "config generated" (Step 5) and "config deployed" without requiring Ansible or manual SSH.
+   - `genNetconfPushScript(state)` embeds pre-generated BOM device configs as base64-encoded constants in a self-contained `netconf_push.py` Python script.
+   - **JunOS**: `ncclient` NETCONF `load_configuration(format='text', action='merge')` + `commit()` — accepts the exact JunOS text/set CLI generated in Step 5 without transformation.
+   - **IOS-XE**: `ncclient` NETCONF with `Cisco-IOS-XE-native` YANG model (hostname push) + `cisco-ia:sync-from` RPC (IOS-XE 16.12+) for full CLI synchronisation.
+   - **NX-OS**: `ncclient` NETCONF with `Cisco-NX-OS-device` YANG model (hostname + advisory for full config push via NAPALM/Ansible).
+   - **EOS**: Arista `eAPI` `runCmds` over HTTPS JSON-RPC — parses the EOS CLI config into a command list and applies via `enable` + `configure`.
+   - **SONiC**: OpenConfig RESTCONF REST API hostname push + `sonic-cfggen` advisory for full `config_db.json` apply.
+   - Script flags: `--dry-run` (connectivity only, no config changes), `--device HOSTNAME` (single device), `--no-commit` (skip commit / JunOS discard-changes), `--yes` (skip interactive confirmation).
+   - Credentials from `NETCONF_USER` / `NETCONF_PASSWORD` env vars; no hardcoded secrets in script.
+   - `rich` console table summary + JSON report file saved per run; graceful fallback when `rich` not installed.
+   - `renderNetconfPanel()` renders a download card with API method table and quick-start code block in Step 6; auto-called in `jumpStep(6)` via `app.js`.
+
+2. **Mermaid Topology Export** — `cbc748a`
+   - Created `src/js/mermaid_export.js` (316 lines) — converts the BOM topology to Mermaid `graph TD` syntax for pasting into GitHub markdown, Confluence, Notion, or mermaid.live.
+   - `genMermaidTopology(state)`: builds Mermaid with YAML front-matter title, `subgraph` per layer (icon + device count), device nodes with product model subtitle, and edge labels (speed + cable type).
+   - Edge source: uses the live cabling matrix (`generateCablingMatrix()` → `details[]` → `deviceA`/`deviceB`) for exact device-pair connections; falls back to layer-pair mesh derivation when cabling data is not yet ready.
+   - Per-layer `classDef` colour coding: core=blue, dist=orange, access=green, spine=purple, leaf=cyan, GPU TOR=gold, GPU spine=pink, fw=red.
+   - `copyMermaidToClipboard()` — `navigator.clipboard` with `execCommand` fallback.
+   - `downloadMermaidFile()` — downloads `<orgSlug>-topology.mmd`.
+   - **New "📊 Mermaid Diagram" tab** added to Step 4 design tab bar; `renderMermaidPanel()` called on tab click (same lazy-render pattern as Reference Designs / Summary tabs).
+   - 10 `.mmd-*` CSS rules added to `main.css`.
+
+**Files added**: `src/js/netconf.js`, `src/js/mermaid_export.js`
+**Files changed**: `index.html`, `src/css/main.css`, `src/js/app.js`
+**Issues closed:** None (self-identified deployment gap + documentation gap; no pre-existing issue numbers)
