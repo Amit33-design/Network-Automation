@@ -375,6 +375,20 @@ window.parsePostCheckReport = function() {
   showToast('Diff report rendered', 'success');
 };
 
+// ─── Canary deploy pane (G-28) ───────────────────────────────────────────────
+
+function renderCanaryDeployPane() {
+  var out = document.getElementById('canary-deploy-output');
+  if (!out) return;
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Complete Step 1 first', 'warning');
+    return;
+  }
+  out.innerHTML = window.renderDeployPane(STATE);
+  showToast('Canary deploy plan generated', 'success');
+}
+window.renderCanaryDeployPane = renderCanaryDeployPane;
+
 // ─── Rollback pane (G-25) ────────────────────────────────────────────────────
 
 function renderRollbackPane() {

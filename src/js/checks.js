@@ -89,6 +89,46 @@ function _buildInventoryPy(devices) {
   return lines.join('\n');
 }
 
+// Build loopback IP matrix from device list (lo0 = 10.0.0.<unit>)
+function _buildReachabilityPy(devices) {
+  var loopbacks = [];
+  devices.forEach(function(dev) {
+    var ip = dev.loopback0 || ('10.0.0.' + (dev.unit || 1));
+    loopbacks.push({ hostname: dev.hostname, ip: ip });
+  });
+
+  var lines = [
+    '# Reachability matrix — loopback0 IPs (edit to match your addressing)',
+    'LOOPBACKS = {'
+  ];
+  loopbacks.forEach(function(lb) {
+    lines.push('    "' + lb.hostname + '": "' + lb.ip + '",');
+  });
+  lines.push('}');
+  lines.push('');
+  lines.push('PING_CMDS = {');
+  lines.push('    "nxos":  lambda ip: f"ping {ip} count 3 timeout 2",');
+  lines.push('    "iosxe": lambda ip: f"ping {ip} repeat 3 timeout 2",');
+  lines.push('    "eos":   lambda ip: f"ping {ip} repeat 3",');
+  lines.push('    "junos": lambda ip: f"ping {ip} count 3 rapid",');
+  lines.push('    "sonic": lambda ip: f"ping -c 3 -W 2 {ip}",');
+  lines.push('}');
+  lines.push('');
+  lines.push('def check_reachability(dev, conn):');
+  lines.push('    """Ping all loopbacks from this device; return list of failures."""');
+  lines.push('    platform = dev["platform"]');
+  lines.push('    ping_fn  = PING_CMDS.get(platform, PING_CMDS["nxos"])');
+  lines.push('    failures = []');
+  lines.push('    for target_hn, target_ip in LOOPBACKS.items():');
+  lines.push('        if target_hn == dev["hostname"]: continue  # skip self');
+  lines.push('        cmd = ping_fn(target_ip)');
+  lines.push('        out = conn.send_command(cmd, expect_string=r"#", read_timeout=10)');
+  lines.push('        if "!!!!!" not in out and "5 received" not in out and "bytes from" not in out:');
+  lines.push('            failures.append(f"{dev[\"hostname\"]} → {target_hn} ({target_ip})")');
+  lines.push('    return failures');
+  return lines.join('\n');
+}
+
 // Build COMMANDS dict — per-platform command lists
 function _buildCommandsPy() {
   var lines = ['COMMANDS = {'];
@@ -268,6 +308,8 @@ window.genPostCheckScript = function(devices, state) {
     '',
     _buildCommandsPy(),
     '',
+    _buildReachabilityPy(devices),
+    '',
     'BASELINE_FILE  = "pre_baseline_' + site.toLowerCase() + '.json"',
     'REPORT_FILE    = "post_report_' + site.toLowerCase() + '.json"',
     '',
@@ -276,7 +318,7 @@ window.genPostCheckScript = function(devices, state) {
     '    cmds = COMMANDS.get(platform, COMMANDS["nxos"])',
     '    results = {"hostname": dev["hostname"], "host": dev["host"],',
     '               "platform": platform, "timestamp": datetime.datetime.utcnow().isoformat(),',
-    '               "commands": {}, "reachable": False, "error": None}',
+    '               "commands": {}, "ping_failures": [], "reachable": False, "error": None}',
     '    try:',
     '        with ConnectHandler(**{k: dev[k] for k in',
     '                ("host","device_type","username","password","secret")}) as conn:',
@@ -286,6 +328,7 @@ window.genPostCheckScript = function(devices, state) {
     '                    results["commands"][key] = conn.send_command(cmd)',
     '                except Exception as e:',
     '                    results["commands"][key] = "ERROR: " + str(e)',
+    '            results["ping_failures"] = check_reachability(dev, conn)',
     '    except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:',
     '        results["error"] = str(e)',
     '    return results',
@@ -338,6 +381,9 @@ window.genPostCheckScript = function(devices, state) {
     '    post_err = extract_interface_errors(post["commands"].get("iface", ""))',
     '    if post_err - pre_err > 100:',
     '        alerts.append(f"INTERFACE ERRORS: total errors increased {pre_err} → {post_err} (+{post_err - pre_err})")',
+    '',
+    '    for fail in post.get("ping_failures", []):',
+    '        alerts.append(f"REACHABILITY: ping failed — {fail}")',
     '',
     '    return alerts',
     '',

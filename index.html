@@ -865,6 +865,7 @@ export NET_ENABLE=enablepassword   # if required</pre>
       <div class="bom-tab active" data-pane="mon-pane-prom">Prometheus Alerts</div>
       <div class="bom-tab" data-pane="mon-pane-grafana">Grafana Dashboard</div>
       <div class="bom-tab" data-pane="mon-pane-deploy">Deploy Guide</div>
+      <div class="bom-tab" data-pane="mon-pane-canary">Canary Deploy</div>
       <div class="bom-tab" data-pane="mon-pane-rollback">Rollback</div>
     </div>
 
@@ -920,6 +921,16 @@ curl -X POST http://localhost:9090/-/reload</pre>
       </div>
     </div>
 
+    <div id="mon-pane-canary" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-primary" onclick="window.renderCanaryDeployPane()">Generate Canary Deploy</button>
+        <button class="btn btn-secondary" onclick="window.downloadDeployScript()">Download deploy.py</button>
+      </div>
+      <div id="canary-deploy-output">
+        <p class="empty-state">Complete Step 1 and click Generate Canary Deploy.</p>
+      </div>
+    </div>
+
     <div id="mon-pane-rollback" class="bom-pane">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderRollbackPane()">Generate Rollback Plan</button>
@@ -948,6 +959,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/checks.js"></script>
 <script src="src/js/monitoring.js"></script>
 <script src="src/js/rollback.js"></script>
+<script src="src/js/deploy.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>
