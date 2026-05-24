@@ -147,6 +147,13 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 - [x] **Day-2 Operations Toolkit**: Config backup (git + rotation), rolling firmware upgrade (health-gated, per-vendor), maintenance-mode drain (OSPF max-metric + BGP graceful-shutdown) scripts for all 5 NOS
 
+### TIER 6 — Config Quality & UX
+
+- [x] **Config Parameters Panel**: Step 5 collapsible form to customize NTP/TACACS/SNMP/syslog server IPs, domain name, BGP ASNs, and credentials before generating configs. Values persist in localStorage and update all vendor configs on Apply.
+- [ ] **Config Linter**: Analyze generated vendor configs for missing mandatory sections, known anti-patterns (e.g. `no shutdown` on management, NTP without auth, BGP without `maximum-paths`). Show as a badge count + panel in Step 5 config viewer.
+- [ ] **Port Capacity Report**: Per-device table showing fabric ports used vs. total, oversubscription ratio, and uplink headroom. Flag devices near capacity. Available in BOM step.
+- [ ] **Multi-vendor Consistency Checker**: Verify that NTP servers, TACACS+ servers, SNMP trap targets, and domain name are consistent across ALL generated configs. Surface mismatches as a summary panel.
+
 ---
 
 ## Coding Conventions (agent must follow exactly)
@@ -904,3 +911,38 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 **Files added**: `src/js/netconf.js`, `src/js/mermaid_export.js`
 **Files changed**: `index.html`, `src/css/main.css`, `src/js/app.js`
 **Issues closed:** None (self-identified deployment gap + documentation gap; no pre-existing issue numbers)
+
+### 2026-05-24 (run 25)
+
+**Features completed this run:**
+
+1. **Config Parameters Panel** — `e379720`
+   - Created `src/js/params.js` (220 lines): `PARAMS` object with 17 configurable values
+     (ntp1/2, tacacs1/2, snmpTrap, syslog, gnmiCollector, dnsServer, domainName,
+     spineAsn, leafAsnBase, ntpKey, snmpUser, snmpAuthPw, snmpPrivPw, tacacsKey,
+     hsrpKey, enableSecret). Persists to localStorage (`netdesign_params_v1`).
+   - `_P(key)` returns string value (empty → fallback to default, backward-safe).
+     `_PI(key)` returns integer, safe for BGP ASN arithmetic.
+   - Collapsible panel (▼ Expand) rendered at top of Step 5 via `renderParamsPanel()`.
+     Three sections: Infrastructure Servers, Network Config, Credentials.
+     Password-type inputs for all secrets. Apply & Regenerate + Reset to Defaults.
+   - Wired into configgen.js helper functions — all 5 vendor blocks updated:
+     - `_genGNMI`:   gnmiCollector → `10.0.0.210`
+     - `_genNTP`:    ntp1/ntp2/ntpKey/syslog — all 5 vendors
+     - `_genSNMPv3`: snmpUser/snmpAuthPw/snmpPrivPw/snmpTrap/syslog — all 5 vendors
+     - `_genAAA`:    tacacs1/tacacs2/tacacsKey — all 5 vendors
+     - `genIOSXE` campus: domainName, dnsServer, enableSecret
+     - `genNXOS`:    domainName, spineAsn, leafAsnBase
+     - `genEOS`:     spineAsn, leafAsnBase; remote-as uses variables
+     - `genJunos`:   domainName, autonomous-system, peer-as, vrf-target
+     - `_genWANRouterIOSXE` / `_genWANRouterJunOS`: domainName, enableSecret
+     - `_genBGPUnnumbered`: spineAsn / leafAsnBase
+     - `_genRouteReflector`: spineAsn for NX-OS and EOS spine `router bgp N`
+   - `index.html`: `#params-panel` div before `.cfg-layout`; script tag before configgen.js.
+   - `topology.js`: `renderParamsPanel()` called in `jumpStep(5)` hook.
+   - `main.css`: 30 `.prm-*` CSS rules (panel, header, grid, fields, inputs, actions).
+   - All 50 JS files pass `node --check`; no ES module violations; `'use strict'` in all files.
+
+**Issues closed:** None (self-identified UX gap; no pre-existing issue number)
+
+**Files changed**: `src/js/params.js` (new), `src/js/configgen.js`, `src/js/topology.js`, `index.html`, `src/css/main.css`
