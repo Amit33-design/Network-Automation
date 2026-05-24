@@ -1484,6 +1484,7 @@
       <button class="dtab" onclick="switchDesignTab(this,'lld-bgp')">🔀 Routing &amp; Protocols</button>
       <button class="dtab" onclick="switchDesignTab(this,'lld-phy')">🔌 Physical Links</button>
       <button class="dtab" onclick="switchDesignTab(this,'lld-ref');renderRefArchitectures()">📚 Reference Designs</button>
+      <button class="dtab" onclick="switchDesignTab(this,'mermaid');renderMermaidPanel()">📊 Mermaid Diagram</button>
       <button class="dtab" onclick="switchDesignTab(this,'simulate');renderSimulationTab()">🧪 Simulate</button>
       <button class="dtab" onclick="switchDesignTab(this,'summary');renderDesignSummary()">📋 Summary</button>
     </div>
@@ -1649,6 +1650,15 @@
       <div id="summary-tab-content">
         <div style="color:var(--txt2);text-align:center;padding:3rem">
           Generate products &amp; topology (Step 3 → Build Design) to see the design summary.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Mermaid Diagram Panel ── -->
+    <div class="design-panel" id="dpanel-mermaid">
+      <div id="mermaid-panel">
+        <div style="color:var(--txt2);text-align:center;padding:3rem">
+          Generate the design first (Step 3 → Build Design) to export the Mermaid diagram.
         </div>
       </div>
     </div>
@@ -1834,6 +1844,9 @@
 
     <!-- Streaming Telemetry / gNMI collector config panel -->
     <div id="telemetry-panel" style="margin-bottom:1.5rem"></div>
+
+    <!-- NETCONF / eAPI config push script panel -->
+    <div id="netconf-panel" style="margin-bottom:1.5rem"></div>
 
     <!-- Action bar -->
     <div style="display:flex;gap:.85rem;flex-wrap:wrap;margin-bottom:1.75rem" id="deploy-action-bar">
@@ -3377,6 +3390,7 @@ rules:
 <script src="src/js/optics.js"></script>
 <script src="src/js/ansible.js"></script>
 <script src="src/js/topology.js"></script>
+<script src="src/js/mermaid_export.js"></script>
 <script src="src/js/policy_blocks.js"></script>
 <script src="src/js/naming.js"></script>
 <script src="src/js/netbox.js"></script>
@@ -3393,6 +3407,7 @@ rules:
 <script src="src/js/checks.js"></script>
 <script src="src/js/day2ops.js"></script>
 <script src="src/js/telemetry.js"></script>
+<script src="src/js/netconf.js"></script>
 <script src="src/js/dnac.js"></script>
 <script src="src/js/awx.js"></script>
 <script src="src/js/servicenow.js"></script>

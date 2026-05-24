@@ -3444,3 +3444,20 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .rval-cap-table th { background: var(--bg3); color: var(--txt1); font-weight: 600;
                      padding: .4rem .75rem; border: 1px solid var(--border); text-align: left; }
 .rval-cap-table td { padding: .4rem .75rem; border: 1px solid var(--border); }
+
+
+/* ── Mermaid Topology Export Panel ────────────────────────────────── */
+.mmd-panel         { background: var(--bg1); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; }
+.mmd-panel-hdr     { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin-bottom: .6rem; }
+.mmd-panel-title   { font-size: .9rem; font-weight: 700; color: var(--txt0); }
+.mmd-panel-sub     { font-size: .77rem; color: var(--txt2); margin-top: .15rem; }
+.mmd-panel-actions { display: flex; gap: .5rem; flex-shrink: 0; }
+.mmd-btn           { font-size: .78rem; padding: .3rem .7rem; }
+.mmd-hint          { font-size: .79rem; color: var(--txt2); margin-bottom: .75rem; line-height: 1.5; }
+.mmd-hint a        { color: var(--blue); text-decoration: none; }
+.mmd-hint a:hover  { text-decoration: underline; }
+.mmd-code-wrap     { overflow-x: auto; border-radius: 8px; }
+.mmd-code          { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+                     padding: 1rem; font-size: .74rem; font-family: monospace; line-height: 1.6;
+                     color: var(--txt1); white-space: pre; overflow-x: auto; margin: 0;
+                     max-height: 480px; overflow-y: auto; }
