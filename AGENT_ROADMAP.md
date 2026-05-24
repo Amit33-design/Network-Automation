@@ -805,3 +805,43 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 
 **Files changed**: `src/js/configgen.js`
 **Issues closed**: None (no GitHub issue number; self-identified overlay chip no-op gap)
+
+### 2026-05-24 (run 22)
+
+**Features completed this run:**
+
+1. **IP Address & VLAN Allocation Plan** — `41cd0c3`
+   - Created `src/js/ipplan.js` (519 lines) with four `window.*` public functions.
+   - `genIPAddressPlan(state)` — per-UC structured plan rows matching the exact IPs used in
+     `configgen.js`: User VLANs + subnets (VLAN 10/20/21/30/40/41), HSRP VIPs, loopbacks
+     (campus 10.255.0.20+, DC spines 10.255.1.x, DC leaves 10.255.2.x, GPU TOR 10.255.5–6.x),
+     P2P fabric /31 links (10.1.0.0/24 block), BGP ASNs (65000 spine, 65001+ leaves), VXLAN
+     overlay (VNIs 100000/100001/999000/999001, anycast GW 10.200.0.1/22 + 10.200.4.1/22),
+     MLAG peer-link SVIs (10.254.x.x/30), DMVPN tunnel subnet (172.16.0.0/24), branch LAN
+     (192.168.100+.0/24), multi-site DCI P2P links (10.201.0.0/24), shared services block
+     (NTP 10.0.0.1/2, TACACS+ 10.0.0.101/102, SNMP 10.0.0.200, syslog 10.0.0.201, gNMI 10.0.0.210).
+   - `renderIPPlanPanel()` — collapsible table in `#ipplan-section` with category badges
+     colour-coded by type (VLANs=blue, loopbacks=purple, overlay=purple, routing=green, services=grey).
+   - `downloadIPPlanCSV()` — browser CSV download (6 columns: category, resource, VLAN, subnet, purpose, notes).
+   - `downloadIPPlanMarkdown()` — Markdown table download with org name and date header.
+   - `index.html`: `#ipplan-section` div in BOM section after `#rack-plan-section`; script tag after `eol.js`.
+   - `src/js/recommendations.js`: `renderIPPlanPanel()` called from `updateBOMTable()`.
+   - `src/css/main.css`: 14 `.ipplan-*` rules (table, category badges, subnet code, footnote).
+
+2. **Security hardening baseline for all 5 vendor configs** — `22cc022`
+   - Audited all vendor config generators and added missing CIS/NIST network hardening commands.
+   - **IOS-XE**: `no service finger/tcp-small-servers/udp-small-servers`, `no ip http server`,
+     `ip http secure-server` + `ip http authentication aaa`, `no ip source-route`,
+     `no ip finger`, `no ip bootp server`, `login block-for 60 attempts 5 within 30`,
+     `login delay 2`, `banner motd` with device name, `ip access-list MGMT-ACL` (10.0.0.0/24 only).
+   - **NX-OS**: `no feature telnet`, `no feature http-server`, `banner motd`.
+   - **EOS**: `management api gnmi` (TLS), `no management api restconf`, `management security ssl profile`
+     (TLS 1.2/1.3 only), `management ssh idle-timeout 10`, `banner motd`.
+   - **JunOS** (both WAN and DC templates): `ssh max-sessions-per-connection 1`, `connection-limit 10`,
+     `rate-limit 5`, `xnm-clear-text { no }`, login `announcement` + `retry-options` (lockout 5 min),
+     `syslog file security { authorization any; interactive-commands any }`, `no-multicast-echo`,
+     `no-ping-record-route`, `no-redirects`.
+   - **SONiC** (GPU TOR): `/etc/ssh/sshd_config` hardening comments (`PermitRootLogin no`,
+     `PasswordAuthentication no`, `MaxAuthTries 3`, `Banner /etc/issue.net`), `/etc/issue.net` content.
+
+**Issues closed:** None (self-identified production correctness / security gaps)
