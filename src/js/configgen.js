@@ -99,6 +99,60 @@ function _leafDesign(dev, state) {
   };
 }
 
+// ─── STP design helper (G-14) ────────────────────────────────────────────────
+// Returns per-platform STP config block driven by state.stp.
+
+function _nxosStpBlock(state) {
+  var stp = state.stp || { mode: 'mstp', bpdu_guard: true, portfast: true, mst_vlan: '1-4094' };
+  var modeCmd = stp.mode === 'rpvst' ? 'rapid-pvst' : (stp.mode === 'pvst' ? 'pvst' : 'mst');
+  var lines = [
+    '! --- STP (G-14) ---',
+    'spanning-tree mode ' + modeCmd,
+  ];
+  if (stp.mode === 'mstp') {
+    lines = lines.concat([
+      'spanning-tree mst configuration',
+      '  name NDAL-MST',
+      '  revision 1',
+      '  instance 1 vlan ' + (stp.mst_vlan || '1-4094'),
+    ]);
+  }
+  if (stp.portfast)   lines.push('spanning-tree port type edge default');
+  if (stp.bpdu_guard) lines.push('spanning-tree port type edge bpduguard default');
+  lines.push('! Apply to each server-facing interface:');
+  if (stp.portfast)   lines.push('!   spanning-tree port type edge');
+  if (stp.bpdu_guard) lines.push('!   spanning-tree bpduguard enable');
+  return lines;
+}
+
+function _eosStpBlock(state) {
+  var stp = state.stp || { mode: 'mstp', bpdu_guard: true, portfast: true, mst_vlan: '1-4094' };
+  var modeCmd = stp.mode === 'rpvst' ? 'rapid-pvst' : (stp.mode === 'pvst' ? 'pvst' : 'mstp');
+  var lines = [
+    '! --- STP (G-14) ---',
+    'spanning-tree mode ' + modeCmd,
+  ];
+  if (stp.mode === 'mstp') {
+    lines = lines.concat([
+      'spanning-tree mst configuration',
+      '   name NDAL-MST',
+      '   revision 1',
+      '   instance 1 vlan-map ' + (stp.mst_vlan || '1-4094'),
+    ]);
+  }
+  if (stp.portfast)   lines.push('spanning-tree portfast default');
+  if (stp.bpdu_guard) lines.push('spanning-tree bpduguard default');
+  return lines;
+}
+
+function _junosStpBlock(state) {
+  var stp = state.stp || { bpdu_guard: true, portfast: true };
+  var lines = ['# --- STP (G-14) ---'];
+  lines.push('set protocols rstp interface all edge');
+  if (stp.bpdu_guard) lines.push('set protocols rstp bpdu-block-on-edge');
+  return lines;
+}
+
 // ─── EVPN design helper (G-11) ────────────────────────────────────────────────
 // Returns RD/RT strings derived from state.evpn + leafDesign values.
 
@@ -374,12 +428,16 @@ function nxosLeafConfig(dev, state) {
       '',
       '! --- ESI multi-homing ---',
       'evpn multihoming',
-      '  system-mac auto',   // Type 1 LACP: auto-derived; Type 0: set manually
+      '  system-mac auto',
     ]);
     if (ev.esiType === 'type0') {
       lines.push('  ! Type 0 ESI: set manually per uplink port-channel — e.g. esi 0000.0000.0001.0001.0001');
     }
   }
+
+  // STP design (G-14)
+  lines.push('');
+  lines = lines.concat(_nxosStpBlock(state));
 
   return lines.join('\n') + '\n';
 }
@@ -543,6 +601,10 @@ function aristaLeafConfig(dev, state) {
     ]);
   }
 
+  // STP design (G-14)
+  lines.push('');
+  lines = lines.concat(_eosStpBlock(state));
+
   return lines.join('\n') + '\n';
 }
 
@@ -601,6 +663,10 @@ function juniperLeafConfig(dev, state) {
     'set vlans SERVERS vlan-id ' + d.vlanId,
     'set vlans SERVERS vxlan vni ' + d.l2vni,
   ]);
+
+  // STP design (G-14)
+  lines.push('');
+  lines = lines.concat(_junosStpBlock(state));
 
   return lines.join('\n') + '\n';
 }

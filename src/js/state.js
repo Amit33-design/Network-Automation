@@ -37,6 +37,12 @@ var STATE = {
     arp_suppress: true,
     advertise_pip: true
   },
+  stp: {
+    mode:       'mstp',    // 'mstp' | 'rpvst' | 'pvst'
+    bpdu_guard: true,      // enable BPDU guard on edge/portfast ports
+    portfast:   true,      // enable PortFast on server-facing ports
+    mst_vlan:   '1-4094'   // VLAN range for MST instance 1
+  },
   linkDistances: {      // layer pair -> distance in metres
     'spine-leaf': 100,
     'dist-access': 50,
@@ -76,6 +82,7 @@ window.resetState = function() {
   STATE.gpu  = { transport: 'none' };
   STATE.org  = { sites: 1 };
   STATE.evpn = { rd: 'auto', rt: 'auto', rt_base: '', rt_types: ['rt2','rt3'], esi: false, esi_type: 'type1', arp_suppress: true, advertise_pip: true };
+  STATE.stp  = { mode: 'mstp', bpdu_guard: true, portfast: true, mst_vlan: '1-4094' };
   STATE.linkDistances = { 'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 };
   STATE.devices = [];
   STATE.cabling = [];

@@ -593,6 +593,32 @@
             </select>
           </div>
         </div>
+
+        <!-- STP Design — visible for dc/campus use cases -->
+        <div id="fs-stp-design" style="display:none; margin-top:16px; padding:14px 16px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface2);">
+          <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--accent); margin-bottom:12px;">STP Design (G-14)</div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>STP Mode</label>
+              <select id="sel-stp-mode">
+                <option value="mstp">MSTP (802.1s — recommended DC)</option>
+                <option value="rpvst">Rapid PVST+ (per-VLAN)</option>
+                <option value="pvst">PVST+ (legacy)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>MST Instance 1 VLANs</label>
+              <input id="inp-stp-mst-vlan" type="text" value="1-4094" placeholder="1-4094">
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:8px;">
+            <label>Edge Port Hardening (server-facing ports)</label>
+            <div class="checkbox-group">
+              <label class="checkbox-item"><input type="checkbox" id="chk-stp-portfast" checked> PortFast / Edge (skip Listening+Learning)</label>
+              <label class="checkbox-item"><input type="checkbox" id="chk-stp-bpduguard" checked> BPDU Guard (err-disable on BPDU receipt)</label>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div id="fs-gpu" class="form-section" style="display:none;">

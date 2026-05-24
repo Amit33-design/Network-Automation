@@ -35,10 +35,11 @@ window.goToStep = goToStep;
 function onUseCaseChange() {
   var val = document.getElementById('sel-usecase').value;
   STATE.useCase = val;
-  // Show GPU fabric section only for gpu use case or hpc app type
   var gpuSection = document.getElementById('fs-gpu');
   if (gpuSection) gpuSection.style.display = (val === 'gpu') ? '' : 'none';
-  // Clear stale validation highlights when use case changes
+  // Show STP section for dc and campus (G-14)
+  var stpSection = document.getElementById('fs-stp-design');
+  if (stpSection) stpSection.style.display = (val === 'dc' || val === 'campus') ? '' : 'none';
   if (window.clearValidationHighlights) window.clearValidationHighlights();
 }
 window.onUseCaseChange = onUseCaseChange;
@@ -95,6 +96,14 @@ function onStep1Submit(e) {
   STATE.ecmp = {
     max_paths:      parseInt(document.getElementById('inp-ecmp-max-paths').value) || 8,
     hash_algorithm: document.getElementById('sel-ecmp-hash').value || 'default'
+  };
+
+  // STP design (G-14)
+  STATE.stp = {
+    mode:       (document.getElementById('sel-stp-mode')      || {}).value   || 'mstp',
+    bpdu_guard: !!(document.getElementById('chk-stp-bpduguard') || {}).checked,
+    portfast:   !!(document.getElementById('chk-stp-portfast')  || {}).checked,
+    mst_vlan:   (document.getElementById('inp-stp-mst-vlan')  || {}).value   || '1-4094'
   };
 
   // EVPN design parameters (G-11)
