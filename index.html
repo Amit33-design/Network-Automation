@@ -361,18 +361,24 @@
     .symptom-search-bar select { min-width: 130px; }
 
     /* ─── Mobile responsive ──────────────────────────────────────────────────── */
-    /* Prevent page-level horizontal scroll; scrollable children still work */
-    html { overflow-x: hidden; }
-    body { overflow-x: hidden; }
+    /* clip (not hidden) — visually prevents page-level horizontal scroll but does NOT
+       create a scroll container, so child overflow-x:auto elements receive touch events */
+    html { overflow-x: clip; }
+    body { overflow-x: clip; }
 
     /* Tables: scroll within their pane rather than blowing out the page */
     .bom-pane   { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .bom-table  { min-width: 480px; } /* ensure scroll triggers before content wraps oddly */
+    .bom-table  { min-width: 480px; }
     .rollback-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .rollback-table   { min-width: 420px; }
 
-    /* config-pre already has overflow:auto — ensure it scrolls itself, not the page */
-    .config-pre { max-width: 100%; }
+    /* Config viewer: scrollable wrapper so the pre can scroll horizontally on touch */
+    .config-viewer { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .config-pre    {
+      max-width: none;           /* let content dictate width inside scroll container */
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-x pan-y; /* tell the browser both axes are OK here */
+    }
 
     /* Ensure textarea never blows out its container */
     textarea { width: 100%; max-width: 100%; box-sizing: border-box; }
@@ -804,6 +810,7 @@
       <div class="bom-tab" data-pane="bom-pane-cabling">Cabling Schedule</div>
       <div class="bom-tab" data-pane="bom-pane-optics">Optics</div>
       <div class="bom-tab" data-pane="bom-pane-rack">Rack Layout</div>
+      <div class="bom-tab" data-pane="bom-pane-tco">TCO (3yr)</div>
       <div class="bom-tab" data-pane="bom-pane-capacity">Capacity Math</div>
     </div>
     </div>
@@ -832,6 +839,15 @@
       </div>
       <div id="rack-layout-output">
         <p class="empty-state">Rack layout will appear after BOM generation.</p>
+      </div>
+    </div>
+
+    <div id="bom-pane-tco" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-secondary" onclick="window.downloadTCOCSV()">Download TCO CSV</button>
+      </div>
+      <div id="tco-output">
+        <p class="empty-state">TCO report will appear after BOM generation.</p>
       </div>
     </div>
 
@@ -1157,6 +1173,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/cabling.js"></script>
 <script src="src/js/bom_calculator.js"></script>
 <script src="src/js/racklayout.js"></script>
+<script src="src/js/tco.js"></script>
 <script src="src/js/bom.js"></script>
 <script src="src/js/optics.js"></script>
 <script src="src/js/configgen.js"></script>

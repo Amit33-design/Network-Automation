@@ -262,6 +262,12 @@ function renderStep2() {
     rackOut.innerHTML = window.renderRackLayout(STATE.devices);
   }
 
+  // TCO tab (G-06)
+  var tcoOut = document.getElementById('tco-output');
+  if (tcoOut && window.renderTCOReport) {
+    tcoOut.innerHTML = window.renderTCOReport(STATE);
+  }
+
   // Capacity Math tab (G-03 + G-04)
   renderCapacityMath(STATE);
 
@@ -298,6 +304,16 @@ function exportOptics() {
   showToast('Optics recommendations exported', 'success');
 }
 window.exportOptics = exportOptics;
+
+window.downloadTCOCSV = function() {
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Generate BOM first', 'warning');
+    return;
+  }
+  var csv = window.exportTCOCSV(STATE);
+  downloadFile('tco-' + STATE.siteCode + '.csv', csv, 'text/csv');
+  showToast('TCO exported', 'success');
+};
 
 window.downloadRackLayoutCSV = function() {
   if (!STATE.devices || !STATE.devices.length) {
