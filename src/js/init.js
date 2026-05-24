@@ -385,6 +385,38 @@ window.updateSymptomResults = function() {
   out.innerHTML = window.renderSymptomClassifier(query, cat);
 };
 
+// ─── Drift check pane (G-27) ─────────────────────────────────────────────────
+
+window.renderDriftPane = function() {
+  var out = document.getElementById('drift-script-output');
+  if (!out) return;
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Complete Step 1 first', 'warning');
+    return;
+  }
+  if (!STATE.configs || !Object.keys(STATE.configs).length) {
+    showToast('Generate configs in Step 3 first', 'warning');
+    out.innerHTML = '<p class="val-block val-block-error">No configs found — complete Step 3 (Generate Configs) first.</p>';
+    return;
+  }
+  var script = window.genDriftScript(STATE.devices, STATE.configs, STATE);
+  var site   = STATE.siteCode || 'SITE';
+  out.innerHTML = '<p style="font-size:13px;margin-bottom:6px;">Script ready — <strong>drift_check_'
+    + site.toLowerCase() + '.py</strong> covers '
+    + STATE.devices.length + ' device(s).</p>'
+    + '<pre class="config-pre" style="max-height:320px;">'
+    + script.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    + '</pre>';
+  showToast('Drift script generated', 'success');
+};
+
+window.parseDriftReport = function() {
+  var input = document.getElementById('drift-json-input');
+  var out   = document.getElementById('drift-report-output');
+  if (!input || !out) return;
+  out.innerHTML = window.renderDriftReport(input.value);
+};
+
 // ─── Canary deploy pane (G-28) ───────────────────────────────────────────────
 
 function renderCanaryDeployPane() {

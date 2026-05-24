@@ -881,6 +881,7 @@
       <div class="bom-tab active" data-pane="checks-pane-pre">Pre-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-post">Post-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-results">Results Diff</div>
+      <div class="bom-tab" data-pane="checks-pane-drift">Drift Check</div>
       <div class="bom-tab" data-pane="checks-pane-symptoms">Symptom Classifier</div>
       <div class="bom-tab" data-pane="checks-pane-readme">Usage Guide</div>
     </div>
@@ -916,6 +917,34 @@
           <button class="btn btn-primary" onclick="window.parsePostCheckReport()">Parse &amp; Render Diff</button>
         </div>
         <div id="diff-output"></div>
+      </div>
+    </div>
+
+    <div id="checks-pane-drift" class="bom-pane">
+      <div class="form-section">
+        <h3 style="margin:0 0 4px;">Config Drift Detection</h3>
+        <p class="section-sub" style="margin-bottom:10px;">
+          Generates a Python script that SSHes to each device, pulls the running configuration,
+          and diffs it line-by-line against the intended config generated in Step&nbsp;3.
+        </p>
+        <div class="btn-toolbar">
+          <button class="btn btn-primary" onclick="window.renderDriftPane()">Generate drift_check.py</button>
+          <button class="btn btn-secondary" onclick="window.downloadDriftScript()">Download drift_check.py</button>
+        </div>
+        <div id="drift-script-output" style="margin-top:12px;">
+          <p class="empty-state">Complete Step 3 (generate configs) then click Generate.</p>
+        </div>
+      </div>
+      <div class="form-section" style="margin-top:12px;">
+        <h3 style="margin:0 0 6px;">Drift Report Viewer</h3>
+        <p style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">
+          Paste the contents of <code>drift_report_&lt;site&gt;.json</code> to visualise results.
+        </p>
+        <textarea id="drift-json-input" rows="5" style="width:100%;font-family:monospace;font-size:12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:8px;resize:vertical;" placeholder='[{"hostname":"leaf-01","status":"DRIFT","added_lines":3,...}]'></textarea>
+        <div class="btn-toolbar" style="margin:8px 0;">
+          <button class="btn btn-primary" onclick="window.parseDriftReport()">Parse &amp; Render Drift</button>
+        </div>
+        <div id="drift-report-output"></div>
       </div>
     </div>
 
