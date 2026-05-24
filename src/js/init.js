@@ -256,6 +256,12 @@ function renderStep2() {
     opticsOut.innerHTML = window.renderOpticsTable(STATE.optics);
   }
 
+  // Rack Layout tab (G-05)
+  var rackOut = document.getElementById('rack-layout-output');
+  if (rackOut && window.renderRackLayout) {
+    rackOut.innerHTML = window.renderRackLayout(STATE.devices);
+  }
+
   // Capacity Math tab (G-03 + G-04)
   renderCapacityMath(STATE);
 
@@ -292,6 +298,16 @@ function exportOptics() {
   showToast('Optics recommendations exported', 'success');
 }
 window.exportOptics = exportOptics;
+
+window.downloadRackLayoutCSV = function() {
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Generate BOM first', 'warning');
+    return;
+  }
+  var csv = window.exportRackLayoutCSV(STATE.devices);
+  downloadFile('rack-layout-' + STATE.siteCode + '.csv', csv, 'text/csv');
+  showToast('Rack layout exported', 'success');
+};
 
 // ─── Step 5: Pre/Post Checks ──────────────────────────────────────────────────
 function renderChecks() {

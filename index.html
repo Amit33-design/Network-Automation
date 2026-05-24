@@ -803,6 +803,7 @@
       <div class="bom-tab active" data-pane="bom-pane-devices">Devices &amp; BOM</div>
       <div class="bom-tab" data-pane="bom-pane-cabling">Cabling Schedule</div>
       <div class="bom-tab" data-pane="bom-pane-optics">Optics</div>
+      <div class="bom-tab" data-pane="bom-pane-rack">Rack Layout</div>
       <div class="bom-tab" data-pane="bom-pane-capacity">Capacity Math</div>
     </div>
     </div>
@@ -822,6 +823,15 @@
     <div id="bom-pane-optics" class="bom-pane">
       <div id="optics-output">
         <p class="empty-state">Optics recommendations will appear after BOM generation.</p>
+      </div>
+    </div>
+
+    <div id="bom-pane-rack" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-secondary" onclick="window.downloadRackLayoutCSV()">Download CSV</button>
+      </div>
+      <div id="rack-layout-output">
+        <p class="empty-state">Rack layout will appear after BOM generation.</p>
       </div>
     </div>
 
@@ -1146,6 +1156,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/naming.js"></script>
 <script src="src/js/cabling.js"></script>
 <script src="src/js/bom_calculator.js"></script>
+<script src="src/js/racklayout.js"></script>
 <script src="src/js/bom.js"></script>
 <script src="src/js/optics.js"></script>
 <script src="src/js/configgen.js"></script>

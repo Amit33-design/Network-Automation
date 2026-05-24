@@ -113,8 +113,9 @@ function buildDeviceList(state) {
       var dev = Object.assign({}, product, {
         instanceId: product.id + '-' + (i + 1),
         hostname:   '',   // filled by generateHostnames()
-        rack:       'A',
-        unit:       (i * 2) + 1
+        rack:       'TBD',
+        unit:       0,
+        unitHeight: 1    // overwritten by assignRackPositions
       });
       devices.push(dev);
     }
@@ -123,6 +124,11 @@ function buildDeviceList(state) {
   // Assign hostnames
   if (window.generateHostnames) {
     window.generateHostnames(devices, state);
+  }
+
+  // Assign rack positions (G-05)
+  if (window.assignRackPositions) {
+    window.assignRackPositions(devices);
   }
 
   state.devices = devices;
