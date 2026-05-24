@@ -64,6 +64,15 @@ var CONSTRAINTS = [
     msg: 'OTV is a multi-site DCI technology. Meaningless for single-site designs.',
     fix: 'Use VXLAN/EVPN for L2 extension within a single site.',
     fields: ['fs-protocols', 'fs-site-identity']
+  },
+  {
+    id: 'R-08', severity: 'warning',
+    check: function(i) {
+      return (i.use_case === 'dc' || i.use_case === 'gpu') && i.bgp_timers === 'conservative';
+    },
+    msg: 'Default BGP timers (60/180s) in a DC fabric mean 3-minute convergence on BGP failure without BFD.',
+    fix: 'Use DC Aggressive preset (3/9s) + BFD.',
+    fields: ['fs-protocols']
   }
 ];
 
@@ -81,8 +90,9 @@ window.validateIntent = function(state) {
       overlay:  (state.protocols && state.protocols.overlay)  || [],
       features: (state.protocols && state.protocols.features) || []
     },
-    gpu: { transport: (state.gpu && state.gpu.transport) || 'none' },
-    org: { sites:     (state.org && state.org.sites)     || 1 }
+    gpu:        { transport: (state.gpu && state.gpu.transport) || 'none' },
+    org:        { sites:     (state.org && state.org.sites)     || 1 },
+    bgp_timers: state.bgp_timers || 'dc_aggressive'
   };
 
   var violations = [];

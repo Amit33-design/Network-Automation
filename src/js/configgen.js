@@ -1,5 +1,49 @@
 'use strict';
 
+// ─── BGP timer presets (CLAUDE.md §10) ───────────────────────────────────────
+
+var BGP_TIMER_PRESETS = {
+  dc_aggressive: { label: 'DC Aggressive',  keepalive: 3,  hold: 9,   adv_interval: 0  },
+  wan_standard:  { label: 'WAN Standard',   keepalive: 10, hold: 30,  adv_interval: 5  },
+  conservative:  { label: 'Conservative',   keepalive: 60, hold: 180, adv_interval: 30 }
+};
+
+// ─── Feature helpers ──────────────────────────────────────────────────────────
+
+function _hasFeat(state, feat) {
+  return state.protocols && state.protocols.features &&
+         state.protocols.features.indexOf(feat) !== -1;
+}
+
+// NX-OS: global BFD command + ECMP hash command (appended after BGP stanza)
+function _nxosGlobalBfd(state) {
+  if (!_hasFeat(state, 'bfd')) return '';
+  var b = state.bfd || { interval: 300, min_rx: 300, multiplier: 3 };
+  return '\n! --- BFD global ---\n' +
+    'feature bfd\n' +
+    'bfd interval ' + b.interval + ' min_rx ' + b.min_rx + ' multiplier ' + b.multiplier + '\n' +
+    '! Apply to each uplink: bfd interval ' + b.interval + ' min_rx ' + b.min_rx + ' multiplier ' + b.multiplier + '\n';
+}
+
+// NX-OS: ECMP load-sharing hash command
+function _nxosEcmpHash(state) {
+  if (!_hasFeat(state, 'ecmp')) return '';
+  var algo = state.ecmp && state.ecmp.hash_algorithm;
+  if (algo === 'symmetric') {
+    return 'ip load-sharing address symmetric\n';
+  } else if (algo === 'resilient') {
+    return 'ip load-sharing address source-destination port source-destination resilient\n';
+  }
+  return 'ip load-sharing address source-destination port source-destination\n';
+}
+
+// EOS: BFD slow-timer (per CLAUDE.md §14)
+function _eosBfdSlowTimer(state) {
+  if (!_hasFeat(state, 'bfd')) return '';
+  var b = state.bfd || { min_rx: 300 };
+  return '   bfd slow-timer ' + (b.min_rx * 10) + '\n'; // EOS slow-timer in ms; 300*10=3000ms fallback
+}
+
 // ─── Design derivation helpers ────────────────────────────────────────────────
 
 function _leafDesign(dev, state) {
@@ -17,7 +61,6 @@ function _leafDesign(dev, state) {
   var spineHostnames = [];
   if (spines.length) {
     spines.forEach(function(sp, idx) {
-      // /31 blocks: 192.168.{leaf_unit * 10 + idx * 2}.{0 = spine side, 1 = leaf side}
       spinePeerIps.push('192.168.' + (unit * 10 + idx * 2) + '.0');
       spineHostnames.push(sp.hostname || ('SPINE-' + (idx + 1)));
     });
@@ -27,18 +70,24 @@ function _leafDesign(dev, state) {
   }
 
   // VNI design (per CLAUDE.md §8)
-  var vlanId   = 10;
-  var l2vni    = 10000 + vlanId;           // 10010
-  var l3vni    = 50000 + (pairIdx + 1);    // 50001, 50002, …
-  var l3VlanId = 3000  + (pairIdx + 1);    // transit VLAN for L3VNI
-  var vrfName  = 'PROD';
+  var vlanId    = 10;
+  var l2vni     = 10000 + vlanId;
+  var l3vni     = 50000 + (pairIdx + 1);
+  var l3VlanId  = 3000  + (pairIdx + 1);
+  var vrfName   = 'PROD';
   var anycastGw = '10.10.' + unit + '.1';
   var prefix    = '24';
 
-  // BGP timers from CLAUDE.md §10: DC aggressive (3/9) unless WAN
-  var useCase   = state.useCase || 'dc';
-  var keepalive = (useCase === 'wan') ? 10 : 3;
-  var hold      = (useCase === 'wan') ? 30 : 9;
+  // BGP timers from state.bgp_timers preset (G-12 / CLAUDE.md §10)
+  var timerKey = state.bgp_timers ||
+    ((state.useCase === 'wan') ? 'wan_standard' : 'dc_aggressive');
+  var preset    = BGP_TIMER_PRESETS[timerKey] || BGP_TIMER_PRESETS.dc_aggressive;
+  var keepalive = preset.keepalive;
+  var hold      = preset.hold;
+  var advInt    = preset.adv_interval;
+
+  // ECMP max-paths from state (G-10)
+  var maxPaths = (state.ecmp && state.ecmp.max_paths) || 8;
 
   return {
     leafAsn: leafAsn, spineAsn: spineAsn,
@@ -46,17 +95,23 @@ function _leafDesign(dev, state) {
     spinePeerIps: spinePeerIps, spineHostnames: spineHostnames,
     vlanId: vlanId, l2vni: l2vni, l3vni: l3vni, l3VlanId: l3VlanId,
     vrfName: vrfName, anycastGw: anycastGw, prefix: prefix,
-    keepalive: keepalive, hold: hold
+    keepalive: keepalive, hold: hold, advInt: advInt, maxPaths: maxPaths
   };
 }
 
 // ─── NX-OS Spine ─────────────────────────────────────────────────────────────
 
 function nxosSpineConfig(dev, state) {
-  var hn      = dev.hostname;
+  var hn       = dev.hostname;
   var spineAsn = 65000;
-  var unit    = dev.unit || 1;
-  var lo0ip   = '10.0.0.' + (100 + unit); // spines in 10.0.0.101+
+  var unit     = dev.unit || 1;
+  var lo0ip    = '10.0.0.' + (100 + unit);
+
+  var timerKey  = state.bgp_timers || 'dc_aggressive';
+  var preset    = BGP_TIMER_PRESETS[timerKey] || BGP_TIMER_PRESETS.dc_aggressive;
+  var maxPaths  = (state.ecmp && state.ecmp.max_paths) || 8;
+  var hasBfd    = _hasFeat(state, 'bfd');
+  var hasEcmp   = _hasFeat(state, 'ecmp');
 
   var lines = [
     '! ' + hn + ' — Cisco NX-OS Spine',
@@ -65,23 +120,43 @@ function nxosSpineConfig(dev, state) {
     'feature nv overlay',
     'feature vn-segment-vlan-based',
     'feature interface-vlan',
+  ];
+  if (hasBfd) lines.push('feature bfd');
+  lines = lines.concat([
     'nv overlay evpn',
     '',
     'interface loopback0',
     '  ip address ' + lo0ip + '/32',
     '  description BGP router-id',
     '',
+  ]);
+
+  // BFD global timers (G-09)
+  if (hasBfd) {
+    var b = state.bfd || { interval: 300, min_rx: 300, multiplier: 3 };
+    lines.push('! --- BFD global ---');
+    lines.push('bfd interval ' + b.interval + ' min_rx ' + b.min_rx + ' multiplier ' + b.multiplier);
+    lines.push('');
+  }
+
+  lines = lines.concat([
     'router bgp ' + spineAsn,
     '  router-id ' + lo0ip,
-    '  bestpath as-path multipath-relax',   // G-13: required for eBGP CLOS ECMP
+    '  bestpath as-path multipath-relax',
     '  bestpath compare-routerid',
+    '  address-family ipv4 unicast',
+  ]);
+  if (hasEcmp) lines.push('    maximum-paths ' + maxPaths);          // G-10
+  lines = lines.concat([
     '  address-family l2vpn evpn',
     '    retain route-target all',
     '  template peer LEAFS',
     '    update-source loopback0',
-    '    timers 3 9',                       // DC aggressive (§10)
-    '    advertisement-interval 0',
-    '    bfd',
+    '    timers ' + preset.keepalive + ' ' + preset.hold,            // G-12
+    '    advertisement-interval ' + preset.adv_interval,
+  ]);
+  if (hasBfd) lines.push('    bfd');                                  // G-09
+  lines = lines.concat([
     '    send-community extended',
     '    address-family ipv4 unicast',
     '      maximum-prefix 12000 warning-only',
@@ -89,7 +164,10 @@ function nxosSpineConfig(dev, state) {
     '      send-community extended',
     '      route-reflector-client',
     '  ! Add leaf neighbors — inherit peer LEAFS per leaf loopback',
-  ];
+  ]);
+
+  // ECMP hash (G-10)
+  if (hasEcmp) lines.push(_nxosEcmpHash(state).trimEnd());
 
   return lines.join('\n') + '\n';
 }
@@ -99,6 +177,10 @@ function nxosSpineConfig(dev, state) {
 function nxosLeafConfig(dev, state) {
   var hn = dev.hostname;
   var d  = _leafDesign(dev, state);
+
+  var hasBfd  = _hasFeat(state, 'bfd');
+  var hasEcmp = _hasFeat(state, 'ecmp');
+  var b       = state.bfd || { interval: 300, min_rx: 300, multiplier: 3 };
 
   var lines = [
     '! ' + hn + ' — Cisco NX-OS Leaf',
@@ -110,8 +192,21 @@ function nxosLeafConfig(dev, state) {
     'feature interface-vlan',
     'feature lacp',
     'feature vpc',
+  ];
+  if (hasBfd) lines.push('feature bfd');                                  // G-09
+  lines = lines.concat([
     'nv overlay evpn',
     '',
+  ]);
+
+  // BFD global timers (G-09)
+  if (hasBfd) {
+    lines.push('! --- BFD global ---');
+    lines.push('bfd interval ' + b.interval + ' min_rx ' + b.min_rx + ' multiplier ' + b.multiplier);
+    lines.push('');
+  }
+
+  lines = lines.concat([
     '! --- Loopbacks ---',
     'interface loopback0',
     '  ip address ' + d.lo0ip + '/32',
@@ -161,19 +256,26 @@ function nxosLeafConfig(dev, state) {
     '  router-id ' + d.lo0ip,
     '  bestpath as-path multipath-relax',   // G-13
     '  bestpath compare-routerid',
+    '  address-family ipv4 unicast',
+  ]);
+  if (hasEcmp) lines.push('    maximum-paths ' + d.maxPaths);            // G-10
+  if (hasEcmp) lines.push(_nxosEcmpHash(state).replace(/\n$/, '').split('\n').map(function(l) { return '    ' + l; }).join('\n'));
+  lines = lines.concat([
     '  address-family l2vpn evpn',
     '    advertise-pip',
     '  template peer SPINES',
     '    remote-as ' + d.spineAsn,
     '    timers ' + d.keepalive + ' ' + d.hold + '   ! DC: 3 9 | WAN: 10 30',
     '    advertisement-interval 0',
-    '    bfd',
+  ]);
+  if (hasBfd) lines.push('    bfd');                                      // G-09
+  lines = lines.concat([
     '    send-community extended',
     '    address-family ipv4 unicast',
     '      maximum-prefix 12000 warning-only',
     '    address-family l2vpn evpn',
     '      send-community extended',
-  ];
+  ]);
 
   // Per-spine neighbor stanzas
   d.spinePeerIps.forEach(function(ip, idx) {
@@ -186,7 +288,9 @@ function nxosLeafConfig(dev, state) {
     '  vrf ' + d.vrfName,
     '    address-family ipv4 unicast',
     '      redistribute direct route-map RMAP-CONNECTED',
-    '      maximum-paths 8',
+  ]);
+  if (hasEcmp) lines.push('      maximum-paths ' + d.maxPaths);          // G-10
+  lines = lines.concat([
     '',
     '! --- EVPN section ---',
     'evpn',
@@ -202,11 +306,16 @@ function nxosLeafConfig(dev, state) {
 // ─── Arista EOS Spine ────────────────────────────────────────────────────────
 
 function aristaSpineConfig(dev, state) {
-  var hn   = dev.hostname;
-  var unit = dev.unit || 1;
-  var lo0  = '10.0.0.' + (100 + unit);
+  var hn      = dev.hostname;
+  var unit    = dev.unit || 1;
+  var lo0     = '10.0.0.' + (100 + unit);
+  var hasBfd  = _hasFeat(state, 'bfd');
+  var hasEcmp = _hasFeat(state, 'ecmp');
+  var maxPaths = (state.ecmp && state.ecmp.max_paths) || 8;
+  var timerKey = state.bgp_timers || 'dc_aggressive';
+  var preset   = BGP_TIMER_PRESETS[timerKey] || BGP_TIMER_PRESETS.dc_aggressive;
 
-  return [
+  var lines = [
     '! ' + hn + ' — Arista EOS Spine',
     'hostname ' + hn,
     '',
@@ -221,12 +330,14 @@ function aristaSpineConfig(dev, state) {
     'router bgp 65000',
     '   router-id ' + lo0,
     '   bgp asn notation asdot',
-    '   bgp bestpath as-path multipath-relax',    // G-13
+    '   bgp bestpath as-path multipath-relax',         // G-13
     '   neighbor LEAF-PEERS peer group',
     '   neighbor LEAF-PEERS send-community extended',
-    '   neighbor LEAF-PEERS bfd',
-    '   neighbor LEAF-PEERS timers 3 9',           // DC aggressive (§10)
-    '   neighbor LEAF-PEERS advertisement-interval 0',
+  ];
+  if (hasBfd) lines.push('   neighbor LEAF-PEERS bfd');                   // G-09
+  lines = lines.concat([
+    '   neighbor LEAF-PEERS timers ' + preset.keepalive + ' ' + preset.hold,  // G-12
+    '   neighbor LEAF-PEERS advertisement-interval ' + preset.adv_interval,
     '   bgp listen range 10.0.0.0/16 peer-group LEAF-PEERS',
     '   address-family evpn',
     '      neighbor LEAF-PEERS activate',
@@ -234,14 +345,19 @@ function aristaSpineConfig(dev, state) {
     '   address-family ipv4',
     '      neighbor LEAF-PEERS activate',
     '      neighbor LEAF-PEERS next-hop-unchanged',
-  ].join('\n') + '\n';
+  ]);
+  if (hasEcmp) lines.push('      maximum-paths ' + maxPaths + ' ecmp ' + maxPaths);  // G-10
+
+  return lines.join('\n') + '\n';
 }
 
 // ─── Arista EOS Leaf ─────────────────────────────────────────────────────────
 
 function aristaLeafConfig(dev, state) {
-  var hn = dev.hostname;
-  var d  = _leafDesign(dev, state);
+  var hn      = dev.hostname;
+  var d       = _leafDesign(dev, state);
+  var hasBfd  = _hasFeat(state, 'bfd');
+  var hasEcmp = _hasFeat(state, 'ecmp');
 
   var lines = [
     '! ' + hn + ' — Arista EOS Leaf',
@@ -279,12 +395,17 @@ function aristaLeafConfig(dev, state) {
     '   bgp bestpath as-path multipath-relax',    // G-13
     '   neighbor SPINES peer group',
     '   neighbor SPINES remote-as ' + d.spineAsn,
-    '   neighbor SPINES bfd',
+  ];
+  if (hasBfd) {
+    lines.push('   neighbor SPINES bfd');                                 // G-09
+    lines.push(_eosBfdSlowTimer(state).trimEnd());
+  }
+  lines = lines.concat([
     '   neighbor SPINES timers ' + d.keepalive + ' ' + d.hold,
     '   neighbor SPINES advertisement-interval 0',
     '   neighbor SPINES send-community extended',
     '   neighbor SPINES maximum-routes 12000 warning-only',
-  ];
+  ]);
 
   d.spinePeerIps.forEach(function(ip, idx) {
     lines.push('   neighbor ' + ip + ' peer group SPINES');
@@ -296,6 +417,9 @@ function aristaLeafConfig(dev, state) {
     '      neighbor SPINES activate',
     '   address-family ipv4',
     '      neighbor SPINES activate',
+  ]);
+  if (hasEcmp) lines.push('      maximum-paths ' + d.maxPaths + ' ecmp ' + d.maxPaths);  // G-10
+  lines = lines.concat([
     '      network ' + d.lo0ip + '/32',
     '      network ' + d.lo1ip + '/32',
     '   vlan ' + d.vlanId,
@@ -307,7 +431,7 @@ function aristaLeafConfig(dev, state) {
     '      route-target import evpn ' + d.spineAsn + ':' + d.l3vni,
     '      route-target export evpn ' + d.spineAsn + ':' + d.l3vni,
     '      redistribute connected',
-    '      maximum-paths 8',
+    '      maximum-paths ' + d.maxPaths,
   ]);
 
   return lines.join('\n') + '\n';
@@ -316,8 +440,11 @@ function aristaLeafConfig(dev, state) {
 // ─── Juniper QFX Leaf ────────────────────────────────────────────────────────
 
 function juniperLeafConfig(dev, state) {
-  var hn = dev.hostname;
-  var d  = _leafDesign(dev, state);
+  var hn      = dev.hostname;
+  var d       = _leafDesign(dev, state);
+  var hasBfd  = _hasFeat(state, 'bfd');
+  var hasEcmp = _hasFeat(state, 'ecmp');
+  var b       = state.bfd || { interval: 300, multiplier: 3 };
 
   var lines = [
     '# ' + hn + ' — Juniper QFX Leaf',
@@ -333,10 +460,13 @@ function juniperLeafConfig(dev, state) {
     'set protocols bgp group SPINES export LOOPBACKS',
     'set protocols bgp group SPINES peer-as ' + d.spineAsn,
     'set protocols bgp group SPINES multipath multiple-as',      // G-13
-    'set protocols bgp group SPINES bfd-liveness-detection minimum-interval 300 multiplier 3',
+  ];
+  if (hasEcmp) lines.push('set protocols bgp group SPINES multipath ' + d.maxPaths);  // G-10
+  if (hasBfd) lines.push('set protocols bgp group SPINES bfd-liveness-detection minimum-interval ' + b.interval + ' multiplier ' + b.multiplier);  // G-09
+  lines = lines.concat([
     'set protocols bgp group SPINES hold-time ' + d.hold,
     'set protocols bgp group SPINES keep ' + d.keepalive,
-  ];
+  ]);
 
   d.spinePeerIps.forEach(function(ip) {
     lines.push('set protocols bgp group SPINES neighbor ' + ip);

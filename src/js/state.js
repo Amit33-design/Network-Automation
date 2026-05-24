@@ -12,6 +12,9 @@ var STATE = {
     bandwidth_gbps:   25,   // per-server bandwidth (1|10|25|100|400)
     oversubscription:  3    // uplink oversubscription ratio N:1
   },
+  bgp_timers: 'dc_aggressive', // dc_aggressive | wan_standard | conservative (§10)
+  bfd: { interval: 300, min_rx: 300, multiplier: 3 },
+  ecmp: { max_paths: 8, hash_algorithm: 'default' },
   vendors: [],          // cisco | arista | juniper | nvidia | fortinet | hpe | dell | extreme
   protocols: {
     underlay: 'bgp',    // bgp | ospf | is-is | eigrp | static
@@ -53,8 +56,11 @@ window.resetState = function() {
   STATE.siteName = '';
   STATE.siteCode = '';
   STATE.scale = 'small';
-  STATE.redundancy = 'ha';
-  STATE.topology   = { endpoint_count: 500, bandwidth_gbps: 25, oversubscription: 3 };
+  STATE.redundancy  = 'ha';
+  STATE.topology    = { endpoint_count: 500, bandwidth_gbps: 25, oversubscription: 3 };
+  STATE.bgp_timers  = 'dc_aggressive';
+  STATE.bfd         = { interval: 300, min_rx: 300, multiplier: 3 };
+  STATE.ecmp        = { max_paths: 8, hash_algorithm: 'default' };
   STATE.vendors = [];
   STATE.protocols = { underlay: 'bgp', overlay: [], features: [] };
   STATE.gpu = { transport: 'none' };
