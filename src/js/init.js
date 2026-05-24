@@ -375,6 +375,16 @@ window.parsePostCheckReport = function() {
   showToast('Diff report rendered', 'success');
 };
 
+// ─── Symptom classifier (G-37) ───────────────────────────────────────────────
+
+window.updateSymptomResults = function() {
+  var query = (document.getElementById('symptom-query') || {}).value || '';
+  var cat   = (document.getElementById('symptom-cat')   || {}).value || 'All';
+  var out   = document.getElementById('symptom-results');
+  if (!out) return;
+  out.innerHTML = window.renderSymptomClassifier(query, cat);
+};
+
 // ─── Canary deploy pane (G-28) ───────────────────────────────────────────────
 
 function renderCanaryDeployPane() {

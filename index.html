@@ -342,6 +342,22 @@
     .diff-table .diff-changed td { background: rgba(245,158,11,.08); }
     .diff-alert { color: var(--warn); font-size: 12px; margin: 2px 0; }
     --success: #22c55e;
+
+    /* Symptom classifier (G-37) */
+    .symptom-card { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+    .symptom-header { display: flex; align-items: center; gap: 8px; background: var(--surface2); padding: 8px 12px; }
+    .symptom-id { font-size: 10px; font-weight: 700; color: var(--text-dim); min-width: 60px; }
+    .symptom-cat { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; background: var(--surface3,#334); color: var(--text-dim); text-transform: uppercase; }
+    .symptom-title { font-size: 13px; font-weight: 600; flex: 1; }
+    .symptom-body { padding: 10px 12px; font-size: 12px; line-height: 1.6; }
+    .symptom-body ul { margin: 4px 0 8px 16px; padding: 0; }
+    .symptom-body li { margin-bottom: 2px; }
+    .symptom-causes { margin-bottom: 8px; }
+    .symptom-fix { margin-bottom: 8px; color: var(--text-dim); }
+    .symptom-cmds code { background: var(--surface2); padding: 6px 8px; border-radius: 4px; font-size: 11px; }
+    .symptom-search-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .symptom-search-bar input { flex: 1; min-width: 200px; }
+    .symptom-search-bar select { min-width: 130px; }
   </style>
 </head>
 <body>
@@ -783,6 +799,7 @@
       <div class="bom-tab active" data-pane="checks-pane-pre">Pre-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-post">Post-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-results">Results Diff</div>
+      <div class="bom-tab" data-pane="checks-pane-symptoms">Symptom Classifier</div>
       <div class="bom-tab" data-pane="checks-pane-readme">Usage Guide</div>
     </div>
 
@@ -816,6 +833,38 @@
           <button class="btn btn-primary" onclick="window.parsePostCheckReport()">Parse &amp; Render Diff</button>
         </div>
         <div id="diff-output"></div>
+      </div>
+    </div>
+
+    <div id="checks-pane-symptoms" class="bom-pane">
+      <div class="form-section">
+        <h3 style="margin:0 0 4px;">Symptom Classifier</h3>
+        <p class="section-sub" style="margin-bottom:10px;">150+ symptoms across BGP, EVPN, STP, DHCP, QoS, Interface, CPU, LLDP, VXLAN, Routing, Multicast, and more — with per-platform diagnostic commands.</p>
+        <div class="symptom-search-bar">
+          <input id="symptom-query" type="text" placeholder="Search by symptom, protocol, keyword…"
+            oninput="window.updateSymptomResults()" />
+          <select id="symptom-cat" onchange="window.updateSymptomResults()">
+            <option value="All">All categories</option>
+            <option value="BGP">BGP</option>
+            <option value="EVPN">EVPN</option>
+            <option value="STP">STP</option>
+            <option value="DHCP">DHCP</option>
+            <option value="QoS">QoS</option>
+            <option value="Interface">Interface</option>
+            <option value="CPU">CPU</option>
+            <option value="LLDP">LLDP</option>
+            <option value="VXLAN">VXLAN</option>
+            <option value="Routing">Routing</option>
+            <option value="Multicast">Multicast</option>
+            <option value="Security">Security</option>
+            <option value="RoCEv2">RoCEv2</option>
+            <option value="ZTP">ZTP</option>
+            <option value="NTP">NTP</option>
+          </select>
+        </div>
+        <div id="symptom-results">
+          <p class="empty-state">Start typing a symptom or select a category.</p>
+        </div>
       </div>
     </div>
 
@@ -960,6 +1009,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/monitoring.js"></script>
 <script src="src/js/rollback.js"></script>
 <script src="src/js/deploy.js"></script>
+<script src="src/js/troubleshoot.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>
