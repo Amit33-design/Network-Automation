@@ -43,6 +43,19 @@ var STATE = {
     portfast:   true,      // enable PortFast on server-facing ports
     mst_vlan:   '1-4094'   // VLAN range for MST instance 1
   },
+  qos: {
+    classes: ['voice','video','critical','high','medium','low','scavenger','default'],
+    dscp_map: {
+      voice:     'ef',   // DSCP 46
+      video:     'af41', // DSCP 34
+      critical:  'af31', // DSCP 26
+      high:      'af21', // DSCP 18
+      medium:    'af11', // DSCP 10
+      low:       'cs3',  // DSCP 24
+      scavenger: 'cs1',  // DSCP 8
+      'default': 'default' // DSCP 0
+    }
+  },
   linkDistances: {      // layer pair -> distance in metres
     'spine-leaf': 100,
     'dist-access': 50,
@@ -83,6 +96,7 @@ window.resetState = function() {
   STATE.org  = { sites: 1 };
   STATE.evpn = { rd: 'auto', rt: 'auto', rt_base: '', rt_types: ['rt2','rt3'], esi: false, esi_type: 'type1', arp_suppress: true, advertise_pip: true };
   STATE.stp  = { mode: 'mstp', bpdu_guard: true, portfast: true, mst_vlan: '1-4094' };
+  STATE.qos  = { classes: ['voice','video','critical','high','medium','low','scavenger','default'], dscp_map: { voice:'ef', video:'af41', critical:'af31', high:'af21', medium:'af11', low:'cs3', scavenger:'cs1', 'default':'default' } };
   STATE.linkDistances = { 'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 };
   STATE.devices = [];
   STATE.cabling = [];

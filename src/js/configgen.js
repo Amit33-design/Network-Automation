@@ -99,6 +99,95 @@ function _leafDesign(dev, state) {
   };
 }
 
+// ─── VRF-lite config (G-16) ──────────────────────────────────────────────────
+// Full VRF-lite block: definition + RT import/export + BGP AF, used when
+// 'vrf' feature is selected but vxlan_evpn is NOT the overlay.
+
+function _nxosVrfLiteBlock(state) {
+  if (!_hasFeat(state, 'vrf')) return [];
+  var asn  = 65000;
+  var vrfs = [
+    { name: 'MGMT',  rd: asn + ':100', rt: asn + ':100' },
+    { name: 'PROD',  rd: asn + ':200', rt: asn + ':200' },
+    { name: 'DEV',   rd: asn + ':300', rt: asn + ':300' },
+  ];
+  var lines = ['! --- VRF-lite (G-16) ---'];
+  vrfs.forEach(function(v) {
+    lines = lines.concat([
+      'vrf context ' + v.name,
+      '  rd '                        + v.rd,
+      '  address-family ipv4 unicast',
+      '    route-target import '     + v.rt,
+      '    route-target export '     + v.rt,
+    ]);
+  });
+  lines.push('');
+  lines.push('! BGP VRF address-families — add under router bgp <asn>:');
+  vrfs.forEach(function(v) {
+    lines = lines.concat([
+      '!  vrf ' + v.name,
+      '!    address-family ipv4 unicast',
+      '!      redistribute direct route-map RMAP-CONNECTED',
+      '!      maximum-paths 8',
+    ]);
+  });
+  return lines;
+}
+
+function _eosVrfLiteBlock(state) {
+  if (!_hasFeat(state, 'vrf')) return [];
+  var asn  = 65000;
+  var vrfs = [
+    { name: 'MGMT',  rd: asn + ':100', rt: asn + ':100' },
+    { name: 'PROD',  rd: asn + ':200', rt: asn + ':200' },
+    { name: 'DEV',   rd: asn + ':300', rt: asn + ':300' },
+  ];
+  var lines = ['! --- VRF-lite (G-16) ---'];
+  vrfs.forEach(function(v) {
+    lines = lines.concat([
+      'vrf instance ' + v.name,
+      '   rd '                      + v.rd,
+    ]);
+  });
+  lines.push('');
+  lines.push('ip routing vrf MGMT');
+  lines.push('ip routing vrf PROD');
+  lines.push('ip routing vrf DEV');
+  lines.push('');
+  lines.push('! BGP VRF address-families — under router bgp <asn>:');
+  vrfs.forEach(function(v) {
+    lines = lines.concat([
+      '!  vrf ' + v.name,
+      '!     rd ' + v.rd,
+      '!     route-target import evpn ' + v.rt,
+      '!     route-target export evpn ' + v.rt,
+      '!     redistribute connected',
+    ]);
+  });
+  return lines;
+}
+
+function _junosVrfLiteBlock(state) {
+  if (!_hasFeat(state, 'vrf')) return [];
+  var asn  = 65000;
+  var vrfs = [
+    { name: 'MGMT',  rt: asn + ':100' },
+    { name: 'PROD',  rt: asn + ':200' },
+    { name: 'DEV',   rt: asn + ':300' },
+  ];
+  var lines = ['# --- VRF-lite (G-16) ---'];
+  vrfs.forEach(function(v) {
+    lines = lines.concat([
+      'set routing-instances ' + v.name + ' instance-type vrf',
+      'set routing-instances ' + v.name + ' vrf-target target:' + v.rt,
+      'set routing-instances ' + v.name + ' vrf-table-label',
+      'set routing-instances ' + v.name + ' protocols bgp group INT type internal',
+      'set routing-instances ' + v.name + ' protocols bgp group INT family inet unicast',
+    ]);
+  });
+  return lines;
+}
+
 // ─── STP design helper (G-14) ────────────────────────────────────────────────
 // Returns per-platform STP config block driven by state.stp.
 
@@ -150,6 +239,110 @@ function _junosStpBlock(state) {
   var lines = ['# --- STP (G-14) ---'];
   lines.push('set protocols rstp interface all edge');
   if (stp.bpdu_guard) lines.push('set protocols rstp bpdu-block-on-edge');
+  return lines;
+}
+
+// ─── QoS 8-class config blocks (G-15) ────────────────────────────────────────
+// DSCP values for each class (decimal)
+var DSCP_DEC = { ef:46, af41:34, af31:26, af21:18, af11:10, cs3:24, cs2:16, cs1:8, 'default':0 };
+
+// Build per-platform QoS config when 'qos' feature is enabled
+function _nxosQosBlock(state) {
+  if (!_hasFeat(state, 'qos')) return [];
+  var q = state.qos || {};
+  var dscpMap = q.dscp_map || { voice:'ef', video:'af41', critical:'af31', high:'af21',
+                                 medium:'af11', low:'cs3', scavenger:'cs1', 'default':'default' };
+  var lines = ['! --- QoS 8-class policy (G-15) ---'];
+
+  // Class maps — match by DSCP
+  Object.keys(dscpMap).forEach(function(cls) {
+    var dscp = dscpMap[cls];
+    if (dscp === 'default') return;  // class-default is built-in
+    var dec = DSCP_DEC[dscp] || 0;
+    lines = lines.concat([
+      'class-map match-all CM-' + cls.toUpperCase(),
+      '  match dscp ' + dscp + '  ! DSCP ' + dec,
+    ]);
+  });
+  lines.push('');
+
+  // Policy map — ingress marking + queuing
+  lines.push('policy-map PM-QOS-IN');
+  Object.keys(dscpMap).forEach(function(cls) {
+    var dscp = dscpMap[cls];
+    if (dscp === 'default') {
+      lines = lines.concat([
+        '  class class-default',
+        '    set dscp default',
+        '    bandwidth remaining percent 10',
+      ]);
+    } else {
+      var bw = { voice:10, video:20, critical:15, high:10, medium:10, low:5, scavenger:1 };
+      var pq = (cls === 'voice' || cls === 'video');
+      lines = lines.concat([
+        '  class CM-' + cls.toUpperCase(),
+        '    set dscp ' + dscp,
+        pq ? '    priority level ' + (cls === 'voice' ? '1' : '2')
+           : '    bandwidth remaining percent ' + (bw[cls] || 5),
+      ]);
+    }
+  });
+  lines.push('');
+
+  lines.push('! Apply policy to server-facing interfaces:');
+  lines.push('!   service-policy input PM-QOS-IN');
+  return lines;
+}
+
+function _eosQosBlock(state) {
+  if (!_hasFeat(state, 'qos')) return [];
+  var q = state.qos || {};
+  var dscpMap = q.dscp_map || { voice:'ef', video:'af41', critical:'af31', high:'af21',
+                                  medium:'af11', low:'cs3', scavenger:'cs1', 'default':'default' };
+  var lines = ['! --- QoS 8-class policy (G-15) ---'];
+
+  // Traffic classes
+  lines.push('qos map dscp-to-traffic-class table');
+  var tcMap = { ef:6, af41:5, af31:4, af21:3, af11:2, cs3:3, cs2:2, cs1:1, 'default':0 };
+  Object.keys(dscpMap).forEach(function(cls) {
+    var dscp = dscpMap[cls];
+    if (dscp === 'default') return;
+    var dec = DSCP_DEC[dscp] || 0;
+    lines.push('   ' + dec + ' to ' + (tcMap[dscp] || 0) + '  ! ' + cls + ' (' + dscp + ')');
+  });
+  lines.push('');
+
+  // Policy maps
+  lines.push('policy-map type qos PM-INGRESS');
+  Object.keys(dscpMap).forEach(function(cls) {
+    var dscp = dscpMap[cls];
+    lines = lines.concat([
+      '   class ' + (dscp === 'default' ? 'class-default' : 'CM-' + cls.toUpperCase()),
+      '      set dscp ' + dscp,
+    ]);
+  });
+  lines.push('');
+  lines.push('! Apply: interface Ethernet X / service-policy type qos input PM-INGRESS');
+  return lines;
+}
+
+function _junosQosBlock(state) {
+  if (!_hasFeat(state, 'qos')) return [];
+  var q = state.qos || {};
+  var dscpMap = q.dscp_map || { voice:'ef', video:'af41', critical:'af31', high:'af21',
+                                  medium:'af11', low:'cs3', scavenger:'cs1', 'default':'default' };
+  var lines = ['# --- QoS 8-class policy (G-15) ---'];
+  var fcMap = { voice:'voice', video:'video', critical:'assured-forwarding', high:'best-effort',
+                medium:'best-effort', low:'best-effort', scavenger:'best-effort', 'default':'best-effort' };
+
+  Object.keys(dscpMap).forEach(function(cls) {
+    var dscp = dscpMap[cls];
+    if (dscp === 'default') return;
+    var dec = DSCP_DEC[dscp] || 0;
+    lines.push('set class-of-service code-point-aliases dscp ' + cls + '-dscp 0b' + dec.toString(2).padStart(6,'0'));
+    lines.push('set class-of-service dscp-code-points ' + (fcMap[cls] || 'best-effort') + ' ' + cls + '-dscp');
+  });
+  lines.push('# Apply: set interfaces <if> unit 0 family inet filter input QOS-FILTER');
   return lines;
 }
 
@@ -439,6 +632,18 @@ function nxosLeafConfig(dev, state) {
   lines.push('');
   lines = lines.concat(_nxosStpBlock(state));
 
+  // VRF-lite (G-16) — only when vxlan_evpn not in use (EVPN VRF already handled above)
+  var hasEvpnOverlay = state.protocols && state.protocols.overlay &&
+                       state.protocols.overlay.indexOf('vxlan_evpn') !== -1;
+  if (!hasEvpnOverlay) {
+    var vrfLines = _nxosVrfLiteBlock(state);
+    if (vrfLines.length) { lines.push(''); lines = lines.concat(vrfLines); }
+  }
+
+  // QoS 8-class policy (G-15)
+  var qosLines = _nxosQosBlock(state);
+  if (qosLines.length) { lines.push(''); lines = lines.concat(qosLines); }
+
   return lines.join('\n') + '\n';
 }
 
@@ -605,6 +810,18 @@ function aristaLeafConfig(dev, state) {
   lines.push('');
   lines = lines.concat(_eosStpBlock(state));
 
+  // VRF-lite (G-16)
+  var hasEvpnEos = state.protocols && state.protocols.overlay &&
+                   state.protocols.overlay.indexOf('vxlan_evpn') !== -1;
+  if (!hasEvpnEos) {
+    var vrfLinesEos = _eosVrfLiteBlock(state);
+    if (vrfLinesEos.length) { lines.push(''); lines = lines.concat(vrfLinesEos); }
+  }
+
+  // QoS 8-class policy (G-15)
+  var qosLinesEos = _eosQosBlock(state);
+  if (qosLinesEos.length) { lines.push(''); lines = lines.concat(qosLinesEos); }
+
   return lines.join('\n') + '\n';
 }
 
@@ -667,6 +884,18 @@ function juniperLeafConfig(dev, state) {
   // STP design (G-14)
   lines.push('');
   lines = lines.concat(_junosStpBlock(state));
+
+  // VRF-lite (G-16)
+  var hasEvpnJunos = state.protocols && state.protocols.overlay &&
+                     state.protocols.overlay.indexOf('vxlan_evpn') !== -1;
+  if (!hasEvpnJunos) {
+    var vrfLinesJunos = _junosVrfLiteBlock(state);
+    if (vrfLinesJunos.length) { lines.push(''); lines = lines.concat(vrfLinesJunos); }
+  }
+
+  // QoS 8-class policy (G-15)
+  var qosLinesJunos = _junosQosBlock(state);
+  if (qosLinesJunos.length) { lines.push(''); lines = lines.concat(qosLinesJunos); }
 
   return lines.join('\n') + '\n';
 }
