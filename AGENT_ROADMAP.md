@@ -845,3 +845,31 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
      `PasswordAuthentication no`, `MaxAuthTries 3`, `Banner /etc/issue.net`), `/etc/issue.net` content.
 
 **Issues closed:** None (self-identified production correctness / security gaps)
+
+### 2026-05-24 (run 23)
+
+**Features completed this run:**
+
+1. **Live Requirements Validator + Capacity Preview (Step 2)** — `4553bad`
+   - **Root cause**: Step 2 provided no live feedback — users could select incompatible protocols (EIGRP + non-Cisco, FlowSpec without BGP, MPLS without IGP) or mismatched compliance/security choices without any warning until Step 5 generated incorrect or incomplete configs. Capacity/cost estimates were only visible in Step 3/4.
+   - Created `src/js/validator.js` (257 lines) with two `window.*` public functions.
+   - `validateRequirements(state)` — evaluates 16 rules across four categories (protocol compatibility, security/compliance, application/latency, use-case scale):
+     - **Protocol**: EIGRP with non-Cisco vendors (error), VXLAN without BGP (warn), FlowSpec without BGP (error), MPLS without IGP underlay (warn), BGP Unnumbered outside DC (info).
+     - **Security/Compliance**: PCI without MACSec/IPsec (warn), HIPAA without NAC (warn), FedRAMP/DoD/CMMC without MACSec (warn).
+     - **Application**: Voice/video without BFD (warn), ultra-low-latency without RDMA (info), block storage without overlay (info), PIM-SM without multicast app (info).
+     - **Scale**: GPU without RDMA spec (info), WAN without routing protocol (info), campus >15K endpoints (warn), DC <8 servers (info).
+     - Returns `{ issues, errorCount, warnCount, infoCount }`.
+   - `renderRequirementsPreview()` — renders `#req-validator` panel (after `#peeringdb-panel` in Step 2) showing:
+     - **Header**: title + badge row with counts (colored red/orange/blue/green per level).
+     - **Issue list**: each issue shows icon, bold message, and "Fix:" suggestion with appropriate border color.
+     - **Capacity preview table**: calls `getLayersForUC()` + `estimateCounts(layerKey)` + `PRODUCTS[selectedProductId]` to build a per-layer table with device qty, product name, unit cost, and extended cost; footer row shows totals.
+   - **Integration**: `updateSummary()` in `app.js` now calls `renderRequirementsPreview()` as its last step (guarded by `typeof` check — safe if validator.js hasn't loaded yet). All existing Step 2 `onchange` events already call `updateSummary()`, so validation fires automatically on every state change.
+   - `index.html`: `<div id="req-validator">` added after peeringdb-panel; `<script src="src/js/validator.js">` added between scoring.js and recommendations.js.
+   - `src/css/main.css`: 35 new `.rval-*` rules using design-system CSS variables.
+
+2. **`'use strict'` added to 5 JS files** — `4553bad`
+   - `analytics.js`, `init.js`, `paywall.js`, `policy_rules_editor.js`, `similar_designs.js` were missing the `'use strict'` directive required by the tech stack constraints.
+   - Added to the first executable line of each file (after JSDoc block where present).
+
+**Files changed**: `src/js/validator.js` (new), `index.html`, `src/css/main.css`, `src/js/app.js`, `src/js/analytics.js`, `src/js/init.js`, `src/js/paywall.js`, `src/js/policy_rules_editor.js`, `src/js/similar_designs.js`
+**Issues closed:** None (self-identified UX gap + tech constraint violations)
