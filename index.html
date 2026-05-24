@@ -737,23 +737,52 @@
       </div>
 
       <div class="form-section">
-        <h3>Link Distances</h3>
+        <h3>Link Distances &amp; Fiber Type</h3>
+        <p class="section-sub" style="margin-bottom:10px;">Fiber type drives optic selection — MMF uses SR/SR4, SMF uses LR/LR4/DR4.</p>
         <div class="dist-grid">
           <div>
             <div class="dist-label">Spine ↔ Leaf</div>
-            <div class="dist-row"><input id="dist-spine-leaf" type="number" value="100" min="1" max="80000"><span>metres</span></div>
+            <div class="dist-row"><input id="dist-spine-leaf" type="number" value="100" min="1" max="80000"><span>m</span></div>
+            <select id="fiber-spine-leaf" class="form-select" style="margin-top:4px;font-size:12px;">
+              <option value="mmf-om4">MMF OM4 (≤100m)</option>
+              <option value="mmf-om3">MMF OM3 (≤70m)</option>
+              <option value="smf-lc">SMF OS2 LC duplex</option>
+              <option value="smf-mpo">SMF OS2 MPO (PSM4/DR4)</option>
+              <option value="auto">Auto (cheapest)</option>
+            </select>
           </div>
           <div>
             <div class="dist-label">Dist ↔ Access</div>
-            <div class="dist-row"><input id="dist-dist-access" type="number" value="50" min="1" max="80000"><span>metres</span></div>
+            <div class="dist-row"><input id="dist-dist-access" type="number" value="50" min="1" max="80000"><span>m</span></div>
+            <select id="fiber-dist-access" class="form-select" style="margin-top:4px;font-size:12px;">
+              <option value="mmf-om4">MMF OM4 (≤100m)</option>
+              <option value="mmf-om3">MMF OM3 (≤70m)</option>
+              <option value="smf-lc">SMF OS2 LC duplex</option>
+              <option value="smf-mpo">SMF OS2 MPO (PSM4/DR4)</option>
+              <option value="auto">Auto (cheapest)</option>
+            </select>
           </div>
           <div>
             <div class="dist-label">Core ↔ Dist</div>
-            <div class="dist-row"><input id="dist-core-dist" type="number" value="200" min="1" max="80000"><span>metres</span></div>
+            <div class="dist-row"><input id="dist-core-dist" type="number" value="200" min="1" max="80000"><span>m</span></div>
+            <select id="fiber-core-dist" class="form-select" style="margin-top:4px;font-size:12px;">
+              <option value="mmf-om4">MMF OM4 (≤100m)</option>
+              <option value="mmf-om3">MMF OM3 (≤70m)</option>
+              <option value="smf-lc" selected>SMF OS2 LC duplex</option>
+              <option value="smf-mpo">SMF OS2 MPO (PSM4/DR4)</option>
+              <option value="auto">Auto (cheapest)</option>
+            </select>
           </div>
           <div>
             <div class="dist-label">WAN Edge</div>
-            <div class="dist-row"><input id="dist-wan-edge" type="number" value="5000" min="1" max="80000"><span>metres</span></div>
+            <div class="dist-row"><input id="dist-wan-edge" type="number" value="5000" min="1" max="80000"><span>m</span></div>
+            <select id="fiber-wan-edge" class="form-select" style="margin-top:4px;font-size:12px;">
+              <option value="smf-lc" selected>SMF OS2 LC duplex</option>
+              <option value="mmf-om4">MMF OM4 (≤100m)</option>
+              <option value="mmf-om3">MMF OM3 (≤70m)</option>
+              <option value="smf-mpo">SMF OS2 MPO (PSM4/DR4)</option>
+              <option value="auto">Auto (cheapest)</option>
+            </select>
           </div>
         </div>
       </div>

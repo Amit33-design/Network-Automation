@@ -123,11 +123,14 @@ function onStep1Submit(e) {
     };
   }
 
-  // Link distances
+  // Link distances + fiber types (G-07)
   var ld = STATE.linkDistances;
+  if (!STATE.fiberTypes) STATE.fiberTypes = {};
   ['spine-leaf','dist-access','core-dist','wan-edge'].forEach(function(key) {
-    var el = document.getElementById('dist-' + key);
-    if (el) ld[key] = parseInt(el.value) || ld[key];
+    var distEl  = document.getElementById('dist-' + key);
+    var fiberEl = document.getElementById('fiber-' + key);
+    if (distEl)  ld[key] = parseInt(distEl.value) || ld[key];
+    if (fiberEl) STATE.fiberTypes[key] = fiberEl.value;
   });
 
   // Compliance

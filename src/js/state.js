@@ -98,6 +98,7 @@ window.resetState = function() {
   STATE.stp  = { mode: 'mstp', bpdu_guard: true, portfast: true, mst_vlan: '1-4094' };
   STATE.qos  = { classes: ['voice','video','critical','high','medium','low','scavenger','default'], dscp_map: { voice:'ef', video:'af41', critical:'af31', high:'af21', medium:'af11', low:'cs3', scavenger:'cs1', 'default':'default' } };
   STATE.linkDistances = { 'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 };
+  STATE.fiberTypes    = { 'spine-leaf': 'mmf-om4', 'dist-access': 'mmf-om4', 'core-dist': 'smf-lc', 'wan-edge': 'smf-lc' };
   STATE.devices = [];
   STATE.cabling = [];
   STATE.optics = [];
