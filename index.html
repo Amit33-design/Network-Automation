@@ -374,6 +374,18 @@
     /* config-pre already has overflow:auto — ensure it scrolls itself, not the page */
     .config-pre { max-width: 100%; }
 
+    /* Ensure textarea never blows out its container */
+    textarea { width: 100%; max-width: 100%; box-sizing: border-box; }
+
+    /* Tab bars that can overflow: show a right-fade gradient hint */
+    .bom-tabs-wrap { position: relative; }
+    .bom-tabs-wrap::after {
+      content: '';
+      position: absolute; right: 0; top: 0; bottom: 0; width: 32px;
+      background: linear-gradient(to right, transparent, var(--surface));
+      pointer-events: none;
+    }
+
     @media (max-width: 680px) {
       /* Tighten padding so content has more usable width */
       .main-content  { padding: 16px 12px; }
@@ -385,23 +397,23 @@
       /* Stack section header on narrow screens */
       .section-header { flex-direction: column; align-items: flex-start; gap: 6px; }
 
-      /* Buttons wrap rather than overflow */
-      .btn-toolbar { flex-wrap: wrap; gap: 6px; }
-      .btn         { padding: 8px 14px; font-size: 12px; }
+      /* Buttons: better touch targets (≥36px height) + wrap */
+      .btn-toolbar { flex-wrap: wrap; gap: 8px; }
+      .btn         { padding: 10px 16px; font-size: 12px; min-height: 38px; }
 
       /* Symptom search: stack vertically */
       .symptom-search-bar         { flex-direction: column; }
       .symptom-search-bar input   { min-width: 0; width: 100%; }
       .symptom-search-bar select  { min-width: 0; width: 100%; }
 
-      /* Slightly smaller config-pre on mobile */
+      /* config-pre: shorter max-height and smaller font on mobile */
       .config-pre { max-height: 320px; font-size: 11px; padding: 10px; }
 
       /* Checkbox groups wrap tightly */
       .checkbox-group { gap: 6px; }
-      .checkbox-item  { padding: 5px 10px; font-size: 12px; }
+      .checkbox-item  { padding: 5px 10px; font-size: 12px; min-height: 36px; }
 
-      /* Reduce rollback/deploy section inner padding */
+      /* Rollback/deploy section inner padding */
       .rollback-section { padding: 0; }
 
       /* Symptom cards on mobile */
@@ -409,9 +421,21 @@
       .symptom-title  { min-width: 0; word-break: break-word; }
       .symptom-body   { padding: 8px 10px; }
 
-      /* Tabs bar within steps */
-      .bom-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-      .bom-tab  { white-space: nowrap; padding: 8px 12px; font-size: 12px; flex-shrink: 0; }
+      /* Tabs bar within steps: scroll + fade hint */
+      .bom-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+      .bom-tabs::-webkit-scrollbar { display: none; }
+      .bom-tab  { white-space: nowrap; padding: 9px 14px; font-size: 12px; flex-shrink: 0; }
+
+      /* Link distance rows: wrap on very small screens */
+      .dist-row { flex-wrap: wrap; }
+
+      /* Step sub-section titles */
+      .section-title { font-size: 15px; }
+
+      /* Config gen toolbar: stack selector + buttons vertically */
+      .config-toolbar { flex-direction: column; align-items: stretch; }
+      .config-toolbar select { min-width: 0; width: 100%; }
+      .config-toolbar .btn { width: 100%; justify-content: center; }
     }
   </style>
 </head>
@@ -774,11 +798,13 @@
 
     <div id="bom-capacity-banner" style="display:none; margin-bottom:12px;"></div>
 
+    <div class="bom-tabs-wrap">
     <div class="bom-tabs">
       <div class="bom-tab active" data-pane="bom-pane-devices">Devices &amp; BOM</div>
       <div class="bom-tab" data-pane="bom-pane-cabling">Cabling Schedule</div>
       <div class="bom-tab" data-pane="bom-pane-optics">Optics</div>
       <div class="bom-tab" data-pane="bom-pane-capacity">Capacity Math</div>
+    </div>
     </div>
 
     <div id="bom-pane-devices" class="bom-pane active">
@@ -850,12 +876,14 @@
       </div>
     </div>
 
+    <div class="bom-tabs-wrap">
     <div class="bom-tabs">
       <div class="bom-tab active" data-pane="checks-pane-pre">Pre-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-post">Post-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-results">Results Diff</div>
       <div class="bom-tab" data-pane="checks-pane-symptoms">Symptom Classifier</div>
       <div class="bom-tab" data-pane="checks-pane-readme">Usage Guide</div>
+    </div>
     </div>
 
     <div id="checks-pane-pre" class="bom-pane active">
@@ -965,12 +993,14 @@ export NET_ENABLE=enablepassword   # if required</pre>
       </div>
     </div>
 
+    <div class="bom-tabs-wrap">
     <div class="bom-tabs">
       <div class="bom-tab active" data-pane="mon-pane-prom">Prometheus Alerts</div>
       <div class="bom-tab" data-pane="mon-pane-grafana">Grafana Dashboard</div>
       <div class="bom-tab" data-pane="mon-pane-deploy">Deploy Guide</div>
       <div class="bom-tab" data-pane="mon-pane-canary">Canary Deploy</div>
       <div class="bom-tab" data-pane="mon-pane-rollback">Rollback</div>
+    </div>
     </div>
 
     <div id="mon-pane-prom" class="bom-pane active">
