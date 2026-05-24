@@ -952,22 +952,32 @@ function renderConfigViewer(state) {
     return '<p class="empty-state">No devices — complete Step 1 first.</p>';
   }
 
-  var options = devices.map(function(dev) {
-    return '<option value="' + dev.instanceId + '">' + dev.hostname + ' (' + dev.model + ')</option>';
+  var listItems = devices.map(function(dev, i) {
+    var eid = (dev.instanceId || '').replace(/'/g, "\\'");
+    return '<div class="cfg-dev-item' + (i === 0 ? ' active' : '') + '" '
+      + 'data-id="' + dev.instanceId + '" '
+      + 'onclick="window.showDeviceConfig(\'' + eid + '\')">'
+      + '<div class="cfg-dev-name">' + (dev.hostname || dev.id) + '</div>'
+      + '<div class="cfg-dev-model">' + (dev.model || '') + '</div>'
+      + '</div>';
   }).join('');
 
-  return '<div class="config-viewer">' +
-    '<div class="config-toolbar">' +
-      '<select id="cfg-device-select" onchange="window.showDeviceConfig(this.value)">' +
-        options +
-      '</select>' +
-      '<button class="btn btn-secondary" onclick="window.downloadConfig()">Download</button>' +
-      '<button class="btn btn-secondary" onclick="window.downloadAllConfigs()">Download All</button>' +
-    '</div>' +
-    '<pre id="cfg-output" class="config-pre">' +
-      (Object.values(state.configs || {})[0] || '! Select a device') +
-    '</pre>' +
-  '</div>';
+  var firstDev = devices[0];
+  var firstCfg = (firstDev && state.configs[firstDev.instanceId]) || '! Generate configs first';
+  var firstTitle = firstDev ? (firstDev.hostname || firstDev.id) : '';
+
+  return '<div class="cfg-layout" id="cfg-layout">'
+    + '<div class="cfg-device-list" id="cfg-device-list">' + listItems + '</div>'
+    + '<div class="cfg-panel" id="cfg-panel">'
+    +   '<div class="cfg-panel-hdr">'
+    +     '<button class="btn btn-secondary cfg-back-btn" onclick="window.cfgShowList()">&#8592; Devices</button>'
+    +     '<span class="cfg-panel-hdr-title" id="cfg-panel-title">' + firstTitle + '</span>'
+    +     '<button class="btn btn-secondary" onclick="window.downloadConfig()">&#8595; Download</button>'
+    +     '<button class="btn btn-secondary" onclick="window.downloadAllConfigs()">&#8595; All</button>'
+    +   '</div>'
+    +   '<pre id="cfg-output" class="config-pre">' + firstCfg + '</pre>'
+    + '</div>'
+    + '</div>';
 }
 
 window.generateAllConfigs = generateAllConfigs;

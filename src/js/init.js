@@ -520,6 +520,8 @@ function renderStep3() {
   window.generateAllConfigs(STATE);
   var container = document.getElementById('config-output');
   if (container) container.innerHTML = window.renderConfigViewer(STATE);
+  // Set initial device for download
+  window._currentCfgId = STATE.devices[0] ? STATE.devices[0].instanceId : null;
   showToast('Configs generated for ' + STATE.devices.length + ' devices', 'success');
 }
 window.renderStep3 = renderStep3;
@@ -528,13 +530,37 @@ function showDeviceConfig(instanceId) {
   var pre = document.getElementById('cfg-output');
   if (!pre) return;
   pre.textContent = STATE.configs[instanceId] || '! No config for ' + instanceId;
+
+  // Highlight the selected item in the device list
+  var items = document.querySelectorAll('.cfg-dev-item');
+  items.forEach(function(item) {
+    item.classList.toggle('active', item.getAttribute('data-id') === instanceId);
+  });
+
+  // Update the panel title
+  var titleEl = document.getElementById('cfg-panel-title');
+  var dev = STATE.devices.find(function(d) { return d.instanceId === instanceId; });
+  if (titleEl && dev) titleEl.textContent = dev.hostname || dev.id;
+
+  // Remember for download
+  window._currentCfgId = instanceId;
+
+  // Mobile: show the config panel, hide the device list
+  var layout = document.getElementById('cfg-layout');
+  if (layout) layout.classList.add('show-config');
 }
 window.showDeviceConfig = showDeviceConfig;
 
+function cfgShowList() {
+  var layout = document.getElementById('cfg-layout');
+  if (layout) layout.classList.remove('show-config');
+}
+window.cfgShowList = cfgShowList;
+
 function downloadConfig() {
-  var sel = document.getElementById('cfg-device-select');
-  if (!sel) return;
-  var id  = sel.value;
+  var id = window._currentCfgId;
+  if (!id && STATE.devices.length) id = STATE.devices[0].instanceId;
+  if (!id) return;
   var cfg = STATE.configs[id] || '';
   var dev = STATE.devices.find(function(d) { return d.instanceId === id; });
   downloadFile((dev ? dev.hostname : id) + '.cfg', cfg, 'text/plain');
