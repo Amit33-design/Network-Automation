@@ -855,6 +855,8 @@ window._genMACSec = _genMACSec;
    SONiC   → sonic-gnmi service config_db.json entry      (port 8080)
 ──────────────────────────────────────────────────────────────────────── */
 function _genGNMI(vendor) {
+  const _p = window._P || function () { return ''; };
+  const gnmiColl = _p('gnmiCollector') || '10.0.0.210';
   if (vendor === 'ios-xe') {
     return `!
 ! ── gNMI / YANG-Push (IOS-XE 17.x) ───────────────────────
@@ -869,28 +871,28 @@ telemetry ietf subscription 101
  filter xpath /interfaces/interface/state
  stream yang-push
  update-policy periodic 10000
- receiver ip address 10.0.0.210 57500 protocol grpc-tcp profile default
+ receiver ip address ${gnmiColl} 57500 protocol grpc-tcp profile default
 !
 telemetry ietf subscription 102
  encoding encode-kvgpb
  filter xpath /interfaces/interface/state/counters
  stream yang-push
  update-policy periodic 10000
- receiver ip address 10.0.0.210 57500 protocol grpc-tcp profile default
+ receiver ip address ${gnmiColl} 57500 protocol grpc-tcp profile default
 !
 telemetry ietf subscription 103
  encoding encode-kvgpb
  filter xpath /network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state
  stream yang-push
  update-policy periodic 30000
- receiver ip address 10.0.0.210 57500 protocol grpc-tcp profile default
+ receiver ip address ${gnmiColl} 57500 protocol grpc-tcp profile default
 !
 telemetry ietf subscription 104
  encoding encode-kvgpb
  filter xpath /components/component/cpu/utilization/state
  stream yang-push
  update-policy periodic 30000
- receiver ip address 10.0.0.210 57500 protocol grpc-tcp profile default
+ receiver ip address ${gnmiColl} 57500 protocol grpc-tcp profile default
 `;
   }
   if (vendor === 'nxos') {
@@ -898,7 +900,7 @@ telemetry ietf subscription 104
 ! ── gNMI / Telemetry (NX-OS 9.3+) ────────────────────────
 telemetry
   destination-group 1
-    ip address 10.0.0.210 port 50051 protocol gRPC encoding GPB
+    ip address ${gnmiColl} port 50051 protocol gRPC encoding GPB
   sensor-group 1
     data-source YANG
     path openconfig-interfaces:interfaces depth unbounded
@@ -970,15 +972,20 @@ system {
 }
 
 function _genNTP(vendor) {
+  const _p     = window._P || function () { return ''; };
+  const ntp1   = _p('ntp1')   || '10.0.0.1';
+  const ntp2   = _p('ntp2')   || '10.0.0.2';
+  const ntpKey = _p('ntpKey') || 'NetDesignNTP@2024';
+  const syslog = _p('syslog') || '10.0.0.201';
   if (vendor === 'ios-xe') {
     return `!
 ! ── NTP ─────────────────────────────────────────────────────
 ntp authenticate
-ntp authentication-key 1 md5 NetDesignNTP@2024
+ntp authentication-key 1 md5 ${ntpKey}
 ntp trusted-key 1
 ntp source Vlan10
-ntp server 10.0.0.1 prefer key 1
-ntp server 10.0.0.2 key 1
+ntp server ${ntp1} prefer key 1
+ntp server ${ntp2} key 1
 clock timezone UTC 0 0
 clock calendar-valid
 `;
@@ -987,10 +994,10 @@ clock calendar-valid
     return `!
 ! ── NTP ─────────────────────────────────────────────────────
 ntp authenticate
-ntp authentication-key 1 md5 NetDesignNTP@2024
+ntp authentication-key 1 md5 ${ntpKey}
 ntp trusted-key 1
-ntp server 10.0.0.1 prefer use-vrf management key 1
-ntp server 10.0.0.2 use-vrf management key 1
+ntp server ${ntp1} prefer use-vrf management key 1
+ntp server ${ntp2} use-vrf management key 1
 clock timezone UTC 0 0
 `;
   }
@@ -998,19 +1005,19 @@ clock timezone UTC 0 0
     return `!
 ! ── NTP ─────────────────────────────────────────────────────
 ntp authenticate
-ntp authentication-key 1 md5 NetDesignNTP@2024
+ntp authentication-key 1 md5 ${ntpKey}
 ntp trusted-key 1
-ntp server 10.0.0.1 prefer key 1
-ntp server 10.0.0.2 key 1
+ntp server ${ntp1} prefer key 1
+ntp server ${ntp2} key 1
 `;
   }
   if (vendor === 'junos') {
     return `ntp {
-        authentication-key 1 type md5 value "NetDesignNTP@2024";
+        authentication-key 1 type md5 value "${ntpKey}";
         trusted-key 1;
-        boot-server 10.0.0.1;
-        server 10.0.0.1 prefer key 1;
-        server 10.0.0.2 key 1;
+        boot-server ${ntp1};
+        server ${ntp1} prefer key 1;
+        server ${ntp2} key 1;
     }`;
   }
   if (vendor === 'sonic') {
@@ -1018,11 +1025,11 @@ ntp server 10.0.0.2 key 1
 # /etc/sonic/config_db.json  (NTP section)
 {
   "NTP_SERVER": {
-    "10.0.0.1": { "resolve_as_hostname": "false" },
-    "10.0.0.2": { "resolve_as_hostname": "false" }
+    "${ntp1}": { "resolve_as_hostname": "false" },
+    "${ntp2}": { "resolve_as_hostname": "false" }
   },
   "NTP": { "global": { "src_intf": "eth0", "vrf": "mgmt" } },
-  "SYSLOG_SERVER": { "10.0.0.201": {} }
+  "SYSLOG_SERVER": { "${syslog}": {} }
 }
 `;
   }
@@ -1030,6 +1037,12 @@ ntp server 10.0.0.2 key 1
 }
 
 function _genSNMPv3(vendor) {
+  const _p       = window._P || function () { return ''; };
+  const snmpUser = _p('snmpUser')   || 'netmon';
+  const snmpAuth = _p('snmpAuthPw') || 'NetDesign@Auth2024';
+  const snmpPriv = _p('snmpPrivPw') || 'NetDesign@Priv2024';
+  const snmpTrap = _p('snmpTrap')   || '10.0.0.200';
+  const syslog   = _p('syslog')     || '10.0.0.201';
   if (vendor === 'ios-xe') {
     return `!
 ! ── SNMP v3 (authPriv) ──────────────────────────────────────
@@ -1038,13 +1051,13 @@ no snmp-server community NetWrite
 snmp-server view NETDESIGN-VIEW iso included
 snmp-server group NETDESIGN-RO v3 priv read NETDESIGN-VIEW
 snmp-server group NETDESIGN-RW v3 priv read NETDESIGN-VIEW write NETDESIGN-VIEW
-snmp-server user netmon NETDESIGN-RO v3 auth sha NetDesign@Auth2024 priv aes 128 NetDesign@Priv2024
-snmp-server host 10.0.0.200 traps version 3 priv netmon
+snmp-server user ${snmpUser} NETDESIGN-RO v3 auth sha ${snmpAuth} priv aes 128 ${snmpPriv}
+snmp-server host ${snmpTrap} traps version 3 priv ${snmpUser}
 snmp-server enable traps bgp
 snmp-server enable traps envmon
 snmp-server enable traps interface
 !
-logging host 10.0.0.201
+logging host ${syslog}
 logging trap informational
 logging source-interface Vlan10
 `;
@@ -1053,13 +1066,13 @@ logging source-interface Vlan10
     return `!
 ! ── SNMP v3 (authPriv) ──────────────────────────────────────
 no snmp-server community NetRead
-snmp-server user netmon auth sha NetDesign@Auth2024 priv aes-128 NetDesign@Priv2024
+snmp-server user ${snmpUser} auth sha ${snmpAuth} priv aes-128 ${snmpPriv}
 snmp-server group NETDESIGN-RO v3 priv
-snmp-server host 10.0.0.200 traps version 3 priv netmon use-vrf management
+snmp-server host ${snmpTrap} traps version 3 priv ${snmpUser} use-vrf management
 snmp-server enable traps bgp
 snmp-server enable traps link
 !
-logging server 10.0.0.201 6 use-vrf management
+logging server ${syslog} 6 use-vrf management
 `;
   }
   if (vendor === 'eos') {
@@ -1067,11 +1080,11 @@ logging server 10.0.0.201 6 use-vrf management
 ! ── SNMP v3 (authPriv) ──────────────────────────────────────
 no snmp-server community NetRead
 snmp-server group NETDESIGN-RO v3 priv
-snmp-server user netmon NETDESIGN-RO v3 auth sha NetDesign@Auth2024 priv aes128 NetDesign@Priv2024
-snmp-server host 10.0.0.200 traps version 3 priv netmon
+snmp-server user ${snmpUser} NETDESIGN-RO v3 auth sha ${snmpAuth} priv aes128 ${snmpPriv}
+snmp-server host ${snmpTrap} traps version 3 priv ${snmpUser}
 snmp-server enable traps bgp
 !
-logging host 10.0.0.201
+logging host ${syslog}
 logging buffered 10000
 `;
   }
@@ -1080,12 +1093,12 @@ logging buffered 10000
     v3 {
         usm {
             local-engine {
-                user netmon {
+                user ${snmpUser} {
                     authentication-sha {
-                        authentication-password "NetDesign@Auth2024";
+                        authentication-password "${snmpAuth}";
                     }
                     privacy-aes128 {
-                        privacy-password "NetDesign@Priv2024";
+                        privacy-password "${snmpPriv}";
                     }
                 }
             }
@@ -1093,7 +1106,7 @@ logging buffered 10000
         vacm {
             security-to-group {
                 security-model usm {
-                    security-name netmon { group NETDESIGN-RO; }
+                    security-name ${snmpUser} { group NETDESIGN-RO; }
                 }
             }
             access {
@@ -1109,7 +1122,7 @@ logging buffered 10000
             }
         }
         target-address NMS {
-            address 10.0.0.200;
+            address ${snmpTrap};
             tag-list netdesign;
         }
         target-parameters NMS {
@@ -1117,7 +1130,7 @@ logging buffered 10000
                 message-processing-model v3;
                 security-model usm;
                 security-level privacy;
-                security-name netmon;
+                security-name ${snmpUser};
             }
         }
         notify netdesign { tag netdesign; type trap; }
@@ -1129,12 +1142,12 @@ logging buffered 10000
   if (vendor === 'sonic') {
     return `# ── SNMP v3 ─────────────────────────────────────────────────
 # /etc/snmp/snmpd.conf  (net-snmp v3 authPriv — apply via sudo)
-createUser netmon SHA "NetDesign@Auth2024" AES "NetDesign@Priv2024"
-group NETDESIGN-RO usm netmon
+createUser ${snmpUser} SHA "${snmpAuth}" AES "${snmpPriv}"
+group NETDESIGN-RO usm ${snmpUser}
 view NETDESIGN-VIEW included .1 80000000
 access NETDESIGN-RO "" usm priv exact NETDESIGN-VIEW none none
-rouser netmon priv
-trapsess -v 3 -u netmon -l authPriv -a SHA -A "NetDesign@Auth2024" -x AES -X "NetDesign@Priv2024" 10.0.0.200
+rouser ${snmpUser} priv
+trapsess -v 3 -u ${snmpUser} -l authPriv -a SHA -A "${snmpAuth}" -x AES -X "${snmpPriv}" ${snmpTrap}
 `;
   }
   return '';
@@ -1145,20 +1158,24 @@ trapsess -v 3 -u netmon -l authPriv -a SHA -A "NetDesign@Auth2024" -x AES -X "Ne
 ════════════════════════════════════════════════════════════════ */
 
 function _genAAA(vendor, state) {
+  const _p      = window._P || function () { return ''; };
+  const tac1    = _p('tacacs1')   || '10.0.0.101';
+  const tac2    = _p('tacacs2')   || '10.0.0.102';
+  const tacKey  = _p('tacacsKey') || 'NetDesign@TACACS2024';
   if (vendor === 'ios-xe') {
     return `!
 ! ── AAA / TACACS+ ───────────────────────────────────────────
 aaa new-model
 !
 tacacs server ISE-TACACS-PRIMARY
- address ipv4 10.0.0.101
- key 7 NetDesign@TACACS2024
+ address ipv4 ${tac1}
+ key 7 ${tacKey}
  timeout 3
  single-connection
 !
 tacacs server ISE-TACACS-SECONDARY
- address ipv4 10.0.0.102
- key 7 NetDesign@TACACS2024
+ address ipv4 ${tac2}
+ key 7 ${tacKey}
  timeout 3
 !
 aaa group server tacacs+ TACACS-GROUP
@@ -1181,13 +1198,13 @@ aaa accounting commands 15 default start-stop group TACACS-GROUP
   if (vendor === 'nxos') {
     return `!
 ! ── AAA / TACACS+ ───────────────────────────────────────────
-tacacs-server host 10.0.0.101 key NetDesign@TACACS2024
-tacacs-server host 10.0.0.102 key NetDesign@TACACS2024
+tacacs-server host ${tac1} key ${tacKey}
+tacacs-server host ${tac2} key ${tacKey}
 tacacs-server timeout 3
 !
 aaa group server tacacs+ TACACS-GROUP
-    server 10.0.0.101
-    server 10.0.0.102
+    server ${tac1}
+    server ${tac2}
     source-interface mgmt0
     use-vrf management
 !
@@ -1202,13 +1219,13 @@ aaa accounting default group TACACS-GROUP
   if (vendor === 'eos') {
     return `!
 ! ── AAA / TACACS+ ───────────────────────────────────────────
-tacacs-server host 10.0.0.101 key NetDesign@TACACS2024
-tacacs-server host 10.0.0.102 key NetDesign@TACACS2024
+tacacs-server host ${tac1} key ${tacKey}
+tacacs-server host ${tac2} key ${tacKey}
 tacacs-server timeout 3
 !
 aaa group server tacacs+ TACACS-GROUP
-   server 10.0.0.101
-   server 10.0.0.102
+   server ${tac1}
+   server ${tac2}
 !
 aaa authentication login default group TACACS-GROUP local
 aaa authentication enable default group TACACS-GROUP local
@@ -1223,13 +1240,13 @@ aaa accounting commands all default start-stop group TACACS-GROUP
     return `## ── AAA / TACACS+ ─────────────────────────────────────────
 system {
     tacplus-server {
-        10.0.0.101 {
-            secret "NetDesign@TACACS2024";
+        ${tac1} {
+            secret "${tacKey}";
             single-connection;
             timeout 3;
         }
-        10.0.0.102 {
-            secret "NetDesign@TACACS2024";
+        ${tac2} {
+            secret "${tacKey}";
             timeout 3;
         }
     }
@@ -1248,15 +1265,15 @@ system {
 # /etc/sonic/config_db.json  (AAA section — merge with base config)
 {
   "TACPLUS_SERVER": {
-    "10.0.0.101": {
+    "${tac1}": {
       "priority": "1",
       "tcp_port": "49",
-      "passkey": "NetDesign@TACACS2024"
+      "passkey": "${tacKey}"
     },
-    "10.0.0.102": {
+    "${tac2}": {
       "priority": "2",
       "tcp_port": "49",
-      "passkey": "NetDesign@TACACS2024"
+      "passkey": "${tacKey}"
     }
   },
   "AAA": {
@@ -1504,7 +1521,9 @@ interface Loopback0
 function _genBGPUnnumbered(vendor, layer, idx, hasVxlan) {
   var isSpine = layer === 'dc-spine';
   var isLeaf  = layer === 'dc-leaf';
-  var asn     = isSpine ? 65000 : (65001 + idx);
+  var _sAsn   = (window._PI ? window._PI('spineAsn')   : 0) || 65000;
+  var _lBase  = (window._PI ? window._PI('leafAsnBase') : 0) || 65001;
+  var asn     = isSpine ? _sAsn : (_lBase + idx);
   var loIP    = isSpine ? ('10.255.1.' + (idx+1)) : ('10.255.2.' + (idx+1));
   var vtepIP  = '10.255.3.' + (idx+1);
 
@@ -2104,6 +2123,7 @@ function _genRouteReflector(vendor, layer, idx) {
   const loIP  = vendor === 'junos'
     ? '10.255.2.' + (idx + 1)
     : '10.255.0.' + (20 + idx);
+  const _rrSpineAsn = (window._PI ? window._PI('spineAsn') : 0) || 65000;
 
   if (vendor === 'ios-xe' && layer === 'campus-core') {
     return `!
@@ -2123,7 +2143,7 @@ router bgp 65100
 ! ── ROUTE REFLECTORS ────────────────────────────────────────
 ! RR is already active on this spine (neighbor LEAF route-reflector-client
 ! lines above).  BGP cluster-id ensures loop prevention between RR peers.
-router bgp 65000
+router bgp ${_rrSpineAsn}
   cluster-id ${loIP}
 `;
   }
@@ -2133,7 +2153,7 @@ router bgp 65000
 ! ── ROUTE REFLECTORS ────────────────────────────────────────
 ! RR is already active on this spine (neighbor LEAVES route-reflector-client).
 ! Adding cluster-id for dual-RR loop prevention.
-router bgp 65000
+router bgp ${_rrSpineAsn}
    bgp cluster-id ${loIP}
 !`;
   }
@@ -2679,6 +2699,10 @@ function _genWANRouterIOSXE(dev, isHub, idx) {
   const lanMask = '255.255.255.0';
   const branchLan = `192.168.${idx+1}.0 0.0.0.255`;
   const date   = new Date().toISOString().slice(0,10);
+  const _p     = window._P || function () { return ''; };
+  const _dom   = _p('domainName') || 'netdesign.local';
+  const _dns   = _p('dnsServer')  || '8.8.8.8';
+  const _enSec = _p('enableSecret') || 'NetDesign@Enable2024';
 
   let cfg = `! ═══════════════════════════════════════════════════════════
 ! Device : ${name}
@@ -2690,15 +2714,15 @@ function _genWANRouterIOSXE(dev, isHub, idx) {
 ! ── MANAGEMENT ─────────────────────────────────────────────
 hostname ${name}
 !
-ip domain-name netdesign.local
-ip name-server 8.8.8.8
+ip domain-name ${_dom}
+ip name-server ${_dns}
 service timestamps log datetime msec localtime show-timezone
 service timestamps debug datetime msec
 service password-encryption
 no service pad
 !
-username admin privilege 15 algorithm-type sha256 secret NetDesign@2024
-enable algorithm-type sha256 secret NetDesign@2024
+username admin privilege 15 algorithm-type sha256 secret ${_enSec}
+enable algorithm-type sha256 secret ${_enSec}
 !
 interface GigabitEthernet0
  description OOB-MANAGEMENT
@@ -2979,6 +3003,8 @@ function _genWANRouterJunOS(dev, isHub, idx) {
   const tunnIP = isHub ? '172.16.0.1/24' : `172.16.0.${10+idx}/24`;
   const lanIP  = isHub ? `10.0.${idx}.1/24` : `192.168.${idx+1}.1/24`;
   const date   = new Date().toISOString().slice(0,10);
+  const _p     = window._P || function () { return ''; };
+  const _dom   = _p('domainName') || 'netdesign.local';
 
   let cfg = `## ═══════════════════════════════════════════════════════════
 ## Device : ${dev.name}  Role: ${dev.role}
@@ -2987,7 +3013,7 @@ function _genWANRouterJunOS(dev, isHub, idx) {
 ## ═══════════════════════════════════════════════════════════
 system {
     host-name ${name};
-    domain-name netdesign.local;
+    domain-name ${_dom};
     time-zone UTC;
     authentication-order [ password ];
     root-authentication {
@@ -3467,6 +3493,10 @@ function genIOSXE(dev, layer, idx) {
   const name   = dev.name;
   const mgmtIP = `10.0.0.${30 + idx}`;
   const loIP   = `10.255.0.${20 + idx}`;
+  const _p_xe  = window._P || function () { return ''; };
+  const _dom   = _p_xe('domainName') || 'netdesign.local';
+  const _dns   = _p_xe('dnsServer')  || '8.8.8.8';
+  const _enSec = _p_xe('enableSecret') || 'NetDesign@Enable2024';
   const isCore = layer === 'campus-core';
   const isDist = layer === 'campus-dist';
   const isAcc  = layer === 'campus-access';
@@ -3499,8 +3529,8 @@ function genIOSXE(dev, layer, idx) {
 ! ── MANAGEMENT ─────────────────────────────────────────────
 hostname ${name}
 !
-ip domain-name netdesign.local
-ip name-server 8.8.8.8
+ip domain-name ${_dom}
+ip name-server ${_dns}
 service timestamps log datetime msec localtime show-timezone
 service timestamps debug datetime msec
 service password-encryption
@@ -3532,8 +3562,8 @@ ip access-list standard MGMT-ACL
  permit 10.0.0.0 0.0.0.255
  deny   any log
 !
-username admin privilege 15 algorithm-type sha256 secret NetDesign@2024
-enable algorithm-type sha256 secret NetDesign@2024
+username admin privilege 15 algorithm-type sha256 secret ${_enSec}
+enable algorithm-type sha256 secret ${_enSec}
 !
 ! ── VLANs ──────────────────────────────────────────────────
 vlan 10
@@ -3910,11 +3940,16 @@ function genNXOS(dev, layer, idx) {
   if (dev.role === 'HQ Core Router' || dev.role === 'Branch CPE') {
     return `! ── WAN NOTE ─────────────────────────────────────────────\n! NX-OS is a DC OS and does not support DMVPN/FlexVPN.\n! Switch the vendor to Cisco IOS-XE (ASR/ISR) or Juniper\n! (MX/SRX) for WAN/Branch deployments.\n`;
   }
+  const _p_nx  = window._P  || function () { return ''; };
+  const _pi_nx = window._PI || function () { return 0; };
+  const _dom   = _p_nx('domainName') || 'netdesign.local';
   const name    = dev.name;
   const isSpine = layer === 'dc-spine' || layer === 'gpu-spine';
   const isLeaf  = layer === 'dc-leaf';
   const isTOR   = layer === 'gpu-tor';
-  const asn     = isSpine ? 65000 : (isTOR ? 65010 + idx : 65001 + idx);
+  const _spineAsn_nx   = (_pi_nx('spineAsn')   || 65000);
+  const _leafAsnBase_nx = (_pi_nx('leafAsnBase') || 65001);
+  const asn     = isSpine ? _spineAsn_nx : (isTOR ? 65010 + idx : _leafAsnBase_nx + idx);
   const loIP    = isSpine ? `10.255.1.${idx+1}` : (isTOR ? `10.255.5.${idx+1}` : `10.255.2.${idx+1}`);
   const vtepIP  = `10.255.3.${idx+1}`;
   const mgmtIP  = `10.0.0.${isSpine ? 5+idx : 11+idx}`;
@@ -3952,7 +3987,7 @@ ${isLeaf   ? `feature vpc
 feature dhcp` : ''}
 !
 no ip domain-lookup
-ip domain-name netdesign.local
+ip domain-name ${_dom}
 !
 ! ── SECURITY HARDENING ──────────────────────────────────────
 no feature telnet
@@ -4384,10 +4419,14 @@ function genEOS(dev, layer, idx) {
   if (dev.role === 'HQ Core Router' || dev.role === 'Branch CPE') {
     return `! ── WAN NOTE ─────────────────────────────────────────────\n! Arista EOS is a DC OS and does not support DMVPN/NHRP.\n! Switch the vendor to Cisco IOS-XE (ASR/ISR) for traditional\n! DMVPN, or use Arista CloudVision SD-WAN for EOS-based WAN.\n`;
   }
+  const _p_eos  = window._P  || function () { return ''; };
+  const _pi_eos = window._PI || function () { return 0; };
+  const _spineAsn_eos   = (_pi_eos('spineAsn')   || 65000);
+  const _leafAsnBase_eos = (_pi_eos('leafAsnBase') || 65001);
   const name    = dev.name;
   const isSpine = layer === 'dc-spine' || layer === 'gpu-spine';
   const isTOR   = layer === 'gpu-tor';
-  const asn     = isSpine ? 65000 : 65001 + idx;
+  const asn     = isSpine ? _spineAsn_eos : _leafAsnBase_eos + idx;
   const loIP    = isSpine ? `10.255.1.${idx+1}` : `10.255.2.${idx+1}`;
   const vtepIP  = `10.255.3.${idx+1}`;
   const _ud     = (typeof getUplinkDescs === 'function') ? getUplinkDescs(name) : [];
@@ -4505,12 +4544,12 @@ router bgp ${asn}
    bgp bestpath as-path multipath-relax
    !
    neighbor SPINES peer group
-   neighbor SPINES remote-as 65000
+   neighbor SPINES remote-as ${_spineAsn_eos}
    neighbor SPINES send-community extended
    neighbor SPINES maximum-routes 12000
    !
 ${isSpine ? `   neighbor LEAVES peer group
-   neighbor LEAVES remote-as 65001
+   neighbor LEAVES remote-as ${_leafAsnBase_eos}
    neighbor LEAVES route-reflector-client
    neighbor LEAVES send-community extended
    neighbor 10.1.0.1 peer group LEAVES
@@ -4565,6 +4604,11 @@ function genJunos(dev, layer, idx) {
   if (dev.role === 'HQ Core Router') return _genWANRouterJunOS(dev, true,  idx);
   if (dev.role === 'Branch CPE')     return _genWANRouterJunOS(dev, false, idx);
 
+  const _p_j  = window._P  || function () { return ''; };
+  const _pi_j = window._PI || function () { return 0; };
+  const _dom  = _p_j('domainName') || 'netdesign.local';
+  const _spineAsn_j    = (_pi_j('spineAsn')   || 65000);
+  const _leafAsnBase_j = (_pi_j('leafAsnBase') || 65001);
   const name    = dev.name.toLowerCase().replace(/-/g, '_');
   const loIP    = `10.255.2.${idx+1}`;
   const mgmt    = `10.0.0.${20+idx}`;
@@ -4581,7 +4625,7 @@ function genJunos(dev, layer, idx) {
 ## ═══════════════════════════════════════════════════════════
 system {
     host-name ${name};
-    domain-name netdesign.local;
+    domain-name ${_dom};
     time-zone UTC;
     authentication-order [ password ];
     root-authentication {
@@ -4647,7 +4691,7 @@ vlans {
 }
 routing-options {
     router-id ${loIP};
-    autonomous-system 6500${idx+1};
+    autonomous-system ${_leafAsnBase_j + idx};
     forwarding-table { export ECMP-POLICY; }
 }
 policy-options {
@@ -4665,7 +4709,7 @@ policy-options {
 ${hasVxlan ? `switch-options {
     vtep-source-interface lo0.0;
     route-distinguisher ${loIP}:1;
-    vrf-target target:65000:1;
+    vrf-target target:${_spineAsn_j}:1;
     vrf-table-label;
 }
 ` : ''}protocols {
@@ -4689,8 +4733,8 @@ ${hasVxlan ? `switch-options {
             family evpn signaling;
             export [ CONNECTED VTEP-LOOPBACK ];` : `export CONNECTED;`}
             multipath { multiple-as; }
-            neighbor 10.1.0.${idx*2} { peer-as 65000; description "SPINE-01"; }
-            neighbor 10.1.0.${idx*2+8} { peer-as 65000; description "SPINE-02"; }
+            neighbor 10.1.0.${idx*2} { peer-as ${_spineAsn_j}; description "SPINE-01"; }
+            neighbor 10.1.0.${idx*2+8} { peer-as ${_spineAsn_j}; description "SPINE-02"; }
         }`}
     }
 ${hasVxlan ? `    evpn {

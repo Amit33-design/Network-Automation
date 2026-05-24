@@ -6,7 +6,10 @@ window.jumpStep = function(n) {
   _coreJumpStep(n);
   if (n === 3) setTimeout(generateRecommendations, 80);
   if (n === 4) setTimeout(buildDesign, 80);
-  if (n === 5) setTimeout(renderDeviceList, 80);
+  if (n === 5) {
+    if (typeof renderParamsPanel === 'function') renderParamsPanel();
+    setTimeout(renderDeviceList, 80);
+  }
   saveStateLS();
 };
 

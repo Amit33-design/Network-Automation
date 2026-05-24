@@ -3461,3 +3461,38 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
                      padding: 1rem; font-size: .74rem; font-family: monospace; line-height: 1.6;
                      color: var(--txt1); white-space: pre; overflow-x: auto; margin: 0;
                      max-height: 480px; overflow-y: auto; }
+
+
+/* ── Config Parameters Panel ─────────────────────────────────────── */
+.prm-panel          { background: var(--bg1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.prm-header         { display: flex; align-items: center; gap: .75rem; padding: .75rem 1.1rem;
+                      cursor: pointer; user-select: none; }
+.prm-header:hover   { background: var(--bg2); }
+.prm-header-icon    { font-size: 1.15rem; flex-shrink: 0; }
+.prm-header-text    { flex: 1; }
+.prm-title          { font-size: .88rem; font-weight: 700; color: var(--txt0); }
+.prm-sub            { font-size: .74rem; color: var(--txt2); margin-top: .1rem; }
+.prm-chevron        { font-size: .75rem; color: var(--txt3); flex-shrink: 0; white-space: nowrap; }
+.prm-body           { padding: .75rem 1.1rem 1rem; border-top: 1px solid var(--border); }
+.prm-section        { margin-bottom: 1rem; }
+.prm-section:last-of-type { margin-bottom: .5rem; }
+.prm-section-title  { font-size: .78rem; font-weight: 700; color: var(--txt1);
+                      text-transform: uppercase; letter-spacing: .06em;
+                      margin-bottom: .55rem; }
+.prm-cred-note      { font-size: .72rem; font-weight: 400; color: var(--orange);
+                      text-transform: none; letter-spacing: 0; }
+.prm-grid           { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .5rem .75rem; }
+.prm-field          { display: flex; flex-direction: column; gap: .18rem; }
+.prm-label          { font-size: .72rem; font-weight: 600; color: var(--txt2); }
+.prm-input          { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+                      color: var(--txt0); font-size: .8rem; padding: .3rem .55rem;
+                      outline: none; font-family: monospace; }
+.prm-input:focus    { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(26,127,255,.15); }
+.prm-hint           { font-size: .68rem; color: var(--txt3); line-height: 1.3; }
+.prm-actions        { display: flex; gap: .6rem; padding-top: .6rem;
+                      border-top: 1px solid var(--border); margin-top: .6rem; flex-wrap: wrap; }
+.prm-apply-btn      { font-size: .8rem; padding: .35rem .9rem; }
+.prm-reset-btn      { font-size: .8rem; padding: .35rem .9rem;
+                      background: var(--bg3); border: 1px solid var(--border);
+                      color: var(--txt1); border-radius: 6px; cursor: pointer; }
+.prm-reset-btn:hover { background: var(--bg2); }
