@@ -20,6 +20,17 @@ Main entry: `index.html` | JS: `src/js/` | Backend: `backend/`
 
 ## Agent Log
 
+### Run 2026-05-24 03:00Z
+**Implemented**: G-03 + G-04 — Port-math BOM sizing
+**Files changed**:
+- `src/js/bom_calculator.js` (created) — `window.calculateBOM(intent, leafSku, spineSku)` exact from CLAUDE.md §6: leaf count (raw → even HA pairs), uplink validation (server capacity / oversubscription / uplink speed), spine count (max of ceil + 2 minimum), trace object, warning string when insufficient
+- `src/js/products.js` (updated) — added `uplink_speed_gbps` field to all leaf/access/distribution products (93180YC=100G, 9332C=100G, 7050CX3=100G, QFX5120=100G, Cat9500=100G, Cat9300L=1G, Cat9200=1G)
+- `src/js/state.js` (updated) — added `topology: {endpoint_count, bandwidth_gbps, oversubscription}`
+- `src/js/bom.js` (updated) — `buildDeviceList()`: for DC/GPU/multisite, runs `calculateBOM()` with selected leaf+spine SKUs and overrides device counts; stores `state.capacityMath`; other roles kept from SCALE_DEFS; fallback to SCALE_DEFS when port-math not applicable
+- `index.html` (updated) — Step 1: endpoint count, bandwidth per server, oversubscription ratio form fields; Step 2: Capacity Math sub-tab + BOM warning banner
+- `src/js/init.js` (updated) — reads topology fields in `onStep1Submit`; `renderCapacityMath(state)`: renders calculation step table with uplink OK/INSUFFICIENT status; warning banner when hardware cannot satisfy intent
+**Tested**: 4 test cases — standard DC (12 leaves / 2 spines / OK), GPU 1:1 insufficient (warning triggered), exact boundary (2 leaves), odd-to-even rounding (3→4). All pass.
+
 ### Run 2026-05-24 02:00Z
 **Implemented**: G-20 + G-13 — Complete NX-OS leaf EVPN config + BGP bestpath multipath-relax
 **Files changed**:

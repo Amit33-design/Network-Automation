@@ -7,6 +7,11 @@ var STATE = {
   siteCode: '',         // e.g. IAD, SJC
   scale: 'small',       // small | medium | large
   redundancy: 'ha',     // none | basic | ha | full
+  topology: {
+    endpoint_count:  500,   // total server/endpoint count
+    bandwidth_gbps:   25,   // per-server bandwidth (1|10|25|100|400)
+    oversubscription:  3    // uplink oversubscription ratio N:1
+  },
   vendors: [],          // cisco | arista | juniper | nvidia | fortinet | hpe | dell | extreme
   protocols: {
     underlay: 'bgp',    // bgp | ospf | is-is | eigrp | static
@@ -49,6 +54,7 @@ window.resetState = function() {
   STATE.siteCode = '';
   STATE.scale = 'small';
   STATE.redundancy = 'ha';
+  STATE.topology   = { endpoint_count: 500, bandwidth_gbps: 25, oversubscription: 3 };
   STATE.vendors = [];
   STATE.protocols = { underlay: 'bgp', overlay: [], features: [] };
   STATE.gpu = { transport: 'none' };

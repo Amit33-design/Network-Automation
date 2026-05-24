@@ -46,16 +46,53 @@ function lookupProduct(id) {
   return window.PRODUCTS.find(function(p) { return p.id === id; }) || null;
 }
 
+// Use cases where port-math BOM applies (spine-leaf topologies)
+var PORT_MATH_CASES = { dc: true, gpu: true, multisite: true };
+
 /**
  * Build a flat device list for the given use case and scale.
- * Each device has all PRODUCTS fields + count, qty, hostname (set by naming.js).
+ * For DC/GPU/multisite: quantities come from calculateBOM() port-math (G-03/G-04).
+ * For other use cases: fall back to SCALE_DEFS.
  */
 function buildDeviceList(state) {
   var useCase = state.useCase || 'dc';
   var scale   = state.scale   || 'small';
 
-  var scaleDef     = (SCALE_DEFS[scale]         || SCALE_DEFS.small)[useCase]     || SCALE_DEFS.small.dc;
   var prefProducts = PREFERRED_PRODUCTS[useCase] || PREFERRED_PRODUCTS.dc;
+  var scaleDef;
+
+  // ── Port-math sizing (G-03 + G-04) ────────────────────────────────────────
+  if (PORT_MATH_CASES[useCase] && window.calculateBOM && state.topology) {
+    var leafProdId  = prefProducts['leaf'];
+    var spineProdId = prefProducts['spine'];
+    var leafProd    = leafProdId  ? lookupProduct(leafProdId)  : null;
+    var spineProd   = spineProdId ? lookupProduct(spineProdId) : null;
+
+    if (leafProd && spineProd && leafProd.uplinks > 0) {
+      var leafSku = {
+        downlink_count:   leafProd.ports,
+        uplink_count:     leafProd.uplinks,
+        uplink_speed_gbps: leafProd.uplink_speed_gbps || 100,
+        model:            leafProd.model
+      };
+      var spineSku = { port_count: spineProd.ports };
+      var calc     = window.calculateBOM(state, leafSku, spineSku);
+
+      state.capacityMath = calc; // stored for "Capacity Math" panel display
+
+      scaleDef = { spine: calc.spine_count, leaf: calc.leaf_count };
+      // Preserve non-spine-leaf roles from SCALE_DEFS
+      var fallback = (SCALE_DEFS[scale] || SCALE_DEFS.small)[useCase] || {};
+      Object.keys(fallback).forEach(function(role) {
+        if (role !== 'spine' && role !== 'leaf') scaleDef[role] = fallback[role];
+      });
+    }
+  }
+
+  if (!scaleDef) {
+    state.capacityMath = null;
+    scaleDef = (SCALE_DEFS[scale] || SCALE_DEFS.small)[useCase] || SCALE_DEFS.small.dc;
+  }
 
   var devices = [];
 

@@ -380,7 +380,7 @@
       </div>
 
       <div id="fs-architecture" class="form-section">
-        <h3>Architecture</h3>
+        <h3>Architecture &amp; Topology Sizing</h3>
         <div class="form-grid">
           <div class="form-group">
             <label>Use Case</label>
@@ -410,6 +410,31 @@
               <option value="basic">Basic (single uplink)</option>
               <option value="ha" selected>High Availability (dual)</option>
               <option value="full">Full (dual + cross-connect)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Endpoint / Server Count</label>
+            <input id="inp-endpoint-count" type="number" value="500" min="1" max="100000">
+          </div>
+          <div class="form-group">
+            <label>Bandwidth per Server (Gbps)</label>
+            <select id="sel-bandwidth-gbps">
+              <option value="1">1 GbE</option>
+              <option value="10">10 GbE</option>
+              <option value="25" selected>25 GbE</option>
+              <option value="100">100 GbE</option>
+              <option value="400">400 GbE</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Oversubscription Ratio (N:1)</label>
+            <select id="sel-oversubscription">
+              <option value="1">1:1 (lossless / GPU)</option>
+              <option value="2">2:1</option>
+              <option value="3" selected>3:1 (standard DC)</option>
+              <option value="4">4:1</option>
+              <option value="6">6:1</option>
+              <option value="20">20:1 (campus)</option>
             </select>
           </div>
         </div>
@@ -549,10 +574,13 @@
       <button class="btn btn-primary" onclick="window.renderStep3(); window.goToStep(3)">Generate Configs →</button>
     </div>
 
+    <div id="bom-capacity-banner" style="display:none; margin-bottom:12px;"></div>
+
     <div class="bom-tabs">
       <div class="bom-tab active" data-pane="bom-pane-devices">Devices &amp; BOM</div>
       <div class="bom-tab" data-pane="bom-pane-cabling">Cabling Schedule</div>
       <div class="bom-tab" data-pane="bom-pane-optics">Optics</div>
+      <div class="bom-tab" data-pane="bom-pane-capacity">Capacity Math</div>
     </div>
 
     <div id="bom-pane-devices" class="bom-pane active">
@@ -570,6 +598,12 @@
     <div id="bom-pane-optics" class="bom-pane">
       <div id="optics-output">
         <p class="empty-state">Optics recommendations will appear after BOM generation.</p>
+      </div>
+    </div>
+
+    <div id="bom-pane-capacity" class="bom-pane">
+      <div id="capacity-math-output">
+        <p class="empty-state">Port-math sizing available for DC / GPU / Multi-site use cases.</p>
       </div>
     </div>
   </section>
@@ -753,6 +787,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/products.js"></script>
 <script src="src/js/naming.js"></script>
 <script src="src/js/cabling.js"></script>
+<script src="src/js/bom_calculator.js"></script>
 <script src="src/js/bom.js"></script>
 <script src="src/js/optics.js"></script>
 <script src="src/js/configgen.js"></script>

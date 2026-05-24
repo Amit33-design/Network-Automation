@@ -99,6 +99,13 @@ function onStep1Submit(e) {
     STATE.appTypes.push(cb.value);
   });
 
+  // Topology sizing (G-03 + G-04)
+  STATE.topology = {
+    endpoint_count:   parseInt(document.getElementById('inp-endpoint-count').value) || 500,
+    bandwidth_gbps:   parseInt(document.getElementById('sel-bandwidth-gbps').value)  || 25,
+    oversubscription: parseInt(document.getElementById('sel-oversubscription').value) || 3
+  };
+
   // ── G-02: Intent coherence validation ─────────────────────────────────────
   if (window.validateIntent && window.applyValidationHighlights) {
     var violations = window.validateIntent(STATE);
@@ -122,6 +129,58 @@ function onStep1Submit(e) {
   goToStep(2);
 }
 window.onStep1Submit = onStep1Submit;
+
+// ─── Capacity Math panel (G-03 + G-04) ───────────────────────────────────────
+function renderCapacityMath(state) {
+  var calc    = state.capacityMath;
+  var capOut  = document.getElementById('capacity-math-output');
+  var banner  = document.getElementById('bom-capacity-banner');
+
+  if (banner) banner.style.display = 'none';
+
+  if (!capOut) return;
+  if (!calc) {
+    capOut.innerHTML = '<p class="empty-state">Port-math sizing applies to DC / GPU / Multi-site use cases.</p>';
+    return;
+  }
+
+  var topo = state.topology || {};
+  var t    = calc.trace;
+
+  // Warning badge if uplinks insufficient
+  if (!calc.uplink_capacity_ok && banner) {
+    banner.innerHTML = '<div class="val-block val-block-error" style="margin:0;">' +
+      '<div class="val-block-hdr">Hardware Warning — BOM cannot satisfy intent</div>' +
+      '<div class="val-item"><span class="val-msg">' + (calc.warning || '') + '</span></div>' +
+      '</div>';
+    banner.style.display = 'block';
+  }
+
+  var statusClass = calc.uplink_capacity_ok ? 'color:var(--success)' : 'color:var(--danger)';
+
+  capOut.innerHTML =
+    '<div class="form-section">' +
+      '<h3>Port-Math Capacity Calculation</h3>' +
+      '<table class="bom-table">' +
+        '<thead><tr><th>Parameter</th><th>Input</th><th>Result</th></tr></thead>' +
+        '<tbody>' +
+          '<tr><td>Endpoints / servers</td><td>' + topo.endpoint_count + '</td><td>—</td></tr>' +
+          '<tr><td>Bandwidth per server</td><td>' + topo.bandwidth_gbps + ' GbE</td><td>—</td></tr>' +
+          '<tr><td>Oversubscription</td><td>' + topo.oversubscription + ':1</td><td>—</td></tr>' +
+          '<tr><td>Servers per leaf</td><td>' + t.servers_per_leaf + ' downlinks</td><td>—</td></tr>' +
+          '<tr><td>Raw leaf count</td><td>⌈' + topo.endpoint_count + ' / ' + t.servers_per_leaf + '⌉</td><td>' + t.raw_leaf_count + '</td></tr>' +
+          '<tr><td>Leaf count (even HA pairs)</td><td>→ even</td><td><strong>' + calc.leaf_count + '</strong></td></tr>' +
+          '<tr><td>Server capacity per leaf</td><td>' + t.servers_per_leaf + ' × ' + topo.bandwidth_gbps + 'G</td><td>' + t.server_capacity_gbps + ' Gbps</td></tr>' +
+          '<tr><td>Required uplink capacity</td><td>' + t.server_capacity_gbps + 'G / ' + topo.oversubscription + '</td><td>' + t.required_uplink_gbps.toFixed(0) + ' Gbps</td></tr>' +
+          '<tr><td>Uplinks per leaf</td><td style="' + statusClass + '">' + calc.uplinks_per_leaf + ' × ' + (calc.uplinks_per_leaf > 0 ? (t.required_uplink_gbps / calc.uplinks_per_leaf).toFixed(0) : '?') + 'G</td>' +
+            '<td style="' + statusClass + '"><strong>' + (calc.uplink_capacity_ok ? 'OK' : 'INSUFFICIENT') + '</strong></td></tr>' +
+          '<tr><td>Total leaf uplinks</td><td>' + calc.leaf_count + ' × ' + calc.uplinks_per_leaf + '</td><td>' + t.total_leaf_uplinks + '</td></tr>' +
+          '<tr><td>Spine count</td><td>⌈' + t.total_leaf_uplinks + ' / spine ports⌉ (min 2)</td><td><strong>' + calc.spine_count + '</strong></td></tr>' +
+        '</tbody>' +
+      '</table>' +
+    '</div>';
+}
+window.renderCapacityMath = renderCapacityMath;
 
 // ─── Step 2: BOM ──────────────────────────────────────────────────────────────
 function renderStep2() {
@@ -153,6 +212,9 @@ function renderStep2() {
     window.recommendOptics(STATE.cabling, STATE.devices, STATE);
     opticsOut.innerHTML = window.renderOpticsTable(STATE.optics);
   }
+
+  // Capacity Math tab (G-03 + G-04)
+  renderCapacityMath(STATE);
 
   showToast('BOM generated: ' + STATE.devices.length + ' devices', 'success');
 }
