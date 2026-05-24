@@ -96,6 +96,7 @@
     .form-group { display: flex; flex-direction: column; gap: 6px; }
     .form-group label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; }
     .form-group select, .form-group input {
+      width: 100%;
       background: var(--surface2);
       border: 1px solid var(--border);
       border-radius: var(--radius);
@@ -358,6 +359,60 @@
     .symptom-search-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
     .symptom-search-bar input { flex: 1; min-width: 200px; }
     .symptom-search-bar select { min-width: 130px; }
+
+    /* ─── Mobile responsive ──────────────────────────────────────────────────── */
+    /* Prevent page-level horizontal scroll; scrollable children still work */
+    html { overflow-x: hidden; }
+    body { overflow-x: hidden; }
+
+    /* Tables: scroll within their pane rather than blowing out the page */
+    .bom-pane   { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .bom-table  { min-width: 480px; } /* ensure scroll triggers before content wraps oddly */
+    .rollback-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .rollback-table   { min-width: 420px; }
+
+    /* config-pre already has overflow:auto — ensure it scrolls itself, not the page */
+    .config-pre { max-width: 100%; }
+
+    @media (max-width: 680px) {
+      /* Tighten padding so content has more usable width */
+      .main-content  { padding: 16px 12px; }
+      .form-section  { padding: 14px 12px; }
+      .app-header    { padding: 10px 14px; gap: 8px; }
+      .wizard-tabs   { padding: 0 4px; }
+      .step-tab      { padding: 10px 12px; font-size: 12px; }
+
+      /* Stack section header on narrow screens */
+      .section-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+
+      /* Buttons wrap rather than overflow */
+      .btn-toolbar { flex-wrap: wrap; gap: 6px; }
+      .btn         { padding: 8px 14px; font-size: 12px; }
+
+      /* Symptom search: stack vertically */
+      .symptom-search-bar         { flex-direction: column; }
+      .symptom-search-bar input   { min-width: 0; width: 100%; }
+      .symptom-search-bar select  { min-width: 0; width: 100%; }
+
+      /* Slightly smaller config-pre on mobile */
+      .config-pre { max-height: 320px; font-size: 11px; padding: 10px; }
+
+      /* Checkbox groups wrap tightly */
+      .checkbox-group { gap: 6px; }
+      .checkbox-item  { padding: 5px 10px; font-size: 12px; }
+
+      /* Reduce rollback/deploy section inner padding */
+      .rollback-section { padding: 0; }
+
+      /* Symptom cards on mobile */
+      .symptom-header { flex-wrap: wrap; }
+      .symptom-title  { min-width: 0; word-break: break-word; }
+      .symptom-body   { padding: 8px 10px; }
+
+      /* Tabs bar within steps */
+      .bom-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .bom-tab  { white-space: nowrap; padding: 8px 12px; font-size: 12px; flex-shrink: 0; }
+    }
   </style>
 </head>
 <body>
