@@ -236,7 +236,205 @@ window.renderRackLayout = function(devices) {
       + ' — no physical rack slot required.</div>';
   }
 
-  return legend + rackDiagrams + placementTable + virtSection;
+  return legend + rackDiagrams + placementTable + virtSection
+       + window.renderPowerCooling(devices);
+};
+
+// ─── Power & Cooling engine ───────────────────────────────────────────────────
+
+// Standard 3-phase rack PDU sizes (kW) — pick smallest that covers load + 25% headroom
+var PDU_SIZES_KW = [7.2, 10.4, 14.4, 17.3, 21.6, 36, 60];
+
+// Cooling tier guidance thresholds (W per rack)
+var COOLING_TIERS = [
+  { maxW: 5000,  label: 'Standard air (≤5 kW)',      desc: '2 perforated floor tiles per rack, standard CRAC airflow' },
+  { maxW: 10000, label: 'High-density air (5–10 kW)', desc: 'Blanking panels essential; consider hot-aisle/cold-aisle containment' },
+  { maxW: 20000, label: 'In-row cooling (10–20 kW)',  desc: 'In-row CRAH or rear-door heat exchanger recommended' },
+  { maxW: Infinity, label: 'Liquid/direct cooling (>20 kW)', desc: 'Direct liquid cooling or liquid-cooled rear-door HX required' }
+];
+
+var BTU_PER_WATT_HR  = 3.412;   // 1 W electrical → 3.412 BTU/hr heat
+var TONS_PER_KW      = 0.2843;  // 1 kW cooling = 0.2843 tons of refrigeration
+var DEFAULT_PUE      = 1.5;     // industry-average for network/compute DC
+var POWER_USD_PER_KWH = 0.10;
+
+function _pduSize(rackPowerW) {
+  var needed = rackPowerW / 1000 * 1.25;  // 25% headroom
+  for (var i = 0; i < PDU_SIZES_KW.length; i++) {
+    if (PDU_SIZES_KW[i] >= needed) return PDU_SIZES_KW[i];
+  }
+  return Math.ceil(needed / 10) * 10;
+}
+
+function _coolingTier(rackPowerW) {
+  for (var i = 0; i < COOLING_TIERS.length; i++) {
+    if (rackPowerW <= COOLING_TIERS[i].maxW) return COOLING_TIERS[i];
+  }
+  return COOLING_TIERS[COOLING_TIERS.length - 1];
+}
+
+/**
+ * Calculate per-rack and total power/cooling data.
+ * Returns { racks: [...], totals: {...} }
+ */
+window.calcRackPower = function(devices, pue) {
+  pue = pue || DEFAULT_PUE;
+  if (!devices || !devices.length) return { racks: [], totals: {} };
+
+  // Group devices by rack
+  var rackMap = {};
+  devices.forEach(function(d) {
+    if (!d.rack || d.rack === 'VIRTUAL') return;
+    if (!rackMap[d.rack]) rackMap[d.rack] = { rackId: d.rack, devices: [], totalPowerW: 0, usedU: 0 };
+    rackMap[d.rack].devices.push(d);
+    rackMap[d.rack].totalPowerW += (d.powerW || 0);
+    rackMap[d.rack].usedU       += (d.unitHeight || _uHeight(d));
+  });
+
+  var racks = Object.values(rackMap).map(function(r) {
+    var pw       = r.totalPowerW;
+    var pduKw    = _pduSize(pw);
+    var tier     = _coolingTier(pw);
+    var btuHr    = Math.round(pw * BTU_PER_WATT_HR);
+    var coolingKw= Math.round(pw / 1000 * 10) / 10;
+    var coolTons = Math.round(coolingKw * TONS_PER_KW * 10) / 10;
+    return {
+      rackId:      r.rackId,
+      devices:     r.devices,
+      totalPowerW: pw,
+      totalPowerKw:Math.round(pw / 100) / 10,
+      usedU:       r.usedU,
+      freeU:       RACK_SIZE_U - r.usedU,
+      pduKw:       pduKw,
+      coolingKw:   coolingKw,
+      coolTons:    coolTons,
+      btuHr:       btuHr,
+      tier:        tier
+    };
+  });
+
+  var totalITW    = racks.reduce(function(s, r) { return s + r.totalPowerW; }, 0);
+  var facilityW   = Math.round(totalITW * pue);
+  var coolingW    = facilityW - totalITW;
+  var coolingTons = Math.round(coolingW / 1000 * TONS_PER_KW * 10) / 10;
+  var annualKwh   = Math.round(facilityW * 8760 / 1000);
+  var annualCostUSD = Math.round(annualKwh * POWER_USD_PER_KWH);
+
+  return {
+    racks:  racks,
+    pue:    pue,
+    totals: {
+      totalITW:       totalITW,
+      totalITKw:      Math.round(totalITW / 100) / 10,
+      facilityKw:     Math.round(facilityW / 100) / 10,
+      coolingKw:      Math.round(coolingW / 100) / 10,
+      coolingTons:    coolingTons,
+      annualKwh:      annualKwh,
+      annualCostUSD:  annualCostUSD,
+      rackCount:      racks.length
+    }
+  };
+};
+
+/**
+ * Render power & cooling report as HTML.
+ */
+window.renderPowerCooling = function(devices, pue) {
+  var data = window.calcRackPower(devices, pue);
+  if (!data.racks.length) return '';
+
+  var tot = data.totals;
+  var fmtW  = function(w) { return w >= 1000 ? (Math.round(w/100)/10) + ' kW' : w + ' W'; };
+  var fmtKw = function(kw) { return kw + ' kW'; };
+
+  // ── Summary cards ──────────────────────────────────────────────────────────
+  function card(label, val, sub, color) {
+    return '<div style="flex:1;min-width:130px;background:var(--surface2);border:1px solid var(--border);'
+      + 'border-radius:var(--radius);padding:12px 14px;">'
+      + '<div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;">' + label + '</div>'
+      + '<div style="font-size:20px;font-weight:700;color:' + (color||'var(--text)') + ';margin:3px 0 2px;">' + val + '</div>'
+      + (sub ? '<div style="font-size:11px;color:var(--text-dim);">' + sub + '</div>' : '')
+      + '</div>';
+  }
+
+  var cards = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">'
+    + card('IT Load',        fmtKw(tot.totalITKw),   tot.rackCount + ' rack(s) combined',          '#3b82f6')
+    + card('Facility Load',  fmtKw(tot.facilityKw),  'At PUE ' + data.pue + ' (IT + cooling + UPS)','#f97316')
+    + card('Cooling Load',   fmtKw(tot.coolingKw),   tot.coolingTons + ' tons of refrigeration',   '#22c55e')
+    + card('Annual Energy',  (tot.annualKwh/1000).toFixed(1) + ' MWh', '~$' + tot.annualCostUSD.toLocaleString() + '/yr @ $0.10/kWh', '#eab308')
+    + '</div>';
+
+  // ── Per-rack table ─────────────────────────────────────────────────────────
+  var rackRows = data.racks.map(function(r) {
+    var tierColor = r.totalPowerW > 20000 ? '#f97316' : r.totalPowerW > 10000 ? '#eab308' : '#22c55e';
+    return '<tr>'
+      + '<td><strong>' + r.rackId + '</strong></td>'
+      + '<td>' + r.devices.length + ' devices</td>'
+      + '<td style="font-weight:600;">' + fmtW(r.totalPowerW) + '</td>'
+      + '<td>' + r.usedU + 'U / 42U</td>'
+      + '<td>2 × ' + r.pduKw + ' kW PDU <span style="font-size:10px;color:var(--text-dim);">(2N)</span></td>'
+      + '<td>' + r.coolingKw + ' kW &nbsp;<span style="color:var(--text-dim);font-size:11px;">(' + r.btuHr.toLocaleString() + ' BTU/hr)</span></td>'
+      + '<td style="font-size:11px;color:' + tierColor + ';">' + r.tier.label + '</td>'
+      + '</tr>';
+  }).join('');
+
+  var rackTable = '<div style="overflow-x:auto;">'
+    + '<table class="bom-table diff-table" style="min-width:640px;">'
+    + '<thead><tr><th>Rack</th><th>Devices</th><th>IT Load</th><th>U Fill</th>'
+    + '<th>PDU (2N)</th><th>Cooling Load</th><th>Cooling Tier</th></tr></thead>'
+    + '<tbody>' + rackRows + '</tbody>'
+    + '<tfoot><tr><td><strong>Total</strong></td><td>' + devices.filter(function(d){return d.rack!=='VIRTUAL';}).length + ' devices</td>'
+    + '<td><strong>' + fmtKw(tot.totalITKw) + '</strong></td>'
+    + '<td>—</td>'
+    + '<td>—</td>'
+    + '<td><strong>' + fmtKw(tot.coolingKw) + ' (' + tot.coolingTons + ' tons)</strong></td>'
+    + '<td>—</td></tr></tfoot>'
+    + '</table></div>';
+
+  // ── Cooling tier legend ────────────────────────────────────────────────────
+  var tierNotes = data.racks.map(function(r) {
+    return '<div style="margin:4px 0;font-size:12px;color:var(--text-dim);">'
+      + '<strong style="color:var(--text);">Rack ' + r.rackId + ' (' + r.tier.label + '):</strong> ' + r.tier.desc
+      + '</div>';
+  }).join('');
+
+  // ── Device power breakdown table ───────────────────────────────────────────
+  var devRows = devices
+    .filter(function(d) { return d.rack !== 'VIRTUAL' && d.powerW; })
+    .sort(function(a, b) { return (b.powerW||0) - (a.powerW||0); })
+    .map(function(d) {
+      var pct = tot.totalITW > 0 ? Math.round(d.powerW / tot.totalITW * 100) : 0;
+      var bar = '<div style="display:inline-block;width:' + Math.max(pct,2) + '%;height:8px;'
+        + 'background:' + (_deviceColor(d)) + '55;border-radius:2px;vertical-align:middle;"></div>';
+      return '<tr>'
+        + '<td>' + (d.hostname||d.id||'—') + '</td>'
+        + '<td>' + d.model + '</td>'
+        + '<td>' + d.subLayer + '</td>'
+        + '<td>' + d.rack + '</td>'
+        + '<td style="font-weight:600;">' + d.powerW + ' W</td>'
+        + '<td>' + bar + ' <span style="font-size:11px;color:var(--text-dim);">' + pct + '%</span></td>'
+        + '</tr>';
+    }).join('');
+
+  var devPowerTable = '<details style="margin-top:12px;">'
+    + '<summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);padding:6px 0;">'
+    + '▶ Device power breakdown (' + devices.filter(function(d){return d.rack!=='VIRTUAL'&&d.powerW;}).length + ' devices)</summary>'
+    + '<div style="overflow-x:auto;margin-top:8px;">'
+    + '<table class="bom-table diff-table" style="min-width:480px;">'
+    + '<thead><tr><th>Hostname</th><th>Model</th><th>Role</th><th>Rack</th><th>Power</th><th>% of Total IT</th></tr></thead>'
+    + '<tbody>' + devRows + '</tbody>'
+    + '</table></div></details>';
+
+  var notes = '<div style="margin-top:10px;font-size:12px;color:var(--text-dim);line-height:1.8;">'
+    + '<strong>Assumptions:</strong> PUE ' + data.pue + ' (industry-average DC). '
+    + 'PDU sized at 2N redundancy with 25% headroom. '
+    + 'Cooling load = IT load × (PUE−1). 1 ton refrigeration = 3.517 kW = 12,000 BTU/hr. '
+    + 'Power cost @ $0.10/kWh. Device power from vendor datasheets (max draw).'
+    + '</div>';
+
+  return '<hr style="margin:24px 0;border-color:var(--border);">'
+    + '<h3 style="margin:0 0 12px;font-size:15px;">Power &amp; Cooling Estimates</h3>'
+    + cards + rackTable + tierNotes + devPowerTable + notes;
 };
 
 // ─── CSV export ──────────────────────────────────────────────────────────────
