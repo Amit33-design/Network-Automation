@@ -882,6 +882,7 @@
       <div class="bom-tab" data-pane="checks-pane-post">Post-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-results">Results Diff</div>
       <div class="bom-tab" data-pane="checks-pane-drift">Drift Check</div>
+      <div class="bom-tab" data-pane="checks-pane-topo">Topology Crawl</div>
       <div class="bom-tab" data-pane="checks-pane-symptoms">Symptom Classifier</div>
       <div class="bom-tab" data-pane="checks-pane-readme">Usage Guide</div>
     </div>
@@ -945,6 +946,36 @@
           <button class="btn btn-primary" onclick="window.parseDriftReport()">Parse &amp; Render Drift</button>
         </div>
         <div id="drift-report-output"></div>
+      </div>
+    </div>
+
+    <div id="checks-pane-topo" class="bom-pane">
+      <div class="form-section">
+        <h3 style="margin:0 0 4px;">LLDP/CDP Topology Crawler</h3>
+        <p class="section-sub" style="margin-bottom:10px;">
+          Generates a Python BFS script that SSHes to your BOM devices as seeds, runs
+          <code>show lldp neighbors detail</code> (+ CDP fallback on Cisco), parses responses,
+          and recursively discovers the full topology up to <strong>5 hops</strong>.
+          Output: <code>topo_crawl_&lt;site&gt;.json</code> with nodes + links.
+        </p>
+        <div class="btn-toolbar">
+          <button class="btn btn-primary" onclick="window.renderTopoCrawlPane()">Generate topo_crawl.py</button>
+          <button class="btn btn-secondary" onclick="window.downloadTopoCrawlScript()">Download topo_crawl.py</button>
+        </div>
+        <div id="topo-script-output" style="margin-top:12px;">
+          <p class="empty-state">Complete Step 1 and click Generate.</p>
+        </div>
+      </div>
+      <div class="form-section" style="margin-top:12px;">
+        <h3 style="margin:0 0 6px;">Crawl Result Viewer</h3>
+        <p style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">
+          Paste <code>topo_crawl_&lt;site&gt;.json</code> to render the discovered topology as node and link tables.
+        </p>
+        <textarea id="topo-json-input" rows="5" style="width:100%;font-family:monospace;font-size:12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:8px;resize:vertical;" placeholder='{"nodes":[...],"edges":[...],"timestamp":"..."}'></textarea>
+        <div class="btn-toolbar" style="margin:8px 0;">
+          <button class="btn btn-primary" onclick="window.parseTopoCrawlResult()">Parse &amp; Render Topology</button>
+        </div>
+        <div id="topo-result-output"></div>
       </div>
     </div>
 
@@ -1124,6 +1155,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/rollback.js"></script>
 <script src="src/js/deploy.js"></script>
 <script src="src/js/troubleshoot.js"></script>
+<script src="src/js/topodisc.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>

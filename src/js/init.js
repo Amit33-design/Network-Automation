@@ -385,6 +385,33 @@ window.updateSymptomResults = function() {
   out.innerHTML = window.renderSymptomClassifier(query, cat);
 };
 
+// ─── Topology crawl pane (G-36) ──────────────────────────────────────────────
+
+window.renderTopoCrawlPane = function() {
+  var out = document.getElementById('topo-script-output');
+  if (!out) return;
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Complete Step 1 first', 'warning');
+    return;
+  }
+  var script = window.genTopoCrawlScript(STATE.devices, STATE);
+  var site   = STATE.siteCode || 'SITE';
+  out.innerHTML = '<p style="font-size:13px;margin-bottom:6px;">Script ready — <strong>topo_crawl_'
+    + site.toLowerCase() + '.py</strong> with '
+    + STATE.devices.length + ' seed device(s).</p>'
+    + '<pre class="config-pre" style="max-height:320px;">'
+    + script.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    + '</pre>';
+  showToast('Topology crawl script generated', 'success');
+};
+
+window.parseTopoCrawlResult = function() {
+  var input = document.getElementById('topo-json-input');
+  var out   = document.getElementById('topo-result-output');
+  if (!input || !out) return;
+  out.innerHTML = window.renderTopoCrawlResult(input.value);
+};
+
 // ─── Drift check pane (G-27) ─────────────────────────────────────────────────
 
 window.renderDriftPane = function() {
