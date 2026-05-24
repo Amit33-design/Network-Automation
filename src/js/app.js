@@ -321,6 +321,8 @@ function updateSummary() {
   // Live sync from fields on step 2
   const th = document.getElementById('total-hosts');
   if (th) { STATE.totalHosts = th.value; set('sum-hosts', th.value ? Number(th.value).toLocaleString() : '—'); }
+
+  if (typeof renderRequirementsPreview === 'function') renderRequirementsPreview();
 }
 
 /* Live sync fields */

@@ -1,3 +1,4 @@
+'use strict';
 
 /* ── Keyboard navigation ────────────────────────────────────────── */
 document.addEventListener('keydown', e => {

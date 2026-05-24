@@ -15,6 +15,8 @@
  *   track('step1_complete', { use_case: 'gpu_fabric', scale: '128_gpu' });
  */
 
+'use strict';
+
 function _ph() { return window.posthog ?? null; }
 
 /**

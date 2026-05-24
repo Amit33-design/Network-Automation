@@ -11,6 +11,8 @@
  * Exports: initPaywall(), requireAuth(), trackConfigGenQuota()
  */
 
+'use strict';
+
 const PAYWALL_STEPS  = [5, 6]; // steps requiring sign-in
 const UPGRADE_URL    = "https://app.netdesignai.com/upgrade";
 const CHECKOUT_PLANS = {

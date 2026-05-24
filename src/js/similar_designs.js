@@ -14,6 +14,8 @@
  *   querySimilarDesigns({ use_case, intent, vendor });  // call after Step 1 intent
  */
 
+'use strict';
+
 // track() is a global exposed by analytics.js
 const CONTAINER_ID = "similar-designs-panel";
 let _currentMatches = [];

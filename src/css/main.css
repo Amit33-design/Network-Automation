@@ -3403,3 +3403,44 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .ipplan-footnote     { font-size: .73rem; color: var(--txt2); margin-top: .5rem;
                        padding: .45rem .7rem; background: var(--bg2); border-radius: 6px;
                        border-left: 3px solid var(--orange-dim); }
+
+/* ── Requirements Validator (#req-validator) ─────────────────── */
+.rval-panel       { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius2);
+                    padding: 1.1rem 1.25rem; margin-top: 1.5rem; animation: fadeUp .25s ease; }
+.rval-hdr         { display: flex; align-items: center; justify-content: space-between;
+                    flex-wrap: wrap; gap: .5rem; margin-bottom: .85rem; }
+.rval-title       { font-weight: 700; font-size: .9rem; color: var(--txt0); }
+.rval-badges      { display: flex; gap: .4rem; flex-wrap: wrap; }
+.rval-badge       { font-size: .72rem; font-weight: 700; padding: .15rem .55rem;
+                    border-radius: 20px; letter-spacing: .02em; }
+.rval-badge-error { background: rgba(255,51,85,.15); color: var(--red);   border: 1px solid rgba(255,51,85,.3); }
+.rval-badge-warn  { background: rgba(255,140,0,.15);  color: var(--orange); border: 1px solid rgba(255,140,0,.3); }
+.rval-badge-info  { background: rgba(26,127,255,.12); color: var(--blue);  border: 1px solid rgba(26,127,255,.3); }
+.rval-badge-ok    { background: rgba(0,232,122,.1);   color: var(--green); border: 1px solid rgba(0,232,122,.3); }
+.rval-issues      { display: flex; flex-direction: column; gap: .4rem; margin-bottom: .85rem; }
+.rval-issue       { display: flex; gap: .6rem; align-items: flex-start;
+                    border-radius: 6px; padding: .5rem .75rem; font-size: .8rem; }
+.rval-issue-error { background: rgba(255,51,85,.07);  border-left: 3px solid var(--red); }
+.rval-issue-warn  { background: rgba(255,140,0,.07);  border-left: 3px solid var(--orange); }
+.rval-issue-info  { background: rgba(26,127,255,.07); border-left: 3px solid var(--blue); }
+.rval-issue-icon  { font-size: .85rem; font-weight: 800; min-width: 1rem; margin-top: .05rem; }
+.rval-issue-error .rval-issue-icon { color: var(--red); }
+.rval-issue-warn  .rval-issue-icon { color: var(--orange); }
+.rval-issue-info  .rval-issue-icon { color: var(--blue); }
+.rval-issue-body  { display: flex; flex-direction: column; gap: .15rem; }
+.rval-issue-msg   { color: var(--txt0); font-weight: 600; }
+.rval-issue-fix   { color: var(--txt2); font-size: .75rem; }
+.rval-all-clear   { font-size: .82rem; color: var(--green); font-weight: 600;
+                    padding: .4rem .75rem; background: rgba(0,232,122,.06);
+                    border-radius: 6px; border-left: 3px solid var(--green-dim); }
+.rval-cap-wrap    { border-top: 1px solid var(--border); padding-top: .85rem; }
+.rval-cap-head    { font-weight: 700; font-size: .85rem; color: var(--txt0);
+                    display: flex; align-items: center; gap: .6rem; margin-bottom: .3rem; }
+.rval-cap-count   { font-size: .72rem; font-weight: 600; color: var(--cyan);
+                    background: rgba(0,212,255,.1); border: 1px solid rgba(0,212,255,.25);
+                    padding: .1rem .4rem; border-radius: 20px; }
+.rval-cap-note    { font-size: .73rem; color: var(--txt2); margin-bottom: .65rem; }
+.rval-cap-table   { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.rval-cap-table th { background: var(--bg3); color: var(--txt1); font-weight: 600;
+                     padding: .4rem .75rem; border: 1px solid var(--border); text-align: left; }
+.rval-cap-table td { padding: .4rem .75rem; border: 1px solid var(--border); }

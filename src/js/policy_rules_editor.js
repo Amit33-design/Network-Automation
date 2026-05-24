@@ -8,6 +8,8 @@
  * API: /api/user-policies/*
  */
 
+'use strict';
+
 const PolicyRulesEditor = (() => {
   // ── State ─────────────────────────────────────────────────────────────────
   let _savedRulesets = [];   // [{id, name, version, rule_count, updated_at}]
