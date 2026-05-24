@@ -97,6 +97,23 @@ function onStep1Submit(e) {
     hash_algorithm: document.getElementById('sel-ecmp-hash').value || 'default'
   };
 
+  // EVPN design parameters (G-11)
+  var hasEvpn = STATE.protocols.overlay.indexOf('vxlan_evpn') !== -1;
+  if (hasEvpn) {
+    var rtTypes = [];
+    document.querySelectorAll('.chk-rt-type:checked').forEach(function(cb) { rtTypes.push(cb.value); });
+    STATE.evpn = {
+      rd:           (document.getElementById('sel-evpn-rd')       || {}).value || 'auto',
+      rt:           (document.getElementById('sel-evpn-rt')       || {}).value || 'auto',
+      rt_base:      (document.getElementById('inp-evpn-rt-base')  || {}).value || '',
+      rt_types:     rtTypes.length ? rtTypes : ['rt2', 'rt3'],
+      esi:          !!(document.getElementById('chk-evpn-esi')    || {}).checked,
+      esi_type:     (document.getElementById('sel-evpn-esi-type') || {}).value || 'type1',
+      arp_suppress: !!(document.getElementById('chk-evpn-arp')    || {}).checked,
+      advertise_pip:!!(document.getElementById('chk-evpn-pip')    || {}).checked
+    };
+  }
+
   // Link distances
   var ld = STATE.linkDistances;
   ['spine-leaf','dist-access','core-dist','wan-edge'].forEach(function(key) {
@@ -431,6 +448,34 @@ document.addEventListener('DOMContentLoaded', function() {
       goToStep(n);
     });
   });
+
+  // EVPN design section — show/hide when vxlan_evpn overlay is toggled (G-11)
+  document.querySelectorAll('.chk-overlay').forEach(function(cb) {
+    cb.addEventListener('change', function() {
+      var anyEvpn = Array.from(document.querySelectorAll('.chk-overlay:checked'))
+                        .some(function(c) { return c.value === 'vxlan_evpn'; });
+      var sec = document.getElementById('fs-evpn-design');
+      if (sec) sec.style.display = anyEvpn ? '' : 'none';
+    });
+  });
+
+  // RT manual base community field
+  var rtSel = document.getElementById('sel-evpn-rt');
+  if (rtSel) {
+    rtSel.addEventListener('change', function() {
+      var grp = document.getElementById('evpn-rt-base-group');
+      if (grp) grp.style.display = (rtSel.value === 'manual') ? '' : 'none';
+    });
+  }
+
+  // ESI group
+  var esiChk = document.getElementById('chk-evpn-esi');
+  if (esiChk) {
+    esiChk.addEventListener('change', function() {
+      var grp = document.getElementById('evpn-esi-group');
+      if (grp) grp.style.display = esiChk.checked ? '' : 'none';
+    });
+  }
 
   // Sub-tab groups — each group activates only sibling panes
   function wireSubTabs(groupSelector, paneAttr) {

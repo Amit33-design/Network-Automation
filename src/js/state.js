@@ -27,6 +27,16 @@ var STATE = {
   org: {
     sites: 1
   },
+  evpn: {
+    rd:           'auto',          // 'auto' | 'manual' (<lo0>:<vni>)
+    rt:           'auto',          // 'auto' | 'manual'
+    rt_base:      '',              // base community when rt=manual, e.g. '65000:10000'
+    rt_types:     ['rt2', 'rt3'], // rt2 (MAC/IP) | rt3 (IMET/BUM) | rt5 (IP prefix)
+    esi:          false,           // ESI multi-homing
+    esi_type:     'type1',         // 'type0' (static) | 'type1' (LACP)
+    arp_suppress: true,
+    advertise_pip: true
+  },
   linkDistances: {      // layer pair -> distance in metres
     'spine-leaf': 100,
     'dist-access': 50,
@@ -63,8 +73,9 @@ window.resetState = function() {
   STATE.ecmp        = { max_paths: 8, hash_algorithm: 'default' };
   STATE.vendors = [];
   STATE.protocols = { underlay: 'bgp', overlay: [], features: [] };
-  STATE.gpu = { transport: 'none' };
-  STATE.org = { sites: 1 };
+  STATE.gpu  = { transport: 'none' };
+  STATE.org  = { sites: 1 };
+  STATE.evpn = { rd: 'auto', rt: 'auto', rt_base: '', rt_types: ['rt2','rt3'], esi: false, esi_type: 'type1', arp_suppress: true, advertise_pip: true };
   STATE.linkDistances = { 'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 };
   STATE.devices = [];
   STATE.cabling = [];

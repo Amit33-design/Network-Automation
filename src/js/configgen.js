@@ -99,6 +99,53 @@ function _leafDesign(dev, state) {
   };
 }
 
+// ─── EVPN design helper (G-11) ────────────────────────────────────────────────
+// Returns RD/RT strings derived from state.evpn + leafDesign values.
+
+function _evpnDesign(d, state) {
+  var ev = (state.evpn) || {};
+  var rdMode  = ev.rd  || 'auto';
+  var rtMode  = ev.rt  || 'auto';
+  var rtBase  = ev.rt_base || (d.spineAsn + ':' + d.l2vni);
+  var rtTypes = ev.rt_types || ['rt2', 'rt3'];
+
+  // RD strings
+  var vrfRd  = (rdMode === 'manual') ? (d.lo0ip + ':' + d.l3vni) : 'auto';
+  var l2Rd   = (rdMode === 'manual') ? (d.lo0ip + ':' + d.l2vni) : 'auto';
+
+  // RT strings for VRF (L3)
+  var l3rtImport, l3rtExport;
+  if (rtMode === 'manual') {
+    l3rtImport = rtBase;
+    l3rtExport = rtBase;
+  } else {
+    l3rtImport = 'auto evpn';
+    l3rtExport = null; // 'route-target both auto evpn' covers both
+  }
+
+  // RT strings for L2 VNI
+  var l2rtImport = (rtMode === 'manual') ? rtBase : 'auto';
+  var l2rtExport = (rtMode === 'manual') ? rtBase : 'auto';
+
+  // RT-5 IP prefix routes
+  var hasRt5 = rtTypes.indexOf('rt5') !== -1;
+
+  // ESI
+  var esiEnabled = !!(ev.esi);
+  var esiType    = ev.esi_type || 'type1';
+
+  return {
+    vrfRd: vrfRd, l2Rd: l2Rd,
+    rtMode: rtMode,
+    l3rtImport: l3rtImport, l3rtExport: l3rtExport,
+    l2rtImport: l2rtImport, l2rtExport: l2rtExport,
+    hasRt5: hasRt5,
+    arpSuppress:  ev.arp_suppress  !== false,
+    advertisePip: ev.advertise_pip !== false,
+    esiEnabled: esiEnabled, esiType: esiType
+  };
+}
+
 // ─── NX-OS Spine ─────────────────────────────────────────────────────────────
 
 function nxosSpineConfig(dev, state) {
@@ -177,6 +224,7 @@ function nxosSpineConfig(dev, state) {
 function nxosLeafConfig(dev, state) {
   var hn = dev.hostname;
   var d  = _leafDesign(dev, state);
+  var ev = _evpnDesign(d, state);                                          // G-11
 
   var hasBfd  = _hasFeat(state, 'bfd');
   var hasEcmp = _hasFeat(state, 'ecmp');
@@ -193,7 +241,8 @@ function nxosLeafConfig(dev, state) {
     'feature lacp',
     'feature vpc',
   ];
-  if (hasBfd) lines.push('feature bfd');                                  // G-09
+  if (hasBfd)       lines.push('feature bfd');                            // G-09
+  if (ev.esiEnabled) lines.push('feature evpn-multisite');                // G-11 ESI
   lines = lines.concat([
     'nv overlay evpn',
     '',
@@ -230,14 +279,27 @@ function nxosLeafConfig(dev, state) {
     '  source-interface loopback1',
     '  member vni ' + d.l2vni,
     '    ingress-replication protocol bgp',
+  ]);
+  if (ev.arpSuppress) lines.push('    suppress-arp');                     // G-11
+  lines = lines.concat([
     '  member vni ' + d.l3vni + ' associate-vrf',
     '',
     '! --- VRF ---',
     'vrf context ' + d.vrfName,
     '  vni ' + d.l3vni,
-    '  rd auto',
+    '  rd ' + ev.vrfRd,                                                  // G-11 RD
     '  address-family ipv4 unicast',
-    '    route-target both auto evpn',
+  ]);
+  if (ev.rtMode === 'auto') {
+    lines.push('    route-target both auto evpn');
+  } else {
+    lines.push('    route-target import ' + ev.l3rtImport);
+    lines.push('    route-target export ' + ev.l3rtExport);
+  }
+  if (ev.hasRt5) {
+    lines.push('    route-target import evpn route-type 5 ' + ev.l3rtImport);  // G-11 RT-5
+  }
+  lines = lines.concat([
     '',
     '! --- SVIs ---',
     'interface Vlan' + d.vlanId,
@@ -260,9 +322,9 @@ function nxosLeafConfig(dev, state) {
   ]);
   if (hasEcmp) lines.push('    maximum-paths ' + d.maxPaths);            // G-10
   if (hasEcmp) lines.push(_nxosEcmpHash(state).replace(/\n$/, '').split('\n').map(function(l) { return '    ' + l; }).join('\n'));
+  lines.push('  address-family l2vpn evpn');
+  if (ev.advertisePip) lines.push('    advertise-pip');                   // G-11
   lines = lines.concat([
-    '  address-family l2vpn evpn',
-    '    advertise-pip',
     '  template peer SPINES',
     '    remote-as ' + d.spineAsn,
     '    timers ' + d.keepalive + ' ' + d.hold + '   ! DC: 3 9 | WAN: 10 30',
@@ -295,10 +357,29 @@ function nxosLeafConfig(dev, state) {
     '! --- EVPN section ---',
     'evpn',
     '  vni ' + d.l2vni + ' l2',
-    '    rd auto',
-    '    route-target import auto',
-    '    route-target export auto',
+    '    rd ' + ev.l2Rd,                                                  // G-11 RD
+    '    route-target import ' + ev.l2rtImport,
+    '    route-target export ' + ev.l2rtExport,
   ]);
+  if (ev.hasRt5) {                                                        // G-11 RT-5
+    lines.push('  vni ' + d.l3vni + ' l3');
+    lines.push('    rd ' + ev.vrfRd);
+    lines.push('    route-target import ' + ev.l3rtImport);
+    lines.push('    route-target export ' + ev.l3rtExport);
+  }
+
+  // ESI multi-homing (G-11)
+  if (ev.esiEnabled) {
+    lines = lines.concat([
+      '',
+      '! --- ESI multi-homing ---',
+      'evpn multihoming',
+      '  system-mac auto',   // Type 1 LACP: auto-derived; Type 0: set manually
+    ]);
+    if (ev.esiType === 'type0') {
+      lines.push('  ! Type 0 ESI: set manually per uplink port-channel — e.g. esi 0000.0000.0001.0001.0001');
+    }
+  }
 
   return lines.join('\n') + '\n';
 }
@@ -356,6 +437,7 @@ function aristaSpineConfig(dev, state) {
 function aristaLeafConfig(dev, state) {
   var hn      = dev.hostname;
   var d       = _leafDesign(dev, state);
+  var ev      = _evpnDesign(d, state);                                    // G-11
   var hasBfd  = _hasFeat(state, 'bfd');
   var hasEcmp = _hasFeat(state, 'ecmp');
 
@@ -423,16 +505,43 @@ function aristaLeafConfig(dev, state) {
     '      network ' + d.lo0ip + '/32',
     '      network ' + d.lo1ip + '/32',
     '   vlan ' + d.vlanId,
-    '      rd auto',
-    '      route-target both auto',
+    '      rd ' + ev.l2Rd,                                                // G-11 RD
+  ]);
+  if (ev.rtMode === 'auto') {
+    lines.push('      route-target both auto');
+  } else {
+    lines.push('      route-target import evpn ' + ev.l2rtImport);
+    lines.push('      route-target export evpn ' + ev.l2rtExport);
+  }
+  lines = lines.concat([
     '      redistribute learned',
     '   vrf ' + d.vrfName,
-    '      rd ' + d.lo0ip + ':' + d.l3vni,
-    '      route-target import evpn ' + d.spineAsn + ':' + d.l3vni,
-    '      route-target export evpn ' + d.spineAsn + ':' + d.l3vni,
+    '      rd ' + ev.vrfRd,                                               // G-11 RD
+  ]);
+  if (ev.rtMode === 'auto') {
+    lines.push('      route-target import evpn auto');
+    lines.push('      route-target export evpn auto');
+  } else {
+    lines.push('      route-target import evpn ' + ev.l3rtImport);
+    lines.push('      route-target export evpn ' + ev.l3rtExport);
+  }
+  if (ev.hasRt5) {                                                        // G-11 RT-5
+    lines.push('      route-target import evpn ' + ev.l3rtImport + ' ip-prefix');
+  }
+  lines = lines.concat([
     '      redistribute connected',
     '      maximum-paths ' + d.maxPaths,
   ]);
+
+  // ESI multi-homing (G-11)
+  if (ev.esiEnabled) {
+    lines = lines.concat([
+      '',
+      '! --- ESI / EVPN multi-homing ---',
+      'evpn',
+      '   multihoming recovery-delay 180',
+    ]);
+  }
 
   return lines.join('\n') + '\n';
 }

@@ -489,6 +489,57 @@
             <label class="checkbox-item"><input type="checkbox" class="chk-overlay" value="none"> None</label>
           </div>
         </div>
+
+        <!-- EVPN design parameters — shown only when VXLAN/EVPN is selected -->
+        <div id="fs-evpn-design" style="display:none; margin:12px 0 4px; padding:14px 16px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface2);">
+          <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--accent); margin-bottom:12px;">EVPN Design Parameters</div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Route Distinguisher (RD)</label>
+              <select id="sel-evpn-rd">
+                <option value="auto">Auto (lo0-ip:vni — recommended)</option>
+                <option value="manual">Manual (&lt;lo0-ip&gt;:&lt;vni&gt;)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Route Target (RT) Policy</label>
+              <select id="sel-evpn-rt">
+                <option value="auto">Auto (ASN:vni — recommended)</option>
+                <option value="manual">Manual (enter base community)</option>
+              </select>
+            </div>
+            <div class="form-group" id="evpn-rt-base-group" style="display:none;">
+              <label>RT Base Community (e.g. 65000:10000)</label>
+              <input id="inp-evpn-rt-base" type="text" placeholder="65000:10000">
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:8px;">
+            <label>EVPN Route Types</label>
+            <div class="checkbox-group">
+              <label class="checkbox-item"><input type="checkbox" class="chk-rt-type" value="rt2" checked> RT-2 MAC/IP (L2 host routes)</label>
+              <label class="checkbox-item"><input type="checkbox" class="chk-rt-type" value="rt3" checked> RT-3 IMET (BUM replication)</label>
+              <label class="checkbox-item"><input type="checkbox" class="chk-rt-type" value="rt5"> RT-5 IP Prefix (L3 inter-VRF)</label>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:8px;">
+            <label>Advanced</label>
+            <div class="checkbox-group">
+              <label class="checkbox-item"><input type="checkbox" id="chk-evpn-arp" checked> ARP suppression (suppress-arp in NVE)</label>
+              <label class="checkbox-item"><input type="checkbox" id="chk-evpn-pip" checked> Advertise-PIP (per-VTEP IP for anycast-GW)</label>
+              <label class="checkbox-item"><input type="checkbox" id="chk-evpn-esi"> ESI multi-homing</label>
+            </div>
+          </div>
+          <div id="evpn-esi-group" style="display:none; margin-top:8px;">
+            <div class="form-group">
+              <label>ESI Type</label>
+              <select id="sel-evpn-esi-type">
+                <option value="type1">Type 1 — LACP system-ID (auto-derived)</option>
+                <option value="type0">Type 0 — Static ESI value</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div class="form-group">
           <label>Protocol Features</label>
           <div class="checkbox-group">
