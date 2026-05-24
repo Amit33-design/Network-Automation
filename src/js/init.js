@@ -337,6 +337,20 @@ function downloadGrafana() {
 }
 window.downloadGrafana = downloadGrafana;
 
+// ─── Rollback pane (G-25) ────────────────────────────────────────────────────
+
+function renderRollbackPane() {
+  var out = document.getElementById('rollback-output');
+  if (!out) return;
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Complete Step 1 first', 'warning');
+    return;
+  }
+  out.innerHTML = window.renderRollbackRunbook(STATE);
+  showToast('Rollback plan generated', 'success');
+}
+window.renderRollbackPane = renderRollbackPane;
+
 function escapeHtml(str) {
   return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }

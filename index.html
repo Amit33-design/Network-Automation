@@ -327,6 +327,15 @@
     .val-id-warn  { color: var(--warn); }
     .val-msg  { font-size: 13px; color: var(--text); }
     .val-fix  { font-size: 12px; color: var(--text-dim); }
+
+    /* Rollback table */
+    .rollback-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .rollback-table th { background: var(--surface2); padding: 8px 10px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
+    .rollback-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .rollback-table code { font-size: 11px; background: var(--surface2); padding: 2px 5px; border-radius: 3px; white-space: nowrap; }
+    .platform-badge { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; background: var(--accent); color: #fff; }
+    .rollback-section h3 { margin: 0 0 8px; }
+    .rollback-section h4 { margin: 16px 0 6px; font-size: 13px; color: var(--text-dim); }
   </style>
 </head>
 <body>
@@ -758,6 +767,7 @@ export NET_ENABLE=enablepassword   # if required</pre>
       <div class="bom-tab active" data-pane="mon-pane-prom">Prometheus Alerts</div>
       <div class="bom-tab" data-pane="mon-pane-grafana">Grafana Dashboard</div>
       <div class="bom-tab" data-pane="mon-pane-deploy">Deploy Guide</div>
+      <div class="bom-tab" data-pane="mon-pane-rollback">Rollback</div>
     </div>
 
     <div id="mon-pane-prom" class="bom-pane active">
@@ -811,6 +821,16 @@ curl -X POST http://localhost:9090/-/reload</pre>
         </p>
       </div>
     </div>
+
+    <div id="mon-pane-rollback" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-primary" onclick="window.renderRollbackPane()">Generate Rollback Plan</button>
+        <button class="btn btn-secondary" onclick="window.downloadRollbackScript()">Download rollback.py</button>
+      </div>
+      <div id="rollback-output">
+        <p class="empty-state">Complete Step 1 and click Generate Rollback Plan.</p>
+      </div>
+    </div>
   </section>
 
 </main>
@@ -829,6 +849,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/intent_constraints.js"></script>
 <script src="src/js/checks.js"></script>
 <script src="src/js/monitoring.js"></script>
+<script src="src/js/rollback.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>
