@@ -521,14 +521,63 @@
     <div class="section-header">
       <div>
         <div class="section-title">Pre / Post Deployment Checks</div>
-        <div class="section-sub">Netmiko-based validation scripts</div>
+        <div class="section-sub">Netmiko-based validation scripts — capture baseline before deploy, diff after</div>
       </div>
     </div>
-    <div class="coming-soon">
-      <div class="cs-icon">🔍</div>
-      <h3>Coming soon</h3>
-      <p>Auto-generated Python scripts using Netmiko to verify interface states,<br>
-         BGP neighbor counts, and LLDP neighbors before and after deployment.</p>
+
+    <div class="bom-tabs">
+      <div class="bom-tab active" data-pane="checks-pane-pre">Pre-Check Script</div>
+      <div class="bom-tab" data-pane="checks-pane-post">Post-Check Script</div>
+      <div class="bom-tab" data-pane="checks-pane-readme">Usage Guide</div>
+    </div>
+
+    <div id="checks-pane-pre" class="bom-pane active">
+      <div class="btn-toolbar">
+        <button class="btn btn-primary" onclick="window.renderChecks()">Generate Scripts</button>
+        <button class="btn btn-secondary" onclick="window.downloadPreCheck()">Download pre_check.py</button>
+      </div>
+      <div id="pre-check-output">
+        <p class="empty-state">Complete Step 1 and click Generate Scripts.</p>
+      </div>
+    </div>
+
+    <div id="checks-pane-post" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-secondary" onclick="window.downloadPostCheck()">Download post_check.py</button>
+      </div>
+      <div id="post-check-output">
+        <p class="empty-state">Generate scripts first.</p>
+      </div>
+    </div>
+
+    <div id="checks-pane-readme" class="bom-pane">
+      <div class="form-section" style="font-size:13px; line-height:1.8;">
+        <h3>Usage Guide</h3>
+        <p><strong>1. Install dependencies</strong></p>
+        <pre class="config-pre" style="max-height:none; margin-bottom:12px;">pip install netmiko</pre>
+
+        <p><strong>2. Set credentials (never hard-code)</strong></p>
+        <pre class="config-pre" style="max-height:none; margin-bottom:12px;">export NET_USER=admin
+export NET_PASS=yourpassword
+export NET_ENABLE=enablepassword   # if required</pre>
+
+        <p><strong>3. Run pre-check BEFORE deployment</strong></p>
+        <pre class="config-pre" style="max-height:none; margin-bottom:12px;">python3 pre_check_&lt;site&gt;.py
+# Saves: pre_baseline_&lt;site&gt;.json</pre>
+
+        <p><strong>4. Deploy your configs</strong></p>
+
+        <p><strong>5. Run post-check AFTER deployment</strong></p>
+        <pre class="config-pre" style="max-height:none; margin-bottom:12px;">python3 post_check_&lt;site&gt;.py
+# Reads: pre_baseline_&lt;site&gt;.json
+# Saves: post_report_&lt;site&gt;.json
+# Alerts: BGP peer drop, route count drop &gt;5%, interface errors spike</pre>
+
+        <p><strong>Exit codes:</strong> 0 = all OK · 1 = unreachable devices · 2 = post-check alerts</p>
+        <p style="color:var(--text-dim); margin-top:12px;">
+          Management IPs default to 192.168.1.X — edit DEVICES list in the generated script to match your out-of-band addressing.
+        </p>
+      </div>
     </div>
   </section>
 
@@ -539,14 +588,66 @@
     <div class="section-header">
       <div>
         <div class="section-title">Monitoring &amp; Observability</div>
-        <div class="section-sub">Prometheus alerts, Grafana dashboards</div>
+        <div class="section-sub">Prometheus alert rules &amp; Grafana dashboard — export and deploy</div>
       </div>
     </div>
-    <div class="coming-soon">
-      <div class="cs-icon">📊</div>
-      <h3>Coming soon</h3>
-      <p>Prometheus alert rules, Grafana dashboard JSON, and ML-based RCA.<br>
-         Implement from AGENT_ROADMAP.md: Prometheus alerts + Grafana dashboard generator.</p>
+
+    <div class="bom-tabs">
+      <div class="bom-tab active" data-pane="mon-pane-prom">Prometheus Alerts</div>
+      <div class="bom-tab" data-pane="mon-pane-grafana">Grafana Dashboard</div>
+      <div class="bom-tab" data-pane="mon-pane-deploy">Deploy Guide</div>
+    </div>
+
+    <div id="mon-pane-prom" class="bom-pane active">
+      <div class="btn-toolbar">
+        <button class="btn btn-primary" onclick="window.renderMonitoring()">Generate Monitoring</button>
+        <button class="btn btn-secondary" onclick="window.downloadPrometheus()">Download alerts.yml</button>
+      </div>
+      <div id="prometheus-output">
+        <p class="empty-state">Complete Step 1 and click Generate Monitoring.</p>
+      </div>
+    </div>
+
+    <div id="mon-pane-grafana" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-secondary" onclick="window.downloadGrafana()">Download dashboard.json</button>
+      </div>
+      <div id="grafana-output">
+        <p class="empty-state">Generate monitoring first.</p>
+      </div>
+    </div>
+
+    <div id="mon-pane-deploy" class="bom-pane">
+      <div class="form-section" style="font-size:13px; line-height:1.8;">
+        <h3>Deploy Guide</h3>
+        <p><strong>Prometheus alert rules</strong></p>
+        <pre class="config-pre" style="max-height:none; margin-bottom:12px;"># Copy to Prometheus rules directory
+cp alerts-&lt;site&gt;.yml /etc/prometheus/rules/
+# Reload Prometheus
+curl -X POST http://localhost:9090/-/reload</pre>
+
+        <p><strong>Grafana dashboard (API import)</strong></p>
+        <pre class="config-pre" style="max-height:none; margin-bottom:12px;">curl -X POST http://admin:admin@localhost:3000/api/dashboards/import \
+  -H 'Content-Type: application/json' \
+  -d @dashboard-&lt;site&gt;.json</pre>
+
+        <p><strong>SNMP exporter targets</strong> — add your device IPs to <code>snmp.yml</code> modules, then scrape via:</p>
+        <pre class="config-pre" style="max-height:none; margin-bottom:12px;">- job_name: network_devices
+  static_configs:
+    - targets: [&lt;device-mgmt-ips&gt;]
+  metrics_path: /snmp
+  params:
+    module: [if_mib, bgp]
+  relabel_configs:
+    - source_labels: [__address__]
+      target_label: __param_target
+    - target_label: __address__
+      replacement: snmp-exporter:9116</pre>
+
+        <p style="color:var(--text-dim); margin-top:12px;">
+          Datasource UID in the dashboard JSON is <code>prometheus</code> — rename to match your Grafana datasource UID if different.
+        </p>
+      </div>
     </div>
   </section>
 
@@ -562,6 +663,8 @@
 <script src="src/js/bom.js"></script>
 <script src="src/js/optics.js"></script>
 <script src="src/js/configgen.js"></script>
+<script src="src/js/checks.js"></script>
+<script src="src/js/monitoring.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>

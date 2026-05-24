@@ -136,6 +136,80 @@ function exportOptics() {
 }
 window.exportOptics = exportOptics;
 
+// ─── Step 5: Pre/Post Checks ──────────────────────────────────────────────────
+function renderChecks() {
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Complete Step 1 first', 'warning');
+    return;
+  }
+  STATE.preCheckScript  = window.genPreCheckScript(STATE.devices, STATE);
+  STATE.postCheckScript = window.genPostCheckScript(STATE.devices, STATE);
+
+  var pre = document.getElementById('pre-check-output');
+  if (pre) pre.innerHTML = '<pre class="config-pre">' + escapeHtml(STATE.preCheckScript) + '</pre>';
+
+  var post = document.getElementById('post-check-output');
+  if (post) post.innerHTML = '<pre class="config-pre">' + escapeHtml(STATE.postCheckScript) + '</pre>';
+
+  showToast('Check scripts generated for ' + STATE.devices.length + ' devices', 'success');
+}
+window.renderChecks = renderChecks;
+
+function downloadPreCheck() {
+  if (!STATE.preCheckScript) { renderChecks(); }
+  if (!STATE.preCheckScript) return;
+  downloadFile('pre_check_' + STATE.siteCode.toLowerCase() + '.py', STATE.preCheckScript, 'text/x-python');
+  showToast('pre_check downloaded', 'success');
+}
+window.downloadPreCheck = downloadPreCheck;
+
+function downloadPostCheck() {
+  if (!STATE.postCheckScript) { renderChecks(); }
+  if (!STATE.postCheckScript) return;
+  downloadFile('post_check_' + STATE.siteCode.toLowerCase() + '.py', STATE.postCheckScript, 'text/x-python');
+  showToast('post_check downloaded', 'success');
+}
+window.downloadPostCheck = downloadPostCheck;
+
+// ─── Step 6: Monitoring ───────────────────────────────────────────────────────
+function renderMonitoring() {
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Complete Step 1 first', 'warning');
+    return;
+  }
+  STATE.prometheusAlerts  = window.genPrometheusAlerts(STATE.devices, STATE);
+  STATE.grafanaDashboard  = window.genGrafanaDashboard(STATE.devices, STATE);
+
+  var promOut = document.getElementById('prometheus-output');
+  if (promOut) promOut.innerHTML = '<pre class="config-pre">' + escapeHtml(STATE.prometheusAlerts) + '</pre>';
+
+  var grafOut = document.getElementById('grafana-output');
+  if (grafOut) grafOut.innerHTML = '<pre class="config-pre">' + escapeHtml(STATE.grafanaDashboard) + '</pre>';
+
+  showToast('Monitoring config generated', 'success');
+}
+window.renderMonitoring = renderMonitoring;
+
+function downloadPrometheus() {
+  if (!STATE.prometheusAlerts) { renderMonitoring(); }
+  if (!STATE.prometheusAlerts) return;
+  downloadFile('alerts-' + STATE.siteCode.toLowerCase() + '.yml', STATE.prometheusAlerts, 'text/yaml');
+  showToast('Prometheus alerts downloaded', 'success');
+}
+window.downloadPrometheus = downloadPrometheus;
+
+function downloadGrafana() {
+  if (!STATE.grafanaDashboard) { renderMonitoring(); }
+  if (!STATE.grafanaDashboard) return;
+  downloadFile('dashboard-' + STATE.siteCode.toLowerCase() + '.json', STATE.grafanaDashboard, 'application/json');
+  showToast('Grafana dashboard downloaded', 'success');
+}
+window.downloadGrafana = downloadGrafana;
+
+function escapeHtml(str) {
+  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 // ─── Step 3: Config generation ────────────────────────────────────────────────
 function renderStep3() {
   if (!STATE.devices || !STATE.devices.length) {
@@ -213,14 +287,29 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
 
-  // BOM sub-tabs
-  document.querySelectorAll('.bom-tab').forEach(function(tab) {
+  // Sub-tab groups — each group activates only sibling panes
+  function wireSubTabs(groupSelector, paneAttr) {
+    document.querySelectorAll(groupSelector).forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        var parent = tab.closest('section') || document;
+        parent.querySelectorAll(groupSelector).forEach(function(t) { t.classList.remove('active'); });
+        parent.querySelectorAll('.bom-pane').forEach(function(p) { p.classList.remove('active'); });
+        tab.classList.add('active');
+        var pane = document.getElementById(tab.getAttribute(paneAttr || 'data-pane'));
+        if (pane) pane.classList.add('active');
+      });
+    });
+  }
+  wireSubTabs('.bom-tab', 'data-pane');
+
+  // Step tabs: generate content when navigating to steps 5 and 6
+  document.querySelectorAll('.step-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {
-      document.querySelectorAll('.bom-tab').forEach(function(t) { t.classList.remove('active'); });
-      document.querySelectorAll('.bom-pane').forEach(function(p) { p.classList.remove('active'); });
-      tab.classList.add('active');
-      var pane = document.getElementById(tab.getAttribute('data-pane'));
-      if (pane) pane.classList.add('active');
+      var n = parseInt(tab.getAttribute('data-step'));
+      if ((n === 5 || n === 6) && (!STATE.devices || !STATE.devices.length)) {
+        showToast('Complete Step 1 first', 'warning');
+        return;
+      }
     });
   });
 });
