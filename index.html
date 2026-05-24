@@ -1414,6 +1414,9 @@
       <!-- Rack plan — rendered by recommendations.js -->
       <div id="rack-plan-section" style="display:none;margin-top:1.2rem"></div>
 
+      <!-- IP Address & VLAN Plan — rendered by ipplan.js -->
+      <div id="ipplan-section" style="display:none;margin-top:1.2rem"></div>
+
       <!-- Optics recommendations — rendered by optics.js -->
       <div id="optics-section" style="display:none;margin-top:1.2rem">
         <div class="section-toggle-hdr" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none';this.querySelector('.toggle-caret').textContent=this.nextElementSibling.style.display===''?'▼':'▶'">
@@ -3391,6 +3394,7 @@ rules:
 <script src="src/js/servicenow.js"></script>
 <script src="src/js/peeringdb.js"></script>
 <script src="src/js/eol.js"></script>
+<script src="src/js/ipplan.js"></script>
 <script src="src/js/export.js"></script>
 <script src="src/js/deploy.js"></script>
 <script src="src/js/storage.js"></script>

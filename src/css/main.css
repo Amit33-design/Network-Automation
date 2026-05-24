@@ -3379,3 +3379,27 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .telemetry-dl-btn        { font-size: .78rem; padding: .3rem .7rem; }
 .telemetry-panel-usage   { background: var(--bg3); border-radius: 6px; padding: .5rem .75rem; font-size: .74rem; color: var(--txt2); line-height: 1.7; }
 .telemetry-panel-usage code { color: var(--blue); font-family: monospace; }
+
+/* ── IP Address & VLAN Plan Panel ─────────────────────────────────── */
+.ipplan-table-wrap   { overflow-x: auto; margin: .25rem 0 .75rem; }
+.ipplan-table        { width: 100%; border-collapse: collapse; font-size: .78rem; }
+.ipplan-table th     { background: var(--bg3); color: var(--txt1); padding: .45rem .7rem;
+                       text-align: left; border-bottom: 2px solid var(--border); white-space: nowrap; }
+.ipplan-cat-row td   { background: var(--bg2); padding: .3rem .7rem; }
+.ipplan-cat-badge    { display: inline-block; font-size: .7rem; font-weight: 700;
+                       padding: .12rem .55rem; border-radius: 4px; border: 1px solid;
+                       letter-spacing: .03em; text-transform: uppercase; }
+.ipplan-row td       { padding: .32rem .7rem; border-bottom: 1px solid var(--bg3); vertical-align: top; }
+.ipplan-row:hover td { background: var(--bg2); }
+.ipplan-resource     { font-weight: 500; color: var(--txt0); white-space: nowrap; max-width: 220px; }
+.ipplan-vlan-badge   { display: inline-block; background: var(--blue-dim); color: var(--blue);
+                       font-size: .68rem; font-weight: 700; padding: .1rem .4rem;
+                       border-radius: 3px; font-family: monospace; }
+.ipplan-subnet-td    { white-space: nowrap; }
+.ipplan-subnet       { background: var(--bg3); color: var(--cyan); font-family: monospace;
+                       font-size: .76rem; padding: .1rem .35rem; border-radius: 4px; }
+.ipplan-purpose      { color: var(--txt1); }
+.ipplan-notes        { color: var(--txt2); font-size: .73rem; max-width: 200px; }
+.ipplan-footnote     { font-size: .73rem; color: var(--txt2); margin-top: .5rem;
+                       padding: .45rem .7rem; background: var(--bg2); border-radius: 6px;
+                       border-left: 3px solid var(--orange-dim); }

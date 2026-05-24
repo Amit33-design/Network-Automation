@@ -172,6 +172,9 @@ function updateBOMTable(layers) {
 
   /* Refresh rack plan */
   _updateRackPlanSection(layers);
+
+  /* Refresh IP address & VLAN plan */
+  if (typeof renderIPPlanPanel === 'function') renderIPPlanPanel();
 }
 
 /* ── Rack plan section ──────────────────────────────────────────── */
