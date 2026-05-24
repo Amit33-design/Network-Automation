@@ -173,6 +173,75 @@ window.genPreCheckScript = function(devices, state) {
   ].join('\n');
 };
 
+// ─── Diff table renderer (G-23) ──────────────────────────────────────────────
+// Accepts the JSON string from post_report_<site>.json and renders an HTML table.
+
+window.renderPostCheckDiff = function(jsonStr) {
+  var report;
+  try { report = JSON.parse(jsonStr); } catch (e) {
+    return '<p class="val-block val-block-error">Invalid JSON: ' + e.message + '</p>';
+  }
+  if (!Array.isArray(report) || !report.length) {
+    return '<p class="empty-state">Report is empty or not an array.</p>';
+  }
+
+  var totalAlerts = 0;
+  var rows = report.map(function(entry) {
+    var post   = entry.post || {};
+    var pre    = entry.pre  || {};
+    var alerts = entry.alerts || [];
+    totalAlerts += alerts.length;
+    var hostname = post.hostname || pre.hostname || '?';
+    var platform = post.platform || pre.platform || '?';
+    var ts_pre  = (pre.timestamp  || '—').replace('T', ' ').slice(0, 19);
+    var ts_post = (post.timestamp || '—').replace('T', ' ').slice(0, 19);
+    var reachable = post.reachable ? '<span style="color:var(--success)">✓ OK</span>'
+                                   : '<span style="color:var(--danger)">✗ UNREACHABLE</span>';
+    var alertHtml = alerts.length
+      ? alerts.map(function(a) { return '<div class="diff-alert">⚠ ' + a + '</div>'; }).join('')
+      : '<span style="color:var(--success)">No alerts</span>';
+
+    // Build metric rows: bgp, routes, iface errors
+    function metricRow(label, preVal, postVal, warnFn) {
+      var changed = (preVal !== postVal && preVal !== '?' && postVal !== '?');
+      var cls = (changed && warnFn && warnFn(preVal, postVal)) ? 'diff-changed' : '';
+      return '<tr class="' + cls + '"><td style="padding-left:16px;color:var(--text-dim)">' + label + '</td>'
+           + '<td>' + preVal + '</td><td>' + postVal + '</td></tr>';
+    }
+
+    var preCmd  = pre.commands  || {};
+    var postCmd = post.commands || {};
+
+    return '<tr class="diff-device-hdr"><td colspan="3">'
+      + '<strong>' + hostname + '</strong> <span class="platform-badge">' + platform + '</span>'
+      + ' &nbsp; pre: ' + ts_pre + ' &nbsp; post: ' + ts_post
+      + ' &nbsp; ' + reachable + '</td></tr>'
+      + '<tr><td style="padding-left:16px;color:var(--text-dim)">Alerts</td>'
+      + '<td colspan="2">' + alertHtml + '</td></tr>'
+      + metricRow('BGP output (sample)',
+          (preCmd.bgp  || '—').slice(0, 80).replace(/\n/g, ' ').trim(),
+          (postCmd.bgp || '—').slice(0, 80).replace(/\n/g, ' ').trim(),
+          null)
+      + metricRow('Route output (sample)',
+          (preCmd.routes  || '—').slice(0, 80).replace(/\n/g, ' ').trim(),
+          (postCmd.routes || '—').slice(0, 80).replace(/\n/g, ' ').trim(),
+          null);
+  }).join('');
+
+  var summary = totalAlerts === 0
+    ? '<div class="val-block val-block-error" style="background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.4);">'
+      + '<div class="val-block-hdr" style="color:var(--success)">All post-checks passed — 0 alerts</div></div>'
+    : '<div class="val-block val-block-error">'
+      + '<div class="val-block-hdr">Post-check alerts (' + totalAlerts + ') — investigate before closing change</div></div>';
+
+  return summary
+    + '<div style="overflow-x:auto;margin-top:12px;">'
+    + '<table class="rollback-table diff-table">'
+    + '<thead><tr><th>Device / Metric</th><th>Pre-deploy baseline</th><th>Post-deploy state</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '</table></div>';
+};
+
 window.genPostCheckScript = function(devices, state) {
   if (!devices || !devices.length) return '# No devices — complete Step 1 first.\n';
   var site = (state && state.siteCode) || 'SITE';
@@ -236,6 +305,14 @@ window.genPostCheckScript = function(devices, state) {
     '    if matches: return sum(int(m) for m in matches)',
     '    return -1',
     '',
+    'def extract_interface_errors(output):',
+    '    """Sum all input/output error counters from interface error output."""',
+    '    total = 0',
+    '    for match in re.finditer(r"(\\d+)\\s+(?:input\\s+errors?|CRC|giants|runts|output\\s+errors?|collisions)', +
+    '                             output, re.IGNORECASE):',
+    '        total += int(match.group(1))',
+    '    return total',
+    '',
     'def compare(pre, post):',
     '    """Return list of alert strings for a single device pair."""',
     '    alerts = []',
@@ -256,6 +333,11 @@ window.genPostCheckScript = function(devices, state) {
     '        drop_pct = (pre_rt - post_rt) / pre_rt * 100',
     '        if drop_pct > 5:',
     '            alerts.append(f"ROUTES: count dropped {pre_rt} → {post_rt} ({drop_pct:.1f}% loss)")',
+    '',
+    '    pre_err  = extract_interface_errors(pre["commands"].get("iface", ""))',
+    '    post_err = extract_interface_errors(post["commands"].get("iface", ""))',
+    '    if post_err - pre_err > 100:',
+    '        alerts.append(f"INTERFACE ERRORS: total errors increased {pre_err} → {post_err} (+{post_err - pre_err})")',
     '',
     '    return alerts',
     '',

@@ -336,6 +336,12 @@
     .platform-badge { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; background: var(--accent); color: #fff; }
     .rollback-section h3 { margin: 0 0 8px; }
     .rollback-section h4 { margin: 16px 0 6px; font-size: 13px; color: var(--text-dim); }
+
+    /* Post-check diff table */
+    .diff-table .diff-device-hdr td { background: var(--surface2); padding: 10px; font-size: 12px; }
+    .diff-table .diff-changed td { background: rgba(245,158,11,.08); }
+    .diff-alert { color: var(--warn); font-size: 12px; margin: 2px 0; }
+    --success: #22c55e;
   </style>
 </head>
 <body>
@@ -750,6 +756,7 @@
     <div class="bom-tabs">
       <div class="bom-tab active" data-pane="checks-pane-pre">Pre-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-post">Post-Check Script</div>
+      <div class="bom-tab" data-pane="checks-pane-results">Results Diff</div>
       <div class="bom-tab" data-pane="checks-pane-readme">Usage Guide</div>
     </div>
 
@@ -769,6 +776,20 @@
       </div>
       <div id="post-check-output">
         <p class="empty-state">Generate scripts first.</p>
+      </div>
+    </div>
+
+    <div id="checks-pane-results" class="bom-pane">
+      <div class="form-section" style="font-size:13px;">
+        <h3>Post-Check Diff Report</h3>
+        <p style="color:var(--text-dim); margin-bottom:8px;">
+          Paste the contents of <code>post_report_&lt;site&gt;.json</code> below, then click Parse.
+        </p>
+        <textarea id="diff-json-input" rows="6" style="width:100%;font-family:monospace;font-size:12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:8px;resize:vertical;" placeholder='[{"pre":{...},"post":{...},"alerts":[...]}]'></textarea>
+        <div class="btn-toolbar" style="margin:8px 0;">
+          <button class="btn btn-primary" onclick="window.parsePostCheckReport()">Parse &amp; Render Diff</button>
+        </div>
+        <div id="diff-output"></div>
       </div>
     </div>
 

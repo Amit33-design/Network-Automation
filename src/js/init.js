@@ -354,6 +354,18 @@ function downloadGrafana() {
 }
 window.downloadGrafana = downloadGrafana;
 
+// ─── Post-check diff report (G-23) ──────────────────────────────────��────────
+
+window.parsePostCheckReport = function() {
+  var input = document.getElementById('diff-json-input');
+  var out   = document.getElementById('diff-output');
+  if (!input || !out) return;
+  var jsonStr = (input.value || '').trim();
+  if (!jsonStr) { showToast('Paste post_report JSON first', 'warning'); return; }
+  out.innerHTML = window.renderPostCheckDiff(jsonStr);
+  showToast('Diff report rendered', 'success');
+};
+
 // ─── Rollback pane (G-25) ────────────────────────────────────────────────────
 
 function renderRollbackPane() {
