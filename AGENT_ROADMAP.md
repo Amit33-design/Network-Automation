@@ -20,6 +20,12 @@ Main entry: `index.html` | JS: `src/js/` | Backend: `backend/`
 
 ## Agent Log
 
+### Run 2026-05-24 02:00Z
+**Implemented**: G-20 + G-13 — Complete NX-OS leaf EVPN config + BGP bestpath multipath-relax
+**Files changed**:
+- `src/js/configgen.js` (rewritten) — `_leafDesign(dev, state)`: derives all VNI/ASN/IP/timer values from device unit + state (no hardcoded values); `nxosLeafConfig`: complete per CLAUDE.md §8 — features, nv overlay evpn, per-VLAN VN-segment, NVE interface (L2VNI ingress-replication + L3VNI associate-vrf), VRF context (RD auto + RT both auto evpn), L2 SVI with anycast-gateway, L3VNI transit SVI, BGP with bestpath multipath-relax + compare-routerid + template peer SPINES (timers/BFD/community/max-prefix) + per-spine neighbor stanzas + VRF AF, EVPN section (rd auto + RT import/export auto); `nxosSpineConfig`: added bestpath as-path multipath-relax + updated loopback + peer template; `aristaLeafConfig` (new): full EOS leaf — Loopback/VTEP, Vxlan1 interface, BGP with peer group SPINES + bestpath multipath-relax + per-VNI EVPN + VRF RT; `juniperLeafConfig`: updated — lo0.1 VTEP, BGP hold/keepalive from §10, multipath multiple-as (G-13), bfd-liveness-detection, per-spine neighbors, EVPN + VRF config. BGP timers auto-selected: DC/GPU → 3/9 aggressive, WAN → 10/30.
+**Tested**: 17-point template check against CLAUDE.md §8 — all pass.
+
 ### Run 2026-05-24 01:00Z
 **Implemented**: G-02 — Intent coherence validation
 **Files changed**:
