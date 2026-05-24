@@ -80,6 +80,23 @@ function onStep1Submit(e) {
   var gpuEl = document.getElementById('sel-gpu-transport');
   STATE.gpu = { transport: gpuEl ? gpuEl.value : 'none' };
 
+  // BGP timer preset (G-12)
+  var bgpTimerEl = document.getElementById('sel-bgp-timers');
+  STATE.bgp_timers = bgpTimerEl ? bgpTimerEl.value : 'dc_aggressive';
+
+  // BFD timers (G-09)
+  STATE.bfd = {
+    interval:   parseInt(document.getElementById('inp-bfd-interval').value)   || 300,
+    min_rx:     parseInt(document.getElementById('inp-bfd-min-rx').value)     || 300,
+    multiplier: parseInt(document.getElementById('inp-bfd-multiplier').value) || 3
+  };
+
+  // ECMP (G-10)
+  STATE.ecmp = {
+    max_paths:      parseInt(document.getElementById('inp-ecmp-max-paths').value) || 8,
+    hash_algorithm: document.getElementById('sel-ecmp-hash').value || 'default'
+  };
+
   // Link distances
   var ld = STATE.linkDistances;
   ['spine-leaf','dist-access','core-dist','wan-edge'].forEach(function(key) {

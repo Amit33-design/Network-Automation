@@ -492,6 +492,41 @@
             <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="qos"> QoS</label>
           </div>
         </div>
+
+        <div class="form-grid" style="margin-top:16px;">
+          <div class="form-group" style="grid-column:1/-1;">
+            <label>BGP Timer Preset</label>
+            <select id="sel-bgp-timers">
+              <option value="dc_aggressive">Data Center Aggressive — keepalive 3s / hold 9s (recommended DC &amp; GPU)</option>
+              <option value="wan_standard">WAN Standard — keepalive 10s / hold 30s</option>
+              <option value="conservative">Conservative — keepalive 60s / hold 180s (Cisco/Juniper default)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>BFD Tx Interval (ms)</label>
+            <input id="inp-bfd-interval" type="number" value="300" min="50" max="30000">
+          </div>
+          <div class="form-group">
+            <label>BFD Min Rx (ms)</label>
+            <input id="inp-bfd-min-rx" type="number" value="300" min="50" max="30000">
+          </div>
+          <div class="form-group">
+            <label>BFD Detect Multiplier</label>
+            <input id="inp-bfd-multiplier" type="number" value="3" min="2" max="20">
+          </div>
+          <div class="form-group">
+            <label>ECMP Max Paths</label>
+            <input id="inp-ecmp-max-paths" type="number" value="8" min="1" max="64">
+          </div>
+          <div class="form-group">
+            <label>ECMP Hash Algorithm</label>
+            <select id="sel-ecmp-hash">
+              <option value="default">Default (src+dst IP + L4 port)</option>
+              <option value="symmetric">Symmetric (same hash both directions)</option>
+              <option value="resilient">Resilient (minimal rehash on link change)</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <div id="fs-gpu" class="form-section" style="display:none;">
