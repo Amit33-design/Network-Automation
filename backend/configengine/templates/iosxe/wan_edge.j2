@@ -1,0 +1,46 @@
+{# IOS-XE WAN Edge — NetDesign AI Jinja2 Engine #}
+hostname {{ device.hostname }}
+!
+interface Loopback0
+ description ROUTER-ID
+ ip address {{ device.lo0_ip }} 255.255.255.255
+!
+{% for iface in device.wan_interfaces | default([]) %}
+interface {{ iface.name }}
+ description {{ iface.desc | default('WAN-LINK') }}
+ ip address {{ iface.ip }} {{ iface.mask }}
+ no shutdown
+!
+{% endfor %}
+{% if site.protocols.underlay == 'bgp' %}
+router bgp {{ device.bgp_asn }}
+ bgp router-id {{ device.lo0_ip }}
+ bgp log-neighbor-changes
+{% for peer in device.bgp_peers | default([]) %}
+ neighbor {{ peer.ip }} remote-as {{ peer.asn }}
+ neighbor {{ peer.ip }} description {{ peer.desc | default('WAN-PEER') }}
+ neighbor {{ peer.ip }} timers {{ site.bgp_keepalive | default(10) }} {{ site.bgp_hold | default(30) }}
+{% endfor %}
+ !
+ address-family ipv4
+{% for peer in device.bgp_peers | default([]) %}
+  neighbor {{ peer.ip }} activate
+{% endfor %}
+ exit-address-family
+!
+{% elif site.protocols.underlay == 'ospf' %}
+router ospf 1
+ router-id {{ device.lo0_ip }}
+ passive-interface Loopback0
+!
+{% endif %}
+{% if 'ipsec' in site.protocols.overlay | default([]) or 'ikev2' in site.security.vpn | default('') %}
+crypto ikev2 proposal NDAL-IKE
+ encryption aes-cbc-256
+ integrity sha256
+ group 20
+!
+crypto ipsec profile NDAL-IPSEC
+ set ikev2-profile NDAL-IKE
+!
+{% endif %}

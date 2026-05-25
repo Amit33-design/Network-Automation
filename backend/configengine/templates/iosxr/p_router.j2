@@ -1,0 +1,36 @@
+{# IOS-XR P Router (core/transit) — NetDesign AI Jinja2 Engine #}
+hostname {{ device.hostname }}
+!
+interface Loopback0
+ ipv4 address {{ device.lo0_ip }} 255.255.255.255
+!
+{% for peer in device.pe_peers %}
+interface GigabitEthernet0/0/0/{{ loop.index0 }}
+ description PE-LINK-{{ peer.hostname }}
+ ipv4 address {{ peer.p_p2p_ip }} 255.255.255.254
+ bfd minimum-interval 300
+ bfd multiplier 3
+ carrier-delay msec 0
+ no shutdown
+!
+{% endfor %}
+router isis CORE
+ is-type level-2-only
+ net 49.0001.{{ '%04x' % (100 + device.unit) }}.0000.00
+ address-family ipv4 unicast
+  metric-style wide
+  segment-routing mpls
+ !
+{% for peer in device.pe_peers %}
+ interface GigabitEthernet0/0/0/{{ loop.index0 }}
+  circuit-type level-2-only
+  point-to-point
+  address-family ipv4 unicast
+   fast-reroute per-prefix ti-lfa
+  !
+ !
+{% endfor %}
+!
+segment-routing
+ global-block 16000 23999
+!

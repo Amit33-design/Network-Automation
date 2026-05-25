@@ -1,0 +1,59 @@
+{# NX-OS Spine — NetDesign AI Jinja2 Engine #}
+hostname {{ device.hostname }}
+!
+feature bgp
+feature bfd
+feature lldp
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+feature nv overlay
+nv overlay evpn
+{% endif %}
+!
+interface loopback0
+  description ROUTER-ID
+  ip address {{ device.lo0_ip }}/32
+!
+interface loopback1
+  description VTEP-ANYCAST
+  ip address {{ device.lo1_ip }}/32
+!
+{% for peer in device.leaf_peers %}
+interface Ethernet{{ loop.index }}/1
+  description DOWNLINK-{{ peer.hostname }}
+  no switchport
+  ip address {{ peer.spine_p2p_ip }}/31
+  ip ospf network point-to-point
+  no shutdown
+!
+{% endfor %}
+router bgp {{ device.bgp_asn }}
+  router-id {{ device.lo0_ip }}
+  bestpath as-path multipath-relax
+  bestpath compare-routerid
+  address-family ipv4 unicast
+    maximum-paths {{ site.topology.ecmp_paths | default(8) }}
+    maximum-paths ibgp {{ site.topology.ecmp_paths | default(8) }}
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+  address-family l2vpn evpn
+    retain route-target all
+{% endif %}
+  template peer LEAFS
+    timers {{ site.bgp_keepalive | default(3) }} {{ site.bgp_hold | default(9) }}
+    advertisement-interval {{ site.bgp_adv_interval | default(0) }}
+    bfd
+    send-community extended
+    address-family ipv4 unicast
+      route-reflector-client
+      maximum-prefix 12000 warning-only
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+    address-family l2vpn evpn
+      route-reflector-client
+      send-community extended
+{% endif %}
+{% for peer in device.leaf_peers %}
+  neighbor {{ peer.leaf_p2p_ip }}
+    inherit peer LEAFS
+    remote-as {{ peer.bgp_asn }}
+    description {{ peer.hostname }}
+{% endfor %}
+!

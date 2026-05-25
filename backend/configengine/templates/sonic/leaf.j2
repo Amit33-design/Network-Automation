@@ -1,0 +1,42 @@
+{# NVIDIA SONiC Leaf — NetDesign AI Jinja2 Engine #}
+{# Generates config_db.json fragment + FRR bgpd.conf #}
+{# --- config_db.json fragment --- #}
+{
+  "DEVICE_METADATA": {
+    "localhost": {
+      "hostname": "{{ device.hostname }}",
+      "type": "LeafRouter"
+    }
+  },
+  "LOOPBACK_INTERFACE": {
+    "Loopback0": {},
+    "Loopback0|{{ device.lo0_ip }}/32": {}
+  },
+  "BGP_NEIGHBOR": {
+{% for peer in device.spine_peers %}
+    "{{ peer.spine_p2p_ip }}": {
+      "asn": "{{ device.spine_asn | default(65000) }}",
+      "name": "{{ peer.hostname }}",
+      "local_addr": "{{ peer.leaf_p2p_ip }}"
+    }{{ "," if not loop.last }}
+{% endfor %}
+  }
+}
+
+{# --- FRR bgpd.conf --- #}
+router bgp {{ device.bgp_asn }}
+ bgp router-id {{ device.lo0_ip }}
+ bgp bestpath as-path multipath-relax
+ !
+{% for peer in device.spine_peers %}
+ neighbor {{ peer.spine_p2p_ip }} remote-as {{ device.spine_asn | default(65000) }}
+ neighbor {{ peer.spine_p2p_ip }} description {{ peer.hostname }}
+ neighbor {{ peer.spine_p2p_ip }} bfd
+{% endfor %}
+ !
+ address-family ipv4 unicast
+  maximum-paths {{ site.topology.ecmp_paths | default(8) }}
+{% for peer in device.spine_peers %}
+  neighbor {{ peer.spine_p2p_ip }} activate
+{% endfor %}
+ !

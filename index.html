@@ -822,6 +822,7 @@
   <div class="step-tab" data-step="4"><span class="step-num">4</span>ZTP &amp; Policy</div>
   <div class="step-tab" data-step="5"><span class="step-num">5</span>Pre/Post Checks</div>
   <div class="step-tab" data-step="6"><span class="step-num">6</span>Monitoring</div>
+  <div class="step-tab" data-step="7"><span class="step-num">7</span>Jinja Engine</div>
 </nav>
 
 <main class="main-content">
@@ -1821,6 +1822,15 @@ curl -X POST http://localhost:9090/-/reload</pre>
     </div>
   </section>
 
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       STEP 7: Jinja2 Config Engine
+  ══════════════════════════════════════════════════════════════════════════ -->
+  <section id="step-7" class="step-panel">
+    <div id="jinja-engine-content">
+      <p class="empty-state">Complete Step 1 to generate the Jinja2 inventory and templates.</p>
+    </div>
+  </section>
+
 </main>
 
 <div id="toast-container"></div>
@@ -1845,6 +1855,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/topodisc.js"></script>
 <script src="src/js/nlp_intent.js"></script>
 <script src="src/js/ztp.js"></script>
+<script src="src/js/jinja_engine.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>

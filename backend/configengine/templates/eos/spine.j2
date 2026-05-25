@@ -1,0 +1,46 @@
+{# Arista EOS Spine — NetDesign AI Jinja2 Engine #}
+hostname {{ device.hostname }}
+!
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+service routing protocols model multi-agent
+{% endif %}
+!
+interface Loopback0
+   description ROUTER-ID
+   ip address {{ device.lo0_ip }}/32
+!
+{% for peer in device.leaf_peers %}
+interface Ethernet{{ loop.index }}/1
+   description DOWNLINK-{{ peer.hostname }}
+   no switchport
+   ip address {{ peer.spine_p2p_ip }}/31
+   no shutdown
+!
+{% endfor %}
+router bgp {{ device.bgp_asn }}
+   router-id {{ device.lo0_ip }}
+   bgp bestpath as-path multipath-relax
+   maximum-paths {{ site.topology.ecmp_paths | default(8) }}
+   !
+   peer-group LEAFS
+      bfd
+      timers {{ site.bgp_keepalive | default(3) }} {{ site.bgp_hold | default(9) }}
+      send-community extended
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+      route-reflector-client
+{% endif %}
+   !
+{% for peer in device.leaf_peers %}
+   neighbor {{ peer.leaf_p2p_ip }} peer group LEAFS
+   neighbor {{ peer.leaf_p2p_ip }} remote-as {{ peer.bgp_asn }}
+   neighbor {{ peer.leaf_p2p_ip }} description {{ peer.hostname }}
+{% endfor %}
+   !
+   address-family ipv4
+      neighbor LEAFS activate
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+   !
+   address-family evpn
+      neighbor LEAFS activate
+{% endif %}
+!

@@ -1,0 +1,67 @@
+{# Arista EOS Leaf — NetDesign AI Jinja2 Engine #}
+hostname {{ device.hostname }}
+!
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+service routing protocols model multi-agent
+{% endif %}
+!
+interface Loopback0
+   description ROUTER-ID
+   ip address {{ device.lo0_ip }}/32
+!
+interface Loopback1
+   description VTEP-SOURCE
+   ip address {{ device.lo1_ip }}/32
+!
+{% for peer in device.spine_peers %}
+interface Ethernet{{ loop.index }}/1
+   description UPLINK-{{ peer.hostname }}
+   no switchport
+   ip address {{ peer.leaf_p2p_ip }}/31
+   no shutdown
+!
+{% endfor %}
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+interface Vxlan1
+   vxlan source-interface Loopback1
+   vxlan udp-port 4789
+   vxlan vlan {{ device.vlan_id | default(10) }} vni {{ device.l2vni | default(10010) }}
+   vxlan vrf {{ device.vrf_name | default('PROD') }} vni {{ device.l3vni | default(50001) }}
+!
+vrf instance {{ device.vrf_name | default('PROD') }}
+!
+interface Vlan{{ device.vlan_id | default(10) }}
+   vrf {{ device.vrf_name | default('PROD') }}
+   ip address virtual {{ device.anycast_gw }}/{{ device.prefix | default(24) }}
+!
+{% endif %}
+router bgp {{ device.bgp_asn }}
+   router-id {{ device.lo0_ip }}
+   bgp bestpath as-path multipath-relax
+   maximum-paths {{ site.topology.ecmp_paths | default(8) }}
+   !
+   peer-group SPINES
+      remote-as {{ device.spine_asn | default(65000) }}
+      bfd
+      timers {{ site.bgp_keepalive | default(3) }} {{ site.bgp_hold | default(9) }}
+      send-community extended
+   !
+{% for peer in device.spine_peers %}
+   neighbor {{ peer.spine_p2p_ip }} peer group SPINES
+   neighbor {{ peer.spine_p2p_ip }} description {{ peer.hostname }}
+{% endfor %}
+   !
+   address-family ipv4
+      neighbor SPINES activate
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+   !
+   address-family evpn
+      neighbor SPINES activate
+   !
+   vrf {{ device.vrf_name | default('PROD') }}
+      rd {{ device.unit }}:1
+      route-target import evpn {{ device.unit }}:1
+      route-target export evpn {{ device.unit }}:1
+      redistribute connected
+{% endif %}
+!

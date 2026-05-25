@@ -1,0 +1,39 @@
+{# Juniper JunOS Leaf — NetDesign AI Jinja2 Engine #}
+{# Uses set-style (flat) commands #}
+set system host-name {{ device.hostname }}
+set system ntp server 0.pool.ntp.org
+!
+set interfaces lo0 unit 0 family inet address {{ device.lo0_ip }}/32
+set interfaces lo0 unit 0 family inet address {{ device.lo1_ip }}/32 primary
+!
+{% for peer in device.spine_peers %}
+set interfaces xe-0/0/{{ loop.index0 }} description UPLINK-{{ peer.hostname }}
+set interfaces xe-0/0/{{ loop.index0 }} unit 0 family inet address {{ peer.leaf_p2p_ip }}/31
+{% endfor %}
+!
+set routing-options autonomous-system {{ device.bgp_asn }}
+set routing-options router-id {{ device.lo0_ip }}
+!
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+set protocols evpn encapsulation vxlan
+set protocols evpn default-gateway advertise
+set protocols evpn extended-vni-list all
+{% endif %}
+!
+set protocols bgp group SPINES type external
+set protocols bgp group SPINES family inet unicast
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+set protocols bgp group SPINES family evpn signaling
+{% endif %}
+set protocols bgp group SPINES export SEND-LOOPBACKS
+set protocols bgp group SPINES bfd-liveness-detection minimum-interval 300
+set protocols bgp group SPINES bfd-liveness-detection multiplier 3
+{% for peer in device.spine_peers %}
+set protocols bgp group SPINES neighbor {{ peer.spine_p2p_ip }} peer-as {{ device.spine_asn | default(65000) }}
+set protocols bgp group SPINES neighbor {{ peer.spine_p2p_ip }} description {{ peer.hostname }}
+{% endfor %}
+!
+set policy-options policy-statement SEND-LOOPBACKS term loopbacks from interface lo0.0
+set policy-options policy-statement SEND-LOOPBACKS term loopbacks then accept
+set policy-options policy-statement SEND-LOOPBACKS term deny then reject
+!

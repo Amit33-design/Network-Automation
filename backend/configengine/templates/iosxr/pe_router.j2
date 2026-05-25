@@ -1,0 +1,71 @@
+{# IOS-XR PE Router — NetDesign AI Jinja2 Engine #}
+hostname {{ device.hostname }}
+!
+interface Loopback0
+ ipv4 address {{ device.lo0_ip }} 255.255.255.255
+!
+{% for peer in device.p_peers %}
+interface GigabitEthernet0/0/0/{{ loop.index0 }}
+ description P-LINK-{{ peer.hostname }}
+ ipv4 address {{ peer.pe_p2p_ip }} 255.255.255.254
+ bfd minimum-interval 300
+ bfd multiplier 3
+ carrier-delay msec 0
+ no shutdown
+!
+{% endfor %}
+router isis CORE
+ is-type level-2-only
+ net 49.0001.{{ '%04x' % device.unit }}.0000.00
+ address-family ipv4 unicast
+  metric-style wide
+  segment-routing mpls
+ !
+{% for peer in device.p_peers %}
+ interface GigabitEthernet0/0/0/{{ loop.index0 }}
+  circuit-type level-2-only
+  point-to-point
+  address-family ipv4 unicast
+   fast-reroute per-prefix ti-lfa
+  !
+ !
+{% endfor %}
+!
+segment-routing
+ global-block 16000 23999
+!
+vrf {{ device.vrf_name | default('CUST-A') }}
+ rd {{ device.unit }}:100
+ address-family ipv4 unicast
+  import route-target
+   {{ device.unit }}:100
+  !
+  export route-target
+   {{ device.unit }}:100
+  !
+ !
+!
+router bgp {{ device.bgp_asn }}
+ bgp router-id {{ device.lo0_ip }}
+ address-family vpnv4 unicast
+ !
+ neighbor-group RR-PEERS
+  remote-as {{ device.bgp_asn }}
+  update-source Loopback0
+  bfd fast-detect
+  address-family vpnv4 unicast
+   soft-reconfiguration inbound always
+  !
+ !
+ neighbor {{ device.rr_ip | default('10.0.0.1') }}
+  use neighbor-group RR-PEERS
+  description RR-PEER
+ !
+ vrf {{ device.vrf_name | default('CUST-A') }}
+  rd {{ device.unit }}:100
+  address-family ipv4 unicast
+   redistribute connected
+   maximum-paths ibgp 8
+  !
+ !
+!

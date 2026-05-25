@@ -1,0 +1,99 @@
+{# NX-OS Leaf — NetDesign AI Jinja2 Engine #}
+hostname {{ device.hostname }}
+!
+feature bgp
+feature bfd
+feature interface-vlan
+feature lldp
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+feature nv overlay
+feature vn-segment-vlan-based
+nv overlay evpn
+{% endif %}
+!
+interface loopback0
+  description ROUTER-ID
+  ip address {{ device.lo0_ip }}/32
+!
+interface loopback1
+  description VTEP-SOURCE
+  ip address {{ device.lo1_ip }}/32
+!
+{% for peer in device.spine_peers %}
+interface Ethernet1/{{ loop.index }}
+  description UPLINK-{{ peer.hostname }}
+  no switchport
+  ip address {{ peer.leaf_p2p_ip }}/31
+  no shutdown
+!
+{% endfor %}
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+vlan {{ device.vlan_id | default(10) }}
+  vn-segment {{ device.l2vni | default(10010) }}
+!
+interface nve1
+  no shutdown
+  host-reachability protocol bgp
+  source-interface loopback1
+  member vni {{ device.l2vni | default(10010) }}
+    ingress-replication protocol bgp
+  member vni {{ device.l3vni | default(50001) }} associate-vrf
+!
+vrf context {{ device.vrf_name | default('PROD') }}
+  vni {{ device.l3vni | default(50001) }}
+  rd auto
+  address-family ipv4 unicast
+    route-target both auto evpn
+!
+interface Vlan{{ device.vlan_id | default(10) }}
+  no shutdown
+  vrf member {{ device.vrf_name | default('PROD') }}
+  ip address {{ device.anycast_gw }}/{{ device.prefix | default(24) }}
+  fabric forwarding mode anycast-gateway
+!
+interface Vlan{{ device.l3vni_vlan | default(3001) }}
+  no shutdown
+  vrf member {{ device.vrf_name | default('PROD') }}
+  ip forward
+!
+{% endif %}
+router bgp {{ device.bgp_asn }}
+  router-id {{ device.lo0_ip }}
+  bestpath as-path multipath-relax
+  bestpath compare-routerid
+  address-family ipv4 unicast
+    maximum-paths {{ site.topology.ecmp_paths | default(8) }}
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+  address-family l2vpn evpn
+    advertise-pip
+{% endif %}
+  template peer SPINES
+    remote-as {{ device.spine_asn | default(65000) }}
+    timers {{ site.bgp_keepalive | default(3) }} {{ site.bgp_hold | default(9) }}
+    advertisement-interval {{ site.bgp_adv_interval | default(0) }}
+    bfd
+    send-community extended
+    address-family ipv4 unicast
+      maximum-prefix 12000 warning-only
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+    address-family l2vpn evpn
+      send-community extended
+{% endif %}
+{% for peer in device.spine_peers %}
+  neighbor {{ peer.spine_p2p_ip }}
+    inherit peer SPINES
+    description {{ peer.hostname }}
+{% endfor %}
+{% if 'vxlan_evpn' in site.protocols.overlay | default([]) %}
+  vrf {{ device.vrf_name | default('PROD') }}
+    address-family ipv4 unicast
+      redistribute direct route-map RMAP-CONNECTED
+      maximum-paths {{ site.topology.ecmp_paths | default(8) }}
+!
+evpn
+  vni {{ device.l2vni | default(10010) }} l2
+    rd auto
+    route-target import auto
+    route-target export auto
+{% endif %}
+!

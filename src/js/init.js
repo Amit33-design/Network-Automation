@@ -463,6 +463,19 @@ function renderMonitoring() {
 }
 window.renderMonitoring = renderMonitoring;
 
+function renderJinjaPane() {
+  var out = document.getElementById('jinja-engine-content');
+  if (!out) return;
+  if (!STATE.devices || !STATE.devices.length) {
+    out.innerHTML = '<p class="empty-state">Complete Step 1 first to generate the Jinja2 inventory and templates.</p>';
+    return;
+  }
+  if (window.renderJinjaEnginePane) {
+    out.innerHTML = window.renderJinjaEnginePane(STATE);
+  }
+}
+window.renderJinjaPane = renderJinjaPane;
+
 function downloadPrometheus() {
   if (!STATE.prometheusAlerts) { renderMonitoring(); }
   if (!STATE.prometheusAlerts) return;
@@ -822,6 +835,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
       if (n === 3) { renderStep3(); }
+      if (n === 7) { renderJinjaPane(); }
       goToStep(n);
     });
   });
