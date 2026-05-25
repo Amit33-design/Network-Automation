@@ -1036,8 +1036,26 @@
             <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="vrf"> VRF</label>
             <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="flowspec"> FlowSpec</label>
             <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="ipv6"> IPv6</label>
-            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="multicast"> Multicast</label>
+            <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="multicast" onchange="document.getElementById('mc-opts').style.display=this.checked?'grid':'none'"> Multicast</label>
             <label class="checkbox-item"><input type="checkbox" class="chk-feature" value="qos"> QoS</label>
+          </div>
+          <div id="mc-opts" class="form-grid" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface2);border-radius:6px;border:1px solid var(--border);">
+            <div class="form-group">
+              <label>PIM Mode</label>
+              <select id="sel-pim-mode">
+                <option value="sparse">PIM Sparse-Mode (static RP)</option>
+                <option value="ssm">PIM SSM — Source-Specific (232/8, no RP)</option>
+                <option value="bidir">PIM Bidir (DC anycast RP)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>RP Address</label>
+              <input id="inp-rp-addr" type="text" value="10.0.0.254" placeholder="e.g. 10.0.0.254">
+            </div>
+            <div class="form-group">
+              <label>Multicast Group Range (ACL)</label>
+              <input id="inp-mc-groups" type="text" value="239.0.0.0/8" placeholder="e.g. 239.0.0.0/8">
+            </div>
           </div>
         </div>
 

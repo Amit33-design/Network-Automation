@@ -145,6 +145,19 @@ function onStep1Submit(e) {
     STATE.appTypes.push(cb.value);
   });
 
+  // G-18: Multicast settings (only when multicast feature is checked)
+  if (STATE.protocols.features.indexOf('multicast') !== -1) {
+    var pimModeEl  = document.getElementById('sel-pim-mode');
+    var rpAddrEl   = document.getElementById('inp-rp-addr');
+    var mcGroupsEl = document.getElementById('inp-mc-groups');
+    STATE.multicast = {
+      mode:    pimModeEl  ? pimModeEl.value  : 'sparse',
+      rp_ip:   rpAddrEl   ? rpAddrEl.value   : '10.0.0.254',
+      groups:  mcGroupsEl ? mcGroupsEl.value : '239.0.0.0/8',
+      igmp_version: 3
+    };
+  }
+
   // Topology sizing (G-03 + G-04)
   STATE.topology = {
     endpoint_count:   parseInt(document.getElementById('inp-endpoint-count').value) || 500,

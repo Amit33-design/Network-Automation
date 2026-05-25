@@ -203,6 +203,111 @@ function _junosIPv6Block(dev, state, d) {
   return lines;
 }
 
+// ─── G-18: Multicast — PIM / IGMP config blocks ──────────────────────────────
+// Supported modes: sparse (default, static RP), ssm (232/8, no RP), bidir (DC anycast RP)
+// RP address: use state.multicast.rp_ip or default 10.0.0.254 (anycast RP loopback)
+// SSM range : 232.0.0.0/8 (RFC 4607)
+// IGMP v3   : enabled on all server-facing SVIs/access interfaces
+
+function _mcState(state) {
+  var mc = state.multicast || {};
+  return {
+    mode:    mc.mode    || 'sparse',          // sparse | ssm | bidir
+    rp_ip:   mc.rp_ip   || '10.0.0.254',     // anycast RP
+    groups:  mc.groups  || '239.0.0.0/8',    // multicast group ACL
+    igmpVer: mc.igmp_version || 3
+  };
+}
+
+function _nxosMulticastBlock(dev, state) {
+  if (!_hasFeat(state, 'multicast')) return [];
+  var mc    = _mcState(state);
+  var isSsm = mc.mode === 'ssm';
+  var lines = [
+    '',
+    '! --- G-18: Multicast ---',
+    'feature pim',
+    '',
+  ];
+  if (!isSsm) {
+    lines.push('ip pim rp-address ' + mc.rp_ip + ' group-list ' + mc.groups);
+    if (mc.mode === 'bidir') lines.push('ip pim rp-address ' + mc.rp_ip + ' bidir');
+  }
+  lines = lines.concat([
+    'ip pim ssm range 232.0.0.0/8',
+    '',
+    'interface loopback0',
+    '  ip pim sparse-mode',
+    '',
+    '! Apply on every L3 interface (spine P2P and leaf SVIs):',
+    '! interface <if>',
+    '!   ip pim ' + (isSsm ? 'sparse-mode' : mc.mode === 'bidir' ? 'bidir-dense-mode' : 'sparse-mode'),
+    '!   ip igmp version ' + mc.igmpVer,
+    '!   ip igmp static-oif ' + (mc.groups.split('/')[0] || '239.0.0.1') + '  ! optional join',
+  ]);
+  if (dev.subLayer === 'spine' || (dev.role || '').includes('spine')) {
+    lines.push('');
+    lines.push('! RP loopback (if this spine is the RP):');
+    lines.push('! interface loopback2');
+    lines.push('!   ip address ' + mc.rp_ip + '/32');
+    lines.push('!   ip pim sparse-mode');
+  }
+  return lines;
+}
+
+function _eosMulticastBlock(dev, state) {
+  if (!_hasFeat(state, 'multicast')) return [];
+  var mc    = _mcState(state);
+  var isSsm = mc.mode === 'ssm';
+  var lines = [
+    '',
+    '! --- G-18: Multicast ---',
+    'ip multicast-routing',
+    '',
+  ];
+  if (!isSsm) {
+    lines.push('ip pim rp-address ' + mc.rp_ip);
+    if (mc.mode === 'bidir') lines.push('ip pim bidir-rp-address ' + mc.rp_ip);
+  }
+  lines = lines.concat([
+    'ip pim ssm range 232.0.0.0/8',
+    '',
+    'interface Loopback0',
+    '   pim ipv4 sparse-mode',
+    '',
+    '! Apply on L3 P2P and SVI interfaces:',
+    '! interface <if>',
+    '!    pim ipv4 ' + (isSsm ? 'sparse-mode' : 'sparse-mode'),
+    '!    igmp version ' + mc.igmpVer,
+    '!    igmp static-group ' + (mc.groups.split('/')[0] || '239.0.0.1'),
+  ]);
+  return lines;
+}
+
+function _junosMulticastBlock(dev, state) {
+  if (!_hasFeat(state, 'multicast')) return [];
+  var mc    = _mcState(state);
+  var isSsm = mc.mode === 'ssm';
+  var lines = [
+    '',
+    '# --- G-18: Multicast ---',
+    'set protocols pim interface lo0.0 mode sparse',
+    'set protocols pim interface all mode sparse',
+  ];
+  if (!isSsm) {
+    lines.push('set protocols pim rp static address ' + mc.rp_ip);
+    if (mc.mode === 'bidir') lines.push('set protocols pim rp static address ' + mc.rp_ip + ' bidir');
+  }
+  lines = lines.concat([
+    'set protocols pim ssm-groups 232.0.0.0/8',
+    '',
+    '# IGMP on access/server-facing interfaces:',
+    '# set protocols igmp interface <if>.0 version ' + mc.igmpVer,
+    '# set protocols igmp interface <if>.0 static-group ' + (mc.groups.split('/')[0] || '239.0.0.1'),
+  ]);
+  return lines;
+}
+
 // NX-OS: global BFD command + ECMP hash command (appended after BGP stanza)
 function _nxosGlobalBfd(state) {
   if (!_hasFeat(state, 'bfd')) return '';
@@ -655,6 +760,10 @@ function nxosSpineConfig(dev, state) {
   var v6SpineLines = _nxosSpineIPv6Block(dev, state);
   if (v6SpineLines.length) lines = lines.concat(v6SpineLines);
 
+  // G-18: Multicast
+  var mcNxosSpine = _nxosMulticastBlock(dev, state);
+  if (mcNxosSpine.length) lines = lines.concat(mcNxosSpine);
+
   return lines.join('\n') + '\n';
 }
 
@@ -840,6 +949,10 @@ function nxosLeafConfig(dev, state) {
   var v6LeafLines = _nxosIPv6Block(dev, state, d);
   if (v6LeafLines.length) lines = lines.concat(v6LeafLines);
 
+  // G-18: Multicast
+  var mcNxosLeaf = _nxosMulticastBlock(dev, state);
+  if (mcNxosLeaf.length) lines = lines.concat(mcNxosLeaf);
+
   return lines.join('\n') + '\n';
 }
 
@@ -891,6 +1004,10 @@ function aristaSpineConfig(dev, state) {
   // G-17: IPv6 dual-stack (spine — no _leafDesign object)
   var v6EosSpine = _eosIPv6Block(dev, state, null);
   if (v6EosSpine.length) lines = lines.concat(v6EosSpine);
+
+  // G-18: Multicast
+  var mcEosSpine = _eosMulticastBlock(dev, state);
+  if (mcEosSpine.length) lines = lines.concat(mcEosSpine);
 
   return lines.join('\n') + '\n';
 }
@@ -1026,6 +1143,10 @@ function aristaLeafConfig(dev, state) {
   var v6EosLeaf = _eosIPv6Block(dev, state, d);
   if (v6EosLeaf.length) lines = lines.concat(v6EosLeaf);
 
+  // G-18: Multicast
+  var mcEosLeaf = _eosMulticastBlock(dev, state);
+  if (mcEosLeaf.length) lines = lines.concat(mcEosLeaf);
+
   return lines.join('\n') + '\n';
 }
 
@@ -1104,6 +1225,10 @@ function juniperLeafConfig(dev, state) {
   // G-17: IPv6 dual-stack
   var v6JunosLines = _junosIPv6Block(dev, state, d);
   if (v6JunosLines.length) lines = lines.concat(v6JunosLines);
+
+  // G-18: Multicast
+  var mcJunos = _junosMulticastBlock(dev, state);
+  if (mcJunos.length) lines = lines.concat(mcJunos);
 
   return lines.join('\n') + '\n';
 }
