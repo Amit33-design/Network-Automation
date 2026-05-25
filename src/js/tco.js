@@ -158,7 +158,7 @@ window.renderTCOReport = function(state) {
       + '</tr>';
   }).join('');
 
-  var table = '<div style="overflow-x:auto;margin-top:4px;">'
+  var table = '<div style="overflow-x:auto;margin-top:4px;max-width:100%;">'
     + '<table class="bom-table diff-table" style="min-width:680px;">'
     + '<thead><tr>'
     + '<th>Hostname</th><th>Model</th><th>Role</th>'

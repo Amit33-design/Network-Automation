@@ -207,7 +207,7 @@ function renderCapacityMath(state) {
   capOut.innerHTML =
     '<div class="form-section">' +
       '<h3>Port-Math Capacity Calculation</h3>' +
-      '<table class="bom-table">' +
+      '<div class="table-scroll"><table class="bom-table">' +
         '<thead><tr><th>Parameter</th><th>Input</th><th>Result</th></tr></thead>' +
         '<tbody>' +
           '<tr><td>Endpoints / servers</td><td>' + topo.endpoint_count + '</td><td>—</td></tr>' +
@@ -223,7 +223,7 @@ function renderCapacityMath(state) {
           '<tr><td>Total leaf uplinks</td><td>' + calc.leaf_count + ' × ' + calc.uplinks_per_leaf + '</td><td>' + t.total_leaf_uplinks + '</td></tr>' +
           '<tr><td>Spine count</td><td>⌈' + t.total_leaf_uplinks + ' / spine ports⌉ (min 2)</td><td><strong>' + calc.spine_count + '</strong></td></tr>' +
         '</tbody>' +
-      '</table>' +
+      '</table></div>' +
     '</div>';
 }
 window.renderCapacityMath = renderCapacityMath;
@@ -272,14 +272,14 @@ function renderStep2() {
   // Cabling tab
   var cableOut = document.getElementById('cabling-output');
   if (cableOut) {
-    cableOut.innerHTML = window.renderCablingTable(STATE.cabling);
+    cableOut.innerHTML = '<div class="table-scroll">' + window.renderCablingTable(STATE.cabling) + '</div>';
   }
 
   // Optics tab
   var opticsOut = document.getElementById('optics-output');
   if (opticsOut && window.recommendOptics) {
     window.recommendOptics(STATE.cabling, STATE.devices, STATE);
-    opticsOut.innerHTML = window.renderOpticsTable(STATE.optics);
+    opticsOut.innerHTML = '<div class="table-scroll">' + window.renderOpticsTable(STATE.optics) + '</div>';
   }
 
   // Rack Layout tab (G-05)

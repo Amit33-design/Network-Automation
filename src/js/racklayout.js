@@ -203,7 +203,7 @@ window.renderRackLayout = function(devices) {
 
   var legend = '<div style="margin-bottom:12px;line-height:2;">' + legendItems + '</div>';
 
-  var rackDiagrams = '<div style="overflow-x:auto;white-space:nowrap;">'
+  var rackDiagrams = '<div style="overflow-x:auto;white-space:nowrap;max-width:100%;">'
     + physRacks.map(_renderSingleRack).join('')
     + '</div>';
 
@@ -222,7 +222,7 @@ window.renderRackLayout = function(devices) {
         + '</tr>';
     }).join('');
 
-  var placementTable = '<div style="overflow-x:auto;margin-top:20px;">'
+  var placementTable = '<div style="overflow-x:auto;margin-top:20px;max-width:100%;">'
     + '<table class="bom-table diff-table">'
     + '<thead><tr><th>Hostname</th><th>Model</th><th>Role</th><th>Rack</th><th>Position</th><th>Height</th></tr></thead>'
     + '<tbody>' + tableRows + '</tbody>'
@@ -378,7 +378,7 @@ window.renderPowerCooling = function(devices, pue) {
       + '</tr>';
   }).join('');
 
-  var rackTable = '<div style="overflow-x:auto;">'
+  var rackTable = '<div style="overflow-x:auto;max-width:100%;">'
     + '<table class="bom-table diff-table" style="min-width:640px;">'
     + '<thead><tr><th>Rack</th><th>Devices</th><th>IT Load</th><th>U Fill</th>'
     + '<th>PDU (2N)</th><th>Cooling Load</th><th>Cooling Tier</th></tr></thead>'
@@ -419,7 +419,7 @@ window.renderPowerCooling = function(devices, pue) {
   var devPowerTable = '<details style="margin-top:12px;">'
     + '<summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);padding:6px 0;">'
     + '▶ Device power breakdown (' + devices.filter(function(d){return d.rack!=='VIRTUAL'&&d.powerW;}).length + ' devices)</summary>'
-    + '<div style="overflow-x:auto;margin-top:8px;">'
+    + '<div style="overflow-x:auto;margin-top:8px;max-width:100%;">'
     + '<table class="bom-table diff-table" style="min-width:480px;">'
     + '<thead><tr><th>Hostname</th><th>Model</th><th>Role</th><th>Rack</th><th>Power</th><th>% of Total IT</th></tr></thead>'
     + '<tbody>' + devRows + '</tbody>'

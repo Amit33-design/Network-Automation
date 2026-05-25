@@ -646,14 +646,17 @@
     }
 
     /* ─── Mobile responsive ──────────────────────────────────────────────────── */
-    /* clip (not hidden) — visually prevents page-level horizontal scroll but does NOT
-       create a scroll container, so child overflow-x:auto elements receive touch events */
-    html { overflow-x: clip; }
-    body { overflow-x: clip; }
+    /* hidden (not clip) — creates a formatting context that constrains block children
+       to viewport width, which is required for overflow-x:auto children to scroll */
+    html { overflow-x: hidden; }
+    body { overflow-x: hidden; }
 
     /* Tables: scroll within their pane rather than blowing out the page */
-    .bom-pane   { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .bom-pane   { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
     .bom-table  { min-width: 480px; }
+    .cable-table  { min-width: 640px; }
+    .optics-table { min-width: 580px; }
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
     .rollback-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .rollback-table   { min-width: 420px; }
 
