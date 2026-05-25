@@ -226,6 +226,14 @@ window.renderPostCheckDiff = function(jsonStr) {
   }
 
   var totalAlerts = 0;
+
+  // Collect all ping failures across all devices for reachability matrix
+  var pingFailures = [];
+  report.forEach(function(entry) {
+    var post = entry.post || {};
+    (post.ping_failures || []).forEach(function(f) { pingFailures.push(f); });
+  });
+
   var rows = report.map(function(entry) {
     var post   = entry.post || {};
     var pre    = entry.pre  || {};
@@ -238,10 +246,9 @@ window.renderPostCheckDiff = function(jsonStr) {
     var reachable = post.reachable ? '<span style="color:var(--success)">✓ OK</span>'
                                    : '<span style="color:var(--danger)">✗ UNREACHABLE</span>';
     var alertHtml = alerts.length
-      ? alerts.map(function(a) { return '<div class="diff-alert">⚠ ' + a + '</div>'; }).join('')
+      ? alerts.map(function(a) { return '<div class="diff-alert">⚠ ' + a.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</div>'; }).join('')
       : '<span style="color:var(--success)">No alerts</span>';
 
-    // Build metric rows: bgp, routes, iface errors
     function metricRow(label, preVal, postVal, warnFn) {
       var changed = (preVal !== postVal && preVal !== '?' && postVal !== '?');
       var cls = (changed && warnFn && warnFn(preVal, postVal)) ? 'diff-changed' : '';
@@ -252,20 +259,39 @@ window.renderPostCheckDiff = function(jsonStr) {
     var preCmd  = pre.commands  || {};
     var postCmd = post.commands || {};
 
+    // Ping matrix result for this device
+    var devPingFails = (post.ping_failures || []);
+    var pingCell = devPingFails.length
+      ? '<span style="color:var(--danger)">' + devPingFails.length + ' failed: '
+          + devPingFails.map(function(f) { return f.split('→')[1] || f; }).join(', ') + '</span>'
+      : (post.reachable ? '<span style="color:var(--success)">All loopbacks reachable</span>' : '—');
+
+    // ECMP paths result for this device
+    var ecmpPaths = post.ecmp_paths;
+    var ecmpCell = (ecmpPaths === undefined || ecmpPaths === -1)
+      ? '—'
+      : (ecmpPaths === 0
+          ? '<span style="color:var(--danger)">0 paths (ECMP not working)</span>'
+          : '<span style="color:var(--success)">' + ecmpPaths + ' next-hop path(s)</span>');
+
     return '<tr class="diff-device-hdr"><td colspan="3">'
       + '<strong>' + hostname + '</strong> <span class="platform-badge">' + platform + '</span>'
       + ' &nbsp; pre: ' + ts_pre + ' &nbsp; post: ' + ts_post
       + ' &nbsp; ' + reachable + '</td></tr>'
       + '<tr><td style="padding-left:16px;color:var(--text-dim)">Alerts</td>'
       + '<td colspan="2">' + alertHtml + '</td></tr>'
-      + metricRow('BGP output (sample)',
+      + metricRow('BGP summary (sample)',
           (preCmd.bgp  || '—').slice(0, 80).replace(/\n/g, ' ').trim(),
           (postCmd.bgp || '—').slice(0, 80).replace(/\n/g, ' ').trim(),
           null)
-      + metricRow('Route output (sample)',
+      + metricRow('Route table (sample)',
           (preCmd.routes  || '—').slice(0, 80).replace(/\n/g, ' ').trim(),
           (postCmd.routes || '—').slice(0, 80).replace(/\n/g, ' ').trim(),
-          null);
+          null)
+      + '<tr><td style="padding-left:16px;color:var(--text-dim)">Reachability matrix</td>'
+      + '<td>—</td><td>' + pingCell + '</td></tr>'
+      + '<tr><td style="padding-left:16px;color:var(--text-dim)">ECMP paths (BGP via count)</td>'
+      + '<td>—</td><td>' + ecmpCell + '</td></tr>';
   }).join('');
 
   var summary = totalAlerts === 0
@@ -274,7 +300,19 @@ window.renderPostCheckDiff = function(jsonStr) {
     : '<div class="val-block val-block-error">'
       + '<div class="val-block-hdr">Post-check alerts (' + totalAlerts + ') — investigate before closing change</div></div>';
 
-  return summary
+  // Reachability matrix failure summary (if any)
+  var matrixHtml = '';
+  if (pingFailures.length) {
+    matrixHtml = '<div class="val-block val-block-error" style="margin-top:10px;">'
+      + '<div class="val-block-hdr">Reachability failures — ' + pingFailures.length + ' path(s) unreachable</div>'
+      + '<ul style="margin:8px 0 0 16px;font-size:12px;line-height:1.9;padding:0;">'
+      + pingFailures.map(function(f) {
+          return '<li style="color:var(--danger)">' + f.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</li>';
+        }).join('')
+      + '</ul></div>';
+  }
+
+  return summary + matrixHtml
     + '<div style="overflow-x:auto;margin-top:12px;">'
     + '<table class="rollback-table diff-table">'
     + '<thead><tr><th>Device / Metric</th><th>Pre-deploy baseline</th><th>Post-deploy state</th></tr></thead>'
@@ -558,6 +596,37 @@ window.renderDriftReport = function(jsonStr) {
     + '</table></div>';
 };
 
+// ─── G-26: ECMP path count verification ──────────────────────────────────────
+// Counts BGP next-hop (via) entries in route table — proxy for ECMP working.
+// Expected = number of spine devices from BOM.
+function _buildEcmpCheckPy(devices) {
+  var spineCount = devices.filter(function(d) {
+    return (d.role || d.subLayer || '').toLowerCase().includes('spine');
+  }).length;
+  var expected = Math.max(spineCount, 2);
+
+  return [
+    'EXPECTED_ECMP_PATHS = ' + expected + '  # spine count from BOM',
+    '',
+    'ECMP_BGP_CMD = {',
+    '    "nxos":  "show ip route bgp",',
+    '    "eos":   "show ip route bgp",',
+    '    "junos": "show route protocol bgp",',
+    '    "iosxe": "show ip route bgp",',
+    '    "sonic": "show ip route bgp",',
+    '}',
+    '',
+    'def check_ecmp_paths(dev, conn):',
+    '    """Count BGP via-entries in route table — proxy for ECMP next-hop count."""',
+    '    try:',
+    '        cmd = ECMP_BGP_CMD.get(dev["platform"], "show ip route bgp")',
+    '        out = conn.send_command(cmd, read_timeout=15)',
+    '        return len([l for l in out.splitlines() if " via " in l.lower()])',
+    '    except Exception:',
+    '        return -1  # indeterminate',
+  ].join('\n');
+}
+
 window.genPostCheckScript = function(devices, state) {
   if (!devices || !devices.length) return '# No devices — complete Step 1 first.\n';
   var site = (state && state.siteCode) || 'SITE';
@@ -586,6 +655,8 @@ window.genPostCheckScript = function(devices, state) {
     '',
     _buildReachabilityPy(devices),
     '',
+    _buildEcmpCheckPy(devices),
+    '',
     'BASELINE_FILE  = "pre_baseline_' + site.toLowerCase() + '.json"',
     'REPORT_FILE    = "post_report_' + site.toLowerCase() + '.json"',
     '',
@@ -594,7 +665,7 @@ window.genPostCheckScript = function(devices, state) {
     '    cmds = COMMANDS.get(platform, COMMANDS["nxos"])',
     '    results = {"hostname": dev["hostname"], "host": dev["host"],',
     '               "platform": platform, "timestamp": datetime.datetime.utcnow().isoformat(),',
-    '               "commands": {}, "ping_failures": [], "reachable": False, "error": None}',
+    '               "commands": {}, "ping_failures": [], "ecmp_paths": -1, "reachable": False, "error": None}',
     '    try:',
     '        with ConnectHandler(**{k: dev[k] for k in',
     '                ("host","device_type","username","password","secret")}) as conn:',
@@ -605,6 +676,7 @@ window.genPostCheckScript = function(devices, state) {
     '                except Exception as e:',
     '                    results["commands"][key] = "ERROR: " + str(e)',
     '            results["ping_failures"] = check_reachability(dev, conn)',
+    '            results["ecmp_paths"]    = check_ecmp_paths(dev, conn)',
     '    except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:',
     '        results["error"] = str(e)',
     '    return results',
@@ -660,6 +732,12 @@ window.genPostCheckScript = function(devices, state) {
     '',
     '    for fail in post.get("ping_failures", []):',
     '        alerts.append(f"REACHABILITY: ping failed — {fail}")',
+    '',
+    '    ecmp = post.get("ecmp_paths", -1)',
+    '    if ecmp == 0 and EXPECTED_ECMP_PATHS > 1:',
+    '        alerts.append("ECMP: 0 BGP next-hops in route table — ECMP may not be functioning")',
+    '    elif 0 < ecmp < EXPECTED_ECMP_PATHS and EXPECTED_ECMP_PATHS > 1:',
+    '        alerts.append(f"ECMP: {ecmp} path(s) visible, expected ~{EXPECTED_ECMP_PATHS} (spine count) — partial ECMP")',
     '',
     '    return alerts',
     '',
