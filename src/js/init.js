@@ -464,6 +464,25 @@ function renderMonitoring() {
 window.renderMonitoring = renderMonitoring;
 
 function renderJinjaPane() {
+  // Wire sub-tabs inside step 7 on first open
+  var toolsTabs = document.getElementById('tools-tabs');
+  if (toolsTabs && !toolsTabs._wired) {
+    toolsTabs._wired = true;
+    toolsTabs.querySelectorAll('.bom-tab').forEach(function(t) {
+      t.addEventListener('click', function() {
+        toolsTabs.querySelectorAll('.bom-tab').forEach(function(x) { x.classList.remove('active'); });
+        t.classList.add('active');
+        var paneId = t.getAttribute('data-pane');
+        document.querySelectorAll('#step-7 .bom-pane').forEach(function(p) { p.classList.remove('active'); });
+        var pane = document.getElementById(paneId);
+        if (pane) pane.classList.add('active');
+        if (paneId === 'tools-pane-jinja') { _renderJinjaContent(); }
+      });
+    });
+  }
+  _renderJinjaContent();
+}
+function _renderJinjaContent() {
   var out = document.getElementById('jinja-engine-content');
   if (!out) return;
   if (!STATE.devices || !STATE.devices.length) {
@@ -475,6 +494,190 @@ function renderJinjaPane() {
   }
 }
 window.renderJinjaPane = renderJinjaPane;
+
+// Tools symptom search — mirrors Step 5 but uses separate input IDs
+window.updateToolsSymptomResults = function() {
+  if (window.updateSymptomResults) {
+    // Temporarily swap IDs so shared logic reads our inputs
+    var q  = document.getElementById('tools-symptom-query');
+    var c  = document.getElementById('tools-symptom-cat');
+    var r  = document.getElementById('tools-symptom-results');
+    var q2 = document.getElementById('symptom-query');
+    var c2 = document.getElementById('symptom-cat');
+    var r2 = document.getElementById('symptom-results');
+    if (!q || !c || !r) return;
+    // Manually run the same render logic
+    var query = q.value.toLowerCase().trim();
+    var cat   = c.value;
+    var db    = window.SYMPTOM_DB || [];
+    var hits  = db.filter(function(s) {
+      return (cat === 'All' || s.category === cat) &&
+        (!query || s.symptom.toLowerCase().includes(query) ||
+         (s.keywords || []).some(function(k) { return k.toLowerCase().includes(query); }) ||
+         (s.category || '').toLowerCase().includes(query));
+    });
+    if (!hits.length) {
+      r.innerHTML = '<p class="empty-state">No symptoms matched. Try a broader search.</p>';
+      return;
+    }
+    r.innerHTML = hits.slice(0, 20).map(function(s) {
+      return '<div style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px;">'
+        + '<div style="font-weight:600;margin-bottom:4px;">' + s.symptom + '</div>'
+        + '<div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">Category: ' + s.category + '</div>'
+        + (s.commands ? '<pre class="config-pre" style="margin:0;font-size:11px;">' + s.commands.join('\n') + '</pre>' : '')
+        + '</div>';
+    }).join('');
+  }
+};
+
+// Approvals
+var _changeRequests = [];
+window.submitChangeRequest = function() {
+  var title  = (document.getElementById('appr-title')  || {}).value || '';
+  var window_ = (document.getElementById('appr-window') || {}).value || '';
+  var risk   = (document.getElementById('appr-risk')   || {}).value || 'medium';
+  var desc   = (document.getElementById('appr-desc')   || {}).value || '';
+  var emails = (document.getElementById('appr-emails') || {}).value || '';
+  if (!title) { showToast('Enter a change title', 'warning'); return; }
+  var cr = {
+    id: 'CR-' + Date.now(),
+    title: title,
+    window: window_,
+    risk: risk,
+    desc: desc,
+    approvers: emails.split(',').map(function(e) { return e.trim(); }).filter(Boolean),
+    status: 'PENDING',
+    created: new Date().toISOString(),
+    site: STATE.siteCode || 'SITE'
+  };
+  _changeRequests.push(cr);
+  _renderApprBoard();
+  showToast('Change request ' + cr.id + ' submitted', 'success');
+};
+window.exportChangeRecord = function() {
+  if (!_changeRequests.length) { showToast('No change requests to export', 'warning'); return; }
+  downloadFile('change-records-' + (STATE.siteCode || 'site').toLowerCase() + '.json',
+    JSON.stringify(_changeRequests, null, 2), 'application/json');
+  showToast('Change records exported', 'success');
+};
+window.approveChange = function(id) {
+  var cr = _changeRequests.find(function(c) { return c.id === id; });
+  if (cr) { cr.status = 'APPROVED'; cr.approvedAt = new Date().toISOString(); _renderApprBoard(); showToast(id + ' approved', 'success'); }
+};
+window.rejectChange = function(id) {
+  var cr = _changeRequests.find(function(c) { return c.id === id; });
+  if (cr) { cr.status = 'REJECTED'; cr.rejectedAt = new Date().toISOString(); _renderApprBoard(); showToast(id + ' rejected', 'warning'); }
+};
+function _renderApprBoard() {
+  var board = document.getElementById('appr-board');
+  if (!board) return;
+  if (!_changeRequests.length) { board.innerHTML = '<p class="empty-state">No change requests submitted yet.</p>'; return; }
+  var riskColor = { low: 'var(--success)', medium: 'var(--warning)', high: '#f97316', critical: 'var(--danger)' };
+  board.innerHTML = _changeRequests.map(function(cr) {
+    var col = riskColor[cr.risk] || 'var(--text-dim)';
+    return '<div style="border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:10px;">'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+      + '<span style="font-weight:700;">' + cr.id + '</span>'
+      + '<span style="font-size:11px;padding:2px 7px;border-radius:4px;background:' + col + '22;color:' + col + ';font-weight:600;">' + cr.risk.toUpperCase() + '</span>'
+      + '<span style="font-size:11px;margin-left:auto;color:var(--text-dim);">' + cr.status + '</span>'
+      + '</div>'
+      + '<div style="font-weight:600;margin-bottom:4px;">' + cr.title + '</div>'
+      + (cr.window ? '<div style="font-size:12px;color:var(--text-dim);">Window: ' + cr.window + '</div>' : '')
+      + (cr.approvers.length ? '<div style="font-size:12px;color:var(--text-dim);margin-top:4px;">Approvers: ' + cr.approvers.join(', ') + '</div>' : '')
+      + (cr.status === 'PENDING' ? '<div style="margin-top:10px;display:flex;gap:8px;">'
+          + '<button class="btn btn-secondary btn-sm" style="color:var(--success);border-color:var(--success);" onclick="window.approveChange(\'' + cr.id + '\')">Approve</button>'
+          + '<button class="btn btn-secondary btn-sm" style="color:var(--danger);border-color:var(--danger);" onclick="window.rejectChange(\'' + cr.id + '\')">Reject</button>'
+          + '</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+// Integrations — browser-side fetch stubs (user supplies endpoint URLs + tokens)
+function _intLog(msg, ok) {
+  var log = document.getElementById('int-log');
+  if (log) log.innerHTML = '<span style="color:' + (ok ? 'var(--success)' : 'var(--danger)') + ';">' + msg + '</span>';
+}
+window.intSlackTest = function() {
+  var url = (document.getElementById('int-slack-url') || {}).value || '';
+  if (!url) { showToast('Enter Slack webhook URL', 'warning'); return; }
+  fetch(url, { method:'POST', body: JSON.stringify({ text: 'NetDesign AI: connection test from ' + (STATE.siteCode || 'SITE') }) })
+    .then(function(r) { _intLog('Slack: ' + (r.ok ? 'OK' : 'HTTP ' + r.status), r.ok); })
+    .catch(function(e) { _intLog('Slack error: ' + e.message, false); });
+};
+window.intSlackSend = function(type) {
+  var url = (document.getElementById('int-slack-url') || {}).value || '';
+  if (!url) { showToast('Enter Slack webhook URL', 'warning'); return; }
+  var text = type === 'bom'
+    ? '*BOM Summary — ' + (STATE.siteCode || 'SITE') + '*\nDevices: ' + (STATE.devices || []).length + ' | Generated by NetDesign AI'
+    : '*Change Record* — ' + (_changeRequests.length ? _changeRequests[_changeRequests.length-1].id : 'none') + '\nSite: ' + (STATE.siteCode || 'SITE');
+  fetch(url, { method:'POST', body: JSON.stringify({ text: text }) })
+    .then(function(r) { _intLog('Slack: sent ' + type + (r.ok ? '' : ' — HTTP ' + r.status), r.ok); showToast('Slack message sent', 'success'); })
+    .catch(function(e) { _intLog('Slack error: ' + e.message, false); });
+};
+window.intSnowCreate = function(type) {
+  var url   = ((document.getElementById('int-snow-url')   || {}).value || '').replace(/\/$/, '');
+  var token = (document.getElementById('int-snow-token') || {}).value || '';
+  if (!url || !token) { showToast('Enter ServiceNow URL and token', 'warning'); return; }
+  var endpoint = url + (type === 'change' ? '/api/now/table/change_request' : '/api/now/table/incident');
+  var body = type === 'change'
+    ? { short_description: 'Network change — ' + (STATE.siteCode || 'SITE'), description: 'Generated by NetDesign AI', risk: '3' }
+    : { short_description: 'Network incident — ' + (STATE.siteCode || 'SITE'), urgency: '2', impact: '2' };
+  fetch(endpoint, { method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json', Accept:'application/json' }, body:JSON.stringify(body) })
+    .then(function(r) { return r.json().then(function(j) { _intLog('ServiceNow: ' + (j.result ? j.result.number || 'created' : 'error'), r.ok); }); })
+    .catch(function(e) { _intLog('ServiceNow error: ' + e.message, false); });
+};
+window.intJiraCreate = function(type) {
+  var url   = ((document.getElementById('int-jira-url')   || {}).value || '').replace(/\/$/, '');
+  var token = (document.getElementById('int-jira-token') || {}).value || '';
+  var proj  = (document.getElementById('int-jira-proj')  || {}).value || 'NET';
+  if (!url || !token) { showToast('Enter Jira URL and token', 'warning'); return; }
+  var body = { fields:{ project:{ key:proj }, summary:'Network ' + type + ' — ' + (STATE.siteCode || 'SITE'), issuetype:{ name: type === 'change' ? 'Task' : 'Task' }, description:{ type:'doc', version:1, content:[{ type:'paragraph', content:[{ type:'text', text:'Generated by NetDesign AI' }] }] } } };
+  fetch(url + '/rest/api/3/issue', { method:'POST', headers:{ Authorization:'Basic '+btoa('ndal:'+token), 'Content-Type':'application/json', Accept:'application/json' }, body:JSON.stringify(body) })
+    .then(function(r) { return r.json().then(function(j) { _intLog('Jira: ' + (j.key || 'error'), r.ok); }); })
+    .catch(function(e) { _intLog('Jira error: ' + e.message, false); });
+};
+window.intGitHubCommit = function() {
+  var repo   = (document.getElementById('int-gh-repo')   || {}).value || '';
+  var token  = (document.getElementById('int-gh-token')  || {}).value || '';
+  var branch = (document.getElementById('int-gh-branch') || {}).value || 'main';
+  if (!repo || !token) { showToast('Enter GitHub repo and token', 'warning'); return; }
+  var inv = window.genJinjaInventory ? window.genJinjaInventory(STATE) : '{}';
+  var content = btoa(unescape(encodeURIComponent(inv)));
+  fetch('https://api.github.com/repos/' + repo + '/contents/inventory.json', {
+    method:'PUT', headers:{ Authorization:'token '+token, 'Content-Type':'application/json' },
+    body:JSON.stringify({ message:'chore: update inventory from NetDesign AI [' + (STATE.siteCode||'SITE') + ']', content:content, branch:branch })
+  }).then(function(r) { _intLog('GitHub: ' + (r.ok ? 'committed inventory.json' : 'HTTP '+r.status), r.ok); showToast('Committed to GitHub', r.ok ? 'success' : 'error'); })
+    .catch(function(e) { _intLog('GitHub error: ' + e.message, false); });
+};
+window.intGitHubPR = function() {
+  var repo   = (document.getElementById('int-gh-repo')   || {}).value || '';
+  var token  = (document.getElementById('int-gh-token')  || {}).value || '';
+  var branch = (document.getElementById('int-gh-branch') || {}).value || 'main';
+  if (!repo || !token) { showToast('Enter GitHub repo and token', 'warning'); return; }
+  fetch('https://api.github.com/repos/' + repo + '/pulls', {
+    method:'POST', headers:{ Authorization:'token '+token, 'Content-Type':'application/json' },
+    body:JSON.stringify({ title:'NetDesign AI — ' + (STATE.siteCode||'SITE') + ' config update', body:'Auto-generated by NetDesign AI.\n\nInventory and configs attached.', head:branch, base:'main' })
+  }).then(function(r) { return r.json().then(function(j) { _intLog('GitHub PR: ' + (j.html_url || 'error'), r.ok); }); })
+    .catch(function(e) { _intLog('GitHub error: ' + e.message, false); });
+};
+window.intNetBoxSync = function(type) {
+  var url   = ((document.getElementById('int-nb-url')   || {}).value || '').replace(/\/$/, '');
+  var token = (document.getElementById('int-nb-token') || {}).value || '';
+  if (!url || !token) { showToast('Enter NetBox URL and token', 'warning'); return; }
+  if (type === 'devices') {
+    var devs = (STATE.devices || []).map(function(d) {
+      return { name: d.hostname, device_type:{ model: d.model || 'Unknown' }, device_role:{ name: d.subLayer || 'leaf' }, site:{ name: STATE.siteCode || 'SITE' }, status:'active' };
+    });
+    var results = devs.map(function(d) {
+      return fetch(url + '/api/dcim/devices/', { method:'POST', headers:{ Authorization:'Token '+token, 'Content-Type':'application/json' }, body:JSON.stringify(d) })
+        .then(function(r) { return r.ok; });
+    });
+    Promise.all(results).then(function(oks) { _intLog('NetBox: synced ' + oks.filter(Boolean).length + '/' + devs.length + ' devices', true); showToast('NetBox devices synced', 'success'); })
+      .catch(function(e) { _intLog('NetBox error: ' + e.message, false); });
+  } else {
+    _intLog('NetBox prefix sync — configure IP pools in Step 1 first', false);
+  }
+};
 
 function downloadPrometheus() {
   if (!STATE.prometheusAlerts) { renderMonitoring(); }

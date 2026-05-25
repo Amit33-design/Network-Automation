@@ -1823,11 +1823,244 @@ curl -X POST http://localhost:9090/-/reload</pre>
   </section>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
-       STEP 7: Jinja2 Config Engine
+       STEP 7: Config Engine & Tools
   ══════════════════════════════════════════════════════════════════════════ -->
   <section id="step-7" class="step-panel">
-    <div id="jinja-engine-content">
-      <p class="empty-state">Complete Step 1 to generate the Jinja2 inventory and templates.</p>
+    <div class="section-header">
+      <div>
+        <div class="section-title">Config Engine &amp; Tools</div>
+        <div class="section-sub">Python/Jinja2 config engine · ZTP · Monitoring · Troubleshoot · Approvals · Integrations</div>
+      </div>
+    </div>
+
+    <div class="bom-tabs-wrap">
+    <div class="bom-tabs" id="tools-tabs">
+      <div class="bom-tab active" data-pane="tools-pane-jinja">Jinja Engine</div>
+      <div class="bom-tab" data-pane="tools-pane-ztp">ZTP</div>
+      <div class="bom-tab" data-pane="tools-pane-monitoring">Monitoring</div>
+      <div class="bom-tab" data-pane="tools-pane-troubleshoot">Troubleshoot</div>
+      <div class="bom-tab" data-pane="tools-pane-approvals">Approvals</div>
+      <div class="bom-tab" data-pane="tools-pane-integrations">Integrations</div>
+    </div>
+    </div>
+
+    <!-- Jinja Engine -->
+    <div id="tools-pane-jinja" class="bom-pane active">
+      <div id="jinja-engine-content">
+        <p class="empty-state">Complete Step 1 to generate the Jinja2 inventory and templates.</p>
+      </div>
+    </div>
+
+    <!-- ZTP shortcut -->
+    <div id="tools-pane-ztp" class="bom-pane">
+      <div class="form-section">
+        <h3 style="margin:0 0 4px;">Zero-Touch Provisioning</h3>
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">
+          Quick-access to ZTP scripts and state board. Full workflow (Day-0 bootstrap, file server, OS images) lives in <strong>Step 4</strong>.
+        </p>
+        <div class="btn-toolbar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+          <button class="btn btn-primary" onclick="goToStep(4)">Open Full ZTP Workflow →</button>
+          <button class="btn btn-secondary" onclick="window.renderZtp && window.renderZtp(); window.downloadFile && STATE.day0Config && window.downloadFile('day0-'+STATE.siteCode+'.cfg', STATE.day0Config, 'text/plain')">&#8595; Day-0 Config</button>
+          <button class="btn btn-secondary" onclick="window.renderZtp && window.renderZtp(); STATE.ztpDockerCompose && window.downloadFile && window.downloadFile('docker-compose-ztp.yml', STATE.ztpDockerCompose, 'text/yaml')">&#8595; ZTP Docker Compose</button>
+        </div>
+        <div id="tools-ztp-board">
+          <p class="empty-state">Click "Open Full ZTP Workflow" to configure ZTP, or generate from Step 4 first.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Monitoring shortcut -->
+    <div id="tools-pane-monitoring" class="bom-pane">
+      <div class="form-section">
+        <h3 style="margin:0 0 4px;">Monitoring &amp; Observability</h3>
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">
+          Quick-access to Prometheus and Grafana exports. Full configuration (VictoriaMetrics stack, gNMI, anomaly detection) lives in <strong>Step 6</strong>.
+        </p>
+        <div class="btn-toolbar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+          <button class="btn btn-primary" onclick="goToStep(6)">Open Full Monitoring →</button>
+          <button class="btn btn-secondary" onclick="window.downloadPrometheus && window.downloadPrometheus()">&#8595; Prometheus Alerts</button>
+          <button class="btn btn-secondary" onclick="window.downloadGrafana && window.downloadGrafana()">&#8595; Grafana Dashboard</button>
+          <button class="btn btn-secondary" onclick="window.downloadScrapeConfig && window.downloadScrapeConfig()">&#8595; Scrape Config</button>
+        </div>
+        <div id="tools-mon-preview">
+          <p class="empty-state">Generate monitoring config in Step 6, then return here for quick downloads.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Troubleshoot -->
+    <div id="tools-pane-troubleshoot" class="bom-pane">
+      <div class="form-section">
+        <h3 style="margin:0 0 4px;">Troubleshoot</h3>
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">
+          150+ symptoms across BGP, EVPN, STP, QoS, VXLAN, RoCEv2, ZTP and more — with per-platform diagnostic commands.
+          Full tools (topology crawl, Batfish, convergence predictor) are in <strong>Step 5</strong>.
+        </p>
+        <div class="btn-toolbar" style="margin-bottom:12px;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-secondary" onclick="goToStep(5)">Open Full Checks &amp; Troubleshoot →</button>
+        </div>
+        <div class="symptom-search-bar">
+          <input id="tools-symptom-query" type="text" placeholder="Search by symptom, protocol, keyword…"
+            oninput="window.updateToolsSymptomResults()" />
+          <select id="tools-symptom-cat" onchange="window.updateToolsSymptomResults()">
+            <option value="All">All categories</option>
+            <option value="BGP">BGP</option>
+            <option value="EVPN">EVPN</option>
+            <option value="STP">STP</option>
+            <option value="DHCP">DHCP</option>
+            <option value="QoS">QoS</option>
+            <option value="Interface">Interface</option>
+            <option value="CPU">CPU</option>
+            <option value="LLDP">LLDP</option>
+            <option value="VXLAN">VXLAN</option>
+            <option value="Routing">Routing</option>
+            <option value="Multicast">Multicast</option>
+            <option value="Security">Security</option>
+            <option value="RoCEv2">RoCEv2</option>
+            <option value="ZTP">ZTP</option>
+            <option value="NTP">NTP</option>
+          </select>
+        </div>
+        <div id="tools-symptom-results">
+          <p class="empty-state">Start typing a symptom or select a category.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Approvals -->
+    <div id="tools-pane-approvals" class="bom-pane">
+      <div class="form-section">
+        <h3 style="margin:0 0 4px;">Change Approvals</h3>
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">4-eyes change management — log a change record, collect approver sign-off, track status.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+          <label class="form-label" style="grid-column:1/-1;">Change Title
+            <input id="appr-title" type="text" class="form-input" placeholder="e.g. LEAF-01 BGP ASN migration" />
+          </label>
+          <label class="form-label">Change Window
+            <input id="appr-window" type="datetime-local" class="form-input" />
+          </label>
+          <label class="form-label">Risk Level
+            <select id="appr-risk" class="form-input">
+              <option value="low">Low — config tweak, rollback trivial</option>
+              <option value="medium" selected>Medium — protocol change, tested in lab</option>
+              <option value="high">High — topology change, outage possible</option>
+              <option value="critical">Critical — core/spine, full outage risk</option>
+            </select>
+          </label>
+          <label class="form-label" style="grid-column:1/-1;">Description / Scope
+            <textarea id="appr-desc" class="form-input" rows="3" placeholder="Devices affected, config lines changed, rollback plan…"></textarea>
+          </label>
+          <label class="form-label" style="grid-column:1/-1;">Approvers (comma-separated emails)
+            <input id="appr-emails" type="text" class="form-input" placeholder="alice@example.com, bob@example.com" />
+          </label>
+        </div>
+        <div class="btn-toolbar" style="gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="window.submitChangeRequest()">Submit Change Request</button>
+          <button class="btn btn-secondary" onclick="window.exportChangeRecord()">&#8595; Export Change Record (JSON)</button>
+        </div>
+        <div id="appr-board">
+          <p class="empty-state">No change requests submitted yet.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Integrations -->
+    <div id="tools-pane-integrations" class="bom-pane">
+      <div class="form-section">
+        <h3 style="margin:0 0 4px;">Integrations</h3>
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">Push design artifacts to your ITSM, chat, and CMDB systems.</p>
+
+        <!-- Slack -->
+        <div style="border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:12px;">
+          <div style="font-weight:600;margin-bottom:8px;">&#128172; Slack</div>
+          <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;">
+            <label class="form-label" style="margin:0;">Webhook URL
+              <input id="int-slack-url" type="url" class="form-input" placeholder="https://hooks.slack.com/services/…" />
+            </label>
+            <button class="btn btn-secondary" onclick="window.intSlackTest()">Test</button>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="window.intSlackSend('bom')">Send BOM Summary</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.intSlackSend('change')">Send Change Record</button>
+          </div>
+        </div>
+
+        <!-- ServiceNow -->
+        <div style="border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:12px;">
+          <div style="font-weight:600;margin-bottom:8px;">&#127381; ServiceNow</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <label class="form-label" style="margin:0;">Instance URL
+              <input id="int-snow-url" type="url" class="form-input" placeholder="https://myco.service-now.com" />
+            </label>
+            <label class="form-label" style="margin:0;">Bearer Token
+              <input id="int-snow-token" type="password" class="form-input" placeholder="token…" />
+            </label>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="window.intSnowCreate('change')">Create Change Request</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.intSnowCreate('incident')">Create Incident</button>
+          </div>
+        </div>
+
+        <!-- Jira -->
+        <div style="border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:12px;">
+          <div style="font-weight:600;margin-bottom:8px;">&#128196; Jira</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <label class="form-label" style="margin:0;">Base URL
+              <input id="int-jira-url" type="url" class="form-input" placeholder="https://myco.atlassian.net" />
+            </label>
+            <label class="form-label" style="margin:0;">API Token
+              <input id="int-jira-token" type="password" class="form-input" placeholder="token…" />
+            </label>
+            <label class="form-label" style="margin:0;">Project Key
+              <input id="int-jira-proj" type="text" class="form-input" placeholder="NET" />
+            </label>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="window.intJiraCreate('task')">Create Task</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.intJiraCreate('change')">Create Change</button>
+          </div>
+        </div>
+
+        <!-- GitHub -->
+        <div style="border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:12px;">
+          <div style="font-weight:600;margin-bottom:8px;">&#128037; GitHub</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <label class="form-label" style="margin:0;">Repo (owner/name)
+              <input id="int-gh-repo" type="text" class="form-input" placeholder="myorg/network-configs" />
+            </label>
+            <label class="form-label" style="margin:0;">Personal Access Token
+              <input id="int-gh-token" type="password" class="form-input" placeholder="ghp_…" />
+            </label>
+            <label class="form-label" style="margin:0;">Branch
+              <input id="int-gh-branch" type="text" class="form-input" placeholder="main" value="main" />
+            </label>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="window.intGitHubCommit()">Commit Configs</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.intGitHubPR()">Open PR</button>
+          </div>
+        </div>
+
+        <!-- NetBox -->
+        <div style="border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:12px;">
+          <div style="font-weight:600;margin-bottom:8px;">&#128230; NetBox</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <label class="form-label" style="margin:0;">NetBox URL
+              <input id="int-nb-url" type="url" class="form-input" placeholder="https://netbox.myco.com" />
+            </label>
+            <label class="form-label" style="margin:0;">API Token
+              <input id="int-nb-token" type="password" class="form-input" placeholder="token…" />
+            </label>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="window.intNetBoxSync('devices')">Sync Devices</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.intNetBoxSync('prefixes')">Sync IP Prefixes</button>
+          </div>
+        </div>
+
+        <div id="int-log" style="font-size:12px;color:var(--text-dim);margin-top:8px;"></div>
+      </div>
     </div>
   </section>
 
