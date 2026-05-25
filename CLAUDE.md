@@ -160,7 +160,7 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 | ~~G-23~~ | ~~Pre-checks do not capture device state baseline (show bgp/route/interface)~~ | P0 | ✅ — `genPreCheckScript()` in `checks.js` captures: bgp summary, ip route summary, interface errors, CPU, LLDP neighbors → baseline JSON |
 | G-24 | No Batfish/pyATS dry-run validation before push | P0 | ❌ — pre-checks only collect state; no semantic config analysis |
 | ~~G-25~~ | ~~Rollback is config paste — not platform-native (checkpoint/configure replace)~~ | P1 | ✅ — `rollback.js` with `ROLLBACK_STRATEGIES` per platform (NX-OS checkpoint, IOS-XE configure replace, EOS rollback, JunOS commit confirmed 5, SONiC config load) |
-| G-26 | Post-checks too shallow — no reachability matrix, no ECMP path verification | P1 | ⚠️ — pre/post diff table with BGP/route/error alerts exists; missing: loopback ping matrix, ECMP path count verification |
+| ~~G-26~~ | ~~Post-checks too shallow — no reachability matrix, no ECMP path verification~~ | P1 | ✅ 2026-05-25 — loopback ping matrix + ECMP via-count check in post-check script; failure banner + per-device matrix/ECMP rows in HTML renderer |
 | ~~G-27~~ | ~~No config drift detection (running vs intended diff)~~ | P1 | ✅ — `genDriftDetectionScript()` in `checks.js` — captures running-config, base64-encodes, diffs vs intended; outputs `drift_report_<site>.json` |
 | ~~G-28~~ | ~~No canary deployment (1 device first)~~ | P1 | ✅ — `genCanaryDeployScript()` in `deploy.js` — canary leaf first → BGP verify → confirmation gate → remaining devices |
 
