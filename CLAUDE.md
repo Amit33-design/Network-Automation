@@ -114,88 +114,89 @@ docker-compose.local.yml
 ## 4. Known Gaps — Current State (v1.0)
 
 Priority codes: `P0` = blocks production · `P1` = high value · `P2` = medium · `P3` = enhancement
+Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 
 ### 4.1 Intent & BOM
 
-| ID | Gap | Priority |
-|----|-----|----------|
-| G-01 | No NLP intent parser — free text not parsed to form fields | P1 |
-| G-02 | No intent coherence validation — impossible protocol combos accepted silently | P0 |
-| G-03 | Oversubscription is a label, not a port-math calculation | P0 |
-| G-04 | BOM quantities AI-estimated, not computed from port density math | P0 |
-| G-05 | No rack layout, cable schedule, or physical plant in BOM | P1 |
-| G-06 | No software license or 3-year TCO in BOM | P1 |
-| G-07 | Optics selection ignores fiber type/distance — always wrong without this | P1 |
-| G-08 | 40 SKUs only — no EoL/EoS tracking | P2 |
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| ~~G-01~~ | ~~No NLP intent parser — free text not parsed to form fields~~ | P1 | ✅ 2026-05-25 — heuristic regex parser + optional Claude AI tier; `nlp_intent.js` |
+| ~~G-02~~ | ~~No intent coherence validation — impossible protocol combos accepted silently~~ | P0 | ✅ 2026-05-25 — 8 constraint rules (R-01→R-08) in `intent_constraints.js`; errors block, warnings advisory |
+| ~~G-03~~ | ~~Oversubscription is a label, not a port-math calculation~~ | P0 | ✅ — ratio-driven uplink math: `uplinksNeeded = ceil(serverCap / oversubRatio / uplinkSpeed)` in `bom_calculator.js` |
+| ~~G-04~~ | ~~BOM quantities AI-estimated, not computed from port density math~~ | P0 | ✅ — `calculateBOM()` in `bom_calculator.js` per §6 formula; leaf/spine counts fully deterministic |
+| ~~G-05~~ | ~~No rack layout, cable schedule, or physical plant in BOM~~ | P1 | ✅ — `racklayout.js` (42U rack assignment, U-slot placement, power/cooling); `cabling.js` (cable schedule, distances, part #s, cost) |
+| ~~G-06~~ | ~~No software license or 3-year TCO in BOM~~ | P1 | ✅ — `tco.js` — per-vendor SW license %, annual support %, power cost; 3-year CapEx+OpEx rollup |
+| ~~G-07~~ | ~~Optics selection ignores fiber type/distance — always wrong without this~~ | P1 | ✅ — `optics.js` — 12 SKUs with fiberFamily (mmf/smf), reach per fiber grade, constraint-aware `recommendOptics()` |
+| G-08 | 40 SKUs only — no EoL/EoS tracking | P2 | ❌ — SKUs lack lifecycle metadata (EoL date, support timeline) |
 
 ### 4.2 Protocol Depth
 
-| ID | Gap | Priority |
-|----|-----|----------|
-| G-09 | BFD checkbox only — no timer values, no interface-level config | P0 |
-| G-10 | ECMP checkbox only — no max-paths, no hashing algorithm config | P0 |
-| G-11 | EVPN treated as overlay toggle — no RD/RT design, no ESI multi-homing | P0 |
-| G-12 | BGP timers not surfaced — default 60/180s used even for DC fabric | P0 |
-| G-13 | BGP bestpath as-path multipath-relax missing (required for eBGP CLOS ECMP) | P0 |
-| G-14 | STP design missing for DC — no BPDU guard, PortFast, MST instances | P1 |
-| G-15 | QoS generates policy header only — no 8-class map, no DSCP marking | P1 |
-| G-16 | VRF-lite config incomplete — definition only, no RT import/export | P1 |
-| G-17 | IPv6 dual-stack is checkbox only — no OSPFv3, BGP IPv6 AF config | P2 |
-| G-18 | Multicast checkbox only — no RP address, PIM mode, interface joins | P2 |
-| G-19 | BGP unnumbered not supported (eliminates P2P IP addressing in DC CLOS) | P2 |
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| ~~G-09~~ | ~~BFD checkbox only — no timer values, no interface-level config~~ | P0 | ✅ — `configgen.js` generates `bfd interval <ms> min_rx <ms> multiplier <n>` per platform (NX-OS/EOS/JunOS) from `state.bfd` object |
+| ~~G-10~~ | ~~ECMP checkbox only — no max-paths, no hashing algorithm config~~ | P0 | ✅ — `maximum-paths <N>` + hash algorithm (symmetric/resilient) per platform from `state.ecmp` |
+| ~~G-11~~ | ~~EVPN treated as overlay toggle — no RD/RT design, no ESI multi-homing~~ | P0 | ✅ — `_evpnDesign()` covers RD/RT auto+manual, RT-2/RT-3/RT-5, ESI multi-homing toggle, anycast-gw, ARP suppression |
+| ~~G-12~~ | ~~BGP timers not surfaced — default 60/180s used even for DC fabric~~ | P0 | ✅ — `BGP_TIMER_PRESETS` (dc_aggressive 3/9, wan_standard 10/30, conservative 60/180); auto-selected by use_case |
+| ~~G-13~~ | ~~BGP bestpath as-path multipath-relax missing (required for eBGP CLOS ECMP)~~ | P0 | ✅ — `bestpath as-path multipath-relax` + `bestpath compare-routerid` in all eBGP CLOS configs (NX-OS/EOS/JunOS) |
+| ~~G-14~~ | ~~STP design missing for DC — no BPDU guard, PortFast, MST instances~~ | P1 | ✅ — `_nxosStpBlock()` / `_eosStpBlock()` / `_junosStpBlock()` — mode (pvst/rpvst/mstp), BPDU guard, PortFast, MST instance-VLAN mapping |
+| ~~G-15~~ | ~~QoS generates policy header only — no 8-class map, no DSCP marking~~ | P1 | ✅ — 8-class DSCP map (EF/AF41/AF31/AF21/AF11/CS3/CS2/CS1) with policy-map + priority/bandwidth per platform |
+| ~~G-16~~ | ~~VRF-lite config incomplete — definition only, no RT import/export~~ | P1 | ✅ — `_nxosVrfLiteBlock()` etc. — RD, RT import/export, BGP AF redistribute direct, max-paths per VRF (MGMT/PROD/DEV) |
+| G-17 | IPv6 dual-stack is checkbox only — no OSPFv3, BGP IPv6 AF config | P2 | ❌ — no IPv6 AF, no OSPFv3, no dual-stack loopback/P2P addressing |
+| G-18 | Multicast checkbox only — no RP address, PIM mode, interface joins | P2 | ❌ — no PIM, no RP config, no IGMP joins |
+| G-19 | BGP unnumbered not supported (eliminates P2P IP addressing in DC CLOS) | P2 | ❌ — all P2P links use numbered IPs (/30) |
 
 ### 4.3 Config Generation Quality
 
-| ID | Gap | Priority |
-|----|-----|----------|
-| G-20 | NX-OS EVPN leaf missing: NVE interface, VRF context, EVPN section, SVI anycast-gw | P0 |
-| G-21 | BGP peer templates not generated (NX-OS template peer, EOS peer group) | P1 |
-| G-22 | No IOS-XR platform (critical for SP/WAN use case) | P2 |
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| ~~G-20~~ | ~~NX-OS EVPN leaf missing: NVE interface, VRF context, EVPN section, SVI anycast-gw~~ | P0 | ✅ — full §8 template: `feature nv overlay`, NVE1, member VNI L2+L3, VRF context RD/RT, SVI anycast-gw, transit VLAN, BGP EVPN AF |
+| ~~G-21~~ | ~~BGP peer templates not generated (NX-OS template peer, EOS peer group)~~ | P1 | ✅ — NX-OS `template peer SPINES/LEAFS`, EOS peer-group SPINES, JunOS group SPINES — all with timers, bfd, send-community |
+| G-22 | No IOS-XR platform (critical for SP/WAN use case) | P2 | ❌ — platforms: NX-OS, EOS, JunOS, SONiC only |
 
 ### 4.4 Deployment Pipeline
 
-| ID | Gap | Priority |
-|----|-----|----------|
-| G-23 | Pre-checks do not capture device state baseline (show bgp/route/interface) | P0 |
-| G-24 | No Batfish/pyATS dry-run validation before push | P0 |
-| G-25 | Rollback is config paste — not platform-native (checkpoint/configure replace) | P1 |
-| G-26 | Post-checks too shallow — no reachability matrix, no ECMP path verification | P1 |
-| G-27 | No config drift detection (running vs intended diff) | P1 |
-| G-28 | No canary deployment (1 device first) | P1 |
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| ~~G-23~~ | ~~Pre-checks do not capture device state baseline (show bgp/route/interface)~~ | P0 | ✅ — `genPreCheckScript()` in `checks.js` captures: bgp summary, ip route summary, interface errors, CPU, LLDP neighbors → baseline JSON |
+| G-24 | No Batfish/pyATS dry-run validation before push | P0 | ❌ — pre-checks only collect state; no semantic config analysis |
+| ~~G-25~~ | ~~Rollback is config paste — not platform-native (checkpoint/configure replace)~~ | P1 | ✅ — `rollback.js` with `ROLLBACK_STRATEGIES` per platform (NX-OS checkpoint, IOS-XE configure replace, EOS rollback, JunOS commit confirmed 5, SONiC config load) |
+| G-26 | Post-checks too shallow — no reachability matrix, no ECMP path verification | P1 | ⚠️ — pre/post diff table with BGP/route/error alerts exists; missing: loopback ping matrix, ECMP path count verification |
+| ~~G-27~~ | ~~No config drift detection (running vs intended diff)~~ | P1 | ✅ — `genDriftDetectionScript()` in `checks.js` — captures running-config, base64-encodes, diffs vs intended; outputs `drift_report_<site>.json` |
+| ~~G-28~~ | ~~No canary deployment (1 device first)~~ | P1 | ✅ — `genCanaryDeployScript()` in `deploy.js` — canary leaf first → BGP verify → confirmation gate → remaining devices |
 
 ### 4.5 ZTP
 
-| ID | Gap | Priority |
-|----|-----|----------|
-| G-29 | No embedded ZTP file server — scripts generated but not served | P0 |
-| G-30 | No ZTP state machine — no per-device provisioning state tracking | P0 |
-| G-31 | Day-0 bootstrap and Day-N production config conflated ("Bake Policies") | P1 |
-| G-32 | No OS image version management in ZTP pipeline | P2 |
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| G-29 | No embedded ZTP file server — scripts generated but not served | P0 | ❌ — no nginx/TFTP service; scripts download-only |
+| G-30 | No ZTP state machine — no per-device provisioning state tracking | P0 | ❌ — no REGISTERED→VERIFIED state machine, no API callbacks |
+| G-31 | Day-0 bootstrap and Day-N production config conflated ("Bake Policies") | P1 | ❌ — all config treated as single artifact; no mgmt-plane-only bootstrap |
+| G-32 | No OS image version management in ZTP pipeline | P2 | ❌ — no image staging, download, or boot-device config |
 
 ### 4.6 Monitoring
 
-| ID | Gap | Priority |
-|----|-----|----------|
-| G-33 | Monitoring is export-only — no embedded TSDB or visualization | P1 |
-| G-34 | No gNMI/streaming telemetry — SNMP polling only | P1 |
-| G-35 | Anomaly detection uses 2σ/30-sample window — too many false positives | P2 |
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| G-33 | Monitoring is export-only — no embedded TSDB or visualization | P1 | ⚠️ — Prometheus rules + Grafana dashboard JSON exported; no embedded VictoriaMetrics/Grafana stack |
+| G-34 | No gNMI/streaming telemetry — SNMP polling only | P1 | ❌ — alert rules assume SNMP polling only; no gNMI collector or streaming subscriptions |
+| G-35 | Anomaly detection uses 2σ/30-sample window — too many false positives | P2 | ❌ — no statistical anomaly detection; thresholds are static |
 
 ### 4.7 Troubleshooting
 
-| ID | Gap | Priority |
-|----|-----|----------|
-| G-36 | LLDP/CDP topology requires manual paste — no automated SSH crawl | P1 |
-| G-37 | Symptom classifier has 35 pairs — needs 150+ covering EVPN, QoS, STP, DHCP | P1 |
-| G-38 | BGP convergence predictor ignores RR topology and route table size | P2 |
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| ~~G-36~~ | ~~LLDP/CDP topology requires manual paste — no automated SSH crawl~~ | P1 | ✅ — `topodisc.js` generates BFS Python crawler: Netmiko SSH → `show lldp neighbors detail` + CDP fallback → crawls until no new devices (MAX_HOPS=5) |
+| ~~G-37~~ | ~~Symptom classifier has 35 pairs — needs 150+ covering EVPN, QoS, STP, DHCP~~ | P1 | ✅ — `troubleshoot.js` SYMPTOM_DB has 151 entries across BGP, EVPN, STP, QoS, WAN, Routing, Interface, CPU, ZTP/Day-0, Storage categories |
+| G-38 | BGP convergence predictor ignores RR topology and route table size | P2 | ❌ — symptom classifier only; no predictive convergence modeling |
 
 ### 4.8 Use Case Coverage
 
-| ID | Gap | Priority |
-|----|-----|----------|
-| G-39 | No Service Provider / MPLS core use case (IOS-XR, JunOS MX, SR-MPLS) | P2 |
-| G-40 | No Private 5G / O-RAN use case (fronthaul eCPRI, PTP timing) | P2 |
-| G-41 | No dedicated Storage Networking use case (NVMe-oF, FCoE, iSCSI) | P2 |
-| G-42 | SD-WAN design shallow — no vEdge/vSmart/vBond architecture | P2 |
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| G-39 | No Service Provider / MPLS core use case (IOS-XR, JunOS MX, SR-MPLS) | P2 | ❌ — blocked by G-22 (no IOS-XR); no SR-MPLS, LDP, BGP-LU config |
+| G-40 | No Private 5G / O-RAN use case (fronthaul eCPRI, PTP timing) | P2 | ❌ — no eCPRI, PTP, 5G NR fronthaul/midhaul/backhaul design |
+| G-41 | No dedicated Storage Networking use case (NVMe-oF, FCoE, iSCSI) | P2 | ❌ — no NVMe-oF, FCoE, or iSCSI topology design |
+| G-42 | SD-WAN design shallow — no vEdge/vSmart/vBond architecture | P2 | ⚠️ — wan-edge role + vEdge/Aviatrix SKUs present; no orchestration architecture, no policy-based steering |
 
 ---
 
