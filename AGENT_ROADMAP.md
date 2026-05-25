@@ -1011,3 +1011,42 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 **Files changed (run 26 total):**
 - New files: `src/js/linter.js`, `src/js/consistency.js`
 - Modified: `src/js/configgen.js`, `src/js/recommendations.js`, `src/js/topology.js`, `index.html`, `src/css/main.css`
+
+### 2026-05-25 (run 27)
+
+**Features completed this run:**
+
+1. **My Designs — multi-slot save/load** — `fa35860`
+   - Created `src/js/designs.js` (250 lines) with full localStorage multi-slot manager.
+   - Up to 10 named user save slots + 1 auto-save slot; key: `netdesign_designs_v1`.
+   - `saveDesignSlot(name)` — saves a deep snapshot of all STATE fields (30+ keys, including multicloud) to a named slot; oldest slot evicted when limit reached.
+   - `loadDesignSlot(id)` — restores STATE from slot, calls `applyRestoredState()`, jumps to Step 1 with a success toast.
+   - `deleteDesignSlot(id)` — removes user slots (auto-save protected).
+   - `exportDesigns()` — downloads all slots as `netdesign-ai-designs-YYYY-MM-DD.json`.
+   - `importDesigns(file)` — merges slots from an imported JSON bundle (deduplication by slot id).
+   - `autoSaveDesign()` — silent auto-save; hooked into `saveStateLS()` by wrapping the original function at script load time so every state change (typing, chip selection, product selection) is captured.
+   - `openDesignsModal()` + `renderDesignsPanel()` — modal with auto-save row (cyan border, AUTO badge), user slot list (Load + Delete buttons), save name input, Export All and Import buttons.
+   - 📁 My Designs button added to header utility bar (before Demo button).
+   - `#designs-modal` overlay added to `index.html`; `#dsgn-autosave-ts` timestamp badge in modal footer.
+   - 16 `.dsgn-*` CSS rules in `main.css` (slot cards, auto badge, delete hover state).
+
+2. **Batfish Topology Validation** — `fa35860`
+   - Created `src/js/batfish.js` (~380 lines) generating a self-contained Python/pybatfish validation script.
+   - 6 validation checks wired against the live BOM:
+     1. **Config Parse Status** — `bq.fileParseStatus()` — finds unrecognised syntax per vendor.
+     2. **Undefined Structure References** — `bq.undefinedReferences()` — dangling ACL/route-map/prefix-list names.
+     3. **BGP Session Completeness** — `bq.bgpSessionStatus()` — all expected leaf↔spine eBGP pairs verified; expected pairs auto-built from BOM `dc-leaf`/`dc-spine`/`gpu-tor`/`gpu-spine` layers.
+     4. **Routing Loop Detection** — `bq.detectLoops()` — forwarding-plane loops.
+     5. **Management Reachability** — `bq.reachability(SSH/TCP-22, src=10.0.0.0/24)`.
+     6. **Fabric Loopback Reachability** — `bq.reachability(ICMP, src+dst=10.255.0.0/16)`.
+   - Device inventory (name, mgmt IP, layer) and expected BGP peer pairs auto-generated from `buildDeviceList()`.
+   - CLI flags: `--host` (Batfish service host), `--snapshot` (path), `--skip-reachability` (faster).
+   - Bundled `split_configs.py` helper inside the generated script (splits NetDesign AI All-Configs `.txt` into per-device `.cfg` files for Batfish snapshot).
+   - `renderBatfishPanel()` — renders a structured panel with quick-start Docker/pip instructions, check table, and Download Script button in Step 6.
+   - `#batfish-panel` div inserted in Step 6 after `#netconf-panel`.
+   - `renderBatfishPanel()` called in `jumpStep(6)` hook in `app.js`.
+   - 11 `.bf-*` CSS rules in `main.css`.
+
+**Issues closed:** N/A (new features; no pre-existing GitHub issue numbers)
+**Files added**: `src/js/designs.js`, `src/js/batfish.js`
+**Files modified**: `index.html`, `src/css/main.css`, `src/js/app.js`
