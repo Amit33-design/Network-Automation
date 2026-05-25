@@ -40,7 +40,46 @@ var SCALE_DEFS = {
   }
 };
 
-// Product preference per use case + role
+// Vendor-aware product preferences
+var PREFERRED_PRODUCTS_CISCO = {
+  dc:         { spine: 'nxos-9336c',    leaf: 'nxos-93180yc', firewall: 'ftd4145' },
+  gpu:        { spine: 'nxos-9364c',    leaf: 'nxos-9332c' },
+  campus:     { distribution: 'cat9500', access: 'cat9200', firewall: 'ftd4145' },
+  wan:        { 'wan-edge': 'asr1002hx', 'sdwan-controller': 'sdwan-vsmart', 'sdwan-orchestrator': 'sdwan-vbond' },
+  multisite:  { spine: 'nxos-9336c', leaf: 'nxos-93180yc', 'wan-edge': 'asr1002hx', firewall: 'ftd4145' },
+  multicloud: { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
+  aviatrix:   { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
+  sp_mpls:    { 'pe-router': 'asr9001', 'p-router': 'ncs5501' },
+  private_5g: { fronthaul: 'oran-fh-sw', midhaul: 'oran-mh-rtr' },
+  storage:    { 'storage-fabric': 'mds9396t', 'storage-leaf': 'nxos-93600cd' }
+};
+
+var PREFERRED_PRODUCTS_ARISTA = {
+  dc:         { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
+  gpu:        { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
+  campus:     { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
+  multisite:  { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
+  wan:        { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
+  multicloud: { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' }
+};
+
+var PREFERRED_PRODUCTS_JUNIPER = {
+  dc:         { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+  gpu:        { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+  campus:     { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+  multisite:  { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120', 'wan-edge': 'asr1002hx' }
+};
+
+function getPreferredProducts(useCase, vendors) {
+  var primary = (vendors && vendors[0] || 'cisco').toLowerCase();
+  var map = primary === 'arista'  ? PREFERRED_PRODUCTS_ARISTA
+          : primary === 'juniper' ? PREFERRED_PRODUCTS_JUNIPER
+          : PREFERRED_PRODUCTS_CISCO;
+  // Fall back: if the specific use case isn't in the vendor map, use cisco
+  return map[useCase] || PREFERRED_PRODUCTS_CISCO[useCase] || PREFERRED_PRODUCTS_CISCO.dc;
+}
+
+// Product preference per use case + role (kept as fallback; vendor-aware lookup now handled by getPreferredProducts)
 var PREFERRED_PRODUCTS = {
   dc:         { spine: 'nxos-9336c',    leaf: 'nxos-93180yc', firewall: 'ftd4145' },
   gpu:        { spine: 'nxos-9364c',    leaf: 'nxos-9332c' },
@@ -71,7 +110,7 @@ function buildDeviceList(state) {
   var useCase = state.useCase || 'dc';
   var scale   = state.scale   || 'small';
 
-  var prefProducts = PREFERRED_PRODUCTS[useCase] || PREFERRED_PRODUCTS.dc;
+  var prefProducts = getPreferredProducts(useCase, state.vendors);
   var scaleDef;
 
   // ── Port-math sizing (G-03 + G-04) ────────────────────────────────────────
@@ -105,6 +144,22 @@ function buildDeviceList(state) {
   if (!scaleDef) {
     state.capacityMath = null;
     scaleDef = (SCALE_DEFS[scale] || SCALE_DEFS.small)[useCase] || SCALE_DEFS.small.dc;
+  }
+
+  // Scale up for multi-site: multiply spine/leaf/wan-edge by number of sites
+  if (useCase === 'multisite' && state.org && state.org.sites > 1) {
+    var sites = Math.max(1, parseInt(state.org.sites) || 1);
+    var perSiteRoles = ['spine', 'leaf', 'wan-edge', 'firewall'];
+    var scaled = {};
+    Object.keys(scaleDef).forEach(function(role) {
+      scaled[role] = perSiteRoles.indexOf(role) !== -1
+        ? scaleDef[role] * sites
+        : scaleDef[role]; // controllers/orchestrators are shared, don't multiply
+    });
+    scaleDef = scaled;
+    // Store per-site counts for HLD rendering
+    state.perSiteDevices = { spine: scaleDef.spine / sites, leaf: scaleDef.leaf / sites };
+    state.siteCount = sites;
   }
 
   var devices = [];
@@ -353,8 +408,9 @@ function exportBOMCSV(summary, devices) {
   return [header.join(',')].concat(rows).join('\n') + devHeader + '\n' + devRows.join('\n');
 }
 
-window.buildDeviceList = buildDeviceList;
-window.buildBOM        = buildBOM;
-window.renderBOMTable  = renderBOMTable;
-window.exportBOMCSV    = exportBOMCSV;
-window.SCALE_DEFS      = SCALE_DEFS;
+window.buildDeviceList       = buildDeviceList;
+window.buildBOM              = buildBOM;
+window.renderBOMTable        = renderBOMTable;
+window.exportBOMCSV          = exportBOMCSV;
+window.SCALE_DEFS            = SCALE_DEFS;
+window.getPreferredProducts  = getPreferredProducts;

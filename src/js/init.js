@@ -311,6 +311,10 @@ function renderStep2() {
   // Capacity Math tab (G-03 + G-04)
   renderCapacityMath(STATE);
 
+  // HLD Topology Diagram
+  var hldOut = document.getElementById('topo-hld-output');
+  if (hldOut) hldOut.innerHTML = renderTopologyDiagram(STATE);
+
   // G-38: BGP convergence predictor (updates when devices are built)
   var convOut = document.getElementById('convergence-content');
   if (convOut && window.renderConvergencePredictor) convOut.innerHTML = window.renderConvergencePredictor(STATE);
@@ -318,6 +322,199 @@ function renderStep2() {
   showToast('BOM generated: ' + STATE.devices.length + ' devices', 'success');
 }
 window.renderStep2 = renderStep2;
+
+// ─── HLD Topology Diagram ─────────────────────────────────────────────────────
+var _ROLE_CLR = {
+  'spine': '#3b82f6', 'super-spine': '#6366f1', 'core': '#8b5cf6',
+  'leaf': '#22c55e', 'access': '#14b8a6', 'distribution': '#a855f7',
+  'firewall': '#f97316', 'wan-edge': '#eab308',
+  'pe-router': '#6366f1', 'p-router': '#818cf8',
+  'sdwan-controller': '#64748b', 'sdwan-orchestrator': '#94a3b8'
+};
+function _roleClr(r) { return _ROLE_CLR[r] || '#64748b'; }
+
+function _svgNode(x, y, w, h, label, role, sublabel) {
+  var c = _roleClr(role);
+  return '<rect x="' + (x - w/2) + '" y="' + (y - h/2) + '" width="' + w + '" height="' + h + '" rx="5" fill="' + c + '22" stroke="' + c + '" stroke-width="1.5"/>'
+    + '<text x="' + x + '" y="' + (y + (sublabel ? -3 : 4)) + '" text-anchor="middle" font-size="11" fill="' + c + '" font-weight="600" font-family="monospace,sans-serif">' + label + '</text>'
+    + (sublabel ? '<text x="' + x + '" y="' + (y + 10) + '" text-anchor="middle" font-size="9" fill="' + c + '99" font-family="sans-serif">' + sublabel + '</text>' : '');
+}
+
+function _svgLine(x1, y1, x2, y2) {
+  return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="#4b5563" stroke-width="1.2" opacity="0.7"/>';
+}
+
+function renderTopologyDiagram(state) {
+  var devices  = state.devices || [];
+  var useCase  = state.useCase || 'dc';
+  var W = 880, H = 340, NW = 90, NH = 32;
+
+  function countByRole(role) { return devices.filter(function(d) { return d.subLayer === role; }).length; }
+  function firstModel(role) {
+    var d = devices.find(function(d) { return d.subLayer === role; });
+    return d ? (d.model || role) : role;
+  }
+
+  function rowNodes(roles, y, totalW) {
+    var all = [];
+    roles.forEach(function(r) {
+      var cnt = countByRole(r);
+      if (!cnt) return;
+      all.push({ role: r, cnt: cnt, model: firstModel(r) });
+    });
+    if (!all.length) return { svg: '', nodes: [], y: y };
+    var spacing = Math.min(totalW / (all.length + 1), 160);
+    var startX = (totalW - spacing * (all.length - 1)) / 2 + spacing / 2;
+    var svgParts = [], positions = [];
+    all.forEach(function(item, i) {
+      var cx = startX + i * spacing;
+      var label = item.cnt > 6 ? (item.cnt + '× ' + (item.model.split(' ').slice(-1)[0] || item.role)) : item.model.split(' ').slice(-1)[0];
+      svgParts.push(_svgNode(cx, y, NW + (item.cnt > 6 ? 20 : 0), NH, label, item.role, item.cnt > 1 ? ('×' + item.cnt) : ''));
+      positions.push({ cx: cx, y: y, cnt: item.cnt, role: item.role });
+    });
+    return { svg: svgParts.join(''), nodes: positions, y: y };
+  }
+
+  var svgBody = '';
+
+  // ── DC / GPU ──────────────────────────────────────────────────────────────
+  if (useCase === 'dc' || useCase === 'gpu') {
+    var spineCnt = countByRole('spine');
+    var leafCnt  = countByRole('leaf');
+    var spineSpacing = Math.min(W / (Math.min(spineCnt, 8) + 1), 150);
+    var leafSpacing  = Math.min(W / (Math.min(leafCnt, 12) + 1), 110);
+    var spineStartX  = (W - spineSpacing * (Math.min(spineCnt,8) - 1)) / 2;
+    var leafStartX   = (W - leafSpacing  * (Math.min(leafCnt,12) - 1)) / 2;
+    var spineY = 90, leafY = 190, serverY = 280;
+
+    // Internet box
+    svgBody += '<rect x="' + (W/2-70) + '" y="20" width="140" height="30" rx="5" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>'
+      + '<text x="' + W/2 + '" y="40" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="sans-serif">Internet / Core</text>';
+    svgBody += _svgLine(W/2, 50, W/2, spineY - NH/2);
+
+    // Spines
+    var spinePos = [];
+    for (var si = 0; si < Math.min(spineCnt, 8); si++) {
+      var sx = spineStartX + si * spineSpacing;
+      var lbl = spineCnt > 6 ? (spineCnt + '× ' + firstModel('spine').split(' ').pop()) : ('SP-' + (si+1));
+      svgBody += _svgNode(sx, spineY, NW, NH, lbl, 'spine', spineCnt > 6 && si === 0 ? '' : '');
+      spinePos.push(sx);
+      if (si === 0) svgBody += _svgLine(W/2, 50, sx, spineY - NH/2);
+      else svgBody += _svgLine(W/2, 50, sx, spineY - NH/2);
+    }
+
+    // Leaves + spine-leaf lines
+    var leafPos = [];
+    for (var li = 0; li < Math.min(leafCnt, 12); li++) {
+      var lx = leafStartX + li * leafSpacing;
+      var llbl = leafCnt > 10 ? (leafCnt + '× ' + firstModel('leaf').split(' ').pop()) : ('L-' + (li+1));
+      svgBody += _svgNode(lx, leafY, NW - 6, NH, llbl, 'leaf', '');
+      leafPos.push(lx);
+      // Connect to up to 4 spines (or all if <= 4)
+      var spineConnectLimit = Math.min(spinePos.length, 4);
+      for (var sc = 0; sc < spineConnectLimit; sc++) {
+        svgBody += _svgLine(lx, leafY - NH/2, spinePos[sc], spineY + NH/2);
+      }
+      if (leafCnt > 10 && li > 0) break; // collapse remaining leaves into single node
+    }
+
+    // Server bar
+    var endpointCount = (state.topology && state.topology.endpoint_count) || '—';
+    var bw = (state.topology && state.topology.bandwidth_gbps) || '';
+    svgBody += '<rect x="80" y="' + (serverY-12) + '" width="' + (W-160) + '" height="24" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>'
+      + '<text x="' + W/2 + '" y="' + (serverY+4) + '" text-anchor="middle" font-size="11" fill="#64748b" font-family="sans-serif">'
+      + endpointCount + ' endpoints' + (bw ? ' · ' + bw + 'GbE per server' : '') + '</text>';
+    // Lines from leaves to server bar
+    leafPos.slice(0, Math.min(leafPos.length, 8)).forEach(function(lx) {
+      svgBody += _svgLine(lx, leafY + NH/2, lx, serverY - 12);
+    });
+
+  // ── Multi-site ──────────────────────────────────────────────────────────────
+  } else if (useCase === 'multisite') {
+    var numSites = Math.min(state.siteCount || (state.org && state.org.sites) || 2, 8);
+    var perLeaf  = state.perSiteDevices ? state.perSiteDevices.leaf  : countByRole('leaf')  / numSites;
+    var perSpine = state.perSiteDevices ? state.perSiteDevices.spine : countByRole('spine') / numSites;
+    var boxW = Math.min(140, (W - 40) / numSites - 10);
+    var boxH = 140, spacing2 = (W - 40) / numSites, startX2 = 20 + spacing2 / 2;
+    var siteY = 140;
+
+    // WAN cloud
+    svgBody += '<ellipse cx="' + W/2 + '" cy="50" rx="80" ry="24" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>'
+      + '<text x="' + W/2 + '" y="55" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="sans-serif">WAN / DCI</text>';
+
+    for (var site = 0; site < numSites; site++) {
+      var siteCX = startX2 + site * spacing2;
+      var siteTY = siteY, siteBY = siteY + boxH;
+      // Site box
+      svgBody += '<rect x="' + (siteCX - boxW/2) + '" y="' + (siteTY - 10) + '" width="' + boxW + '" height="' + (boxH + 10) + '" rx="6" fill="#1e293b22" stroke="#334155" stroke-width="1"/>';
+      svgBody += '<text x="' + siteCX + '" y="' + (siteTY + 6) + '" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="sans-serif">Site ' + (site+1) + '</text>';
+      // Mini spine row
+      var miniSpineY = siteTY + 40, miniLeafY = siteTY + 85;
+      var spineN = Math.max(1, Math.round(perSpine));
+      var leafN  = Math.max(1, Math.round(perLeaf));
+      svgBody += '<rect x="' + (siteCX - 40) + '" y="' + (miniSpineY - 10) + '" width="80" height="20" rx="4" fill="#3b82f622" stroke="#3b82f6" stroke-width="1"/>'
+        + '<text x="' + siteCX + '" y="' + (miniSpineY + 4) + '" text-anchor="middle" font-size="9" fill="#3b82f6" font-family="monospace,sans-serif">' + spineN + '× Spine</text>';
+      svgBody += '<rect x="' + (siteCX - 40) + '" y="' + (miniLeafY - 10) + '" width="80" height="20" rx="4" fill="#22c55e22" stroke="#22c55e" stroke-width="1"/>'
+        + '<text x="' + siteCX + '" y="' + (miniLeafY + 4) + '" text-anchor="middle" font-size="9" fill="#22c55e" font-family="monospace,sans-serif">' + leafN + '× Leaf</text>';
+      svgBody += _svgLine(siteCX, miniSpineY + 10, siteCX, miniLeafY - 10);
+      // Line to WAN cloud
+      svgBody += _svgLine(siteCX, siteTY - 10, W/2 + (site - numSites/2 + 0.5) * 20, 74);
+    }
+
+  // ── Campus ────────────────────────────────────────────────────────────────
+  } else if (useCase === 'campus') {
+    var distRow = rowNodes(['distribution', 'core'], 110, W);
+    var accRow  = rowNodes(['access', 'firewall'], 220, W);
+    svgBody += '<rect x="' + (W/2-60) + '" y="20" width="120" height="28" rx="5" fill="#1e293b" stroke="#f97316" stroke-width="1.5"/>'
+      + '<text x="' + W/2 + '" y="38" text-anchor="middle" font-size="11" fill="#f97316" font-family="sans-serif">Internet / Firewall</text>';
+    svgBody += distRow.svg + accRow.svg;
+    distRow.nodes.forEach(function(dn) {
+      svgBody += _svgLine(W/2, 48, dn.cx, 110 - NH/2);
+      accRow.nodes.forEach(function(an) { svgBody += _svgLine(dn.cx, 110 + NH/2, an.cx, 220 - NH/2); });
+    });
+
+  // ── WAN / SD-WAN ──────────────────────────────────────────────────────────
+  } else if (useCase === 'wan') {
+    var ctrlRow   = rowNodes(['sdwan-controller'], 80, W);
+    var orchRow   = rowNodes(['sdwan-orchestrator'], 160, W);
+    var edgeRow   = rowNodes(['wan-edge'], 250, W);
+    svgBody += ctrlRow.svg + orchRow.svg + edgeRow.svg;
+    ctrlRow.nodes.forEach(function(cn) {
+      orchRow.nodes.forEach(function(on) { svgBody += _svgLine(cn.cx, 80 + NH/2, on.cx, 160 - NH/2); });
+    });
+    orchRow.nodes.forEach(function(on) {
+      edgeRow.nodes.forEach(function(en) { svgBody += _svgLine(on.cx, 160 + NH/2, en.cx, 250 - NH/2); });
+    });
+
+  // ── Generic (SP, storage, 5G) ─────────────────────────────────────────────
+  } else {
+    var roles = Object.keys(_ROLE_CLR).filter(function(r) { return countByRole(r) > 0; });
+    var yStep = Math.min(90, (H - 40) / Math.max(roles.length, 1));
+    roles.forEach(function(r, idx) {
+      var cnt = countByRole(r);
+      var cy  = 50 + idx * yStep;
+      var sp = Math.min(W / (Math.min(cnt, 8) + 1), 130);
+      var sx = (W - sp * (Math.min(cnt, 8) - 1)) / 2;
+      for (var ni = 0; ni < Math.min(cnt, 8); ni++) {
+        var lbl = cnt > 6 ? (cnt + '× ' + firstModel(r).split(' ').pop()) : firstModel(r).split(' ').pop();
+        svgBody += _svgNode(sx + ni * sp, cy, NW, NH, lbl, r, '');
+        if (cnt > 6 && ni === 0) break;
+      }
+    });
+  }
+
+  var useLabel = { dc:'Data Center (Spine-Leaf)', gpu:'GPU Cluster', campus:'Campus', multisite:'Multi-Site Fabric', wan:'WAN / SD-WAN' }[useCase] || useCase;
+
+  return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:12px;">'
+    + '<div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;font-weight:600;">'
+    + useLabel + ' · ' + devices.length + ' devices'
+    + ((state.org && state.org.sites > 1) ? ' · ' + state.org.sites + ' sites' : '')
+    + '</div>'
+    + '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:900px;display:block;">'
+    + svgBody
+    + '</svg></div>';
+}
+window.renderTopologyDiagram = renderTopologyDiagram;
 
 function exportBOM() {
   var result = window.buildBOM(STATE);

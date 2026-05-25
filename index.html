@@ -341,40 +341,45 @@
     .accordion-item {
       border: 1px solid var(--border);
       border-radius: 6px;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
       overflow: hidden;
     }
     .accordion-header {
-      padding: 11px 14px;
+      padding: 12px 16px;
       cursor: pointer;
       font-weight: 600;
       font-size: 13px;
       color: var(--text);
-      background: var(--surface);
+      background: var(--surface2);
       display: flex;
       align-items: center;
       list-style: none;
       user-select: none;
       margin: 0;
+      transition: background .12s;
     }
+    .accordion-header:hover { background: rgba(79,142,247,.08); }
     .accordion-header::-webkit-details-marker { display: none; }
-    .accordion-header::after {
+    .accordion-header::before {
       content: '›';
-      margin-left: auto;
-      transition: transform .15s;
+      margin-right: 10px;
       font-size: 18px;
       color: var(--text-dim);
       font-weight: 300;
+      transition: transform .15s;
+      display: inline-block;
     }
-    details.accordion-item[open] > .accordion-header::after {
+    details.accordion-item[open] > .accordion-header::before {
       transform: rotate(90deg);
+      color: var(--accent);
     }
     details.accordion-item[open] > .accordion-header {
       color: var(--accent);
+      border-bottom: 1px solid var(--border);
     }
     .accordion-body {
       padding: 14px;
-      border-top: 1px solid var(--border);
+      background: var(--bg);
     }
 
     /* ─── Config viewer ───────────────────────────────────────────────────── */
@@ -1334,6 +1339,15 @@
       <div id="capacity-math-output">
         <p class="empty-state">Port-math sizing available for DC / GPU / Multi-site use cases.</p>
       </div>
+      </div>
+    </details>
+
+    <details class="accordion-item" open>
+      <summary class="accordion-header">Network Topology (HLD)</summary>
+      <div class="accordion-body" id="topo-hld-pane">
+        <div id="topo-hld-output">
+          <p class="empty-state">Generate BOM to view topology diagram.</p>
+        </div>
       </div>
     </details>
   </section>
