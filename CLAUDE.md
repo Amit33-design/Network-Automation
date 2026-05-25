@@ -143,7 +143,7 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 | ~~G-16~~ | ~~VRF-lite config incomplete — definition only, no RT import/export~~ | P1 | ✅ — `_nxosVrfLiteBlock()` etc. — RD, RT import/export, BGP AF redistribute direct, max-paths per VRF (MGMT/PROD/DEV) |
 | ~~G-17~~ | ~~IPv6 dual-stack is checkbox only — no OSPFv3, BGP IPv6 AF config~~ | P2 | ✅ 2026-05-25 — `configgen.js`: `_v6Addrs()` ULA addressing (fd00::/8 loopback + P2P); `_nxosIPv6Block`, `_nxosSpineIPv6Block`, `_eosIPv6Block`, `_junosIPv6Block` appended when `ipv6` in features; covers OSPFv3, BGP IPv6 AF, dual-stack loopback/P2P on NX-OS/EOS/JunOS |
 | ~~G-18~~ | ~~Multicast checkbox only — no RP address, PIM mode, interface joins~~ | P2 | ✅ 2026-05-25 — `configgen.js`: `_nxosMulticastBlock`, `_eosMulticastBlock`, `_junosMulticastBlock`; PIM sparse/SSM/bidir modes; RP address; SSM range 232/8; IGMP v3 per-interface stubs; RP loopback hint on spine; form fields for PIM mode + RP addr + group ACL in Step 1; `STATE.multicast` wired in `init.js` |
-| G-19 | BGP unnumbered not supported (eliminates P2P IP addressing in DC CLOS) | P2 | ❌ — all P2P links use numbered IPs (/30) |
+| ~~G-19~~ | ~~BGP unnumbered not supported (eliminates P2P IP addressing in DC CLOS)~~ | P2 | ✅ 2026-05-25 — `configgen.js`: `_nxosBgpUnnumberedBlock`, `_eosBgpUnnumberedBlock`, `_junosBgpUnnumberedBlock`; `ip unnumbered loopback0` + `ipv6 link-local` on P2P interfaces; `neighbor interface <if>` syntax on NX-OS/EOS; `local-interface` on JunOS; `bgp_unnumbered` checkbox added to features in Step 1 |
 
 ### 4.3 Config Generation Quality
 

@@ -308,6 +308,135 @@ function _junosMulticastBlock(dev, state) {
   return lines;
 }
 
+// ─── G-19: BGP Unnumbered (RFC 5549) ─────────────────────────────────────────
+// Generates a replacement block: P2P interfaces use ip unnumbered loopback0
+// + ipv6 link-local, BGP peers use interface names instead of IP addresses.
+// Platform interface name conventions:
+//   NX-OS: Ethernet1/<n>   EOS: Ethernet<n>/1   JunOS: xe-0/0/<n>
+
+function _nxosBgpUnnumberedBlock(dev, state, d) {
+  if (!_hasFeat(state, 'bgp_unnumbered')) return [];
+  var n = d ? d.spinePeerIps.length : 2;
+  var lines = [
+    '',
+    '! --- G-19: BGP Unnumbered (RFC 5549) ---',
+    '! Replace numbered P2P interface/neighbor config with the following:',
+    '',
+    '! --- P2P interfaces (unnumbered) ---',
+  ];
+  for (var i = 0; i < n; i++) {
+    var iface = 'Ethernet1/' + (i + 1);
+    var hn    = d ? (d.spineHostnames[i] || ('SPINE-' + (i+1))) : ('SPINE-' + (i+1));
+    lines = lines.concat([
+      'interface ' + iface,
+      '  description P2P-to-' + hn,
+      '  no switchport',
+      '  mtu 9216',
+      '  ip address unnumbered loopback0',
+      '  ipv6 address use-link-local-only',
+      '  no shutdown',
+      '',
+    ]);
+  }
+  var leafAsn  = d ? d.leafAsn  : 65100;
+  var spineAsn = d ? d.spineAsn : 65000;
+  lines = lines.concat([
+    '! --- BGP unnumbered neighbors ---',
+    'router bgp ' + leafAsn,
+    '  template peer SPINES-UNNUM',
+    '    remote-as ' + spineAsn,
+    '    address-family ipv4 unicast',
+    '      next-hop-self',
+    '      send-community extended',
+  ]);
+  for (var j = 0; j < n; j++) {
+    var iface2 = 'Ethernet1/' + (j + 1);
+    var hn2    = d ? (d.spineHostnames[j] || ('SPINE-' + (j+1))) : ('SPINE-' + (j+1));
+    lines.push('  neighbor ' + iface2 + ' interface  ! to ' + hn2);
+    lines.push('    inherit peer SPINES-UNNUM');
+  }
+  return lines;
+}
+
+function _eosBgpUnnumberedBlock(dev, state, d) {
+  if (!_hasFeat(state, 'bgp_unnumbered')) return [];
+  var n = d ? d.spinePeerIps.length : 2;
+  var lines = [
+    '',
+    '! --- G-19: BGP Unnumbered (RFC 5549) ---',
+    '! Replace numbered P2P config with the following:',
+    '',
+  ];
+  for (var i = 0; i < n; i++) {
+    var iface = 'Ethernet' + (i + 1) + '/1';
+    var hn    = d ? (d.spineHostnames[i] || ('SPINE-' + (i+1))) : ('SPINE-' + (i+1));
+    lines = lines.concat([
+      'interface ' + iface,
+      '   description P2P-to-' + hn,
+      '   no switchport',
+      '   mtu 9214',
+      '   ip address unnumbered Loopback0',
+      '   ipv6 enable',
+      '   no shutdown',
+      '',
+    ]);
+  }
+  var leafAsn  = d ? d.leafAsn  : 65100;
+  var spineAsn = d ? d.spineAsn : 65000;
+  lines = lines.concat([
+    'router bgp ' + leafAsn,
+    '   neighbor SPINES peer group',
+    '   neighbor SPINES remote-as ' + spineAsn,
+    '   neighbor SPINES send-community extended',
+    '   neighbor SPINES maximum-routes 12000 warning-only',
+  ]);
+  for (var j = 0; j < n; j++) {
+    var iface2 = 'Ethernet' + (j + 1) + '/1';
+    var hn2    = d ? (d.spineHostnames[j] || ('SPINE-' + (j+1))) : ('SPINE-' + (j+1));
+    lines.push('   neighbor interface ' + iface2 + ' peer-group SPINES  ! to ' + hn2);
+  }
+  lines = lines.concat([
+    '   address-family ipv4',
+    '      neighbor SPINES activate',
+    '      neighbor SPINES next-hop-self',
+  ]);
+  return lines;
+}
+
+function _junosBgpUnnumberedBlock(dev, state, d) {
+  if (!_hasFeat(state, 'bgp_unnumbered')) return [];
+  var n = d ? d.spinePeerIps.length : 2;
+  var lines = [
+    '',
+    '# --- G-19: BGP Unnumbered (RFC 5549) ---',
+    '# Replace numbered P2P config with the following:',
+    '',
+  ];
+  for (var i = 0; i < n; i++) {
+    var iface = 'xe-0/0/' + i;
+    var hn    = d ? (d.spineHostnames[i] || ('SPINE-' + (i+1))) : ('SPINE-' + (i+1));
+    lines = lines.concat([
+      '# Interface ' + iface + ' to ' + hn,
+      'set interfaces ' + iface + ' unit 0 family inet unnumbered-address lo0.0',
+      'set interfaces ' + iface + ' unit 0 family inet6',
+      '',
+    ]);
+  }
+  var spineAsn = d ? d.spineAsn : 65000;
+  lines = lines.concat([
+    '# BGP unnumbered group',
+    'set protocols bgp group SPINES-UNNUM type external',
+    'set protocols bgp group SPINES-UNNUM family inet unicast',
+    'set protocols bgp group SPINES-UNNUM peer-as ' + spineAsn,
+  ]);
+  for (var j = 0; j < n; j++) {
+    var iface2 = 'xe-0/0/' + j;
+    var hn2    = d ? (d.spineHostnames[j] || ('SPINE-' + (j+1))) : ('SPINE-' + (j+1));
+    lines.push('set protocols bgp group SPINES-UNNUM local-interface ' + iface2 + '.0  # to ' + hn2);
+  }
+  return lines;
+}
+
 // NX-OS: global BFD command + ECMP hash command (appended after BGP stanza)
 function _nxosGlobalBfd(state) {
   if (!_hasFeat(state, 'bfd')) return '';
@@ -764,6 +893,10 @@ function nxosSpineConfig(dev, state) {
   var mcNxosSpine = _nxosMulticastBlock(dev, state);
   if (mcNxosSpine.length) lines = lines.concat(mcNxosSpine);
 
+  // G-19: BGP unnumbered
+  var unNumSpine = _nxosBgpUnnumberedBlock(dev, state, null);
+  if (unNumSpine.length) lines = lines.concat(unNumSpine);
+
   return lines.join('\n') + '\n';
 }
 
@@ -953,6 +1086,10 @@ function nxosLeafConfig(dev, state) {
   var mcNxosLeaf = _nxosMulticastBlock(dev, state);
   if (mcNxosLeaf.length) lines = lines.concat(mcNxosLeaf);
 
+  // G-19: BGP unnumbered
+  var unNumLeaf = _nxosBgpUnnumberedBlock(dev, state, d);
+  if (unNumLeaf.length) lines = lines.concat(unNumLeaf);
+
   return lines.join('\n') + '\n';
 }
 
@@ -1008,6 +1145,10 @@ function aristaSpineConfig(dev, state) {
   // G-18: Multicast
   var mcEosSpine = _eosMulticastBlock(dev, state);
   if (mcEosSpine.length) lines = lines.concat(mcEosSpine);
+
+  // G-19: BGP unnumbered
+  var unNumEosSpine = _eosBgpUnnumberedBlock(dev, state, null);
+  if (unNumEosSpine.length) lines = lines.concat(unNumEosSpine);
 
   return lines.join('\n') + '\n';
 }
@@ -1147,6 +1288,10 @@ function aristaLeafConfig(dev, state) {
   var mcEosLeaf = _eosMulticastBlock(dev, state);
   if (mcEosLeaf.length) lines = lines.concat(mcEosLeaf);
 
+  // G-19: BGP unnumbered
+  var unNumEosLeaf = _eosBgpUnnumberedBlock(dev, state, d);
+  if (unNumEosLeaf.length) lines = lines.concat(unNumEosLeaf);
+
   return lines.join('\n') + '\n';
 }
 
@@ -1229,6 +1374,10 @@ function juniperLeafConfig(dev, state) {
   // G-18: Multicast
   var mcJunos = _junosMulticastBlock(dev, state);
   if (mcJunos.length) lines = lines.concat(mcJunos);
+
+  // G-19: BGP unnumbered
+  var unNumJunos = _junosBgpUnnumberedBlock(dev, state, d);
+  if (unNumJunos.length) lines = lines.concat(unNumJunos);
 
   return lines.join('\n') + '\n';
 }
