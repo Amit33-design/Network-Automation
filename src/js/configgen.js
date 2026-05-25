@@ -946,6 +946,12 @@ function generateAllConfigs(state) {
   return configs;
 }
 
+var CFG_ROLE_COLORS = {
+  'super-spine':'#6366f1','spine':'#3b82f6','core':'#8b5cf6',
+  'distribution':'#a855f7','leaf':'#22c55e','access':'#14b8a6',
+  'firewall':'#f97316','wan-edge':'#eab308'
+};
+
 function renderConfigViewer(state) {
   var devices = state.devices || [];
   if (!devices.length) {
@@ -954,26 +960,39 @@ function renderConfigViewer(state) {
 
   var listItems = devices.map(function(dev, i) {
     var eid = (dev.instanceId || '').replace(/'/g, "\\'");
+    var roleColor = CFG_ROLE_COLORS[dev.subLayer] || '#64748b';
     return '<div class="cfg-dev-item' + (i === 0 ? ' active' : '') + '" '
       + 'data-id="' + dev.instanceId + '" '
       + 'onclick="window.showDeviceConfig(\'' + eid + '\')">'
+      + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<span style="width:8px;height:8px;border-radius:50%;background:' + roleColor + ';flex-shrink:0;"></span>'
+      + '<div style="min-width:0;">'
       + '<div class="cfg-dev-name">' + (dev.hostname || dev.id) + '</div>'
-      + '<div class="cfg-dev-model">' + (dev.model || '') + '</div>'
+      + '<div class="cfg-dev-model">' + (dev.subLayer || '') + ' &middot; ' + (dev.model || '') + '</div>'
+      + '</div></div>'
       + '</div>';
   }).join('');
 
   var firstDev = devices[0];
   var firstCfg = (firstDev && state.configs[firstDev.instanceId]) || '! Generate configs first';
   var firstTitle = firstDev ? (firstDev.hostname || firstDev.id) : '';
+  var firstRole  = firstDev ? (firstDev.subLayer || '') : '';
+  var firstColor = CFG_ROLE_COLORS[firstRole] || '#64748b';
 
   return '<div class="cfg-layout" id="cfg-layout">'
-    + '<div class="cfg-device-list" id="cfg-device-list">' + listItems + '</div>'
+    + '<div class="cfg-device-list" id="cfg-device-list">'
+    + '<div style="padding:10px 14px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);border-bottom:1px solid var(--border);">'
+    + devices.length + ' devices</div>'
+    + listItems + '</div>'
     + '<div class="cfg-panel" id="cfg-panel">'
     +   '<div class="cfg-panel-hdr">'
     +     '<button class="btn btn-secondary cfg-back-btn" onclick="window.cfgShowList()">&#8592; Devices</button>'
-    +     '<span class="cfg-panel-hdr-title" id="cfg-panel-title">' + firstTitle + '</span>'
-    +     '<button class="btn btn-secondary" onclick="window.downloadConfig()">&#8595; Download</button>'
-    +     '<button class="btn btn-secondary" onclick="window.downloadAllConfigs()">&#8595; All</button>'
+    +     '<span class="cfg-panel-hdr-title" id="cfg-panel-title">'
+    +       '<span id="cfg-role-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + firstColor + ';margin-right:6px;vertical-align:middle;"></span>'
+    +       firstTitle
+    +     '</span>'
+    +     '<button class="btn btn-secondary" onclick="window.downloadConfig()" title="Download this config">&#8595; .cfg</button>'
+    +     '<button class="btn btn-secondary" onclick="window.downloadAllConfigs()" title="Download all configs">&#8595; All</button>'
     +   '</div>'
     +   '<pre id="cfg-output" class="config-pre">' + firstCfg + '</pre>'
     + '</div>'

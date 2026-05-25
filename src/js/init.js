@@ -229,22 +229,45 @@ function renderCapacityMath(state) {
 window.renderCapacityMath = renderCapacityMath;
 
 // ─── Step 2: BOM ──────────────────────────────────────────────────────────────
+var ROLE_COLORS = {
+  'super-spine': '#6366f1', 'spine': '#3b82f6', 'core': '#8b5cf6',
+  'distribution': '#a855f7', 'leaf': '#22c55e', 'access': '#14b8a6',
+  'firewall': '#f97316', 'wan-edge': '#eab308', 'cloud-transit': '#64748b', 'cloud-gw': '#64748b'
+};
+
+function _roleBadge(role) {
+  var c = ROLE_COLORS[role] || '#64748b';
+  return '<span class="role-badge" style="background:' + c + '18;color:' + c + ';">'
+    + '<span class="role-dot" style="background:' + c + ';"></span>' + role + '</span>';
+}
+
 function renderStep2() {
   var result = window.buildBOM(STATE);
   var html   = window.renderBOMTable(result.summary);
   var deviceList = (STATE.devices || []).map(function(d) {
-    return '<tr><td>' + d.hostname + '</td><td>' + d.model + '</td>' +
-           '<td>' + d.subLayer + '</td><td>' + d.vendor + '</td>' +
-           '<td>' + d.speed + '</td><td>Rack ' + d.rack + ' U' + d.unit + '</td></tr>';
+    return '<tr>'
+      + '<td style="font-weight:600;white-space:nowrap;">' + d.hostname + '</td>'
+      + '<td style="white-space:nowrap;">' + d.model + '</td>'
+      + '<td>' + _roleBadge(d.subLayer) + '</td>'
+      + '<td style="white-space:nowrap;">' + d.vendor + '</td>'
+      + '<td><code style="font-size:11px;background:var(--surface2);padding:2px 6px;border-radius:4px;">' + d.speed + '</code></td>'
+      + '<td style="white-space:nowrap;color:var(--text-dim);">Rack ' + d.rack + ' U' + d.unit + '</td>'
+      + '</tr>';
   }).join('');
 
   var container = document.getElementById('bom-output');
   if (!container) return;
-  container.innerHTML = html +
-    '<h3 style="margin-top:24px">Device List</h3>' +
-    '<table class="bom-table"><thead><tr>' +
-      '<th>Hostname</th><th>Model</th><th>Layer</th><th>Vendor</th><th>Speed</th><th>Location</th>' +
-    '</tr></thead><tbody>' + deviceList + '</tbody></table>';
+
+  var deviceSection = '<div style="margin-top:28px;margin-bottom:10px;display:flex;align-items:baseline;gap:12px;">'
+    + '<h3 style="font-size:14px;font-weight:700;color:var(--text);">Device Inventory</h3>'
+    + '<span style="font-size:12px;color:var(--text-dim);">' + (STATE.devices||[]).length + ' devices</span>'
+    + '</div>'
+    + '<div class="table-scroll">'
+    + '<table class="bom-table"><thead><tr>'
+    + '<th>Hostname</th><th>Model</th><th>Role</th><th>Vendor</th><th>Speed</th><th>Location</th>'
+    + '</tr></thead><tbody>' + deviceList + '</tbody></table></div>';
+
+  container.innerHTML = '<div class="table-scroll">' + html + '</div>' + deviceSection;
 
   // Cabling tab
   var cableOut = document.getElementById('cabling-output');
@@ -537,10 +560,15 @@ function showDeviceConfig(instanceId) {
     item.classList.toggle('active', item.getAttribute('data-id') === instanceId);
   });
 
-  // Update the panel title
-  var titleEl = document.getElementById('cfg-panel-title');
+  // Update the panel title + role dot
   var dev = STATE.devices.find(function(d) { return d.instanceId === instanceId; });
-  if (titleEl && dev) titleEl.textContent = dev.hostname || dev.id;
+  var titleEl = document.getElementById('cfg-panel-title');
+  var dotEl   = document.getElementById('cfg-role-dot');
+  var RCOL = { 'super-spine':'#6366f1','spine':'#3b82f6','core':'#8b5cf6','distribution':'#a855f7','leaf':'#22c55e','access':'#14b8a6','firewall':'#f97316','wan-edge':'#eab308' };
+  if (titleEl && dev) {
+    var c = RCOL[dev.subLayer] || '#64748b';
+    titleEl.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + ';margin-right:6px;vertical-align:middle;"></span>' + (dev.hostname || dev.id);
+  }
 
   // Remember for download
   window._currentCfgId = instanceId;
