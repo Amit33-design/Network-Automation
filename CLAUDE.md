@@ -158,7 +158,7 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 | ID | Gap | Priority | Status |
 |----|-----|----------|--------|
 | ~~G-23~~ | ~~Pre-checks do not capture device state baseline (show bgp/route/interface)~~ | P0 | ✅ — `genPreCheckScript()` in `checks.js` captures: bgp summary, ip route summary, interface errors, CPU, LLDP neighbors → baseline JSON |
-| G-24 | No Batfish/pyATS dry-run validation before push | P0 | ❌ — pre-checks only collect state; no semantic config analysis |
+| ~~G-24~~ | ~~No Batfish/pyATS dry-run validation before push~~ | P0 | ✅ 2026-05-25 — `window.genBatfishScript()` in `checks.js`; writes configs, runs undefinedReferences/bgpSessionStatus/routes checks via pybatfish; Batfish Dry-Run tab in Step 5 |
 | ~~G-25~~ | ~~Rollback is config paste — not platform-native (checkpoint/configure replace)~~ | P1 | ✅ — `rollback.js` with `ROLLBACK_STRATEGIES` per platform (NX-OS checkpoint, IOS-XE configure replace, EOS rollback, JunOS commit confirmed 5, SONiC config load) |
 | ~~G-26~~ | ~~Post-checks too shallow — no reachability matrix, no ECMP path verification~~ | P1 | ✅ 2026-05-25 — loopback ping matrix + ECMP via-count check in post-check script; failure banner + per-device matrix/ECMP rows in HTML renderer |
 | ~~G-27~~ | ~~No config drift detection (running vs intended diff)~~ | P1 | ✅ — `genDriftDetectionScript()` in `checks.js` — captures running-config, base64-encodes, diffs vs intended; outputs `drift_report_<site>.json` |
@@ -168,9 +168,9 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 
 | ID | Gap | Priority | Status |
 |----|-----|----------|--------|
-| G-29 | No embedded ZTP file server — scripts generated but not served | P0 | ❌ — no nginx/TFTP service; scripts download-only |
-| G-30 | No ZTP state machine — no per-device provisioning state tracking | P0 | ❌ — no REGISTERED→VERIFIED state machine, no API callbacks |
-| G-31 | Day-0 bootstrap and Day-N production config conflated ("Bake Policies") | P1 | ❌ — all config treated as single artifact; no mgmt-plane-only bootstrap |
+| ~~G-29~~ | ~~No embedded ZTP file server — scripts generated but not served~~ | P0 | ✅ 2026-05-25 — `ztp.js` `genZtpDockerCompose()`: nginx:alpine (8080) + tftp + Flask API; `genZtpNginxConf()`, `genZtpDhcpScope()` with static MAC bindings; File Server tab in Step 4 ZTP |
+| ~~G-30~~ | ~~No ZTP state machine — no per-device provisioning state tracking~~ | P0 | ✅ 2026-05-25 — `ztp.js` 9-state machine (REGISTERED→ONLINE\|FAILED); `window.ZTP_STATES`; `ztpSetState/ztpAdvanceState/ztpMarkFailed/renderZtpStateBoard()`; Flask API stubs; State Board tab in Step 4 ZTP |
+| ~~G-31~~ | ~~Day-0 bootstrap and Day-N production config conflated ("Bake Policies")~~ | P1 | ✅ 2026-05-25 — `ztp.js` `genDay0Config()`: mgmt-plane only (hostname/mgmt IP/SSH/NTP/syslog/LLDP/callback URL); NO BGP/VLANs/VXLAN; Day-0 Bootstrap tab in Step 4 ZTP |
 | G-32 | No OS image version management in ZTP pipeline | P2 | ❌ — no image staging, download, or boot-device config |
 
 ### 4.6 Monitoring

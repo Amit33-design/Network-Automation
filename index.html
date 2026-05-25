@@ -1287,14 +1287,112 @@
     <div class="section-header">
       <div>
         <div class="section-title">ZTP &amp; Policy Management</div>
-        <div class="section-sub">Zero-touch provisioning and network policies</div>
+        <div class="section-sub">Day-0 bootstrap · Day-N separation · file server · per-device state machine</div>
       </div>
     </div>
-    <div class="coming-soon">
-      <div class="cs-icon">⚙️</div>
-      <h3>Coming soon</h3>
-      <p>ZTP scripts, DHCP scopes, boot scripts, and policy engine.<br>
-         Implement from AGENT_ROADMAP.md: Ansible playbook generator + BGP route-policy validator.</p>
+
+    <div class="bom-tabs-wrap">
+    <div class="bom-tabs">
+      <div class="bom-tab active" data-pane="ztp-pane-day0">Day-0 Bootstrap</div>
+      <div class="bom-tab" data-pane="ztp-pane-server">File Server</div>
+      <div class="bom-tab" data-pane="ztp-pane-board">State Board</div>
+      <div class="bom-tab" data-pane="ztp-pane-api">ZTP API</div>
+    </div>
+    </div>
+
+    <!-- Day-0 bootstrap config (G-31) -->
+    <div id="ztp-pane-day0" class="bom-pane active">
+      <div class="btn-toolbar">
+        <button class="btn btn-primary" onclick="window.renderZtp()">Generate ZTP</button>
+        <button class="btn btn-secondary" onclick="window.downloadDay0Config()">↓ day0-configs.txt</button>
+      </div>
+      <div class="form-section" style="font-size:12px;line-height:1.7;">
+        <h3>Day-0 vs Day-N Separation</h3>
+        <p style="color:var(--text-dim);margin:0 0 6px;">
+          <strong>Day-0</strong> (this tab) = management plane only: hostname, mgmt IP, SSH v2, NTP, syslog, LLDP, ZTP callback URL. <em>No BGP, no VLANs, no VXLAN.</em><br>
+          <strong>Day-N</strong> (Step 3) = full production config pushed after device reaches <code>VERIFIED</code> state.
+        </p>
+      </div>
+      <div id="ztp-day0-output">
+        <p class="empty-state">Complete Step 1 and click Generate ZTP.</p>
+      </div>
+    </div>
+
+    <!-- File server (G-29) -->
+    <div id="ztp-pane-server" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-secondary" onclick="window.downloadZtpDockerCompose()">↓ ztp-stack.yml</button>
+        <button class="btn btn-secondary" onclick="window.downloadZtpNginxConf()">↓ nginx.conf</button>
+        <button class="btn btn-secondary" onclick="window.downloadDhcpScope()">↓ dhcp.conf</button>
+      </div>
+      <div class="form-section" style="font-size:12px;line-height:1.7;">
+        <h3>Quick Start</h3>
+        <pre class="config-pre" style="max-height:none;margin-bottom:10px;"># Start ZTP file server + TFTP + API:
+docker compose -f ztp-stack.yml up -d
+
+# Verify file server is reachable:
+curl http://localhost:8080/health
+
+# Directory structure expected:
+# ztp/scripts/   → POAP.py, eos-ztp.py, pnp.json, junos-ztp.slax
+# ztp/configs/   → day0-&lt;hostname&gt;.cfg  (generated in Day-0 tab)
+# ztp/nginx.conf → generated below</pre>
+      </div>
+      <div id="ztp-server-output">
+        <p class="empty-state">Generate ZTP first.</p>
+      </div>
+    </div>
+
+    <!-- State board (G-30) -->
+    <div id="ztp-pane-board" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-primary" onclick="window.refreshZtpBoard()">Refresh Board</button>
+      </div>
+      <div class="form-section" style="font-size:12px;line-height:1.6;">
+        <h3>Per-Device ZTP State Machine</h3>
+        <p style="color:var(--text-dim);margin:0 0 6px;">
+          States update automatically in production via POST /api/ztp/callback from each device.<br>
+          Use <strong>→ Next</strong> to manually advance state during testing. <strong>↺</strong> resets to REGISTERED.
+        </p>
+        <div style="font-size:11px;color:var(--text-dim);display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;">
+          <span style="color:#64748b;">REGISTERED</span> →
+          <span style="color:#3b82f6;">POWERED_ON</span> →
+          <span style="color:#6366f1;">DHCP_ACK</span> →
+          <span style="color:#8b5cf6;">SCRIPT_DOWNLOADED</span> →
+          <span style="color:#f59e0b;">CONFIG_APPLYING</span> →
+          <span style="color:#10b981;">CALLBACK_RECEIVED</span> →
+          <span style="color:#22c55e;">VERIFIED → ONLINE</span>
+        </div>
+      </div>
+      <div id="ztp-state-board">
+        <p class="empty-state">Complete Step 1 and click Generate ZTP to initialize state board.</p>
+      </div>
+    </div>
+
+    <!-- ZTP API stubs (G-30) -->
+    <div id="ztp-pane-api" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-secondary" onclick="window.downloadZtpApi()">↓ ztp/api.py</button>
+      </div>
+      <div class="form-section" style="font-size:12px;line-height:1.7;">
+        <h3>ZTP State Machine API</h3>
+        <p style="color:var(--text-dim);margin:0 0 6px;">
+          Flask API that tracks per-device ZTP state. Devices POST to <code>/api/ztp/callback</code>
+          at each provisioning milestone. Runs as a Docker sidecar (see File Server tab).
+        </p>
+        <table class="bom-table" style="min-width:400px;margin:8px 0;">
+          <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/api/ztp/register</code></td><td>Pre-register a device</td></tr>
+            <tr><td>POST</td><td><code>/api/ztp/callback</code></td><td>Device reports state change</td></tr>
+            <tr><td>GET</td><td><code>/api/ztp/state</code></td><td>All device states (JSON array)</td></tr>
+            <tr><td>GET</td><td><code>/api/ztp/state/&lt;hostname&gt;</code></td><td>Single device state</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="ztp-api-output">
+        <p class="empty-state">Generate ZTP first.</p>
+      </div>
     </div>
   </section>
 
@@ -1313,6 +1411,7 @@
     <div class="bom-tabs">
       <div class="bom-tab active" data-pane="checks-pane-pre">Pre-Check Script</div>
       <div class="bom-tab" data-pane="checks-pane-post">Post-Check Script</div>
+      <div class="bom-tab" data-pane="checks-pane-batfish">Batfish Dry-Run</div>
       <div class="bom-tab" data-pane="checks-pane-results">Results Diff</div>
       <div class="bom-tab" data-pane="checks-pane-drift">Drift Check</div>
       <div class="bom-tab" data-pane="checks-pane-topo">Topology Crawl</div>
@@ -1337,6 +1436,39 @@
       </div>
       <div id="post-check-output">
         <p class="empty-state">Generate scripts first.</p>
+      </div>
+    </div>
+
+    <!-- G-24: Batfish dry-run validation -->
+    <div id="checks-pane-batfish" class="bom-pane">
+      <div class="btn-toolbar">
+        <button class="btn btn-primary" onclick="window.renderBatfish()">Generate Batfish Script</button>
+        <button class="btn btn-secondary" onclick="window.downloadBatfishScript()">↓ batfish_validate.py</button>
+      </div>
+      <div class="form-section" style="font-size:12px;line-height:1.7;">
+        <h3>Batfish Semantic Validation</h3>
+        <p style="color:var(--text-dim);margin:0 0 8px;">Validates all generated device configs semantically — before any SSH connection — using Batfish network analysis. Catches configuration errors that pre-checks miss.</p>
+        <div class="table-scroll" style="margin-bottom:0;">
+        <table class="bom-table" style="min-width:420px;">
+          <thead><tr><th>Check</th><th>What it catches</th></tr></thead>
+          <tbody>
+            <tr><td>Undefined references</td><td>Route-maps, prefix-lists, ACLs referenced but not defined</td></tr>
+            <tr><td>BGP session reachability</td><td>Peers unreachable in Batfish's data-plane model</td></tr>
+            <tr><td>Loopback route coverage</td><td>Missing routes to any device loopback in the fabric</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <pre class="config-pre" style="max-height:none;margin-top:10px;"># Start Batfish (one-time):
+docker run -d -p 9997:9997 -p 9996:9996 batfish/batfish
+
+# Run validation:
+pip install pybatfish pandas
+python3 batfish_validate_&lt;site&gt;.py
+
+# Exit codes: 0 = all passed · 1 = failures · 2 = Batfish error</pre>
+      </div>
+      <div id="batfish-output">
+        <p class="empty-state">Complete Step 3 (config gen) and click Generate Batfish Script.</p>
       </div>
     </div>
 
@@ -1661,6 +1793,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/troubleshoot.js"></script>
 <script src="src/js/topodisc.js"></script>
 <script src="src/js/nlp_intent.js"></script>
+<script src="src/js/ztp.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>

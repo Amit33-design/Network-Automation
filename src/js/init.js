@@ -485,7 +485,101 @@ window.downloadGnmiDeviceConfigs = function() {
   showToast('gNMI device configs downloaded', 'success');
 };
 
-// ─── Post-check diff report (G-23) ──────────────────────────────────��────────
+// ─── Step 4: ZTP (G-29, G-30, G-31) ─────────────────────────────────────────
+
+window.renderZtp = function() {
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Complete Step 1 first', 'warning');
+    return;
+  }
+  window.ztpInitDevices(STATE.devices);
+
+  STATE.day0Config        = window.genDay0Config(STATE.devices, STATE);
+  STATE.ztpDockerCompose  = window.genZtpDockerCompose(STATE);
+  STATE.ztpNginxConf      = window.genZtpNginxConf();
+  STATE.dhcpScope         = window.genZtpDhcpScope(STATE.devices, STATE);
+  STATE.ztpApiStubs       = window.genZtpApiStubs(STATE.devices, STATE);
+
+  var day0Out = document.getElementById('ztp-day0-output');
+  if (day0Out) day0Out.innerHTML = '<pre class="config-pre" style="max-height:400px;">' + escapeHtml(STATE.day0Config) + '</pre>';
+
+  var srvOut = document.getElementById('ztp-server-output');
+  if (srvOut) srvOut.innerHTML =
+    '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px;">ztp-stack.yml</h4>'
+    + '<pre class="config-pre" style="max-height:220px;">' + escapeHtml(STATE.ztpDockerCompose) + '</pre>'
+    + '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px;">ztp/nginx.conf</h4>'
+    + '<pre class="config-pre" style="max-height:160px;">' + escapeHtml(STATE.ztpNginxConf) + '</pre>'
+    + '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px;">DHCP Scope (ISC DHCPd)</h4>'
+    + '<pre class="config-pre" style="max-height:160px;">' + escapeHtml(STATE.dhcpScope) + '</pre>';
+
+  var apiOut = document.getElementById('ztp-api-output');
+  if (apiOut) apiOut.innerHTML = '<pre class="config-pre" style="max-height:400px;">' + escapeHtml(STATE.ztpApiStubs) + '</pre>';
+
+  var board = document.getElementById('ztp-state-board');
+  if (board) board.innerHTML = window.renderZtpStateBoard();
+
+  showToast('ZTP config generated', 'success');
+};
+
+window.refreshZtpBoard = function() {
+  if (!STATE.devices || !STATE.devices.length) { showToast('Complete Step 1 first', 'warning'); return; }
+  window.ztpInitDevices(STATE.devices);
+  var board = document.getElementById('ztp-state-board');
+  if (board) board.innerHTML = window.renderZtpStateBoard();
+};
+
+window.downloadDay0Config = function() {
+  if (!STATE.day0Config) { window.renderZtp(); }
+  if (!STATE.day0Config) return;
+  downloadFile('day0-configs-' + (STATE.siteCode || 'SITE').toLowerCase() + '.txt', STATE.day0Config, 'text/plain');
+  showToast('Day-0 configs downloaded', 'success');
+};
+window.downloadZtpDockerCompose = function() {
+  if (!STATE.ztpDockerCompose) { window.renderZtp(); }
+  if (!STATE.ztpDockerCompose) return;
+  downloadFile('ztp-stack.yml', STATE.ztpDockerCompose, 'text/yaml');
+  showToast('ZTP stack downloaded', 'success');
+};
+window.downloadZtpNginxConf = function() {
+  if (!STATE.ztpNginxConf) { window.renderZtp(); }
+  if (!STATE.ztpNginxConf) return;
+  downloadFile('ztp/nginx.conf', STATE.ztpNginxConf, 'text/plain');
+  showToast('nginx.conf downloaded', 'success');
+};
+window.downloadDhcpScope = function() {
+  if (!STATE.dhcpScope) { window.renderZtp(); }
+  if (!STATE.dhcpScope) return;
+  downloadFile('dhcp.conf', STATE.dhcpScope, 'text/plain');
+  showToast('DHCP scope downloaded', 'success');
+};
+window.downloadZtpApi = function() {
+  if (!STATE.ztpApiStubs) { window.renderZtp(); }
+  if (!STATE.ztpApiStubs) return;
+  downloadFile('ztp/api.py', STATE.ztpApiStubs, 'text/plain');
+  showToast('ZTP API downloaded', 'success');
+};
+
+// ─── G-24: Batfish dry-run ────────────────────────────────────────────────────
+
+window.renderBatfish = function() {
+  if (!STATE.devices || !STATE.devices.length) {
+    showToast('Complete Step 1 first', 'warning');
+    return;
+  }
+  STATE.batfishScript = window.genBatfishScript(STATE.devices, STATE.configs, STATE);
+  var out = document.getElementById('batfish-output');
+  if (out) out.innerHTML = '<pre class="config-pre" style="max-height:400px;">' + escapeHtml(STATE.batfishScript) + '</pre>';
+  showToast('Batfish script generated', 'success');
+};
+
+window.downloadBatfishScript = function() {
+  if (!STATE.batfishScript) { window.renderBatfish(); }
+  if (!STATE.batfishScript) return;
+  downloadFile('batfish_validate_' + (STATE.siteCode || 'SITE').toLowerCase() + '.py', STATE.batfishScript, 'text/plain');
+  showToast('Batfish script downloaded', 'success');
+};
+
+// ─── Post-check diff report (G-23) ───────────────────────────────────────────
 
 window.parsePostCheckReport = function() {
   var input = document.getElementById('diff-json-input');

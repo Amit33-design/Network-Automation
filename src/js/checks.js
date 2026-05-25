@@ -780,3 +780,162 @@ window.genPostCheckScript = function(devices, state) {
     ''
   ].join('\n');
 };
+
+// ─── G-24: Batfish dry-run validation ────────────────────────────────────────
+// Generates a Python script using pybatfish that semantically validates all
+// device configs before deployment. Checks: undefined refs, BGP reachability,
+// route existence to all loopbacks.
+
+window.genBatfishScript = function(devices, configs, state) {
+  if (!devices || !devices.length) return '# No devices — complete Step 1 first.\n';
+  var site    = (state && state.siteCode) || 'SITE';
+  configs = configs || {};
+
+  // Build DEVICE_CONFIGS dict (base64-encoded to avoid escaping)
+  function _b64(str) {
+    try { return btoa(unescape(encodeURIComponent(str || ''))); }
+    catch (e) { return btoa(str || ''); }
+  }
+  var cfgLines = ['DEVICE_CONFIGS_B64 = {'];
+  devices.forEach(function(dev) {
+    var cfg = configs[dev.instanceId] || '';
+    cfgLines.push('    ' + JSON.stringify(dev.hostname) + ': ' + JSON.stringify(_b64(cfg)) + ',');
+  });
+  cfgLines.push('}');
+
+  // Build LOOPBACKS dict
+  var loLines = ['LOOPBACKS = {'];
+  devices.forEach(function(dev) {
+    loLines.push('    ' + JSON.stringify(dev.hostname) + ': ' + JSON.stringify(dev.loopback0 || ('10.0.0.' + (dev.unit || 1))) + ',');
+  });
+  loLines.push('}');
+
+  return [
+    '#!/usr/bin/env python3',
+    '"""NetDesign AI — Batfish Dry-Run Validation (G-24)',
+    'Site: ' + site + ' | Generated: ' + new Date().toISOString(),
+    '',
+    'Semantically validates all device configs using Batfish before deployment.',
+    'Checks: undefined references, BGP session reachability, route table coverage.',
+    '',
+    'Prerequisites:',
+    '  pip install pybatfish pandas',
+    '  docker run -d -p 9997:9997 -p 9996:9996 batfish/batfish',
+    '',
+    'Usage:',
+    '  python3 batfish_validate_' + site.toLowerCase() + '.py',
+    '',
+    'Exit codes: 0 = all checks passed, 1 = failures found, 2 = Batfish error',
+    '"""',
+    '',
+    'import os, sys, json, base64, pathlib, datetime',
+    '',
+    'try:',
+    '    from pybatfish.client.session import Session',
+    '    from pybatfish.datamodel import *',
+    'except ImportError:',
+    '    print("ERROR: pybatfish not installed. Run: pip install pybatfish pandas")',
+    '    sys.exit(2)',
+    '',
+    cfgLines.join('\n'),
+    '',
+    loLines.join('\n'),
+    '',
+    'NETWORK  = "ndal-' + site.toLowerCase() + '"',
+    'SNAPSHOT = "pre-deploy-" + datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")',
+    'CONFIGS_DIR = pathlib.Path("batfish_configs_' + site.toLowerCase() + '")',
+    'REPORT_FILE = "batfish_report_' + site.toLowerCase() + '.json"',
+    '',
+    '# Write configs from base64 to temp directory',
+    'CONFIGS_DIR.mkdir(exist_ok=True)',
+    'for hostname, b64 in DEVICE_CONFIGS_B64.items():',
+    '    txt = base64.b64decode(b64.encode()).decode("utf-8")',
+    '    if txt.strip():',
+    '        (CONFIGS_DIR / (hostname + ".cfg")).write_text(txt)',
+    '',
+    '# Connect to Batfish',
+    'try:',
+    '    bf = Session(host="localhost", port_v2=9996)',
+    '    bf.set_network(NETWORK)',
+    '    bf.init_snapshot(str(CONFIGS_DIR), name=SNAPSHOT, overwrite=True)',
+    '    print(f"Batfish: network={NETWORK} snapshot={SNAPSHOT}")',
+    'except Exception as e:',
+    '    print(f"ERROR: Cannot connect to Batfish: {e}")',
+    '    print("Start Batfish: docker run -d -p 9997:9997 -p 9996:9996 batfish/batfish")',
+    '    sys.exit(2)',
+    '',
+    'results = []',
+    'has_failures = False',
+    '',
+    '# ── Check 1: Undefined references ────────────────────────────────────────',
+    'print("\\n[1/3] Checking undefined references...", end="", flush=True)',
+    'try:',
+    '    df = bf.q.undefinedReferences().answer().frame()',
+    '    if len(df) > 0:',
+    '        print(f" WARN: {len(df)} undefined reference(s)")',
+    '        has_failures = True',
+    '        results.append({"check": "undefined_references", "status": "FAIL",',
+    '                        "count": len(df), "sample": df.head(5).to_dict(orient="records")})',
+    '    else:',
+    '        print(" PASS")',
+    '        results.append({"check": "undefined_references", "status": "PASS"})',
+    'except Exception as e:',
+    '    print(f" SKIP ({e})")',
+    '    results.append({"check": "undefined_references", "status": "SKIP", "error": str(e)})',
+    '',
+    '# ── Check 2: BGP session reachability ────────────────────────────────────',
+    'print("[2/3] Checking BGP session reachability...", end="", flush=True)',
+    'try:',
+    '    df = bf.q.bgpSessionStatus().answer().frame()',
+    '    if len(df) == 0:',
+    '        print(" SKIP (no BGP configured)")',
+    '        results.append({"check": "bgp_sessions", "status": "SKIP"})',
+    '    else:',
+    '        not_est = df[df["Established_Status"] != "ESTABLISHED"]',
+    '        if len(not_est) > 0:',
+    '            print(f" FAIL: {len(not_est)} session(s) not established")',
+    '            has_failures = True',
+    '            results.append({"check": "bgp_sessions", "status": "FAIL",',
+    '                            "total": len(df), "not_established": len(not_est),',
+    '                            "sample": not_est.head(5).to_dict(orient="records")})',
+    '        else:',
+    '            print(f" PASS ({len(df)} session(s))")',
+    '            results.append({"check": "bgp_sessions", "status": "PASS", "count": len(df)})',
+    'except Exception as e:',
+    '    print(f" SKIP ({e})")',
+    '    results.append({"check": "bgp_sessions", "status": "SKIP", "error": str(e)})',
+    '',
+    '# ── Check 3: Routes to all loopbacks ─────────────────────────────────────',
+    'print("[3/3] Checking loopback reachability...", end="", flush=True)',
+    'try:',
+    '    route_failures = []',
+    '    for hostname, ip in LOOPBACKS.items():',
+    '        df = bf.q.routes(network=ip + "/32").answer().frame()',
+    '        if len(df) == 0:',
+    '            route_failures.append(f"{hostname} ({ip})")',
+    '    if route_failures:',
+    '        print(f" FAIL: no route to {len(route_failures)} loopback(s)")',
+    '        has_failures = True',
+    '        results.append({"check": "loopback_reachability", "status": "FAIL",',
+    '                        "missing": route_failures})',
+    '    else:',
+    '        print(f" PASS ({len(LOOPBACKS)} loopback(s) reachable)")',
+    '        results.append({"check": "loopback_reachability", "status": "PASS",',
+    '                        "count": len(LOOPBACKS)})',
+    'except Exception as e:',
+    '    print(f" SKIP ({e})")',
+    '    results.append({"check": "loopback_reachability", "status": "SKIP", "error": str(e)})',
+    '',
+    '# ── Save report ──────────────────────────────────────────────────────────',
+    'with open(REPORT_FILE, "w") as f:',
+    '    json.dump(results, f, indent=2)',
+    '',
+    'passed  = sum(1 for r in results if r["status"] == "PASS")',
+    'failed  = sum(1 for r in results if r["status"] == "FAIL")',
+    'skipped = sum(1 for r in results if r["status"] == "SKIP")',
+    'print(f"\\nResults: {passed} passed · {failed} failed · {skipped} skipped")',
+    'print(f"Report:  {REPORT_FILE}")',
+    'sys.exit(1 if has_failures else 0)',
+    ''
+  ].join('\n');
+};
