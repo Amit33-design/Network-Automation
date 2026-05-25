@@ -9,6 +9,10 @@ window.jumpStep = function(n) {
   if (n === 5) {
     if (typeof renderParamsPanel === 'function') renderParamsPanel();
     setTimeout(renderDeviceList, 80);
+    /* Consistency check runs after device list + config generation (80ms) */
+    setTimeout(function() {
+      if (typeof renderConsistencyPanel === 'function') renderConsistencyPanel();
+    }, 350);
   }
   saveStateLS();
 };

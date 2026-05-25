@@ -3563,3 +3563,32 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
                       background: var(--bg3); border: 1px solid var(--border);
                       color: var(--txt1); border-radius: 6px; cursor: pointer; }
 .prm-reset-btn:hover { background: var(--bg2); }
+
+/* ── Multi-vendor Consistency Checker ─────────────────────────── */
+.con-panel          { background: var(--bg1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.con-header         { display: flex; align-items: center; gap: .75rem; padding: .75rem 1.1rem;
+                      cursor: pointer; user-select: none; transition: background .15s; }
+.con-header:hover   { background: var(--bg2); }
+.con-header-icon    { font-size: 1.1rem; flex-shrink: 0; }
+.con-header-text    { flex: 1; }
+.con-title          { font-size: .88rem; font-weight: 700; color: var(--txt0); }
+.con-sub            { font-size: .74rem; margin-top: .1rem; }
+.con-status-ok      { color: var(--green); }
+.con-status-warn    { color: var(--orange); }
+.con-chevron        { font-size: .75rem; color: var(--txt3); flex-shrink: 0; }
+.con-body           { border-top: 1px solid var(--border); padding: .75rem 1.1rem 1rem; }
+.con-table          { width: 100%; border-collapse: collapse; font-size: .79rem; }
+.con-table th       { text-align: left; font-size: .72rem; font-weight: 700; color: var(--txt2);
+                      text-transform: uppercase; letter-spacing: .05em; padding: .3rem .5rem .3rem 0;
+                      border-bottom: 1px solid var(--border); }
+.con-table td       { padding: .45rem .5rem .45rem 0; border-bottom: 1px solid var(--bg3);
+                      vertical-align: top; }
+.con-table tr:last-child td { border-bottom: none; }
+.con-ok             { color: var(--green);  font-weight: 800; font-size: .85rem; }
+.con-warn           { color: var(--orange); font-weight: 800; font-size: .85rem; }
+.con-val-ok         { font-family: monospace; font-size: .78rem; color: var(--cyan); }
+.con-val-mismatch   { display: flex; align-items: baseline; gap: .5rem; margin-bottom: .2rem; }
+.con-mismatch-val   { font-family: monospace; font-size: .78rem; color: var(--orange); }
+.con-mismatch-count { font-size: .7rem; color: var(--txt2); }
+.con-tip            { margin-top: .65rem; font-size: .75rem; color: var(--txt2);
+                      background: var(--bg3); border-radius: 6px; padding: .4rem .65rem; }
