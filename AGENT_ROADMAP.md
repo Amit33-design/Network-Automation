@@ -151,8 +151,8 @@ https://github.com/Amit33-design/Network-Automation/issues
 
 - [x] **Config Parameters Panel**: Step 5 collapsible form to customize NTP/TACACS/SNMP/syslog server IPs, domain name, BGP ASNs, and credentials before generating configs. Values persist in localStorage and update all vendor configs on Apply.
 - [x] **Config Linter**: Analyze generated vendor configs for missing mandatory sections, known anti-patterns (e.g. `no shutdown` on management, NTP without auth, BGP without `maximum-paths`). Show as a badge count + panel in Step 5 config viewer.
-- [ ] **Port Capacity Report**: Per-device table showing fabric ports used vs. total, oversubscription ratio, and uplink headroom. Flag devices near capacity. Available in BOM step.
-- [ ] **Multi-vendor Consistency Checker**: Verify that NTP servers, TACACS+ servers, SNMP trap targets, and domain name are consistent across ALL generated configs. Surface mismatches as a summary panel.
+- [x] **Port Capacity Report**: Per-device table showing fabric ports used vs. total, oversubscription ratio, and uplink headroom. Flag devices near capacity. Available in BOM step.
+- [x] **Multi-vendor Consistency Checker**: Verify that NTP servers, TACACS+ servers, SNMP trap targets, and domain name are consistent across ALL generated configs. Surface mismatches as a summary panel.
 
 ---
 
@@ -975,3 +975,39 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 **Issues closed:** None (roadmap-only item, no GitHub issue number)
 
 **Files changed**: `src/js/linter.js` (new), `src/js/configgen.js`, `index.html`, `src/css/main.css`
+
+2. **Port Capacity Report** — `7c57140`
+   - `_portCapacityRows(layers, cap)`: computes per-layer port utilization from capacity model data.
+     Handles DC leaf/spine (server ports, spine uplinks, oversub), campus access/dist/core
+     (endpoints per switch, dual uplinks, core downlinks), GPU TOR/spine (RoCEv2 ports, spine count).
+   - `_parsePortCount(s)`: extracts first integer from strings like "48x 1GbE PoE+" → 48.
+   - `_updatePortCapacitySection(layers, cap)`: renders collapsible table with downlink/uplink
+     fill bars; orange bar + "⚠" badge when utilization ≥ 80%; banner warning when any layer flagged.
+   - Table columns: Layer, Device, Qty, Downlinks used/total (%), Uplinks used/total (%), Oversub, Status.
+   - `togglePortCapacity()`: collapses/expands the section body.
+   - Wired into `updateBOMTable()` in recommendations.js alongside rack plan + cabling matrix.
+   - `index.html`: `#port-capacity-section` div below `#rack-plan-section`.
+   - `main.css`: `.pc-fill-bar`, `.pc-fill-inner`, `.pc-fill-warn`, `.pc-ok`, `.pc-warn`, `.pc-flag-banner`.
+
+3. **Multi-vendor Consistency Checker** — `e2503ea`
+   - `consistency.js` (286 lines): generates all device configs and extracts 4 management parameters.
+   - Extractors per OS (`_extractNTP`, `_extractTACACS`, `_extractSNMPTrap`, `_extractDomain`):
+     - IOS-XE/NX-OS: `ntp server <IP>`, `address ipv4 <IP>`, `snmp-server host <IP>`, `ip domain-name`
+     - EOS: same as IOS-XE plus `dns domain` fallback
+     - JunOS: `server <IP>` in ntp block, `address <IP>;` in tacacs block, `targets { <IP>`, `domain-name <X>;`
+     - SONiC: JSON key patterns
+   - Groups extracts by unique value set; `ok: true` if all devices agree.
+   - `renderConsistencyPanel()`: renders collapsible panel with parameter table.
+     ✓ green row = all devices agree (shows the single value). ⚠ orange row = mismatch (lists each
+     unique value + device count). Tip links to Config Parameters panel for remediation.
+   - `toggleConsistencyPanel()`: open/close the body.
+   - `topology.js`: added 350ms-delayed `renderConsistencyPanel()` call in `jumpStep(5)` hook
+     (after `renderDeviceList` at 80ms populates `DEVICE_LIST`).
+   - `index.html`: `#consistency-panel` div between params-panel and cfg-layout; script tag added.
+   - `main.css`: 25 `.con-*` CSS rules.
+
+**Issues closed:** None (roadmap-only items)
+
+**Files changed (run 26 total):**
+- New files: `src/js/linter.js`, `src/js/consistency.js`
+- Modified: `src/js/configgen.js`, `src/js/recommendations.js`, `src/js/topology.js`, `index.html`, `src/css/main.css`
