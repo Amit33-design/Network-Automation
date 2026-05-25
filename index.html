@@ -1046,6 +1046,7 @@
       </div>
       <div class="nlp-box-body">
         <textarea id="nlp-intent-text" class="nlp-textarea"
+          aria-label="Describe your network in plain English"
           placeholder="e.g. Data center leaf-spine for 500 servers at 25G with Cisco and Arista, BGP underlay, VXLAN/EVPN overlay, full HA redundancy at 3:1 oversubscription"></textarea>
         <div class="nlp-actions">
           <button type="button" class="btn btn-primary" onclick="window.parseIntent()" style="padding:8px 16px;font-size:12px;">✨ Parse Intent</button>
@@ -1810,8 +1811,9 @@ python3 batfish_validate_&lt;site&gt;.py
         <p class="section-sub" style="margin-bottom:10px;">150+ symptoms across BGP, EVPN, STP, DHCP, QoS, Interface, CPU, LLDP, VXLAN, Routing, Multicast, and more — with per-platform diagnostic commands.</p>
         <div class="symptom-search-bar">
           <input id="symptom-query" type="text" placeholder="Search by symptom, protocol, keyword…"
+            aria-label="Search by symptom, protocol, or keyword"
             oninput="window.updateSymptomResults()" />
-          <select id="symptom-cat" onchange="window.updateSymptomResults()">
+          <select id="symptom-cat" aria-label="Filter by category" onchange="window.updateSymptomResults()">
             <option value="All">All categories</option>
             <option value="BGP">BGP</option>
             <option value="EVPN">EVPN</option>
@@ -2041,7 +2043,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Rollback</summary>
+      <summary class="accordion-header" aria-label="Rollback">Rollback</summary>
       <div class="accordion-body" id="mon-pane-rollback">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderRollbackPane()">Generate Rollback Plan</button>
@@ -2055,7 +2057,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
     <!-- G-35: Anomaly detection -->
     <details class="accordion-item">
-      <summary class="accordion-header">Anomaly Detection</summary>
+      <summary class="accordion-header" aria-label="Anomaly Detection">Anomaly Detection</summary>
       <div class="accordion-body" id="mon-pane-anomaly">
       <div id="mon-anomaly-content">
         <p class="empty-state">Complete Step 1 to configure anomaly detection.</p>
@@ -2077,7 +2079,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
     <!-- Jinja Engine -->
     <details class="accordion-item" open>
-      <summary class="accordion-header">Jinja Engine</summary>
+      <summary class="accordion-header" aria-label="Jinja Engine">Jinja Engine</summary>
       <div class="accordion-body" id="tools-pane-jinja">
       <div id="jinja-engine-content">
         <p class="empty-state">Complete Step 1 to generate the Jinja2 inventory and templates.</p>
@@ -2087,7 +2089,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
     <!-- ZTP shortcut -->
     <details class="accordion-item">
-      <summary class="accordion-header">ZTP</summary>
+      <summary class="accordion-header" aria-label="ZTP">ZTP</summary>
       <div class="accordion-body" id="tools-pane-ztp">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Zero-Touch Provisioning</h3>
@@ -2108,7 +2110,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
     <!-- Monitoring shortcut -->
     <details class="accordion-item">
-      <summary class="accordion-header">Monitoring</summary>
+      <summary class="accordion-header" aria-label="Monitoring">Monitoring</summary>
       <div class="accordion-body" id="tools-pane-monitoring">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Monitoring &amp; Observability</h3>
@@ -2130,7 +2132,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
     <!-- Troubleshoot -->
     <details class="accordion-item">
-      <summary class="accordion-header">Troubleshoot</summary>
+      <summary class="accordion-header" aria-label="Troubleshoot">Troubleshoot</summary>
       <div class="accordion-body" id="tools-pane-troubleshoot">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Troubleshoot</h3>
@@ -2143,8 +2145,9 @@ curl -X POST http://localhost:9090/-/reload</pre>
         </div>
         <div class="symptom-search-bar">
           <input id="tools-symptom-query" type="text" placeholder="Search by symptom, protocol, keyword…"
+            aria-label="Search by symptom, protocol, or keyword"
             oninput="window.updateToolsSymptomResults()" />
-          <select id="tools-symptom-cat" onchange="window.updateToolsSymptomResults()">
+          <select id="tools-symptom-cat" aria-label="Filter by category" onchange="window.updateToolsSymptomResults()">
             <option value="All">All categories</option>
             <option value="BGP">BGP</option>
             <option value="EVPN">EVPN</option>
@@ -2172,7 +2175,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
     <!-- Approvals -->
     <details class="accordion-item">
-      <summary class="accordion-header">Approvals</summary>
+      <summary class="accordion-header" aria-label="Approvals">Approvals</summary>
       <div class="accordion-body" id="tools-pane-approvals">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Change Approvals</h3>
@@ -2212,7 +2215,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
     <!-- Integrations -->
     <details class="accordion-item">
-      <summary class="accordion-header">Integrations</summary>
+      <summary class="accordion-header" aria-label="Integrations">Integrations</summary>
       <div class="accordion-body" id="tools-pane-integrations">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Integrations</h3>
@@ -2314,7 +2317,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
     <!-- G-49: Visual Policy Editor -->
     <details class="accordion-item">
-      <summary class="accordion-header">&#9881; Policy Editor — ACL / QoS / Route-Map</summary>
+      <summary class="accordion-header" aria-label="Policy Editor — ACL / QoS / Route-Map">&#9881; Policy Editor — ACL / QoS / Route-Map</summary>
       <div class="accordion-body" id="tools-pane-policy">
         <p style="color:var(--text-dim);font-size:13px;margin:0 0 12px;">
           Build ACL, QoS, and route-map policy chains visually. Rules serialize to the intent object and config generator.
@@ -2363,6 +2366,30 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/policy_editor.js"></script>
 <script src="src/js/command_palette.js"></script>
 <script src="src/js/init.js"></script>
+
+<script>
+window.toggleTheme = function() {
+  var current = document.documentElement.getAttribute('data-theme') ||
+    (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  var next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('ndal-theme', next); } catch(e) {}
+  var btn = document.getElementById('theme-toggle-btn');
+  if (btn) btn.textContent = next === 'dark' ? '☾ Theme' : '☀ Theme';
+  // Update aria-selected on tabs to match active tab (theme toggle does not change tabs)
+};
+// Restore saved theme on load
+(function() {
+  try {
+    var saved = localStorage.getItem('ndal-theme');
+    if (saved) {
+      document.documentElement.setAttribute('data-theme', saved);
+      var btn = document.getElementById('theme-toggle-btn');
+      if (btn) btn.textContent = saved === 'dark' ? '☾ Theme' : '☀ Theme';
+    }
+  } catch(e) {}
+})();
+</script>
 
 </body>
 </html>
