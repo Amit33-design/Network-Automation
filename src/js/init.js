@@ -464,22 +464,6 @@ function renderMonitoring() {
 window.renderMonitoring = renderMonitoring;
 
 function renderJinjaPane() {
-  // Wire sub-tabs inside step 7 on first open
-  var toolsTabs = document.getElementById('tools-tabs');
-  if (toolsTabs && !toolsTabs._wired) {
-    toolsTabs._wired = true;
-    toolsTabs.querySelectorAll('.bom-tab').forEach(function(t) {
-      t.addEventListener('click', function() {
-        toolsTabs.querySelectorAll('.bom-tab').forEach(function(x) { x.classList.remove('active'); });
-        t.classList.add('active');
-        var paneId = t.getAttribute('data-pane');
-        document.querySelectorAll('#step-7 .bom-pane').forEach(function(p) { p.classList.remove('active'); });
-        var pane = document.getElementById(paneId);
-        if (pane) pane.classList.add('active');
-        if (paneId === 'tools-pane-jinja') { _renderJinjaContent(); }
-      });
-    });
-  }
   _renderJinjaContent();
 }
 function _renderJinjaContent() {
@@ -1072,19 +1056,6 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Sub-tab groups — each group activates only sibling panes
-  function wireSubTabs(groupSelector, paneAttr) {
-    document.querySelectorAll(groupSelector).forEach(function(tab) {
-      tab.addEventListener('click', function() {
-        var parent = tab.closest('section') || document;
-        parent.querySelectorAll(groupSelector).forEach(function(t) { t.classList.remove('active'); });
-        parent.querySelectorAll('.bom-pane').forEach(function(p) { p.classList.remove('active'); });
-        tab.classList.add('active');
-        var pane = document.getElementById(tab.getAttribute(paneAttr || 'data-pane'));
-        if (pane) pane.classList.add('active');
-      });
-    });
-  }
-  wireSubTabs('.bom-tab', 'data-pane');
 
   // Step tabs: generate content when navigating to steps 5 and 6
   document.querySelectorAll('.step-tab').forEach(function(tab) {

@@ -337,6 +337,46 @@
     .bom-pane { display: none; }
     .bom-pane.active { display: block; }
 
+    /* ── Accordion (replaces bom-tabs for step sub-sections) ─────────────────── */
+    .accordion-item {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+    .accordion-header {
+      padding: 11px 14px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      list-style: none;
+      user-select: none;
+      margin: 0;
+    }
+    .accordion-header::-webkit-details-marker { display: none; }
+    .accordion-header::after {
+      content: '›';
+      margin-left: auto;
+      transition: transform .15s;
+      font-size: 18px;
+      color: var(--text-dim);
+      font-weight: 300;
+    }
+    details.accordion-item[open] > .accordion-header::after {
+      transform: rotate(90deg);
+    }
+    details.accordion-item[open] > .accordion-header {
+      color: var(--accent);
+    }
+    .accordion-body {
+      padding: 14px;
+      border-top: 1px solid var(--border);
+    }
+
     /* ─── Config viewer ───────────────────────────────────────────────────── */
     .config-viewer { display: flex; flex-direction: column; gap: 12px; }
     .config-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
@@ -1237,58 +1277,65 @@
 
     <div id="bom-capacity-banner" style="display:none; margin-bottom:12px;"></div>
 
-    <div class="bom-tabs-wrap">
-    <div class="bom-tabs">
-      <div class="bom-tab active" data-pane="bom-pane-devices">Devices &amp; BOM</div>
-      <div class="bom-tab" data-pane="bom-pane-cabling">Cabling Schedule</div>
-      <div class="bom-tab" data-pane="bom-pane-optics">Optics</div>
-      <div class="bom-tab" data-pane="bom-pane-rack">Rack Layout</div>
-      <div class="bom-tab" data-pane="bom-pane-tco">TCO (3yr)</div>
-      <div class="bom-tab" data-pane="bom-pane-capacity">Capacity Math</div>
-    </div>
-    </div>
-
-    <div id="bom-pane-devices" class="bom-pane active">
+    <details class="accordion-item" open>
+      <summary class="accordion-header">Devices &amp; BOM</summary>
+      <div class="accordion-body" id="bom-pane-devices">
       <div id="bom-output">
         <p class="empty-state">Complete Step 1 to generate the BOM.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="bom-pane-cabling" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Cabling Schedule</summary>
+      <div class="accordion-body" id="bom-pane-cabling">
       <div id="cabling-output">
         <p class="empty-state">Cabling schedule will appear after BOM generation.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="bom-pane-optics" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Optics</summary>
+      <div class="accordion-body" id="bom-pane-optics">
       <div id="optics-output">
         <p class="empty-state">Optics recommendations will appear after BOM generation.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="bom-pane-rack" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Rack Layout</summary>
+      <div class="accordion-body" id="bom-pane-rack">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadRackLayoutCSV()">Download CSV</button>
       </div>
       <div id="rack-layout-output">
         <p class="empty-state">Rack layout will appear after BOM generation.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="bom-pane-tco" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">TCO (3yr)</summary>
+      <div class="accordion-body" id="bom-pane-tco">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadTCOCSV()">Download TCO CSV</button>
       </div>
       <div id="tco-output">
         <p class="empty-state">TCO report will appear after BOM generation.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="bom-pane-capacity" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Capacity Math</summary>
+      <div class="accordion-body" id="bom-pane-capacity">
       <div id="capacity-math-output">
         <p class="empty-state">Port-math sizing available for DC / GPU / Multi-site use cases.</p>
       </div>
-    </div>
+      </div>
+    </details>
   </section>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -1317,18 +1364,10 @@
       </div>
     </div>
 
-    <div class="bom-tabs-wrap">
-    <div class="bom-tabs">
-      <div class="bom-tab active" data-pane="ztp-pane-day0">Day-0 Bootstrap</div>
-      <div class="bom-tab" data-pane="ztp-pane-server">File Server</div>
-      <div class="bom-tab" data-pane="ztp-pane-board">State Board</div>
-      <div class="bom-tab" data-pane="ztp-pane-api">ZTP API</div>
-      <div class="bom-tab" data-pane="ztp-pane-os-images">OS Images</div>
-    </div>
-    </div>
-
     <!-- Day-0 bootstrap config (G-31) -->
-    <div id="ztp-pane-day0" class="bom-pane active">
+    <details class="accordion-item" open>
+      <summary class="accordion-header">Day-0 Bootstrap</summary>
+      <div class="accordion-body" id="ztp-pane-day0">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderZtp()">Generate ZTP</button>
         <button class="btn btn-secondary" onclick="window.downloadDay0Config()">↓ day0-configs.txt</button>
@@ -1343,10 +1382,13 @@
       <div id="ztp-day0-output">
         <p class="empty-state">Complete Step 1 and click Generate ZTP.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- File server (G-29) -->
-    <div id="ztp-pane-server" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">File Server</summary>
+      <div class="accordion-body" id="ztp-pane-server">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadZtpDockerCompose()">↓ ztp-stack.yml</button>
         <button class="btn btn-secondary" onclick="window.downloadZtpNginxConf()">↓ nginx.conf</button>
@@ -1368,10 +1410,13 @@ curl http://localhost:8080/health
       <div id="ztp-server-output">
         <p class="empty-state">Generate ZTP first.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- State board (G-30) -->
-    <div id="ztp-pane-board" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">State Board</summary>
+      <div class="accordion-body" id="ztp-pane-board">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.refreshZtpBoard()">Refresh Board</button>
       </div>
@@ -1394,10 +1439,13 @@ curl http://localhost:8080/health
       <div id="ztp-state-board">
         <p class="empty-state">Complete Step 1 and click Generate ZTP to initialize state board.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- ZTP API stubs (G-30) -->
-    <div id="ztp-pane-api" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">ZTP API</summary>
+      <div class="accordion-body" id="ztp-pane-api">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadZtpApi()">↓ ztp/api.py</button>
       </div>
@@ -1420,14 +1468,18 @@ curl http://localhost:8080/health
       <div id="ztp-api-output">
         <p class="empty-state">Generate ZTP first.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- G-32: OS image version management -->
-    <div id="ztp-pane-os-images" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">OS Images</summary>
+      <div class="accordion-body" id="ztp-pane-os-images">
       <div id="ztp-image-content">
         <p class="empty-state">Complete Step 1 to see OS image management.</p>
       </div>
-    </div>
+      </div>
+    </details>
   </section>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -1441,21 +1493,9 @@ curl http://localhost:8080/health
       </div>
     </div>
 
-    <div class="bom-tabs-wrap">
-    <div class="bom-tabs">
-      <div class="bom-tab active" data-pane="checks-pane-pre">Pre-Check Script</div>
-      <div class="bom-tab" data-pane="checks-pane-post">Post-Check Script</div>
-      <div class="bom-tab" data-pane="checks-pane-batfish">Batfish Dry-Run</div>
-      <div class="bom-tab" data-pane="checks-pane-results">Results Diff</div>
-      <div class="bom-tab" data-pane="checks-pane-drift">Drift Check</div>
-      <div class="bom-tab" data-pane="checks-pane-topo">Topology Crawl</div>
-      <div class="bom-tab" data-pane="checks-pane-symptoms">Symptom Classifier</div>
-      <div class="bom-tab" data-pane="checks-pane-readme">Usage Guide</div>
-      <div class="bom-tab" data-pane="checks-pane-convergence">Convergence Predictor</div>
-    </div>
-    </div>
-
-    <div id="checks-pane-pre" class="bom-pane active">
+    <details class="accordion-item" open>
+      <summary class="accordion-header">Pre-Check Script</summary>
+      <div class="accordion-body" id="checks-pane-pre">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderChecks()">Generate Scripts</button>
         <button class="btn btn-secondary" onclick="window.downloadPreCheck()">Download pre_check.py</button>
@@ -1463,19 +1503,25 @@ curl http://localhost:8080/health
       <div id="pre-check-output">
         <p class="empty-state">Complete Step 1 and click Generate Scripts.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="checks-pane-post" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Post-Check Script</summary>
+      <div class="accordion-body" id="checks-pane-post">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadPostCheck()">Download post_check.py</button>
       </div>
       <div id="post-check-output">
         <p class="empty-state">Generate scripts first.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- G-24: Batfish dry-run validation -->
-    <div id="checks-pane-batfish" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Batfish Dry-Run</summary>
+      <div class="accordion-body" id="checks-pane-batfish">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderBatfish()">Generate Batfish Script</button>
         <button class="btn btn-secondary" onclick="window.downloadBatfishScript()">↓ batfish_validate.py</button>
@@ -1505,9 +1551,12 @@ python3 batfish_validate_&lt;site&gt;.py
       <div id="batfish-output">
         <p class="empty-state">Complete Step 3 (config gen) and click Generate Batfish Script.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="checks-pane-results" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Results Diff</summary>
+      <div class="accordion-body" id="checks-pane-results">
       <div class="form-section" style="font-size:13px;">
         <h3>Post-Check Diff Report</h3>
         <p style="color:var(--text-dim); margin-bottom:8px;">
@@ -1519,9 +1568,12 @@ python3 batfish_validate_&lt;site&gt;.py
         </div>
         <div id="diff-output"></div>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="checks-pane-drift" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Drift Check</summary>
+      <div class="accordion-body" id="checks-pane-drift">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Config Drift Detection</h3>
         <p class="section-sub" style="margin-bottom:10px;">
@@ -1547,9 +1599,12 @@ python3 batfish_validate_&lt;site&gt;.py
         </div>
         <div id="drift-report-output"></div>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="checks-pane-topo" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Topology Crawl</summary>
+      <div class="accordion-body" id="checks-pane-topo">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">LLDP/CDP Topology Crawler</h3>
         <p class="section-sub" style="margin-bottom:10px;">
@@ -1577,9 +1632,12 @@ python3 batfish_validate_&lt;site&gt;.py
         </div>
         <div id="topo-result-output"></div>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="checks-pane-symptoms" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Symptom Classifier</summary>
+      <div class="accordion-body" id="checks-pane-symptoms">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Symptom Classifier</h3>
         <p class="section-sub" style="margin-bottom:10px;">150+ symptoms across BGP, EVPN, STP, DHCP, QoS, Interface, CPU, LLDP, VXLAN, Routing, Multicast, and more — with per-platform diagnostic commands.</p>
@@ -1609,9 +1667,12 @@ python3 batfish_validate_&lt;site&gt;.py
           <p class="empty-state">Start typing a symptom or select a category.</p>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="checks-pane-readme" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Usage Guide</summary>
+      <div class="accordion-body" id="checks-pane-readme">
       <div class="form-section" style="font-size:13px; line-height:1.8;">
         <h3>Usage Guide</h3>
         <p><strong>1. Install dependencies</strong></p>
@@ -1639,16 +1700,19 @@ export NET_ENABLE=enablepassword   # if required</pre>
           Management IPs default to 192.168.1.X — edit DEVICES list in the generated script to match your out-of-band addressing.
         </p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- G-38: BGP convergence predictor -->
-    <div id="checks-pane-convergence" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Convergence Predictor</summary>
+      <div class="accordion-body" id="checks-pane-convergence">
       <div style="margin-top:16px;" id="convergence-predictor-panel">
         <div id="convergence-content">
           <p class="empty-state">Complete Step 1 to use the convergence predictor.</p>
         </div>
       </div>
-    </div>
+    </details>
   </section>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -1662,20 +1726,9 @@ export NET_ENABLE=enablepassword   # if required</pre>
       </div>
     </div>
 
-    <div class="bom-tabs-wrap">
-    <div class="bom-tabs">
-      <div class="bom-tab active" data-pane="mon-pane-prom">Prometheus Alerts</div>
-      <div class="bom-tab" data-pane="mon-pane-grafana">Grafana Dashboard</div>
-      <div class="bom-tab" data-pane="mon-pane-stack">Stack Setup</div>
-      <div class="bom-tab" data-pane="mon-pane-gnmi">gNMI Telemetry</div>
-      <div class="bom-tab" data-pane="mon-pane-deploy">Deploy Guide</div>
-      <div class="bom-tab" data-pane="mon-pane-canary">Canary Deploy</div>
-      <div class="bom-tab" data-pane="mon-pane-rollback">Rollback</div>
-      <div class="bom-tab" data-pane="mon-pane-anomaly">Anomaly Detection</div>
-    </div>
-    </div>
-
-    <div id="mon-pane-prom" class="bom-pane active">
+    <details class="accordion-item" open>
+      <summary class="accordion-header">Prometheus Alerts</summary>
+      <div class="accordion-body" id="mon-pane-prom">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderMonitoring()">Generate Monitoring</button>
         <button class="btn btn-secondary" onclick="window.downloadPrometheus()">Download alerts.yml</button>
@@ -1683,19 +1736,25 @@ export NET_ENABLE=enablepassword   # if required</pre>
       <div id="prometheus-output">
         <p class="empty-state">Complete Step 1 and click Generate Monitoring.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="mon-pane-grafana" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Grafana Dashboard</summary>
+      <div class="accordion-body" id="mon-pane-grafana">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadGrafana()">Download dashboard.json</button>
       </div>
       <div id="grafana-output">
         <p class="empty-state">Generate monitoring first.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- G-33: Embedded monitoring stack -->
-    <div id="mon-pane-stack" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Stack Setup</summary>
+      <div class="accordion-body" id="mon-pane-stack">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderMonitoring()">Generate Stack</button>
         <button class="btn btn-secondary" onclick="window.downloadDockerCompose()">↓ monitoring-stack.yml</button>
@@ -1727,10 +1786,13 @@ curl -X POST http://admin:admin@localhost:3000/api/dashboards/import \
           <p class="empty-state">Complete Step 1 and click Generate Stack.</p>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- G-34: gNMI streaming telemetry -->
-    <div id="mon-pane-gnmi" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">gNMI Telemetry</summary>
+      <div class="accordion-body" id="mon-pane-gnmi">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderMonitoring()">Generate gNMI Config</button>
         <button class="btn btn-secondary" onclick="window.downloadGnmicYaml()">↓ gnmic.yml</button>
@@ -1759,9 +1821,12 @@ curl -X POST http://admin:admin@localhost:3000/api/dashboards/import \
           <p class="empty-state">Complete Step 1 and click Generate gNMI Config.</p>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="mon-pane-deploy" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Deploy Guide</summary>
+      <div class="accordion-body" id="mon-pane-deploy">
       <div class="form-section" style="font-size:13px; line-height:1.8;">
         <h3>Deploy Guide</h3>
         <p><strong>Prometheus alert rules</strong></p>
@@ -1792,9 +1857,12 @@ curl -X POST http://localhost:9090/-/reload</pre>
           Datasource UID in the dashboard JSON is <code>prometheus</code> — rename to match your Grafana datasource UID if different.
         </p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="mon-pane-canary" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Canary Deploy</summary>
+      <div class="accordion-body" id="mon-pane-canary">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderCanaryDeployPane()">Generate Canary Deploy</button>
         <button class="btn btn-secondary" onclick="window.downloadDeployScript()">Download deploy.py</button>
@@ -1802,9 +1870,12 @@ curl -X POST http://localhost:9090/-/reload</pre>
       <div id="canary-deploy-output">
         <p class="empty-state">Complete Step 1 and click Generate Canary Deploy.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div id="mon-pane-rollback" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Rollback</summary>
+      <div class="accordion-body" id="mon-pane-rollback">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderRollbackPane()">Generate Rollback Plan</button>
         <button class="btn btn-secondary" onclick="window.downloadRollbackScript()">Download rollback.py</button>
@@ -1812,14 +1883,18 @@ curl -X POST http://localhost:9090/-/reload</pre>
       <div id="rollback-output">
         <p class="empty-state">Complete Step 1 and click Generate Rollback Plan.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- G-35: Anomaly detection -->
-    <div id="mon-pane-anomaly" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Anomaly Detection</summary>
+      <div class="accordion-body" id="mon-pane-anomaly">
       <div id="mon-anomaly-content">
         <p class="empty-state">Complete Step 1 to configure anomaly detection.</p>
       </div>
-    </div>
+      </div>
+    </details>
   </section>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -1833,26 +1908,20 @@ curl -X POST http://localhost:9090/-/reload</pre>
       </div>
     </div>
 
-    <div class="bom-tabs-wrap">
-    <div class="bom-tabs" id="tools-tabs">
-      <div class="bom-tab active" data-pane="tools-pane-jinja">Jinja Engine</div>
-      <div class="bom-tab" data-pane="tools-pane-ztp">ZTP</div>
-      <div class="bom-tab" data-pane="tools-pane-monitoring">Monitoring</div>
-      <div class="bom-tab" data-pane="tools-pane-troubleshoot">Troubleshoot</div>
-      <div class="bom-tab" data-pane="tools-pane-approvals">Approvals</div>
-      <div class="bom-tab" data-pane="tools-pane-integrations">Integrations</div>
-    </div>
-    </div>
-
     <!-- Jinja Engine -->
-    <div id="tools-pane-jinja" class="bom-pane active">
+    <details class="accordion-item" open>
+      <summary class="accordion-header">Jinja Engine</summary>
+      <div class="accordion-body" id="tools-pane-jinja">
       <div id="jinja-engine-content">
         <p class="empty-state">Complete Step 1 to generate the Jinja2 inventory and templates.</p>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- ZTP shortcut -->
-    <div id="tools-pane-ztp" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">ZTP</summary>
+      <div class="accordion-body" id="tools-pane-ztp">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Zero-Touch Provisioning</h3>
         <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">
@@ -1867,10 +1936,13 @@ curl -X POST http://localhost:9090/-/reload</pre>
           <p class="empty-state">Click "Open Full ZTP Workflow" to configure ZTP, or generate from Step 4 first.</p>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- Monitoring shortcut -->
-    <div id="tools-pane-monitoring" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Monitoring</summary>
+      <div class="accordion-body" id="tools-pane-monitoring">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Monitoring &amp; Observability</h3>
         <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">
@@ -1886,10 +1958,13 @@ curl -X POST http://localhost:9090/-/reload</pre>
           <p class="empty-state">Generate monitoring config in Step 6, then return here for quick downloads.</p>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- Troubleshoot -->
-    <div id="tools-pane-troubleshoot" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Troubleshoot</summary>
+      <div class="accordion-body" id="tools-pane-troubleshoot">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Troubleshoot</h3>
         <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">
@@ -1925,10 +2000,13 @@ curl -X POST http://localhost:9090/-/reload</pre>
           <p class="empty-state">Start typing a symptom or select a category.</p>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- Approvals -->
-    <div id="tools-pane-approvals" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Approvals</summary>
+      <div class="accordion-body" id="tools-pane-approvals">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Change Approvals</h3>
         <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">4-eyes change management — log a change record, collect approver sign-off, track status.</p>
@@ -1962,10 +2040,13 @@ curl -X POST http://localhost:9090/-/reload</pre>
           <p class="empty-state">No change requests submitted yet.</p>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
     <!-- Integrations -->
-    <div id="tools-pane-integrations" class="bom-pane">
+    <details class="accordion-item">
+      <summary class="accordion-header">Integrations</summary>
+      <div class="accordion-body" id="tools-pane-integrations">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Integrations</h3>
         <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">Push design artifacts to your ITSM, chat, and CMDB systems.</p>
@@ -2061,7 +2142,8 @@ curl -X POST http://localhost:9090/-/reload</pre>
 
         <div id="int-log" style="font-size:12px;color:var(--text-dim);margin-top:8px;"></div>
       </div>
-    </div>
+      </div>
+    </details>
   </section>
 
 </main>
