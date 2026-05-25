@@ -1735,9 +1735,11 @@
             <button class="btn-cfg-action" onclick="downloadConfig()">⬇ Download</button>
             <button class="btn-cfg-action" onclick="toggleAllSections()">⊞ All</button>
             <button class="btn-cfg-action" id="btn-diff" onclick="toggleDiff()" title="Compare with previous config version">⊕ Diff</button>
+            <button class="btn-cfg-action" id="btn-linter" onclick="toggleLinterPanel()" title="Show linter findings">🔍 Lint <span id="linter-badge-count" class="linter-badge linter-badge-ok">0</span></button>
           </div>
         </div>
         <div class="cfg-section-nav" id="cfg-section-nav"></div>
+        <div id="linter-panel"></div>
         <div id="cfg-code-area">
           <pre class="cfg-code" id="cfg-code-pre" style="color:var(--txt3);text-align:center;padding-top:4rem">
 ← Select a device from the list to view its configuration</pre>
@@ -3398,6 +3400,7 @@ rules:
 <script src="src/js/naming.js"></script>
 <script src="src/js/netbox.js"></script>
 <script src="src/js/params.js"></script>
+<script src="src/js/linter.js"></script>
 <script src="src/js/configgen.js"></script>
 <script src="src/js/intentmodel.js"></script>
 <script src="src/js/diffengine.js"></script>

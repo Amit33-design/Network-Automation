@@ -316,6 +316,11 @@ function selectDevice(id) {
   } else {
     document.getElementById('cfg-code-pre').innerHTML = highlight(raw, os);
   }
+
+  // Run linter on fresh config
+  if (typeof renderLinterPanel === 'function') {
+    renderLinterPanel(raw, os, ACTIVE_DEV);
+  }
 }
 
 /* ── Section nav ────────────────────────────────────────────────── */
