@@ -692,11 +692,17 @@
       +'HLD &nbsp;—&nbsp; <span style="color:var(--accent);">'+esc(ucLabel)+'</span>'
       +'&nbsp;·&nbsp; '+devCount+' devices'+sites
       +'</div>'
+      +'<div style="display:flex;gap:6px;align-items:center;">'
       +'<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" '
       +'onclick="window.exportHLDSvg()">&#8595; Export SVG</button>'
+      +'<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" '
+      +'onclick="window.exportHLDPng()">&#8595; Export PNG</button>'
+      +'<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" '
+      +'onclick="window.resetHLDView()" title="Reset pan/zoom (also: double-click diagram)">&#8635; Reset</button>'
+      +'</div>'
       +'</div>'
       +'<svg id="hld-svg" viewBox="0 0 '+W+' '+H+'" width="100%" '
-      +'style="max-width:1000px;display:block;background:transparent;">'
+      +'style="max-width:1000px;display:block;background:transparent;cursor:grab;overflow:hidden;">'
       +body
       +'</svg>'
       +'</div>';
@@ -716,6 +722,127 @@
     a.download = 'network-hld.svg';
     a.click();
     URL.revokeObjectURL(a.href);
+  };
+
+  window.exportHLDPng = function() {
+    var el = document.getElementById('hld-svg');
+    if (!el) { el = document.querySelector('#topo-hld-output svg'); }
+    if (!el) return;
+
+    var vb = el.viewBox.baseVal;
+    var vbW = (vb && vb.width)  || 960;
+    var vbH = (vb && vb.height) || 600;
+    var DPR = 2; // 2× pixel ratio for crisp output
+
+    var s = new XMLSerializer();
+    var svgStr = s.serializeToString(el);
+    // Ensure xmlns is present so the browser can parse as image
+    if (svgStr.indexOf('xmlns=') === -1) {
+      svgStr = svgStr.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+    var blob = new Blob([svgStr], { type: 'image/svg+xml' });
+    var url  = URL.createObjectURL(blob);
+
+    var img = new Image();
+    img.onload = function() {
+      var canvas = document.createElement('canvas');
+      canvas.width  = vbW * DPR;
+      canvas.height = vbH * DPR;
+      var ctx = canvas.getContext('2d');
+      ctx.scale(DPR, DPR);
+      ctx.drawImage(img, 0, 0, vbW, vbH);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(function(pngBlob) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(pngBlob);
+        a.download = 'network-hld.png';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }, 'image/png');
+    };
+    img.onerror = function() {
+      URL.revokeObjectURL(url);
+      console.error('NetDesign AI: PNG export failed — SVG could not be loaded as image.');
+    };
+    img.src = url;
+  };
+
+  /* ── HLD Pan / Zoom / Reset ─────────────────────────────────────────────── */
+
+  /* Module-level interaction state — persists across re-renders */
+  var _hld = null;
+
+  window.initHLDInteraction = function() {
+    var svg = document.getElementById('hld-svg');
+    if (!svg) return;
+
+    /* Wrap children in a viewport <g> if not already done */
+    var vp = document.getElementById('hld-vp');
+    if (!vp) {
+      vp = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      vp.setAttribute('id', 'hld-vp');
+      // Move all existing children into the group
+      while (svg.firstChild) { vp.appendChild(svg.firstChild); }
+      svg.appendChild(vp);
+    }
+
+    /* (Re-)initialise state */
+    _hld = { tx: 0, ty: 0, scale: 1, vp: vp };
+    _hld.apply = function() {
+      _hld.vp.setAttribute('transform',
+        'translate(' + _hld.tx + ',' + _hld.ty + ') scale(' + _hld.scale + ')');
+    };
+    _hld.apply(); // reset to identity
+
+    /* Clamp helper */
+    function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+    /* Mouse-wheel zoom */
+    svg.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      _hld.scale = clamp(_hld.scale * (e.deltaY < 0 ? 1.15 : 0.87), 0.15, 5);
+      _hld.apply();
+    }, { passive: false });
+
+    /* Pointer drag */
+    var dragging = false, lastX = 0, lastY = 0;
+
+    svg.addEventListener('pointerdown', function(e) {
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      svg.style.cursor = 'grabbing';
+      svg.setPointerCapture(e.pointerId);
+    });
+
+    svg.addEventListener('pointermove', function(e) {
+      if (!dragging) return;
+      _hld.tx += e.clientX - lastX;
+      _hld.ty += e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      _hld.apply();
+    });
+
+    function stopDrag(e) {
+      dragging = false;
+      svg.style.cursor = 'grab';
+    }
+    svg.addEventListener('pointerup',    stopDrag);
+    svg.addEventListener('pointerleave', stopDrag);
+
+    /* Double-click to reset */
+    svg.addEventListener('dblclick', function() {
+      _hld.tx = 0; _hld.ty = 0; _hld.scale = 1;
+      _hld.apply();
+    });
+  };
+
+  window.resetHLDView = function() {
+    if (_hld) {
+      _hld.tx = 0; _hld.ty = 0; _hld.scale = 1;
+      _hld.apply();
+    }
   };
 
 })();

@@ -793,31 +793,37 @@ function _roleBadge(role) {
 function renderStep2() {
   var result = window.buildBOM(STATE);
   var html   = window.renderBOMTable(result.summary);
-  var deviceList = (STATE.devices || []).map(function(d) {
-    return '<tr>'
-      + '<td style="font-weight:600;white-space:nowrap;">' + d.hostname + '</td>'
-      + '<td style="white-space:nowrap;">' + d.model + '</td>'
-      + '<td>' + _roleBadge(d.subLayer) + '</td>'
-      + '<td style="white-space:nowrap;">' + d.vendor + '</td>'
-      + '<td><code style="font-size:11px;background:var(--surface2);padding:2px 6px;border-radius:4px;">' + d.speed + '</code></td>'
-      + '<td style="white-space:nowrap;color:var(--text-dim);">Rack ' + d.rack + ' U' + d.unit + '</td>'
-      + '</tr>';
-  }).join('');
+
+  // G-45: store devices for sort/filter
+  window._bomAllDevices = (STATE.devices || []).slice();
+  window._bomSort  = { col: null, dir: 1 };
+  window._bomQuery = '';
 
   var container = document.getElementById('bom-output');
   if (!container) return;
 
+  var sortCols = ['hostname','model','subLayer','vendor','speed'];
+  var thLabels = ['Hostname','Model','Role','Vendor','Speed','Location'];
+  var headerCells = sortCols.map(function(col, i) {
+    return '<th class="bom-sort-th" data-col="' + col + '" onclick="window.bomSortBy(\'' + col + '\')">'
+      + thLabels[i] + '<span class="bom-sort-arrow"></span></th>';
+  }).join('') + '<th>' + thLabels[5] + '</th>';
+
   var deviceSection = '<div style="margin-top:28px;margin-bottom:10px;display:flex;align-items:baseline;gap:12px;">'
     + '<h3 style="font-size:14px;font-weight:700;color:var(--text);">Device Inventory</h3>'
-    + '<span style="font-size:12px;color:var(--text-dim);">' + (STATE.devices||[]).length + ' devices</span>'
+    + '<span id="bom-device-count" style="font-size:12px;color:var(--text-dim);">' + (STATE.devices||[]).length + ' devices</span>'
+    + '</div>'
+    + '<div class="bom-filter-bar">'
+    + '<input id="bom-filter-input" class="bom-filter-input" type="text" placeholder="Filter by hostname, model, role, vendor…" oninput="window.bomFilter()">'
     + '</div>'
     + '<div class="table-scroll">'
-    + '<table class="bom-table"><thead><tr>'
-    + '<th>Hostname</th><th>Model</th><th>Role</th><th>Vendor</th><th>Speed</th><th>Location</th>'
-    + '</tr></thead><tbody>' + deviceList + '</tbody></table></div>';
+    + '<table class="bom-table"><thead><tr>' + headerCells + '</tr></thead>'
+    + '<tbody id="bom-device-tbody"></tbody></table></div>';
 
   var lcBanner = window.renderLifecycleBanner ? window.renderLifecycleBanner(STATE.devices) : '';
   container.innerHTML = lcBanner + '<div class="table-scroll">' + html + '</div>' + deviceSection;
+  // G-45: populate the sortable/filterable tbody now that the DOM exists
+  window.bomRenderTable();
 
   // Cabling tab
   var cableOut = document.getElementById('cabling-output');
@@ -849,7 +855,11 @@ function renderStep2() {
 
   // HLD Topology Diagram
   var hldOut = document.getElementById('topo-hld-output');
-  if (hldOut) hldOut.innerHTML = renderTopologyDiagram(STATE);
+  if (hldOut) {
+    hldOut.innerHTML = renderTopologyDiagram(STATE);
+    // G-43: init pan/zoom after SVG is in DOM
+    if (window.initHLDInteraction) window.initHLDInteraction();
+  }
 
   // G-38: BGP convergence predictor (updates when devices are built)
   var convOut = document.getElementById('convergence-content');
@@ -1469,6 +1479,13 @@ function renderStep3() {
   window.generateAllConfigs(STATE);
   var container = document.getElementById('config-output');
   if (container) container.innerHTML = window.renderConfigViewer(STATE);
+  // G-44: apply syntax highlighting to the initially-shown config
+  var initialPre = document.getElementById('cfg-output');
+  if (initialPre && window.applyConfigHighlight) {
+    var firstDev = STATE.devices[0];
+    var firstCfg = firstDev ? (STATE.configs[firstDev.instanceId] || '') : '';
+    if (firstCfg) window.applyConfigHighlight(initialPre, firstCfg);
+  }
   // Set initial device for download
   window._currentCfgId = STATE.devices[0] ? STATE.devices[0].instanceId : null;
   showToast('Configs generated for ' + STATE.devices.length + ' devices', 'success');
@@ -1478,7 +1495,8 @@ window.renderStep3 = renderStep3;
 function showDeviceConfig(instanceId) {
   var pre = document.getElementById('cfg-output');
   if (!pre) return;
-  pre.textContent = STATE.configs[instanceId] || '! No config for ' + instanceId;
+  var cfgText = STATE.configs[instanceId] || '! No config for ' + instanceId;
+  window.applyConfigHighlight(pre, cfgText);
 
   // Highlight the selected item in the device list
   var items = document.querySelectorAll('.cfg-dev-item');
@@ -1551,8 +1569,136 @@ function downloadFile(filename, content, mimeType) {
 }
 window.downloadFile = downloadFile;
 
+// ─── G-44: Network CLI Syntax Highlighting ────────────────────────────────────
+window.highlightNetCLI = function(text) {
+  // Escape HTML first, then apply semantic spans
+  var h = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Apply patterns top-to-bottom (order matters)
+  // 1. Comments: lines starting with ! or #
+  h = h.replace(/^([!#].*)$/gm, '<span class="cli-comment">$1</span>');
+  // 2. "no " prefix (negative commands)
+  h = h.replace(/^(\s*)(no )(.*)$/gm, '$1<span class="cli-no">$2</span>$3');
+  // 3. VRF context names
+  h = h.replace(/(vrf\s+(?:context|member|definition)\s+)(\S+)/gi, '$1<span class="cli-vrf">$2</span>');
+  // 4. Interface names
+  h = h.replace(/\b((?:interface|source-interface)\s+)([\w\/\.]+)/gi, '$1<span class="cli-iface">$2</span>');
+  // 5. Major block keywords
+  h = h.replace(/\b(router bgp|router ospf|router isis|route-map|policy-map|class-map|address-family|ip prefix-list|ipv6 prefix-list|template peer|peer-group|nv overlay evpn|feature|vlan|evpn|nve interface|interface nve|vrf context|ip community-list)\b/gi,
+    '<span class="cli-keyword">$1</span>');
+  // 6. IPv4 addresses and prefixes
+  h = h.replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2})?)\b/g, '<span class="cli-ip">$1</span>');
+  // 7. IPv6 addresses (simplified)
+  h = h.replace(/\b((?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}(?:\/\d{1,3})?)\b/g, '<span class="cli-ip">$1</span>');
+  // 8. Quoted strings
+  h = h.replace(/"([^"]*)"/g, '"<span class="cli-string">$1</span>"');
+  // 9. Standalone numbers (not inside IPs already marked)
+  h = h.replace(/(?<![.\d])\b(\d+)\b(?![.\d])/g, '<span class="cli-num">$1</span>');
+
+  return h;
+};
+
+// Apply highlighting to an element; falls back to textContent on error
+window.applyConfigHighlight = function(pre, text) {
+  try {
+    pre.innerHTML = window.highlightNetCLI(text);
+  } catch (e) {
+    pre.textContent = text;
+  }
+};
+
+// ─── G-45: BOM Device Table Sort/Filter ───────────────────────────────────────
+window._bomSort  = { col: null, dir: 1 };
+window._bomQuery = '';
+
+window.bomFilter = function() {
+  var inp = document.getElementById('bom-filter-input');
+  window._bomQuery = inp ? inp.value.toLowerCase() : '';
+  window.bomRenderTable();
+};
+
+window.bomSortBy = function(col) {
+  if (window._bomSort.col === col) {
+    window._bomSort.dir *= -1;
+  } else {
+    window._bomSort.col = col;
+    window._bomSort.dir = 1;
+  }
+  window.bomRenderTable();
+};
+
+window.bomRenderTable = function() {
+  var tbody = document.getElementById('bom-device-tbody');
+  var ths   = document.querySelectorAll('.bom-sort-th');
+  if (!tbody) return;
+
+  // Update sort indicators
+  ths.forEach(function(th) {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.getAttribute('data-col') === window._bomSort.col) {
+      th.classList.add(window._bomSort.dir === 1 ? 'sort-asc' : 'sort-desc');
+    }
+  });
+
+  var q    = window._bomQuery;
+  var col  = window._bomSort.col;
+  var dir  = window._bomSort.dir;
+  var devs = (window._bomAllDevices || []).filter(function(d) {
+    if (!q) return true;
+    return (d.hostname + ' ' + d.model + ' ' + d.subLayer + ' ' + d.vendor + ' ' + d.speed)
+      .toLowerCase().indexOf(q) !== -1;
+  });
+
+  if (col) {
+    devs = devs.slice().sort(function(a, b) {
+      var va = (a[col] || '').toString().toLowerCase();
+      var vb = (b[col] || '').toString().toLowerCase();
+      return va < vb ? -dir : va > vb ? dir : 0;
+    });
+  }
+
+  tbody.innerHTML = devs.map(function(d) {
+    var c = ROLE_COLORS[d.subLayer] || '#64748b';
+    return '<tr>'
+      + '<td style="font-weight:600;white-space:nowrap;">' + (d.hostname || '') + '</td>'
+      + '<td style="white-space:nowrap;">' + (d.model || '') + '</td>'
+      + '<td><span class="role-badge" style="background:' + c + '18;color:' + c + ';">'
+      +   '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + c + ';margin-right:4px;"></span>'
+      +   (d.subLayer || '') + '</span></td>'
+      + '<td style="white-space:nowrap;">' + (d.vendor || '') + '</td>'
+      + '<td><code style="font-size:11px;background:var(--surface2);padding:2px 6px;border-radius:4px;">' + (d.speed || '') + '</code></td>'
+      + '<td style="white-space:nowrap;color:var(--text-dim);">Rack ' + (d.rack || '?') + ' U' + (d.unit || '?') + '</td>'
+      + '</tr>';
+  }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:20px;">No devices match filter</td></tr>';
+
+  var cnt = document.getElementById('bom-device-count');
+  if (cnt) cnt.textContent = devs.length + ' / ' + (window._bomAllDevices || []).length + ' devices';
+};
+
+// ─── G-49: Policy Editor helper exposed to HTML ───────────────────────────────
+window.policyGenConfigAndShow = function() {
+  if (!window.policyGenConfig) return;
+  var preview = document.getElementById('pe-config-preview');
+  if (!preview) return;
+  var cfg = window.policyGenConfig();
+  preview.style.display = '';
+  if (window.applyConfigHighlight) {
+    window.applyConfigHighlight(preview, cfg);
+  } else {
+    preview.textContent = cfg;
+  }
+};
+
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
+  // PWA service worker registration
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(function() {});
+  }
+
   goToStep(1);
 
   // Wire up step tabs
@@ -1606,6 +1752,22 @@ document.addEventListener('DOMContentLoaded', function() {
       if ((n === 5 || n === 6) && (!STATE.devices || !STATE.devices.length)) {
         showToast('Complete Step 1 first', 'warning');
         return;
+      }
+    });
+  });
+
+  // G-49: init Policy Editor when its accordion is first opened
+  var policyAccordion = document.querySelector('details.accordion-item summary');
+  document.querySelectorAll('details.accordion-item').forEach(function(det) {
+    det.addEventListener('toggle', function() {
+      if (det.open) {
+        var body = det.querySelector('.accordion-body');
+        if (body && body.id === 'tools-pane-policy') {
+          var list = document.getElementById('pe-policy-list');
+          if (list && (!list.children.length) && window.renderPolicyEditor) {
+            window.renderPolicyEditor();
+          }
+        }
       }
     });
   });

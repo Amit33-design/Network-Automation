@@ -202,13 +202,13 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 
 | ID | Gap | Priority | Status |
 |----|-----|----------|--------|
-| G-43 | Interactive topology viewer — SVG is static, no pan/zoom/drag/click; replace with `@xyflow/react` (or equivalent vanilla canvas) for interactive node-edge diagrams with minimap, node detail popups, auto-layout (ELK/dagre) | P1 | ❌ open |
-| G-44 | Config viewer is plain `<pre>` — no syntax highlighting, no line numbers, no diff view; replace with CodeMirror 6 (`@codemirror/lang-sql`, custom NETCONF/CLI grammar) or PrismJS for read-only display | P2 | ❌ open |
-| G-45 | BOM table has no sorting, filtering, or virtual scrolling — freezes on 200+ rows; migrate to TanStack Table v8 (vanilla adapter) with virtual rows via TanStack Virtual | P2 | ❌ open |
-| G-46 | Mobile experience — layout is desktop-only; no PWA manifest/service-worker; no touch-friendly topology interactions; target Capacitor wrapper for iOS/Android app | P2 | ❌ open |
-| G-47 | No command palette — users must navigate step-by-step; add `⌘K` / `Ctrl+K` command palette (fuzzy search over all actions: "generate config", "export BOM", "run ZTP") | P3 | ❌ open |
-| G-48 | Topology export to PNG/SVG download — current HLD SVG is inline only; add "Export PNG" and "Export SVG" buttons using `XMLSerializer` + `canvas.toBlob()` | P3 | ❌ open — `exportHLDSvg()` stub exists in `hld_diagram.js` |
-| G-49 | Visual policy editor for ACL/QoS/route-map rules — currently text-only intent fields; add a drag-and-drop policy chain UI (match criteria → set action → next rule) that serialises to intent object | P3 | ❌ open |
+| ~~G-43~~ | ~~Interactive topology viewer — SVG is static, no pan/zoom/drag/click~~ | P1 | ✅ 2026-05-25 — `hld_diagram.js`: `initHLDInteraction()` wraps SVG in `<g id="hld-vp">`, wheel zoom (0.15–5×), pointer drag, double-click reset; `resetHLDView()` button; called from `renderStep2()` |
+| ~~G-44~~ | ~~Config viewer is plain `<pre>` — no syntax highlighting~~ | P2 | ✅ 2026-05-25 — `init.js`: `highlightNetCLI(text)` custom 9-pattern network CLI grammar (comments, keywords, no-prefix, VRF, interface, IPs, strings, numbers); `applyConfigHighlight(pre, text)` applied on device select + initial render; CSS classes `.cli-comment/.cli-keyword/.cli-no/.cli-ip/.cli-vrf/.cli-iface` |
+| ~~G-45~~ | ~~BOM table has no sorting, filtering, or virtual scrolling~~ | P2 | ✅ 2026-05-25 — `init.js`: `bomSortBy(col)`, `bomFilter()`, `bomRenderTable()`; filter input above device table; sortable column headers with ▲▼⇅ indicators; `window._bomAllDevices` source array; re-renders on sort/filter without page reload |
+| ~~G-46~~ | ~~Mobile experience — desktop-only; no PWA manifest/service-worker~~ | P2 | ✅ 2026-05-25 — `manifest.json` (standalone PWA); `sw.js` (cache-first, 22 assets); mobile CSS breakpoints 768/480px (scrollable tabs, stacked grid, sidebar hidden); SW registration in DOMContentLoaded |
+| ~~G-47~~ | ~~No command palette — step-by-step navigation only~~ | P3 | ✅ 2026-05-25 — `command_palette.js`: 17 commands (Navigate/Action/Export/UI/Danger/Help); Ctrl+K/Cmd+K global hotkey; fuzzy search; arrow-key nav; Enter execute; CSS-injected overlay; self-initializes on load |
+| ~~G-48~~ | ~~Topology export to PNG/SVG download — inline SVG only~~ | P3 | ✅ 2026-05-25 — `hld_diagram.js`: `exportHLDSvg()` (XMLSerializer → SVG blob); `exportHLDPng()` (SVG→canvas 2× DPR → PNG blob); Export SVG + Export PNG buttons in HLD header |
+| ~~G-49~~ | ~~Visual policy editor for ACL/QoS/route-map rules — text-only~~ | P3 | ✅ 2026-05-25 — `policy_editor.js`: 521-line IIFE; `POLICY_STORE[]` data model; route-map/ACL/QoS policy cards with inline rule table; per-rule match (prefix/DSCP/proto) + set (next-hop/DSCP/local-pref); IOS-XE CLI generator; `policyToIntent()` syncs to `STATE.policies`; Policy Editor accordion in Step 7 |
 
 **Frontend stack recommendation (aspirational roadmap — NOT current):**
 - Topology: `@xyflow/react` or vanilla `<canvas>` with D3-force layout

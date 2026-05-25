@@ -840,7 +840,68 @@
       /* ── Device Inventory heading in bom-output ─────────────────────────── */
       #bom-output > div[style*="margin-top:28px"] { padding: 0 14px; }
     }
+
+    /* ── G-44: Network CLI Syntax Highlighting ────────────────────────── */
+    .cli-comment  { color: #6a9955; font-style: italic; }
+    .cli-keyword  { color: #569cd6; font-weight: 600; }
+    .cli-no       { color: #f48771; font-weight: 600; }
+    .cli-ip       { color: #b5cea8; }
+    .cli-string   { color: #ce9178; }
+    .cli-num      { color: #b5cea8; }
+    .cli-vrf      { color: #c586c0; }
+    .cli-iface    { color: #9cdcfe; }
+    /* G-45: BOM sort/filter controls */
+    .bom-filter-bar { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+    .bom-filter-input { background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:6px 10px; font-size:12px; flex:1; min-width:160px; outline:none; }
+    .bom-filter-input:focus { border-color:var(--accent); }
+    .bom-sort-th { cursor:pointer; user-select:none; white-space:nowrap; }
+    .bom-sort-th:hover { color:var(--accent); }
+    .bom-sort-arrow { margin-left:4px; opacity:.5; font-size:10px; }
+    .bom-sort-th.sort-asc .bom-sort-arrow::after  { content:'▲'; }
+    .bom-sort-th.sort-desc .bom-sort-arrow::after { content:'▼'; }
+    .bom-sort-th:not(.sort-asc):not(.sort-desc) .bom-sort-arrow::after { content:'⇅'; }
+    /* ── Mobile / PWA responsive ────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .wizard-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x mandatory;
+        padding-bottom: 2px;
+      }
+      .step-tab {
+        min-width: 80px;
+        scroll-snap-align: start;
+        flex-shrink: 0;
+        font-size: 11px;
+        padding: 8px 10px;
+      }
+      .step-num { display: none; }
+      .main-layout {
+        flex-direction: column;
+      }
+      .sidebar { display: none; }
+      .content-area {
+        padding: 12px 8px;
+      }
+      .fs-grid { grid-template-columns: 1fr; }
+      .bom-table { font-size: 11px; }
+      .bom-table th, .bom-table td { padding: 6px 8px; }
+      h1 { font-size: 20px; }
+      .form-row { flex-direction: column; }
+    }
+    @media (max-width: 480px) {
+      .wizard-tabs { gap: 2px; }
+      .step-tab { min-width: 60px; padding: 6px 6px; font-size: 10px; }
+      .accordion-header { font-size: 12px; padding: 10px 12px; }
+    }
   </style>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#3b82f6">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="NetDesign AI">
 </head>
 <body>
 
@@ -2158,6 +2219,26 @@ curl -X POST http://localhost:9090/-/reload</pre>
       </div>
       </div>
     </details>
+
+    <!-- G-49: Visual Policy Editor -->
+    <details class="accordion-item">
+      <summary class="accordion-header">&#9881; Policy Editor — ACL / QoS / Route-Map</summary>
+      <div class="accordion-body" id="tools-pane-policy">
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 12px;">
+          Build ACL, QoS, and route-map policy chains visually. Rules serialize to the intent object and config generator.
+        </p>
+        <div class="pe-toolbar">
+          <button class="btn btn-secondary btn-sm" onclick="window.policyAdd('route-map')">+ Route-Map</button>
+          <button class="btn btn-secondary btn-sm" onclick="window.policyAdd('acl')">+ ACL</button>
+          <button class="btn btn-secondary btn-sm" onclick="window.policyAdd('qos')">+ QoS Policy</button>
+          <button class="btn btn-secondary btn-sm" onclick="window.policyExport()">&#8595; Export JSON</button>
+          <button class="btn btn-secondary btn-sm" onclick="window.policyGenConfigAndShow()">&#9654; Preview Config</button>
+        </div>
+        <div id="pe-policy-list" style="margin-top:4px;"></div>
+        <pre id="pe-config-preview" class="config-pre" style="display:none;margin-top:14px;max-height:300px;"></pre>
+      </div>
+    </details>
+
   </section>
 
 </main>
@@ -2186,6 +2267,8 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/ztp.js"></script>
 <script src="src/js/jinja_engine.js"></script>
 <script src="src/js/hld_diagram.js"></script>
+<script src="src/js/policy_editor.js"></script>
+<script src="src/js/command_palette.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>
