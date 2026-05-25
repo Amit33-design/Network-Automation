@@ -241,7 +241,7 @@ function renderCapacityMath(state) {
 }
 window.renderCapacityMath = renderCapacityMath;
 
-// ─── HLD Topology SVG Diagram ─────────────────────────────────────────────────
+// renderTopologyDiagram is provided by hld_diagram.js (loaded before init.js)
 function renderTopologyDiagram(state) {
   var useCase = state.useCase || 'dc';
   var devices = state.devices || [];
@@ -775,7 +775,7 @@ function renderTopologyDiagram(state) {
     + label + ' — High-Level Design</div>'
     + svgEl;
 }
-window.renderTopologyDiagram = renderTopologyDiagram;
+// window.renderTopologyDiagram is set by hld_diagram.js; do not overwrite here.
 
 // ─── Step 2: BOM ──────────────────────────────────────────────────────────────
 var ROLE_COLORS = {

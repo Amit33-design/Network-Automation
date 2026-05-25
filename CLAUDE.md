@@ -198,6 +198,29 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 | ~~G-41~~ | ~~No dedicated Storage Networking use case (NVMe-oF, FCoE, iSCSI)~~ | P2 | ✅ 2026-05-25 — `storage` use case; MDS 9396T SAN fabric (NVMe/FC zoning, VSAN, FCIP) + Nexus 93600CD-GX leaf (RoCEv2 PFC/ECN, RDMA QoS, ECN thresholds); `storageFabricConfig`/`storageLeafConfig` in configgen.js |
 | ~~G-42~~ | ~~SD-WAN design shallow — no vEdge/vSmart/vBond architecture~~ | P2 | ✅ 2026-05-25 — vSmart (OMP, app-aware policy, Webex/Teams/Zoom steering) + vBond (NAT traversal, WAN Edge onboarding) SKUs; `sdwanControllerConfig`/`sdwanOrchConfig` in configgen.js; sdwan-controller/sdwan-orchestrator roles in VENDOR_GEN + SCALE_DEFS |
 
+### 4.9 Frontend / UX (from Technical Improvement Spec, 2026-05-25)
+
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| G-43 | Interactive topology viewer — SVG is static, no pan/zoom/drag/click; replace with `@xyflow/react` (or equivalent vanilla canvas) for interactive node-edge diagrams with minimap, node detail popups, auto-layout (ELK/dagre) | P1 | ❌ open |
+| G-44 | Config viewer is plain `<pre>` — no syntax highlighting, no line numbers, no diff view; replace with CodeMirror 6 (`@codemirror/lang-sql`, custom NETCONF/CLI grammar) or PrismJS for read-only display | P2 | ❌ open |
+| G-45 | BOM table has no sorting, filtering, or virtual scrolling — freezes on 200+ rows; migrate to TanStack Table v8 (vanilla adapter) with virtual rows via TanStack Virtual | P2 | ❌ open |
+| G-46 | Mobile experience — layout is desktop-only; no PWA manifest/service-worker; no touch-friendly topology interactions; target Capacitor wrapper for iOS/Android app | P2 | ❌ open |
+| G-47 | No command palette — users must navigate step-by-step; add `⌘K` / `Ctrl+K` command palette (fuzzy search over all actions: "generate config", "export BOM", "run ZTP") | P3 | ❌ open |
+| G-48 | Topology export to PNG/SVG download — current HLD SVG is inline only; add "Export PNG" and "Export SVG" buttons using `XMLSerializer` + `canvas.toBlob()` | P3 | ❌ open — `exportHLDSvg()` stub exists in `hld_diagram.js` |
+| G-49 | Visual policy editor for ACL/QoS/route-map rules — currently text-only intent fields; add a drag-and-drop policy chain UI (match criteria → set action → next rule) that serialises to intent object | P3 | ❌ open |
+
+**Frontend stack recommendation (aspirational roadmap — NOT current):**
+- Topology: `@xyflow/react` or vanilla `<canvas>` with D3-force layout
+- Tables: TanStack Table v8 (vanilla/web-component adapter, no framework dependency)
+- Config viewer: CodeMirror 6 (lazy-loaded, custom IOS-XE/NX-OS/EOS highlighting)
+- State: Zustand (if/when migrating to React) or continue vanilla STATE object
+- UI components: Shadcn/UI + Tailwind (only if React migration; overkill for vanilla)
+- Mobile: PWA first (manifest + service-worker offline cache), then Capacitor shell
+- Build: Vite + ESM modules (replace single-file monolith when team grows)
+
+**Current constraint**: The tool is a single-file vanilla JS/HTML/CSS monolith. Do NOT introduce npm/bundler/framework dependencies without a deliberate migration plan — they break the GitHub Pages deploy and Docker offline target.
+
 ---
 
 ## 5. Constraint Rules — Intent Coherence Engine
