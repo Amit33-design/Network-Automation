@@ -701,10 +701,21 @@
       +'onclick="window.resetHLDView()" title="Reset pan/zoom (also: double-click diagram)">&#8635; Reset</button>'
       +'</div>'
       +'</div>'
+      +'<div style="position:relative;">'
       +'<svg id="hld-svg" viewBox="0 0 '+W+' '+H+'" width="100%" '
       +'style="max-width:1000px;display:block;background:transparent;cursor:grab;overflow:hidden;">'
       +body
       +'</svg>'
+      +'<div id="hld-minimap-wrap" style="position:absolute;bottom:12px;right:12px;width:180px;height:90px;'
+      +'background:rgba(15,17,23,.85);border:1px solid #334155;border-radius:6px;'
+      +'overflow:hidden;cursor:pointer;z-index:10;" '
+      +'onclick="window.minimapClick(event)" title="Click to navigate \xb7 mini-map">'
+      +'<svg id="hld-minimap" width="180" height="90" style="display:block;"></svg>'
+      +'<div id="hld-minimap-vp" style="position:absolute;top:0;left:0;'
+      +'border:1.5px solid #4f8ef7;background:rgba(79,142,247,.12);'
+      +'pointer-events:none;border-radius:2px;"></div>'
+      +'</div>'
+      +'</div>'
       +'</div>';
   };
 
@@ -772,6 +783,64 @@
   /* Module-level interaction state — persists across re-renders */
   var _hld = null;
 
+  /* ── Mini-map helpers (defined inside IIFE so they close over _hld) ──────── */
+
+  window.updateMinimap = function() {
+    var svg     = document.getElementById('hld-svg');
+    var mm      = document.getElementById('hld-minimap');
+    var vpRect  = document.getElementById('hld-minimap-vp');
+    if (!svg || !mm || !vpRect || !_hld) return;
+
+    var vb = svg.viewBox.baseVal;
+    if (!vb || !vb.width) return;
+    var vbW = vb.width, vbH = vb.height;
+    var mmW = 180, mmH = 90;
+    var scaleX = mmW / vbW, scaleY = mmH / vbH;
+
+    /* Current viewport in SVG-space coordinates */
+    var visX = -_hld.tx / _hld.scale;
+    var visY = -_hld.ty / _hld.scale;
+    var visW = vbW / _hld.scale;
+    var visH = vbH / _hld.scale;
+
+    /* Map to mini-map pixel coordinates */
+    var mmX  = visX * scaleX;
+    var mmY  = visY * scaleY;
+    var mmVW = visW * scaleX;
+    var mmVH = visH * scaleY;
+
+    /* Clamp to mini-map bounds */
+    mmX  = Math.max(0, Math.min(mmX, mmW));
+    mmY  = Math.max(0, Math.min(mmY, mmH));
+    mmVW = Math.min(mmVW, mmW - mmX);
+    mmVH = Math.min(mmVH, mmH - mmY);
+
+    vpRect.style.left   = mmX  + 'px';
+    vpRect.style.top    = mmY  + 'px';
+    vpRect.style.width  = mmVW + 'px';
+    vpRect.style.height = mmVH + 'px';
+  };
+
+  window.minimapClick = function(event) {
+    var mm  = document.getElementById('hld-minimap-wrap');
+    if (!mm || !_hld) return;
+    var rect = mm.getBoundingClientRect();
+    var svg  = document.getElementById('hld-svg');
+    var vb   = svg ? svg.viewBox.baseVal : null;
+    if (!vb || !vb.width) return;
+    var mmW = 180, mmH = 90;
+    var fx  = (event.clientX - rect.left) / mmW;  /* 0..1 fraction */
+    var fy  = (event.clientY - rect.top)  / mmH;
+    /* Clicked point in SVG coordinates */
+    var targetX = fx * vb.width;
+    var targetY = fy * vb.height;
+    /* Pan so the clicked point is centred in the viewport */
+    _hld.tx = -(targetX * _hld.scale - vb.width  / 2);
+    _hld.ty = -(targetY * _hld.scale - vb.height / 2);
+    _hld.apply();
+    window.updateMinimap();
+  };
+
   window.initHLDInteraction = function() {
     var svg = document.getElementById('hld-svg');
     if (!svg) return;
@@ -802,6 +871,7 @@
       e.preventDefault();
       _hld.scale = clamp(_hld.scale * (e.deltaY < 0 ? 1.15 : 0.87), 0.15, 5);
       _hld.apply();
+      window.updateMinimap && window.updateMinimap();
     }, { passive: false });
 
     /* Pointer drag */
@@ -822,6 +892,7 @@
       lastX = e.clientX;
       lastY = e.clientY;
       _hld.apply();
+      window.updateMinimap && window.updateMinimap();
     });
 
     function stopDrag(e) {
@@ -835,13 +906,31 @@
     svg.addEventListener('dblclick', function() {
       _hld.tx = 0; _hld.ty = 0; _hld.scale = 1;
       _hld.apply();
+      window.updateMinimap && window.updateMinimap();
     });
+
+    /* Populate mini-map with a static scaled copy of the diagram */
+    var mm = document.getElementById('hld-minimap');
+    if (mm) {
+      var vb2 = svg.viewBox.baseVal;
+      var mainVp = document.getElementById('hld-vp');
+      if (mainVp && vb2 && vb2.width) {
+        var sx = 180 / vb2.width;
+        var sy = 90  / vb2.height;
+        var sc = Math.min(sx, sy);
+        mm.innerHTML = '<g transform="scale(' + sc + ')">' + (mainVp.innerHTML || '') + '</g>';
+      }
+    }
+
+    /* Set initial viewport indicator */
+    window.updateMinimap && window.updateMinimap();
   };
 
   window.resetHLDView = function() {
     if (_hld) {
       _hld.tx = 0; _hld.ty = 0; _hld.scale = 1;
       _hld.apply();
+      window.updateMinimap && window.updateMinimap();
     }
   };
 

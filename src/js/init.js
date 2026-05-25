@@ -1488,6 +1488,10 @@ function renderStep3() {
   }
   // Set initial device for download
   window._currentCfgId = STATE.devices[0] ? STATE.devices[0].instanceId : null;
+  // G-55: init resize handle after config viewer DOM is ready
+  setTimeout(window.initCfgResizeHandle, 0);
+  // G-50: reset diff state on new generation
+  window._cfgDiffOpen = false;
   showToast('Configs generated for ' + STATE.devices.length + ' devices', 'success');
 }
 window.renderStep3 = renderStep3;
@@ -1516,6 +1520,11 @@ function showDeviceConfig(instanceId) {
 
   // Remember for download
   window._currentCfgId = instanceId;
+
+  // G-50: update diff panel if it's open
+  if (window._cfgDiffOpen && window.showConfigDiff) {
+    window.showConfigDiff(instanceId);
+  }
 
   // Mobile: show the config panel, hide the device list
   var layout = document.getElementById('cfg-layout');
@@ -1604,10 +1613,78 @@ window.highlightNetCLI = function(text) {
 // Apply highlighting to an element; falls back to textContent on error
 window.applyConfigHighlight = function(pre, text) {
   try {
-    pre.innerHTML = window.highlightNetCLI(text);
+    var highlighted = window.highlightNetCLI(text);
+    var folded = window.foldConfigSections
+      ? window.foldConfigSections(highlighted, text)
+      : highlighted;
+    pre.innerHTML = folded;
+    // Make pre a scrollable container for details elements
+    pre.style.overflow = 'auto';
   } catch (e) {
     pre.textContent = text;
   }
+};
+
+// ─── G-51: Config Section Folding ────────────────────────────────────────────
+window.foldConfigSections = function(highlightedHtml, rawText) {
+  var BLOCK_STARTS = [
+    /^interface /i,
+    /^router (bgp|ospf|isis|eigrp|rip)\b/i,
+    /^route-map /i,
+    /^policy-map /i,
+    /^class-map /i,
+    /^vrf context /i,
+    /^evpn$/i,
+    /^nve\d+/i,
+    /^address-family /i,
+    /^template peer /i,
+    /^vlan \d+/i,
+    /^spanning-tree /i,
+    /^ip prefix-list /i,
+    /^ipv6 prefix-list /i
+  ];
+
+  function isBlockStart(line) {
+    var trimmed = line.replace(/^\s+/, '');
+    return BLOCK_STARTS.some(function(re) { return re.test(trimmed); });
+  }
+
+  var rawLines = rawText.split('\n');
+  var htmlLines = highlightedHtml.split('\n');
+  // Safety: if line counts don't match (possible due to escaped chars), return as-is
+  if (rawLines.length !== htmlLines.length) return highlightedHtml;
+
+  var result = [];
+  var i = 0;
+  while (i < rawLines.length) {
+    var raw = rawLines[i];
+    if (isBlockStart(raw)) {
+      // Find end of section: next block start, next ! line, or EOF
+      var end = i + 1;
+      while (end < rawLines.length) {
+        var endLine = rawLines[end].trim();
+        if (endLine === '!' || isBlockStart(rawLines[end])) break;
+        end++;
+      }
+      var sectionLen = end - i;
+      if (sectionLen >= 3) {
+        // First line = summary; remaining lines = body
+        var summary = htmlLines[i];
+        var body = htmlLines.slice(i + 1, end).join('\n');
+        result.push(
+          '<details open class="cfg-fold-section">'
+          + '<summary class="cfg-fold-summary">' + summary + '</summary>'
+          + '<div class="cfg-fold-body">' + body + '</div>'
+          + '</details>'
+        );
+        i = end;
+        continue;
+      }
+    }
+    result.push(htmlLines[i]);
+    i++;
+  }
+  return result.join('\n');
 };
 
 // ─── G-45: BOM Device Table Sort/Filter ───────────────────────────────────────
@@ -1677,6 +1754,86 @@ window.bomRenderTable = function() {
   var cnt = document.getElementById('bom-device-count');
   if (cnt) cnt.textContent = devs.length + ' / ' + (window._bomAllDevices || []).length + ' devices';
 };
+
+// ─── G-50: Config Diff View toggle ────────────────────────────────────────────
+window._cfgDiffOpen = false;
+
+window.cfgToggleDiff = function() {
+  var pre   = document.getElementById('cfg-output');
+  var panel = document.getElementById('cfg-diff-panel');
+  var btn   = document.getElementById('cfg-diff-btn');
+  if (!pre || !panel) return;
+
+  window._cfgDiffOpen = !window._cfgDiffOpen;
+
+  if (window._cfgDiffOpen) {
+    pre.style.display   = 'none';
+    panel.style.display = '';
+    if (btn) { btn.style.background = 'rgba(79,142,247,.18)'; btn.style.color = 'var(--accent)'; }
+    if (window.renderDiffView) {
+      panel.innerHTML = window.renderDiffView(STATE);
+      // populate initial diff device
+      if (STATE.devices && STATE.devices[0] && window.showConfigDiff) {
+        window.showConfigDiff(window._currentCfgId || STATE.devices[0].instanceId);
+      }
+    }
+  } else {
+    pre.style.display   = '';
+    panel.style.display = 'none';
+    if (btn) { btn.style.background = ''; btn.style.color = ''; }
+  }
+};
+
+// ─── G-54: Theme toggle ────────────────────────────────────────────────────────
+window.toggleTheme = function() {
+  var root    = document.documentElement;
+  var current = root.getAttribute('data-theme') ||
+    (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  var next = current === 'dark' ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
+  try { localStorage.setItem('ndal-theme', next); } catch(e) {}
+  var btn = document.getElementById('theme-toggle-btn');
+  if (btn) btn.textContent = next === 'dark' ? '☾ Theme' : '☀ Theme';
+};
+
+// Restore saved theme immediately (before DOMContentLoaded to avoid flash)
+(function() {
+  try {
+    var saved = localStorage.getItem('ndal-theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+  } catch(e) {}
+}());
+
+// ─── G-55: Resizable config panel (drag handle) ───────────────────────────────
+function initCfgResizeHandle() {
+  var handle   = document.getElementById('cfg-resize-handle');
+  var devList  = document.getElementById('cfg-device-list');
+  if (!handle || !devList) return;
+  var dragging = false;
+  var startX   = 0;
+  var startW   = 0;
+
+  handle.addEventListener('pointerdown', function(e) {
+    dragging = true;
+    startX   = e.clientX;
+    startW   = devList.getBoundingClientRect().width;
+    handle.classList.add('dragging');
+    handle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', function(e) {
+    if (!dragging) return;
+    var dx = e.clientX - startX;
+    var nw = Math.max(120, Math.min(420, startW + dx));
+    devList.style.width    = nw + 'px';
+    devList.style.minWidth = nw + 'px';
+  });
+
+  handle.addEventListener('pointerup',    function() { dragging = false; handle.classList.remove('dragging'); });
+  handle.addEventListener('pointerleave', function() { if (dragging) { dragging = false; handle.classList.remove('dragging'); } });
+}
+window.initCfgResizeHandle = initCfgResizeHandle;
 
 // ─── G-49: Policy Editor helper exposed to HTML ───────────────────────────────
 window.policyGenConfigAndShow = function() {

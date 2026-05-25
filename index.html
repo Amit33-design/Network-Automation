@@ -22,6 +22,54 @@
       --radius:    8px;
       --font:      'SF Mono', 'Fira Code', 'Consolas', monospace;
     }
+
+    /* ─── Light theme ────────────────────────────────────────────────────── */
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg:        #f8fafc;
+        --surface:   #ffffff;
+        --surface2:  #f1f5f9;
+        --border:    #e2e8f0;
+        --accent:    #2563eb;
+        --accent2:   #7c3aed;
+        --success:   #16a34a;
+        --warn:      #d97706;
+        --danger:    #dc2626;
+        --text:      #0f172a;
+        --text-dim:  #64748b;
+      }
+    }
+    [data-theme="light"] {
+      --bg:        #f8fafc;
+      --surface:   #ffffff;
+      --surface2:  #f1f5f9;
+      --border:    #e2e8f0;
+      --accent:    #2563eb;
+      --accent2:   #7c3aed;
+      --success:   #16a34a;
+      --warn:      #d97706;
+      --danger:    #dc2626;
+      --text:      #0f172a;
+      --text-dim:  #64748b;
+    }
+    [data-theme="dark"] {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --surface2:  #232638;
+      --border:    #2e3248;
+      --accent:    #4f8ef7;
+      --accent2:   #7c5cfc;
+      --success:   #22c55e;
+      --warn:      #f59e0b;
+      --danger:    #ef4444;
+      --text:      #e2e8f0;
+      --text-dim:  #8892a4;
+    }
+    [data-theme="light"] .config-pre,
+    [data-theme="light"] .diff-textarea,
+    [data-theme="light"] .diff-output { background: #f8fafc; color: #1e293b; }
+    [data-theme="light"] .cfg-dev-item:hover { background: #f1f5f9; }
+    [data-theme="light"] .accordion-header { background: var(--surface2); }
     body {
       background: var(--bg);
       color: var(--text);
@@ -895,6 +943,44 @@
       .step-tab { min-width: 60px; padding: 6px 6px; font-size: 10px; }
       .accordion-header { font-size: 12px; padding: 10px 12px; }
     }
+    /* G-51: Config Section Folding */
+    .cfg-fold-section { display: block; }
+    .cfg-fold-summary {
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      display: block;
+      padding: 0;
+      margin: 0;
+      line-height: inherit;
+      font: inherit;
+      color: inherit;
+    }
+    .cfg-fold-summary::-webkit-details-marker { display: none; }
+    .cfg-fold-summary::before {
+      content: '\25B6 ';
+      font-size: 9px;
+      opacity: .5;
+      vertical-align: 1px;
+      transition: transform .1s;
+    }
+    details.cfg-fold-section[open] > .cfg-fold-summary::before {
+      content: '\25BC ';
+    }
+    .cfg-fold-body {
+      display: block;
+      border-left: 2px solid var(--border);
+      margin-left: 8px;
+      padding-left: 8px;
+    }
+
+    /* ─── G-53: Skip navigation link ──────────────────────────────────────── */
+    .skip-link {
+      position: absolute; top: -40px; left: 8px; z-index: 10000;
+      background: var(--accent); color: #fff; padding: 6px 12px; border-radius: 4px;
+      font-size: 13px; font-weight: 600; text-decoration: none; transition: top .2s;
+    }
+    .skip-link:focus { top: 8px; }
   </style>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#3b82f6">
@@ -904,6 +990,8 @@
   <meta name="apple-mobile-web-app-title" content="NetDesign AI">
 </head>
 <body>
+
+<a href="#main-content" class="skip-link">Skip to main content</a>
 
 <header class="app-header">
   <div class="app-logo-icon">
@@ -919,24 +1007,28 @@
   </div>
   <div class="app-header-spacer"></div>
   <span class="app-badge">v1.0</span>
+  <button id="theme-toggle-btn" class="btn btn-secondary" style="padding:5px 10px;font-size:12px;"
+    onclick="window.toggleTheme()" title="Toggle dark/light theme" aria-label="Toggle color theme">
+    ☾ Theme
+  </button>
 </header>
 
-<nav class="wizard-tabs">
-  <div class="step-tab active" data-step="1"><span class="step-num">1</span>Design</div>
-  <div class="step-tab" data-step="2"><span class="step-num">2</span>BOM &amp; Cabling</div>
-  <div class="step-tab" data-step="3"><span class="step-num">3</span>Config Gen</div>
-  <div class="step-tab" data-step="4"><span class="step-num">4</span>ZTP &amp; Policy</div>
-  <div class="step-tab" data-step="5"><span class="step-num">5</span>Pre/Post Checks</div>
-  <div class="step-tab" data-step="6"><span class="step-num">6</span>Monitoring</div>
-  <div class="step-tab" data-step="7"><span class="step-num">7</span>Jinja Engine</div>
+<nav class="wizard-tabs" role="tablist" aria-label="Design workflow steps">
+  <div id="tab-1" class="step-tab active" data-step="1" role="tab" aria-selected="true" aria-controls="step-1" tabindex="0"><span class="step-num">1</span>Design</div>
+  <div id="tab-2" class="step-tab" data-step="2" role="tab" aria-selected="false" aria-controls="step-2" tabindex="0"><span class="step-num">2</span>BOM &amp; Cabling</div>
+  <div id="tab-3" class="step-tab" data-step="3" role="tab" aria-selected="false" aria-controls="step-3" tabindex="0"><span class="step-num">3</span>Config Gen</div>
+  <div id="tab-4" class="step-tab" data-step="4" role="tab" aria-selected="false" aria-controls="step-4" tabindex="0"><span class="step-num">4</span>ZTP &amp; Policy</div>
+  <div id="tab-5" class="step-tab" data-step="5" role="tab" aria-selected="false" aria-controls="step-5" tabindex="0"><span class="step-num">5</span>Pre/Post Checks</div>
+  <div id="tab-6" class="step-tab" data-step="6" role="tab" aria-selected="false" aria-controls="step-6" tabindex="0"><span class="step-num">6</span>Monitoring</div>
+  <div id="tab-7" class="step-tab" data-step="7" role="tab" aria-selected="false" aria-controls="step-7" tabindex="0"><span class="step-num">7</span>Jinja Engine</div>
 </nav>
 
-<main class="main-content">
+<main id="main-content" class="main-content">
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        STEP 1: Network Design
   ══════════════════════════════════════════════════════════════════════════ -->
-  <section id="step-1" class="step-panel active">
+  <section id="step-1" class="step-panel active" role="tabpanel" aria-labelledby="tab-1">
     <div class="section-header">
       <div>
         <div class="section-title">Network Design</div>
@@ -1326,7 +1418,7 @@
   <!-- ═══════════════════════════════════════════════════════════════════════
        STEP 2: BOM & Cabling
   ══════════════════════════════════════════════════════════════════════════ -->
-  <section id="step-2" class="step-panel">
+  <section id="step-2" class="step-panel" role="tabpanel" aria-labelledby="tab-2">
     <div class="section-header">
       <div>
         <div class="section-title">Bill of Materials &amp; Cabling</div>
@@ -1344,7 +1436,7 @@
     <div id="bom-capacity-banner" style="display:none; margin-bottom:12px;"></div>
 
     <details class="accordion-item" open>
-      <summary class="accordion-header">Devices &amp; BOM</summary>
+      <summary class="accordion-header" aria-label="Devices &amp; BOM">Devices &amp; BOM</summary>
       <div class="accordion-body" id="bom-pane-devices">
       <div id="bom-output">
         <p class="empty-state">Complete Step 1 to generate the BOM.</p>
@@ -1353,7 +1445,7 @@
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Cabling Schedule</summary>
+      <summary class="accordion-header" aria-label="Cabling Schedule">Cabling Schedule</summary>
       <div class="accordion-body" id="bom-pane-cabling">
       <div id="cabling-output">
         <p class="empty-state">Cabling schedule will appear after BOM generation.</p>
@@ -1362,7 +1454,7 @@
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Optics</summary>
+      <summary class="accordion-header" aria-label="Optics">Optics</summary>
       <div class="accordion-body" id="bom-pane-optics">
       <div id="optics-output">
         <p class="empty-state">Optics recommendations will appear after BOM generation.</p>
@@ -1371,7 +1463,7 @@
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Rack Layout</summary>
+      <summary class="accordion-header" aria-label="Rack Layout">Rack Layout</summary>
       <div class="accordion-body" id="bom-pane-rack">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadRackLayoutCSV()">Download CSV</button>
@@ -1383,7 +1475,7 @@
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">TCO (3yr)</summary>
+      <summary class="accordion-header" aria-label="TCO (3yr)">TCO (3yr)</summary>
       <div class="accordion-body" id="bom-pane-tco">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadTCOCSV()">Download TCO CSV</button>
@@ -1395,7 +1487,7 @@
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Capacity Math</summary>
+      <summary class="accordion-header" aria-label="Capacity Math">Capacity Math</summary>
       <div class="accordion-body" id="bom-pane-capacity">
       <div id="capacity-math-output">
         <p class="empty-state">Port-math sizing available for DC / GPU / Multi-site use cases.</p>
@@ -1404,7 +1496,7 @@
     </details>
 
     <details class="accordion-item" open>
-      <summary class="accordion-header">Network Topology (HLD)</summary>
+      <summary class="accordion-header" aria-label="Network Topology (HLD)">Network Topology (HLD)</summary>
       <div class="accordion-body" id="topo-hld-pane">
         <div id="topo-hld-output">
           <p class="empty-state">Generate BOM to view topology diagram.</p>
@@ -1416,7 +1508,7 @@
   <!-- ═══════════════════════════════════════════════════════════════════════
        STEP 3: Config Generation
   ══════════════════════════════════════════════════════════════════════════ -->
-  <section id="step-3" class="step-panel">
+  <section id="step-3" class="step-panel" role="tabpanel" aria-labelledby="tab-3">
     <div class="section-header">
       <div>
         <div class="section-title">Configuration Generator</div>
@@ -1431,7 +1523,7 @@
   <!-- ═══════════════════════════════════════════════════════════════════════
        STEP 4: ZTP & Policy
   ══════════════════════════════════════════════════════════════════════════ -->
-  <section id="step-4" class="step-panel">
+  <section id="step-4" class="step-panel" role="tabpanel" aria-labelledby="tab-4">
     <div class="section-header">
       <div>
         <div class="section-title">ZTP &amp; Policy Management</div>
@@ -1441,7 +1533,7 @@
 
     <!-- Day-0 bootstrap config (G-31) -->
     <details class="accordion-item" open>
-      <summary class="accordion-header">Day-0 Bootstrap</summary>
+      <summary class="accordion-header" aria-label="Day-0 Bootstrap">Day-0 Bootstrap</summary>
       <div class="accordion-body" id="ztp-pane-day0">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderZtp()">Generate ZTP</button>
@@ -1462,7 +1554,7 @@
 
     <!-- File server (G-29) -->
     <details class="accordion-item">
-      <summary class="accordion-header">File Server</summary>
+      <summary class="accordion-header" aria-label="File Server">File Server</summary>
       <div class="accordion-body" id="ztp-pane-server">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadZtpDockerCompose()">↓ ztp-stack.yml</button>
@@ -1490,7 +1582,7 @@ curl http://localhost:8080/health
 
     <!-- State board (G-30) -->
     <details class="accordion-item">
-      <summary class="accordion-header">State Board</summary>
+      <summary class="accordion-header" aria-label="State Board">State Board</summary>
       <div class="accordion-body" id="ztp-pane-board">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.refreshZtpBoard()">Refresh Board</button>
@@ -1519,7 +1611,7 @@ curl http://localhost:8080/health
 
     <!-- ZTP API stubs (G-30) -->
     <details class="accordion-item">
-      <summary class="accordion-header">ZTP API</summary>
+      <summary class="accordion-header" aria-label="ZTP API">ZTP API</summary>
       <div class="accordion-body" id="ztp-pane-api">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadZtpApi()">↓ ztp/api.py</button>
@@ -1548,7 +1640,7 @@ curl http://localhost:8080/health
 
     <!-- G-32: OS image version management -->
     <details class="accordion-item">
-      <summary class="accordion-header">OS Images</summary>
+      <summary class="accordion-header" aria-label="OS Images">OS Images</summary>
       <div class="accordion-body" id="ztp-pane-os-images">
       <div id="ztp-image-content">
         <p class="empty-state">Complete Step 1 to see OS image management.</p>
@@ -1560,7 +1652,7 @@ curl http://localhost:8080/health
   <!-- ═══════════════════════════════════════════════════════════════════════
        STEP 5: Pre/Post Checks
   ══════════════════════════════════════════════════════════════════════════ -->
-  <section id="step-5" class="step-panel">
+  <section id="step-5" class="step-panel" role="tabpanel" aria-labelledby="tab-5">
     <div class="section-header">
       <div>
         <div class="section-title">Pre / Post Deployment Checks</div>
@@ -1569,7 +1661,7 @@ curl http://localhost:8080/health
     </div>
 
     <details class="accordion-item" open>
-      <summary class="accordion-header">Pre-Check Script</summary>
+      <summary class="accordion-header" aria-label="Pre-Check Script">Pre-Check Script</summary>
       <div class="accordion-body" id="checks-pane-pre">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderChecks()">Generate Scripts</button>
@@ -1582,7 +1674,7 @@ curl http://localhost:8080/health
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Post-Check Script</summary>
+      <summary class="accordion-header" aria-label="Post-Check Script">Post-Check Script</summary>
       <div class="accordion-body" id="checks-pane-post">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadPostCheck()">Download post_check.py</button>
@@ -1595,7 +1687,7 @@ curl http://localhost:8080/health
 
     <!-- G-24: Batfish dry-run validation -->
     <details class="accordion-item">
-      <summary class="accordion-header">Batfish Dry-Run</summary>
+      <summary class="accordion-header" aria-label="Batfish Dry-Run">Batfish Dry-Run</summary>
       <div class="accordion-body" id="checks-pane-batfish">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderBatfish()">Generate Batfish Script</button>
@@ -1630,7 +1722,7 @@ python3 batfish_validate_&lt;site&gt;.py
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Results Diff</summary>
+      <summary class="accordion-header" aria-label="Results Diff">Results Diff</summary>
       <div class="accordion-body" id="checks-pane-results">
       <div class="form-section" style="font-size:13px;">
         <h3>Post-Check Diff Report</h3>
@@ -1647,7 +1739,7 @@ python3 batfish_validate_&lt;site&gt;.py
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Drift Check</summary>
+      <summary class="accordion-header" aria-label="Drift Check">Drift Check</summary>
       <div class="accordion-body" id="checks-pane-drift">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Config Drift Detection</h3>
@@ -1678,7 +1770,7 @@ python3 batfish_validate_&lt;site&gt;.py
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Topology Crawl</summary>
+      <summary class="accordion-header" aria-label="Topology Crawl">Topology Crawl</summary>
       <div class="accordion-body" id="checks-pane-topo">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">LLDP/CDP Topology Crawler</h3>
@@ -1711,7 +1803,7 @@ python3 batfish_validate_&lt;site&gt;.py
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Symptom Classifier</summary>
+      <summary class="accordion-header" aria-label="Symptom Classifier">Symptom Classifier</summary>
       <div class="accordion-body" id="checks-pane-symptoms">
       <div class="form-section">
         <h3 style="margin:0 0 4px;">Symptom Classifier</h3>
@@ -1746,7 +1838,7 @@ python3 batfish_validate_&lt;site&gt;.py
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Usage Guide</summary>
+      <summary class="accordion-header" aria-label="Usage Guide">Usage Guide</summary>
       <div class="accordion-body" id="checks-pane-readme">
       <div class="form-section" style="font-size:13px; line-height:1.8;">
         <h3>Usage Guide</h3>
@@ -1780,7 +1872,7 @@ export NET_ENABLE=enablepassword   # if required</pre>
 
     <!-- G-38: BGP convergence predictor -->
     <details class="accordion-item">
-      <summary class="accordion-header">Convergence Predictor</summary>
+      <summary class="accordion-header" aria-label="Convergence Predictor">Convergence Predictor</summary>
       <div class="accordion-body" id="checks-pane-convergence">
       <div style="margin-top:16px;" id="convergence-predictor-panel">
         <div id="convergence-content">
@@ -1793,7 +1885,7 @@ export NET_ENABLE=enablepassword   # if required</pre>
   <!-- ═══════════════════════════════════════════════════════════════════════
        STEP 6: Monitoring
   ══════════════════════════════════════════════════════════════════════════ -->
-  <section id="step-6" class="step-panel">
+  <section id="step-6" class="step-panel" role="tabpanel" aria-labelledby="tab-6">
     <div class="section-header">
       <div>
         <div class="section-title">Monitoring &amp; Observability</div>
@@ -1802,7 +1894,7 @@ export NET_ENABLE=enablepassword   # if required</pre>
     </div>
 
     <details class="accordion-item" open>
-      <summary class="accordion-header">Prometheus Alerts</summary>
+      <summary class="accordion-header" aria-label="Prometheus Alerts">Prometheus Alerts</summary>
       <div class="accordion-body" id="mon-pane-prom">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderMonitoring()">Generate Monitoring</button>
@@ -1815,7 +1907,7 @@ export NET_ENABLE=enablepassword   # if required</pre>
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Grafana Dashboard</summary>
+      <summary class="accordion-header" aria-label="Grafana Dashboard">Grafana Dashboard</summary>
       <div class="accordion-body" id="mon-pane-grafana">
       <div class="btn-toolbar">
         <button class="btn btn-secondary" onclick="window.downloadGrafana()">Download dashboard.json</button>
@@ -1828,7 +1920,7 @@ export NET_ENABLE=enablepassword   # if required</pre>
 
     <!-- G-33: Embedded monitoring stack -->
     <details class="accordion-item">
-      <summary class="accordion-header">Stack Setup</summary>
+      <summary class="accordion-header" aria-label="Stack Setup">Stack Setup</summary>
       <div class="accordion-body" id="mon-pane-stack">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderMonitoring()">Generate Stack</button>
@@ -1866,7 +1958,7 @@ curl -X POST http://admin:admin@localhost:3000/api/dashboards/import \
 
     <!-- G-34: gNMI streaming telemetry -->
     <details class="accordion-item">
-      <summary class="accordion-header">gNMI Telemetry</summary>
+      <summary class="accordion-header" aria-label="gNMI Telemetry">gNMI Telemetry</summary>
       <div class="accordion-body" id="mon-pane-gnmi">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderMonitoring()">Generate gNMI Config</button>
@@ -1900,7 +1992,7 @@ curl -X POST http://admin:admin@localhost:3000/api/dashboards/import \
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Deploy Guide</summary>
+      <summary class="accordion-header" aria-label="Deploy Guide">Deploy Guide</summary>
       <div class="accordion-body" id="mon-pane-deploy">
       <div class="form-section" style="font-size:13px; line-height:1.8;">
         <h3>Deploy Guide</h3>
@@ -1936,7 +2028,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
     </details>
 
     <details class="accordion-item">
-      <summary class="accordion-header">Canary Deploy</summary>
+      <summary class="accordion-header" aria-label="Canary Deploy">Canary Deploy</summary>
       <div class="accordion-body" id="mon-pane-canary">
       <div class="btn-toolbar">
         <button class="btn btn-primary" onclick="window.renderCanaryDeployPane()">Generate Canary Deploy</button>
@@ -1975,7 +2067,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
   <!-- ═══════════════════════════════════════════════════════════════════════
        STEP 7: Config Engine & Tools
   ══════════════════════════════════════════════════════════════════════════ -->
-  <section id="step-7" class="step-panel">
+  <section id="step-7" class="step-panel" role="tabpanel" aria-labelledby="tab-7">
     <div class="section-header">
       <div>
         <div class="section-title">Config Engine &amp; Tools</div>
@@ -2267,6 +2359,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/ztp.js"></script>
 <script src="src/js/jinja_engine.js"></script>
 <script src="src/js/hld_diagram.js"></script>
+<script src="src/js/config_diff.js"></script>
 <script src="src/js/policy_editor.js"></script>
 <script src="src/js/command_palette.js"></script>
 <script src="src/js/init.js"></script>

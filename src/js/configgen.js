@@ -2018,21 +2018,27 @@ function renderConfigViewer(state) {
   var firstColor = CFG_ROLE_COLORS[firstRole] || '#64748b';
 
   return '<div class="cfg-layout" id="cfg-layout">'
-    + '<div class="cfg-device-list" id="cfg-device-list">'
+    + '<div class="cfg-device-list" id="cfg-device-list" aria-label="Device list">'
     + '<div style="padding:10px 14px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);border-bottom:1px solid var(--border);">'
     + devices.length + ' devices</div>'
     + listItems + '</div>'
+    // G-55: drag handle for resizable device list
+    + '<div class="cfg-resize-handle" id="cfg-resize-handle" title="Drag to resize"></div>'
     + '<div class="cfg-panel" id="cfg-panel">'
     +   '<div class="cfg-panel-hdr">'
-    +     '<button class="btn btn-secondary cfg-back-btn" onclick="window.cfgShowList()">&#8592; Devices</button>'
+    +     '<button class="btn btn-secondary cfg-back-btn" onclick="window.cfgShowList()" aria-label="Back to device list">&#8592; Devices</button>'
     +     '<span class="cfg-panel-hdr-title" id="cfg-panel-title">'
     +       '<span id="cfg-role-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + firstColor + ';margin-right:6px;vertical-align:middle;"></span>'
     +       firstTitle
     +     '</span>'
-    +     '<button class="btn btn-secondary" onclick="window.downloadConfig()" title="Download this config">&#8595; .cfg</button>'
-    +     '<button class="btn btn-secondary" onclick="window.downloadAllConfigs()" title="Download all configs">&#8595; All</button>'
+    // G-50: Diff view toggle button
+    +     '<button class="btn btn-secondary" id="cfg-diff-btn" onclick="window.cfgToggleDiff()" title="Compare with running config (diff view)" aria-label="Toggle diff view">&#9741; Diff</button>'
+    +     '<button class="btn btn-secondary" onclick="window.downloadConfig()" title="Download this config" aria-label="Download config file">&#8595; .cfg</button>'
+    +     '<button class="btn btn-secondary" onclick="window.downloadAllConfigs()" title="Download all configs" aria-label="Download all configs">&#8595; All</button>'
     +   '</div>'
-    +   '<pre id="cfg-output" class="config-pre">' + firstCfg + '</pre>'
+    +   '<pre id="cfg-output" class="config-pre" aria-label="Device configuration"></pre>'
+    // G-50: diff view panel (hidden until toggled)
+    +   '<div id="cfg-diff-panel" style="display:none;flex:1;overflow:hidden;"></div>'
     + '</div>'
     + '</div>';
 }
