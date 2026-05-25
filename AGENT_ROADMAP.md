@@ -150,7 +150,7 @@ https://github.com/Amit33-design/Network-Automation/issues
 ### TIER 6 — Config Quality & UX
 
 - [x] **Config Parameters Panel**: Step 5 collapsible form to customize NTP/TACACS/SNMP/syslog server IPs, domain name, BGP ASNs, and credentials before generating configs. Values persist in localStorage and update all vendor configs on Apply.
-- [ ] **Config Linter**: Analyze generated vendor configs for missing mandatory sections, known anti-patterns (e.g. `no shutdown` on management, NTP without auth, BGP without `maximum-paths`). Show as a badge count + panel in Step 5 config viewer.
+- [x] **Config Linter**: Analyze generated vendor configs for missing mandatory sections, known anti-patterns (e.g. `no shutdown` on management, NTP without auth, BGP without `maximum-paths`). Show as a badge count + panel in Step 5 config viewer.
 - [ ] **Port Capacity Report**: Per-device table showing fabric ports used vs. total, oversubscription ratio, and uplink headroom. Flag devices near capacity. Available in BOM step.
 - [ ] **Multi-vendor Consistency Checker**: Verify that NTP servers, TACACS+ servers, SNMP trap targets, and domain name are consistent across ALL generated configs. Surface mismatches as a summary panel.
 
@@ -946,3 +946,32 @@ The agent should aim to complete **1-2 full features** per 5-hour run, not start
 **Issues closed:** None (self-identified UX gap; no pre-existing issue number)
 
 **Files changed**: `src/js/params.js` (new), `src/js/configgen.js`, `src/js/topology.js`, `index.html`, `src/css/main.css`
+**Files changed**: `src/js/params.js` (new), `src/js/configgen.js`, `src/js/topology.js`, `index.html`, `src/css/main.css`
+
+---
+
+### Run 26 — Config Linter
+
+**Commit:** `9f632c2`
+
+1. **Config Linter** — `9f632c2`
+   - Created `src/js/linter.js` (264 lines): `lintConfig(raw, os, dev)` → `{findings}` array.
+   - 12 lint rules in two categories:
+     - **Missing mandatory sections** (sev: warn/info): hostname, NTP, SNMP, AAA/TACACS+, syslog server, domain-name.
+     - **Anti-patterns** (sev: error/warn): BGP without `maximum-paths`, NTP without MD5 auth,
+       VTY lines allowing Telnet (`transport input ssh` missing), `service password-encryption` absent,
+       cleartext `password 0` detected, HTTP server not disabled (IOS-XE).
+   - Terraform/Ansible/YAML/text OS types are skipped — rules only apply to CLI configs.
+   - `renderLinterPanel(raw, os, dev)` updates the `#linter-panel` DOM and the `#linter-badge-count` badge.
+   - `toggleLinterPanel()` opens/closes the inline findings panel below the section nav.
+   - Badge colors: green (0 issues), blue (info only), orange (warns), red (error).
+   - `configgen.js`: `selectDevice()` calls `renderLinterPanel()` after each device render.
+   - `index.html`: Added `🔍 Lint <badge>` button in `.cfg-actions`; added `#linter-panel` div
+     between `#cfg-section-nav` and `#cfg-code-area`; added `<script src="src/js/linter.js">`.
+   - `main.css`: 45 new CSS rules — `.linter-badge*`, `.lint-panel*`, `.lint-finding`, `.lint-error/warn/info`,
+     `.btn-cfg-active` active state for the Lint button.
+   - All JS files pass `node --check`; no ES module violations; `'use strict'` in linter.js.
+
+**Issues closed:** None (roadmap-only item, no GitHub issue number)
+
+**Files changed**: `src/js/linter.js` (new), `src/js/configgen.js`, `index.html`, `src/css/main.css`
