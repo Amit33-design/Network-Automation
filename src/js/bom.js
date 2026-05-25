@@ -6,28 +6,37 @@ var SCALE_DEFS = {
     dc:         { spine: 2, leaf: 4 },
     gpu:        { spine: 2, leaf: 4 },
     campus:     { distribution: 2, access: 4 },
-    wan:        { 'wan-edge': 2 },
+    wan:        { 'wan-edge': 2, 'sdwan-controller': 1, 'sdwan-orchestrator': 1 },
     multisite:  { spine: 2, leaf: 4, 'wan-edge': 2 },
     multicloud: { 'cloud-transit': 1, 'cloud-gw': 2 },
-    aviatrix:   { 'cloud-transit': 1, 'cloud-gw': 2 }
+    aviatrix:   { 'cloud-transit': 1, 'cloud-gw': 2 },
+    sp_mpls:    { 'pe-router': 2, 'p-router': 2 },
+    private_5g: { fronthaul: 4, midhaul: 2 },
+    storage:    { 'storage-fabric': 2, 'storage-leaf': 4 }
   },
   medium: {
     dc:         { spine: 4, leaf: 8, firewall: 2 },
     gpu:        { spine: 4, leaf: 8 },
     campus:     { distribution: 4, access: 12, firewall: 2 },
-    wan:        { 'wan-edge': 4 },
+    wan:        { 'wan-edge': 4, 'sdwan-controller': 2, 'sdwan-orchestrator': 1 },
     multisite:  { spine: 4, leaf: 8, 'wan-edge': 4, firewall: 2 },
     multicloud: { 'cloud-transit': 2, 'cloud-gw': 4 },
-    aviatrix:   { 'cloud-transit': 2, 'cloud-gw': 4 }
+    aviatrix:   { 'cloud-transit': 2, 'cloud-gw': 4 },
+    sp_mpls:    { 'pe-router': 4, 'p-router': 4 },
+    private_5g: { fronthaul: 8, midhaul: 4 },
+    storage:    { 'storage-fabric': 4, 'storage-leaf': 8 }
   },
   large: {
     dc:         { spine: 8, leaf: 24, firewall: 4 },
     gpu:        { spine: 8, leaf: 16 },
     campus:     { distribution: 8, access: 32, firewall: 4 },
-    wan:        { 'wan-edge': 8 },
+    wan:        { 'wan-edge': 8, 'sdwan-controller': 2, 'sdwan-orchestrator': 2 },
     multisite:  { spine: 8, leaf: 24, 'wan-edge': 8, firewall: 4 },
     multicloud: { 'cloud-transit': 4, 'cloud-gw': 8 },
-    aviatrix:   { 'cloud-transit': 4, 'cloud-gw': 8 }
+    aviatrix:   { 'cloud-transit': 4, 'cloud-gw': 8 },
+    sp_mpls:    { 'pe-router': 8, 'p-router': 8 },
+    private_5g: { fronthaul: 16, midhaul: 8 },
+    storage:    { 'storage-fabric': 8, 'storage-leaf': 16 }
   }
 };
 
@@ -36,10 +45,14 @@ var PREFERRED_PRODUCTS = {
   dc:         { spine: 'nxos-9336c',    leaf: 'nxos-93180yc', firewall: 'ftd4145' },
   gpu:        { spine: 'nxos-9364c',    leaf: 'nxos-9332c' },
   campus:     { distribution: 'cat9500', access: 'cat9200',   firewall: 'ftd4145' },
-  wan:        { 'wan-edge': 'asr1002hx' },
+  wan:        { 'wan-edge': 'asr1002hx', 'sdwan-controller': 'sdwan-vsmart', 'sdwan-orchestrator': 'sdwan-vbond' },
   multisite:  { spine: 'nxos-9336c',    leaf: 'nxos-93180yc', 'wan-edge': 'viptela-vedge', firewall: 'ftd4145' },
   multicloud: { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
-  aviatrix:   { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' }
+  aviatrix:   { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
+  sp_mpls:    { 'pe-router': 'asr9001', 'p-router': 'ncs5501' },
+  private_5g: { fronthaul: 'oran-fh-sw', midhaul: 'oran-mh-rtr' },
+  storage:    { 'storage-fabric': 'mds9396t', 'storage-leaf': 'nxos-93600cd' },
+  wan_full:   { 'wan-edge': 'viptela-vedge', 'sdwan-controller': 'sdwan-vsmart', 'sdwan-orchestrator': 'sdwan-vbond' }
 };
 
 function lookupProduct(id) {

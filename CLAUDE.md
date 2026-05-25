@@ -151,7 +151,7 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 |----|-----|----------|--------|
 | ~~G-20~~ | ~~NX-OS EVPN leaf missing: NVE interface, VRF context, EVPN section, SVI anycast-gw~~ | P0 | ✅ — full §8 template: `feature nv overlay`, NVE1, member VNI L2+L3, VRF context RD/RT, SVI anycast-gw, transit VLAN, BGP EVPN AF |
 | ~~G-21~~ | ~~BGP peer templates not generated (NX-OS template peer, EOS peer group)~~ | P1 | ✅ — NX-OS `template peer SPINES/LEAFS`, EOS peer-group SPINES, JunOS group SPINES — all with timers, bfd, send-community |
-| G-22 | No IOS-XR platform (critical for SP/WAN use case) | P2 | ❌ — platforms: NX-OS, EOS, JunOS, SONiC only |
+| ~~G-22~~ | ~~No IOS-XR platform (critical for SP/WAN use case)~~ | P2 | ✅ 2026-05-25 — `configgen.js`: `iosxrPEConfig()` (IS-IS SR-MPLS, L3VPN, BGP VPNv4/VPNv6, TI-LFA) + `iosxrPConfig()` (P-router, transit SR-MPLS); 4 new SKUs (ASR 9001, ASR 9006, NCS 5501, NCS 5502) in `products.js`; `pe-router`/`p-router` roles in VENDOR_GEN dispatch |
 
 ### 4.4 Deployment Pipeline
 
@@ -171,7 +171,7 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 | ~~G-29~~ | ~~No embedded ZTP file server — scripts generated but not served~~ | P0 | ✅ 2026-05-25 — `ztp.js` `genZtpDockerCompose()`: nginx:alpine (8080) + tftp + Flask API; `genZtpNginxConf()`, `genZtpDhcpScope()` with static MAC bindings; File Server tab in Step 4 ZTP |
 | ~~G-30~~ | ~~No ZTP state machine — no per-device provisioning state tracking~~ | P0 | ✅ 2026-05-25 — `ztp.js` 9-state machine (REGISTERED→ONLINE\|FAILED); `window.ZTP_STATES`; `ztpSetState/ztpAdvanceState/ztpMarkFailed/renderZtpStateBoard()`; Flask API stubs; State Board tab in Step 4 ZTP |
 | ~~G-31~~ | ~~Day-0 bootstrap and Day-N production config conflated ("Bake Policies")~~ | P1 | ✅ 2026-05-25 — `ztp.js` `genDay0Config()`: mgmt-plane only (hostname/mgmt IP/SSH/NTP/syslog/LLDP/callback URL); NO BGP/VLANs/VXLAN; Day-0 Bootstrap tab in Step 4 ZTP |
-| G-32 | No OS image version management in ZTP pipeline | P2 | ❌ — no image staging, download, or boot-device config |
+| ~~G-32~~ | ~~No OS image version management in ZTP pipeline~~ | P2 | ✅ 2026-05-25 — `ztp.js`: `window.OS_IMAGE_CATALOG` (stable/latest versions for NX-OS/EOS/JunOS/IOS-XE/IOS-XR/SONiC); `genOsImageManifest()` shell script for image staging; `genOsVersionCheck()` Python post-ZTP verification; "OS Images" tab in ZTP section |
 
 ### 4.6 Monitoring
 
@@ -179,7 +179,7 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 |----|-----|----------|--------|
 | ~~G-33~~ | ~~Monitoring is export-only — no embedded TSDB or visualization~~ | P1 | ✅ 2026-05-25 — `monitoring-stack.yml` (VictoriaMetrics + Grafana + snmp-exporter + gnmic); scrape.yml, datasource/dashboard provisioning YAMLs; "Stack Setup" tab in Step 6 with live Grafana/VM links |
 | ~~G-34~~ | ~~No gNMI/streaming telemetry — SNMP polling only~~ | P1 | ✅ 2026-05-25 — `gnmic.yml` with 4 OpenConfig subscriptions (interface SAMPLE/ON_CHANGE, BGP, CPU/memory); per-platform device-side gNMI config (NX-OS/EOS/JunOS/SONiC); "gNMI Telemetry" tab in Step 6 |
-| G-35 | Anomaly detection uses 2σ/30-sample window — too many false positives | P2 | ❌ — no statistical anomaly detection; thresholds are static |
+| ~~G-35~~ | ~~Anomaly detection uses 2σ/30-sample window — too many false positives~~ | P2 | ✅ 2026-05-25 — `monitoring.js`: `genAnomalyRecordingRules()` (Prometheus `avg_over_time`/`stddev_over_time` + z-score recording rules for 6 metrics); `genAnomalyAlertRules()` (|z-score| > σ threshold, configurable 2–4σ); `renderAnomalyPanel()` with σ selector; "Anomaly Detection" tab in Monitoring section |
 
 ### 4.7 Troubleshooting
 
@@ -187,16 +187,16 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 |----|-----|----------|--------|
 | ~~G-36~~ | ~~LLDP/CDP topology requires manual paste — no automated SSH crawl~~ | P1 | ✅ — `topodisc.js` generates BFS Python crawler: Netmiko SSH → `show lldp neighbors detail` + CDP fallback → crawls until no new devices (MAX_HOPS=5) |
 | ~~G-37~~ | ~~Symptom classifier has 35 pairs — needs 150+ covering EVPN, QoS, STP, DHCP~~ | P1 | ✅ — `troubleshoot.js` SYMPTOM_DB has 151 entries across BGP, EVPN, STP, QoS, WAN, Routing, Interface, CPU, ZTP/Day-0, Storage categories |
-| G-38 | BGP convergence predictor ignores RR topology and route table size | P2 | ❌ — symptom classifier only; no predictive convergence modeling |
+| ~~G-38~~ | ~~BGP convergence predictor ignores RR topology and route table size~~ | P2 | ✅ 2026-05-25 — `troubleshoot.js`: `window.bgpConvergencePredictor()` 6-phase model (BFD detection, best-path recalc, MRAI, RR propagation, scanner penalty, FIB programming); per-use-case SLA targets; `renderConvergencePredictor()` widget; "Convergence Predictor" tab in Step 5 |
 
 ### 4.8 Use Case Coverage
 
 | ID | Gap | Priority | Status |
 |----|-----|----------|--------|
-| G-39 | No Service Provider / MPLS core use case (IOS-XR, JunOS MX, SR-MPLS) | P2 | ❌ — blocked by G-22 (no IOS-XR); no SR-MPLS, LDP, BGP-LU config |
-| G-40 | No Private 5G / O-RAN use case (fronthaul eCPRI, PTP timing) | P2 | ❌ — no eCPRI, PTP, 5G NR fronthaul/midhaul/backhaul design |
-| G-41 | No dedicated Storage Networking use case (NVMe-oF, FCoE, iSCSI) | P2 | ❌ — no NVMe-oF, FCoE, or iSCSI topology design |
-| G-42 | SD-WAN design shallow — no vEdge/vSmart/vBond architecture | P2 | ⚠️ — wan-edge role + vEdge/Aviatrix SKUs present; no orchestration architecture, no policy-based steering |
+| ~~G-39~~ | ~~No Service Provider / MPLS core use case (IOS-XR, JunOS MX, SR-MPLS)~~ | P2 | ✅ 2026-05-25 — `sp_mpls` use case in Step 1 selector; SCALE_DEFS (pe-router/p-router counts S/M/L); PREFERRED_PRODUCTS maps to ASR 9001/NCS 5501; `products.js` LAYER_PAIRS; `iosxrPEConfig`/`iosxrPConfig` in configgen.js |
+| ~~G-40~~ | ~~No Private 5G / O-RAN use case (fronthaul eCPRI, PTP timing)~~ | P2 | ✅ 2026-05-25 — `private_5g` use case; Nexus 3264Q fronthaul (PTP BC, SyncE, eCPRI VLAN, QoS CS7/EF) + ASR 1001-X midhaul (PTP master/slave, SyncE, 5G QoS); `oranFronthaulConfig`/`oranMidhaulConfig` in configgen.js |
+| ~~G-41~~ | ~~No dedicated Storage Networking use case (NVMe-oF, FCoE, iSCSI)~~ | P2 | ✅ 2026-05-25 — `storage` use case; MDS 9396T SAN fabric (NVMe/FC zoning, VSAN, FCIP) + Nexus 93600CD-GX leaf (RoCEv2 PFC/ECN, RDMA QoS, ECN thresholds); `storageFabricConfig`/`storageLeafConfig` in configgen.js |
+| ~~G-42~~ | ~~SD-WAN design shallow — no vEdge/vSmart/vBond architecture~~ | P2 | ✅ 2026-05-25 — vSmart (OMP, app-aware policy, Webex/Teams/Zoom steering) + vBond (NAT traversal, WAN Edge onboarding) SKUs; `sdwanControllerConfig`/`sdwanOrchConfig` in configgen.js; sdwan-controller/sdwan-orchestrator roles in VENDOR_GEN + SCALE_DEFS |
 
 ---
 

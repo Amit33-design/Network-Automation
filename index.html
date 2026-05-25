@@ -890,6 +890,9 @@
               <option value="multisite">Multi-site</option>
               <option value="multicloud">Multi-cloud</option>
               <option value="aviatrix">Aviatrix Cloud Networking</option>
+              <option value="sp_mpls">Service Provider / MPLS Core</option>
+              <option value="private_5g">Private 5G / O-RAN</option>
+              <option value="storage">Storage Networking (NVMe-oF/iSCSI)</option>
             </select>
           </div>
           <div class="form-group">
@@ -1319,6 +1322,7 @@
       <div class="bom-tab" data-pane="ztp-pane-server">File Server</div>
       <div class="bom-tab" data-pane="ztp-pane-board">State Board</div>
       <div class="bom-tab" data-pane="ztp-pane-api">ZTP API</div>
+      <div class="bom-tab" data-pane="ztp-pane-os-images">OS Images</div>
     </div>
     </div>
 
@@ -1416,6 +1420,13 @@ curl http://localhost:8080/health
         <p class="empty-state">Generate ZTP first.</p>
       </div>
     </div>
+
+    <!-- G-32: OS image version management -->
+    <div id="ztp-pane-os-images" class="bom-pane">
+      <div id="ztp-image-content">
+        <p class="empty-state">Complete Step 1 to see OS image management.</p>
+      </div>
+    </div>
   </section>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -1439,6 +1450,7 @@ curl http://localhost:8080/health
       <div class="bom-tab" data-pane="checks-pane-topo">Topology Crawl</div>
       <div class="bom-tab" data-pane="checks-pane-symptoms">Symptom Classifier</div>
       <div class="bom-tab" data-pane="checks-pane-readme">Usage Guide</div>
+      <div class="bom-tab" data-pane="checks-pane-convergence">Convergence Predictor</div>
     </div>
     </div>
 
@@ -1627,6 +1639,15 @@ export NET_ENABLE=enablepassword   # if required</pre>
         </p>
       </div>
     </div>
+
+    <!-- G-38: BGP convergence predictor -->
+    <div id="checks-pane-convergence" class="bom-pane">
+      <div style="margin-top:16px;" id="convergence-predictor-panel">
+        <div id="convergence-content">
+          <p class="empty-state">Complete Step 1 to use the convergence predictor.</p>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -1649,6 +1670,7 @@ export NET_ENABLE=enablepassword   # if required</pre>
       <div class="bom-tab" data-pane="mon-pane-deploy">Deploy Guide</div>
       <div class="bom-tab" data-pane="mon-pane-canary">Canary Deploy</div>
       <div class="bom-tab" data-pane="mon-pane-rollback">Rollback</div>
+      <div class="bom-tab" data-pane="mon-pane-anomaly">Anomaly Detection</div>
     </div>
     </div>
 
@@ -1788,6 +1810,13 @@ curl -X POST http://localhost:9090/-/reload</pre>
       </div>
       <div id="rollback-output">
         <p class="empty-state">Complete Step 1 and click Generate Rollback Plan.</p>
+      </div>
+    </div>
+
+    <!-- G-35: Anomaly detection -->
+    <div id="mon-pane-anomaly" class="bom-pane">
+      <div id="mon-anomaly-content">
+        <p class="empty-state">Complete Step 1 to configure anomaly detection.</p>
       </div>
     </div>
   </section>

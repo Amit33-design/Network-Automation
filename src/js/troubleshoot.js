@@ -1336,5 +1336,118 @@ window.renderSymptomClassifier = function(query, category) {
   return html;
 };
 
+// ─── G-38: BGP Convergence Predictor ─────────────────────────────────────────
+
+window.bgpConvergencePredictor = function(params) {
+  params = params || {};
+  var hold_timer   = params.hold_timer   || 90;
+  var adv_interval = params.adv_interval || (params.use_case === 'dc' ? 0 : 5);
+  var route_count  = params.route_count  || 10000;
+  var has_bfd      = params.has_bfd      || false;
+  var has_rr       = params.has_rr       || false;
+  var rr_count     = params.rr_count     || 0;
+  var use_case     = params.use_case     || 'dc';
+  var scanner_ms   = 60000;
+
+  var breakdown = [];
+  var warnings  = [];
+
+  // 1. Failure detection
+  var detection_ms = has_bfd ? 900 : hold_timer * 1000;
+  if (has_bfd) {
+    breakdown.push({ phase: 'Failure Detection (BFD)', ms: detection_ms, note: '300ms interval × 3 multiplier' });
+  } else {
+    breakdown.push({ phase: 'Failure Detection (hold timer)', ms: detection_ms, note: hold_timer + 's hold timer — no BFD' });
+    if (hold_timer >= 90) warnings.push('Hold timer is ' + hold_timer + 's. Use BFD + DC Aggressive timers (3/9s) for sub-second detection.');
+  }
+
+  // 2. Best-path recalculation (~50ms per 1K prefixes)
+  var calc_ms = Math.ceil(route_count / 1000) * 50;
+  breakdown.push({ phase: 'Best-path Recalculation', ms: calc_ms, note: route_count.toLocaleString() + ' routes × 50ms/1K' });
+
+  // 3. Advertisement interval
+  var update_ms = adv_interval * 1000;
+  if (adv_interval > 0) {
+    breakdown.push({ phase: 'Advertisement Interval', ms: update_ms, note: adv_interval + 's MRAI' });
+    if (adv_interval >= 5 && use_case === 'dc') warnings.push('MRAI of ' + adv_interval + 's is too high for DC fabric. Set advertisement-interval 0.');
+  }
+
+  // 4. RR propagation (extra per-level delay)
+  var rr_ms = 0;
+  if (has_rr && rr_count > 0) {
+    rr_ms = rr_count * (adv_interval * 1000 + 10);
+    breakdown.push({ phase: 'Route Reflector Propagation', ms: rr_ms, note: rr_count + ' RR level(s)' });
+  }
+
+  // 5. BGP scanner (indirect next-hop without BFD)
+  if (!has_bfd) {
+    breakdown.push({ phase: 'BGP Scanner (indirect NH)', ms: scanner_ms, note: 'Worst case: 60s scanner cycle' });
+    warnings.push('Without BFD, indirect next-hop changes rely on 60s BGP scanner. Enable BFD on all peers.');
+  }
+
+  // 6. FIB programming (~100ms per 5K routes)
+  var fib_ms = Math.ceil(route_count / 5000) * 100;
+  breakdown.push({ phase: 'FIB / Hardware Programming', ms: fib_ms, note: route_count.toLocaleString() + ' routes → ASIC' });
+
+  var best_ms  = detection_ms + calc_ms + fib_ms;
+  var worst_ms = detection_ms + calc_ms + update_ms + rr_ms + (has_bfd ? 0 : scanner_ms) + fib_ms;
+
+  var sla_targets = {
+    dc:         { target_ms: 1000,  label: 'DC Fabric < 1s'   },
+    gpu:        { target_ms: 500,   label: 'GPU Cluster < 500ms' },
+    wan:        { target_ms: 30000, label: 'WAN < 30s'        },
+    campus:     { target_ms: 10000, label: 'Campus < 10s'     },
+    multisite:  { target_ms: 5000,  label: 'Multi-site < 5s'  },
+    sp_mpls:    { target_ms: 2000,  label: 'SP/MPLS < 2s'     }
+  };
+  var sla = sla_targets[use_case] || sla_targets.dc;
+
+  return { best_ms: best_ms, worst_ms: worst_ms, breakdown: breakdown, warnings: warnings, sla: sla, meets_sla: worst_ms <= sla.target_ms };
+};
+
+window.renderConvergencePredictor = function(state) {
+  state = state || {};
+  var useCase  = state.useCase || 'dc';
+  var hasBfd   = !!(state.protocols && state.protocols.features && state.protocols.features.indexOf('bfd') !== -1);
+  var preset   = state.bgp_timer_preset || 'conservative';
+  var tmap     = { dc_aggressive: { h: 9, adv: 0 }, wan_standard: { h: 30, adv: 5 }, conservative: { h: 180, adv: 30 } };
+  var t        = tmap[preset] || tmap.conservative;
+  var routes   = (state.topology && state.topology.endpoint_count) ? state.topology.endpoint_count * 2 : 10000;
+  var hasRr    = !!(state.protocols && state.protocols.features && state.protocols.features.indexOf('rr') !== -1);
+
+  var r = window.bgpConvergencePredictor({ hold_timer: t.h, adv_interval: t.adv, route_count: routes, has_bfd: hasBfd, has_rr: hasRr, rr_count: hasRr ? 1 : 0, use_case: useCase });
+
+  var slaColor = r.meets_sla ? '#22c55e' : '#ef4444';
+  var fmt = function(ms) { return ms >= 1000 ? (ms/1000).toFixed(1)+'s' : ms+'ms'; };
+
+  var html = '<h3 style="margin:0 0 14px">BGP Convergence Predictor</h3>';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">';
+  html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px;text-align:center;">';
+  html += '<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Best Case</div>';
+  html += '<div style="font-size:30px;font-weight:700;color:#22c55e;">' + fmt(r.best_ms) + '</div>';
+  html += '</div>';
+  html += '<div style="background:var(--surface);border:1px solid ' + slaColor + ';border-radius:6px;padding:14px;text-align:center;">';
+  html += '<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Worst Case</div>';
+  html += '<div style="font-size:30px;font-weight:700;color:' + slaColor + ';">' + fmt(r.worst_ms) + '</div>';
+  html += '<div style="font-size:11px;color:' + slaColor + ';margin-top:4px;">' + (r.meets_sla ? '✓' : '✗') + ' ' + r.sla.label + '</div>';
+  html += '</div></div>';
+
+  html += '<div class="table-scroll"><table class="bom-table"><thead><tr><th>Phase</th><th>Time</th><th>Notes</th></tr></thead><tbody>';
+  r.breakdown.forEach(function(b) {
+    html += '<tr><td>' + b.phase + '</td><td style="font-weight:600;">' + fmt(b.ms) + '</td><td style="color:var(--text-dim);font-size:12px;">' + b.note + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+
+  if (r.warnings.length) {
+    html += '<div style="margin-top:12px;">';
+    r.warnings.forEach(function(w) {
+      html += '<div style="background:#1a1000;border:1px solid #f97316;border-radius:4px;padding:8px 10px;margin-bottom:6px;font-size:12px;color:#fbbf24;">⚠ ' + w + '</div>';
+    });
+    html += '</div>';
+  }
+
+  return html;
+};
+
 window.SYMPTOM_DB = SYMPTOM_DB;
 window.SYMPTOM_CATEGORIES = CATEGORIES;

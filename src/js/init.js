@@ -311,6 +311,10 @@ function renderStep2() {
   // Capacity Math tab (G-03 + G-04)
   renderCapacityMath(STATE);
 
+  // G-38: BGP convergence predictor (updates when devices are built)
+  var convOut = document.getElementById('convergence-content');
+  if (convOut && window.renderConvergencePredictor) convOut.innerHTML = window.renderConvergencePredictor(STATE);
+
   showToast('BOM generated: ' + STATE.devices.length + ' devices', 'success');
 }
 window.renderStep2 = renderStep2;
@@ -451,6 +455,10 @@ function renderMonitoring() {
       + '<pre class="config-pre" style="max-height:320px;">' + escapeHtml(STATE.gnmiDeviceConfigs || '# No devices — complete Step 1 first.') + '</pre>';
   }
 
+  // G-35: Anomaly detection tab
+  var anomalyOut = document.getElementById('mon-anomaly-content');
+  if (anomalyOut && window.renderAnomalyPanel) anomalyOut.innerHTML = window.renderAnomalyPanel(STATE);
+
   showToast('Monitoring config generated', 'success');
 }
 window.renderMonitoring = renderMonitoring;
@@ -531,6 +539,10 @@ window.renderZtp = function() {
 
   var board = document.getElementById('ztp-state-board');
   if (board) board.innerHTML = window.renderZtpStateBoard();
+
+  // G-32: OS image management tab
+  var imgOut = document.getElementById('ztp-image-content');
+  if (imgOut && window.renderZtpImageTab) imgOut.innerHTML = window.renderZtpImageTab(STATE);
 
   showToast('ZTP config generated', 'success');
 };
