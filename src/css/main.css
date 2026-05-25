@@ -3592,3 +3592,56 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .con-mismatch-count { font-size: .7rem; color: var(--txt2); }
 .con-tip            { margin-top: .65rem; font-size: .75rem; color: var(--txt2);
                       background: var(--bg3); border-radius: 6px; padding: .4rem .65rem; }
+
+/* ── My Designs modal ─────────────────────────────────────────── */
+.dsgn-empty         { color: var(--txt3); font-size: .82rem; text-align: center; padding: 2rem 0; }
+.dsgn-slot          { display: flex; align-items: center; gap: .85rem;
+                      padding: .65rem 0; border-bottom: 1px solid var(--bg3); }
+.dsgn-slot:last-child { border-bottom: none; }
+.dsgn-slot--auto    { background: rgba(0,212,255,.05); border: 1px solid rgba(0,212,255,.18);
+                      border-radius: 8px; padding: .65rem .85rem; margin-bottom: .55rem; }
+.dsgn-slot-icon     { font-size: 1.3rem; flex-shrink: 0; width: 2rem; text-align: center; }
+.dsgn-slot-meta     { flex: 1; min-width: 0; }
+.dsgn-slot-name     { font-weight: 700; font-size: .86rem; color: var(--txt0);
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dsgn-slot-sub      { font-size: .74rem; color: var(--txt2); margin-top: .1rem;
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dsgn-slot-ts       { font-size: .68rem; color: var(--txt3); margin-top: .1rem; }
+.dsgn-slot-actions  { display: flex; gap: .35rem; flex-shrink: 0; }
+.dsgn-del-btn:hover { background: rgba(255,51,85,.12) !important; color: var(--red) !important; }
+.dsgn-auto-badge    { display: inline-block; padding: .05rem .3rem;
+                      background: rgba(0,212,255,.14); color: var(--cyan);
+                      border-radius: 3px; font-size: .62rem; font-weight: 700;
+                      letter-spacing: .04em; vertical-align: middle; }
+
+/* ── Batfish validation panel ─────────────────────────────────── */
+.bf-panel           { background: var(--bg1); border: 1px solid var(--border);
+                      border-radius: 10px; overflow: hidden; }
+.bf-header          { display: flex; align-items: center; gap: .85rem;
+                      padding: .85rem 1.1rem; background: var(--bg2); }
+.bf-header-icon     { font-size: 1.5rem; flex-shrink: 0; }
+.bf-header-text     { flex: 1; }
+.bf-title           { font-size: .92rem; font-weight: 700; color: var(--txt0); }
+.bf-sub             { font-size: .74rem; color: var(--txt2); margin-top: .1rem; }
+.bf-header-actions  { flex-shrink: 0; }
+.bf-body            { padding: 1rem 1.1rem; }
+.bf-desc            { font-size: .8rem; color: var(--txt2); margin-bottom: .85rem;
+                      line-height: 1.6; }
+.bf-desc code       { background: var(--bg3); padding: .1rem .3rem; border-radius: 3px;
+                      font-size: .75rem; color: var(--cyan); }
+.bf-checks-table    { width: 100%; border-collapse: collapse; font-size: .8rem;
+                      margin-bottom: 1rem; }
+.bf-checks-table th { text-align: left; font-size: .7rem; font-weight: 700;
+                      color: var(--txt2); text-transform: uppercase; letter-spacing: .05em;
+                      padding: .3rem .5rem .3rem 0; border-bottom: 1px solid var(--border); }
+.bf-checks-table td { padding: .45rem .5rem .45rem 0; border-bottom: 1px solid var(--bg3);
+                      vertical-align: top; }
+.bf-checks-table tr:last-child td { border-bottom: none; }
+.bf-quickstart      { background: var(--bg2); border: 1px solid var(--border);
+                      border-radius: 8px; overflow: hidden; }
+.bf-qs-title        { font-size: .74rem; font-weight: 700; color: var(--txt2);
+                      text-transform: uppercase; letter-spacing: .05em;
+                      padding: .4rem .85rem; border-bottom: 1px solid var(--border); }
+.bf-qs-code         { padding: .75rem .85rem; font-size: .74rem; color: var(--txt1);
+                      font-family: var(--mono, 'Courier New', monospace);
+                      white-space: pre; overflow-x: auto; margin: 0; }
