@@ -389,3 +389,328 @@ window.genGrafanaDashboard = function(devices, state) {
 
   return JSON.stringify({ dashboard: dashboard, overwrite: true, folderId: 0 }, null, 2);
 };
+
+// ─── G-33: Docker Compose Monitoring Stack ────────────────────────────────────
+
+window.genDockerComposeMonitoring = function(devices, state) {
+  var site = (state && state.siteCode) || 'SITE';
+  return [
+    '# NetDesign AI — Monitoring Stack',
+    '# Site: ' + site + ' | Generated: ' + new Date().toISOString(),
+    '# Usage: docker compose -f monitoring-stack.yml up -d',
+    '',
+    'services:',
+    '',
+    '  victoriametrics:',
+    '    image: victoriametrics/victoria-metrics:latest',
+    '    ports: ["8428:8428"]',
+    '    volumes:',
+    '      - vm_data:/storage',
+    '      - ./monitoring/scrape.yml:/etc/prometheus/prometheus.yml:ro',
+    '    command:',
+    '      - -retentionPeriod=90d',
+    '      - -promscrape.config=/etc/prometheus/prometheus.yml',
+    '    restart: unless-stopped',
+    '',
+    '  grafana:',
+    '    image: grafana/grafana:latest',
+    '    ports: ["3000:3000"]',
+    '    volumes:',
+    '      - grafana_data:/var/lib/grafana',
+    '      - ./monitoring/dashboards:/var/lib/grafana/dashboards:ro',
+    '      - ./monitoring/provisioning:/etc/grafana/provisioning:ro',
+    '    environment:',
+    '      - GF_AUTH_ANONYMOUS_ENABLED=true',
+    '      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin',
+    '      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/network.json',
+    '    restart: unless-stopped',
+    '    depends_on: [victoriametrics]',
+    '',
+    '  snmp-exporter:',
+    '    image: prom/snmp-exporter:latest',
+    '    ports: ["9116:9116"]',
+    '    volumes:',
+    '      - ./monitoring/snmp.yml:/etc/snmp_exporter/snmp.yml:ro',
+    '    restart: unless-stopped',
+    '',
+    '  gnmic:',
+    '    image: ghcr.io/openconfig/gnmic:latest',
+    '    ports: ["9804:9804"]',
+    '    volumes:',
+    '      - ./monitoring/gnmic.yml:/app/gnmic.yml:ro',
+    '    command: subscribe --config /app/gnmic.yml',
+    '    restart: unless-stopped',
+    '    environment:',
+    '      - NET_USER=${NET_USER:-admin}',
+    '      - NET_PASS=${NET_PASS:-}',
+    '',
+    'volumes:',
+    '  vm_data:',
+    '  grafana_data:',
+  ].join('\n');
+};
+
+window.genScrapeConfigYaml = function(devices, state) {
+  var site = (state && state.siteCode) || 'SITE';
+  var targets = (devices || []).map(function(d) {
+    return '      - ' + (d.mgmtIp || ('192.168.1.' + (d.unit || 1))) + '  # ' + d.hostname;
+  }).join('\n');
+  return [
+    '# monitoring/scrape.yml — VictoriaMetrics scrape config',
+    '# Site: ' + site + ' | Generated: ' + new Date().toISOString(),
+    '',
+    'global:',
+    '  scrape_interval: 30s',
+    '  evaluation_interval: 30s',
+    '',
+    'scrape_configs:',
+    '',
+    '  - job_name: network_snmp',
+    '    metrics_path: /snmp',
+    '    params:',
+    '      module: [if_mib, bgp4_v2]',
+    '    static_configs:',
+    '      - targets:',
+    targets,
+    '    relabel_configs:',
+    '      - source_labels: [__address__]',
+    '        target_label: __param_target',
+    '      - source_labels: [__param_target]',
+    '        target_label: instance',
+    '      - target_label: __address__',
+    '        replacement: snmp-exporter:9116',
+    '',
+    '  - job_name: gnmic_streaming',
+    '    honor_labels: true',
+    '    static_configs:',
+    '      - targets: ["gnmic:9804"]',
+    '',
+    '  - job_name: victoriametrics_self',
+    '    static_configs:',
+    '      - targets: ["victoriametrics:8428"]',
+  ].join('\n');
+};
+
+window.genGrafanaDatasourceYaml = function() {
+  return [
+    '# monitoring/provisioning/datasources/victoria.yml',
+    '# Grafana auto-provisions this datasource on startup.',
+    'apiVersion: 1',
+    '',
+    'datasources:',
+    '  - name: VictoriaMetrics',
+    '    type: prometheus',
+    '    uid: prometheus',
+    '    url: http://victoriametrics:8428',
+    '    access: proxy',
+    '    isDefault: true',
+    '    editable: false',
+    '    jsonData:',
+    '      timeInterval: "30s"',
+  ].join('\n');
+};
+
+window.genGrafanaDashboardProvisionYaml = function() {
+  return [
+    '# monitoring/provisioning/dashboards/dashboards.yml',
+    '# Grafana auto-loads dashboard JSON files from the dashboards/ directory.',
+    'apiVersion: 1',
+    '',
+    'providers:',
+    '  - name: NetDesign AI',
+    '    folder: Network',
+    '    type: file',
+    '    disableDeletion: false',
+    '    updateIntervalSeconds: 30',
+    '    allowUiUpdates: true',
+    '    options:',
+    '      path: /var/lib/grafana/dashboards',
+  ].join('\n');
+};
+
+// ─── G-34: gNMI / Streaming Telemetry ────────────────────────────────────────
+
+// Per-platform gNMI device-side configuration
+var GNMI_DEVICE_CONFIGS = {
+  nxos: function(collectorIp) {
+    return [
+      '! NX-OS — enable gNMI/telemetry (dial-out to gnmic collector)',
+      'feature telemetry',
+      '!',
+      'telemetry',
+      '  destination-group 1',
+      '    ip address ' + collectorIp + ' port 57000 protocol gRPC encoding GPB',
+      '  !',
+      '  sensor-group 1',
+      '    data-source NX-API',
+      '    path sys/intf depth unbounded',
+      '    path sys/bgp/inst depth unbounded',
+      '  !',
+      '  sensor-group 2',
+      '    data-source DME',
+      '    path sys/procsys/syscpusummary depth unbounded',
+      '    path sys/procsys depth unbounded',
+      '  !',
+      '  subscription 1',
+      '    dst-grp 1',
+      '    snsr-grp 1 sample-interval 30000',
+      '    snsr-grp 2 sample-interval 60000',
+    ].join('\n');
+  },
+  eos: function(collectorIp) {
+    return [
+      '! Arista EOS — enable gNMI (dial-in mode; gnmic connects to device port 6030)',
+      'management api gnmi',
+      '   transport grpc default',
+      '   !',
+      '   provider eos-native',
+      '!',
+      '! Optional: dial-out streaming',
+      'management telemetry',
+      '   interval 30000',
+      '! gnmic dials in — ensure device is reachable from collector at port 6030',
+      '! Collector IP for reference: ' + collectorIp,
+    ].join('\n');
+  },
+  junos: function(collectorIp) {
+    return [
+      '# Juniper JunOS — enable gNMI (dial-in port 57400) + dial-out streaming',
+      'set system services extension-service request-response grpc clear-text port 57400',
+      'set system services extension-service request-response grpc max-connections 30',
+      '# Dial-out streaming to gnmic collector:',
+      'set services analytics streaming-server ndal-gnmic remote-address ' + collectorIp,
+      'set services analytics streaming-server ndal-gnmic remote-port 57000',
+      'set services analytics export-profile ndal-profile local-address 0.0.0.0',
+      'set services analytics export-profile ndal-profile local-port 57400',
+      'set services analytics export-profile ndal-profile reporting-rate 30000',
+      'set services analytics export-profile ndal-profile format gpb',
+      'set services analytics sensor if-sensor server-name ndal-gnmic',
+      'set services analytics sensor if-sensor export-name ndal-profile',
+      'set services analytics sensor if-sensor resource /interfaces/',
+      'set services analytics sensor bgp-sensor resource /network-instances/',
+    ].join('\n');
+  },
+  sonic: function(collectorIp) {
+    return [
+      '# NVIDIA SONiC — gNMI telemetry is built-in on port 8080',
+      '# Verify it is running:',
+      'sudo systemctl status telemetry',
+      '',
+      '# Start / enable if not running:',
+      'sudo systemctl enable telemetry',
+      'sudo systemctl start telemetry',
+      '',
+      '# gnmic connects to port 8080 (insecure) or 57400 (TLS):',
+      '# No device-side subscription config needed for dial-in mode.',
+      '# Collector IP for reference: ' + collectorIp,
+    ].join('\n');
+  }
+};
+
+window.genGnmicYaml = function(devices, state) {
+  var collectorIp = (state && state.monitoringCollectorIp) || '10.0.0.100';
+
+  function gnmiPort(dev) {
+    var v = (dev.vendor || '').toLowerCase();
+    if (v.includes('arista')) return '6030';
+    if (v.includes('nvidia') || v.includes('sonic')) return '8080';
+    return '57400';  // NX-OS, JunOS, standard
+  }
+
+  var targetLines = (devices || []).map(function(d) {
+    var ip   = d.mgmtIp || ('192.168.1.' + (d.unit || 1));
+    var port = gnmiPort(d);
+    return [
+      '  ' + ip + ':' + port + ':',
+      '    name: ' + d.hostname,
+      '    insecure: true',
+      '    skip-verify: true',
+    ].join('\n');
+  }).join('\n\n');
+
+  return [
+    '# monitoring/gnmic.yml — gnmic gNMI collector config (G-34)',
+    '# Site: ' + ((state && state.siteCode) || 'SITE') + ' | Generated: ' + new Date().toISOString(),
+    '# Run via docker compose (monitoring-stack.yml) or standalone:',
+    '#   gnmic subscribe --config monitoring/gnmic.yml',
+    '',
+    'username: ${NET_USER}',
+    'password: ${NET_PASS}',
+    'insecure: true',
+    'skip-verify: true',
+    'encoding: proto',
+    'log: true',
+    '',
+    'targets:',
+    targetLines,
+    '',
+    'subscriptions:',
+    '',
+    '  interface-counters:',
+    '    paths:',
+    '      - /interfaces/interface/state/counters',
+    '    mode: stream',
+    '    stream-mode: sample',
+    '    sample-interval: 30s',
+    '    encoding: proto',
+    '',
+    '  interface-oper-state:',
+    '    paths:',
+    '      - /interfaces/interface/state/oper-status',
+    '    mode: stream',
+    '    stream-mode: on_change',
+    '    encoding: proto',
+    '',
+    '  bgp-session-state:',
+    '    paths:',
+    '      - /network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state',
+    '    mode: stream',
+    '    stream-mode: sample',
+    '    sample-interval: 60s',
+    '    encoding: proto',
+    '',
+    '  system-resources:',
+    '    paths:',
+    '      - /system/cpus/cpu/state',
+    '      - /system/memory/state',
+    '    mode: stream',
+    '    stream-mode: sample',
+    '    sample-interval: 60s',
+    '    encoding: proto',
+    '',
+    'outputs:',
+    '',
+    '  prometheus-output:',
+    '    type: prometheus',
+    '    listen: :9804',
+    '    path: /metrics',
+    '    expiration-time: 10m',
+    '    metric-name-prefix: gnmi_',
+    '    strings-as-labels: true',
+  ].join('\n');
+};
+
+window.genGnmiDeviceConfigs = function(devices, state) {
+  var collectorIp = (state && state.monitoringCollectorIp) || '10.0.0.100';
+
+  function platformKey(dev) {
+    var v = (dev.vendor || '').toLowerCase();
+    if (v.includes('arista'))  return 'eos';
+    if (v.includes('juniper')) return 'junos';
+    if (v.includes('nvidia') || v.includes('sonic')) return 'sonic';
+    return 'nxos';
+  }
+
+  // Group devices by platform — one config block per platform
+  var seen = {};
+  var blocks = [];
+  (devices || []).forEach(function(dev) {
+    var key = platformKey(dev);
+    if (!seen[key]) {
+      seen[key] = true;
+      var fn = GNMI_DEVICE_CONFIGS[key];
+      if (fn) blocks.push('! ─── ' + key.toUpperCase() + ' ───────────────────────\n' + fn(collectorIp));
+    }
+  });
+  return blocks.join('\n\n');
+};

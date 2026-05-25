@@ -394,12 +394,48 @@ function renderMonitoring() {
   }
   STATE.prometheusAlerts  = window.genPrometheusAlerts(STATE.devices, STATE);
   STATE.grafanaDashboard  = window.genGrafanaDashboard(STATE.devices, STATE);
+  STATE.dockerCompose     = window.genDockerComposeMonitoring(STATE.devices, STATE);
+  STATE.scrapeConfig      = window.genScrapeConfigYaml(STATE.devices, STATE);
+  STATE.datasourceYaml    = window.genGrafanaDatasourceYaml();
+  STATE.dashboardProvYaml = window.genGrafanaDashboardProvisionYaml();
+  STATE.gnmicYaml         = window.genGnmicYaml(STATE.devices, STATE);
+  STATE.gnmiDeviceConfigs = window.genGnmiDeviceConfigs(STATE.devices, STATE);
 
   var promOut = document.getElementById('prometheus-output');
   if (promOut) promOut.innerHTML = '<pre class="config-pre">' + escapeHtml(STATE.prometheusAlerts) + '</pre>';
 
   var grafOut = document.getElementById('grafana-output');
   if (grafOut) grafOut.innerHTML = '<pre class="config-pre">' + escapeHtml(STATE.grafanaDashboard) + '</pre>';
+
+  // G-33: Stack setup tab
+  var stackOut = document.getElementById('mon-stack-output');
+  if (stackOut) {
+    var site = STATE.siteCode || 'SITE';
+    stackOut.innerHTML =
+      '<div class="val-block" style="background:rgba(79,142,247,.06);border-color:rgba(79,142,247,.3);margin-bottom:12px;">'
+      + '<div class="val-block-hdr" style="font-size:13px;">Grafana — <a href="http://localhost:3000" target="_blank" style="color:var(--accent)">http://localhost:3000</a></div>'
+      + '<div style="font-size:12px;color:var(--text-dim);margin-top:4px;">VictoriaMetrics — <a href="http://localhost:8428" target="_blank" style="color:var(--accent)">http://localhost:8428</a></div>'
+      + '<div style="font-size:12px;color:var(--text-dim);">SNMP Exporter — <code>localhost:9116</code> &nbsp;|&nbsp; gnmic Prometheus — <code>localhost:9804</code></div>'
+      + '</div>'
+      + '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px;">monitoring-stack.yml</h4>'
+      + '<pre class="config-pre" style="max-height:260px;">' + escapeHtml(STATE.dockerCompose) + '</pre>'
+      + '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px;">monitoring/scrape.yml</h4>'
+      + '<pre class="config-pre" style="max-height:180px;">' + escapeHtml(STATE.scrapeConfig) + '</pre>'
+      + '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px;">monitoring/provisioning/datasources/victoria.yml</h4>'
+      + '<pre class="config-pre" style="max-height:120px;">' + escapeHtml(STATE.datasourceYaml) + '</pre>'
+      + '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px;">monitoring/provisioning/dashboards/dashboards.yml</h4>'
+      + '<pre class="config-pre" style="max-height:120px;">' + escapeHtml(STATE.dashboardProvYaml) + '</pre>';
+  }
+
+  // G-34: gNMI telemetry tab
+  var gnmiOut = document.getElementById('mon-gnmi-output');
+  if (gnmiOut) {
+    gnmiOut.innerHTML =
+      '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:0 0 6px;">monitoring/gnmic.yml — Collector Config</h4>'
+      + '<pre class="config-pre" style="max-height:320px;">' + escapeHtml(STATE.gnmicYaml) + '</pre>'
+      + '<h4 style="font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 6px;">Device-Side gNMI Config (per platform)</h4>'
+      + '<pre class="config-pre" style="max-height:320px;">' + escapeHtml(STATE.gnmiDeviceConfigs || '# No devices — complete Step 1 first.') + '</pre>';
+  }
 
   showToast('Monitoring config generated', 'success');
 }
@@ -420,6 +456,34 @@ function downloadGrafana() {
   showToast('Grafana dashboard downloaded', 'success');
 }
 window.downloadGrafana = downloadGrafana;
+
+window.downloadDockerCompose = function() {
+  if (!STATE.dockerCompose) { renderMonitoring(); }
+  if (!STATE.dockerCompose) return;
+  downloadFile('monitoring-stack.yml', STATE.dockerCompose, 'text/yaml');
+  showToast('Docker Compose downloaded', 'success');
+};
+
+window.downloadScrapeConfig = function() {
+  if (!STATE.scrapeConfig) { renderMonitoring(); }
+  if (!STATE.scrapeConfig) return;
+  downloadFile('monitoring/scrape.yml', STATE.scrapeConfig, 'text/yaml');
+  showToast('Scrape config downloaded', 'success');
+};
+
+window.downloadGnmicYaml = function() {
+  if (!STATE.gnmicYaml) { renderMonitoring(); }
+  if (!STATE.gnmicYaml) return;
+  downloadFile('monitoring/gnmic.yml', STATE.gnmicYaml, 'text/yaml');
+  showToast('gnmic config downloaded', 'success');
+};
+
+window.downloadGnmiDeviceConfigs = function() {
+  if (!STATE.gnmiDeviceConfigs) { renderMonitoring(); }
+  if (!STATE.gnmiDeviceConfigs) return;
+  downloadFile('gnmi-device-config.txt', STATE.gnmiDeviceConfigs, 'text/plain');
+  showToast('gNMI device configs downloaded', 'success');
+};
 
 // ─── Post-check diff report (G-23) ──────────────────────────────────��────────
 
