@@ -696,3 +696,48 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
 });
+
+// ─── G-01: NLP Intent parse handler ──────────────────────────────────────────
+window.parseIntent = function() {
+  var ta = document.getElementById('nlp-intent-text');
+  var res = document.getElementById('nlp-result');
+  if (!ta || !ta.value.trim()) {
+    showToast('Enter a description first', 'warning');
+    return;
+  }
+
+  var text = ta.value.trim();
+  var result = window.parseIntentHeuristic(text);
+  var intent = result.intent;
+  var conf   = result.confidence;
+
+  if (!Object.keys(intent).length) {
+    res.innerHTML = '<span class="nlp-err">Could not extract any fields. Try describing the use case, vendor names, protocol names, or server count.</span>';
+    res.classList.add('visible');
+    return;
+  }
+
+  var filled = window.fillFormFromIntent(intent, conf);
+
+  // Build result chips
+  var chips = filled.map(function(f) {
+    var key = {
+      'Site Name': 'siteName', 'Site Code': 'siteCode', 'Use Case': 'useCase',
+      'Scale': 'scale', 'Redundancy': 'redundancy', 'Endpoint Count': 'endpointCount',
+      'Bandwidth': 'bandwidth', 'Oversubscription': 'oversubscription',
+      'Vendors': 'vendors', 'Underlay': 'underlay', 'Overlay': 'overlay',
+      'Features': 'features', 'GPU Transport': 'gpuTransport'
+    }[f] || f;
+    var c = conf[key] || 'extracted';
+    return '<span class="nlp-field-chip ' + c + '">' + f + '</span>';
+  }).join('');
+
+  res.innerHTML = '<strong style="font-size:12px;color:var(--text-dim);">AUTO-FILLED:</strong> ' + chips
+    + '<br><span style="font-size:11px;color:var(--text-dim);margin-top:4px;display:block;">'
+    + '<span style="color:var(--accent);font-weight:700;">●</span> Extracted from text &nbsp;'
+    + '<span style="color:#818cf8;font-weight:700;">●</span> Inferred from context'
+    + '</span>';
+  res.classList.add('visible');
+
+  showToast('Filled ' + filled.length + ' field' + (filled.length !== 1 ? 's' : ''), 'success');
+};

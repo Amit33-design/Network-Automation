@@ -556,6 +556,95 @@
     .symptom-search-bar input { flex: 1; min-width: 200px; }
     .symptom-search-bar select { min-width: 130px; }
 
+    /* ─── G-01: NLP Intent Parser ───────────────────────────────────────────── */
+    .nlp-box {
+      margin: 16px 0 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .nlp-box-hdr {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--surface2);
+      cursor: pointer;
+      user-select: none;
+    }
+    .nlp-box-hdr:hover { background: var(--surface3, #1e293b); }
+    .nlp-box-icon { font-size: 16px; }
+    .nlp-box-title { font-size: 13px; font-weight: 600; flex: 1; }
+    .nlp-box-sub { font-size: 11px; color: var(--text-dim); }
+    .nlp-box-chevron { font-size: 10px; color: var(--text-dim); transition: transform .2s; }
+    .nlp-box.open .nlp-box-chevron { transform: rotate(180deg); }
+    .nlp-box-body { padding: 12px 14px; display: none; }
+    .nlp-box.open .nlp-box-body { display: block; }
+    .nlp-textarea {
+      width: 100%;
+      min-height: 72px;
+      max-height: 160px;
+      resize: vertical;
+      box-sizing: border-box;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 9px 11px;
+      font-family: inherit;
+      margin-bottom: 8px;
+    }
+    .nlp-textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,142,247,.15); }
+    .nlp-textarea::placeholder { color: var(--text-dim); }
+    .nlp-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .nlp-result {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      font-size: 12px;
+      line-height: 1.7;
+      display: none;
+    }
+    .nlp-result.visible { display: block; }
+    .nlp-field-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      margin: 2px 3px;
+    }
+    .nlp-field-chip.extracted { background: rgba(79,142,247,.15); color: var(--accent); }
+    .nlp-field-chip.inferred  { background: rgba(99,102,241,.15); color: #818cf8; }
+    .nlp-err { color: var(--danger); margin-top: 6px; font-size: 12px; }
+
+    /* Field highlight when auto-filled by NLP parser */
+    .intent-filled {
+      box-shadow: 0 0 0 2px var(--accent) !important;
+      border-color: var(--accent) !important;
+    }
+    .intent-filled[data-intent-conf="inferred"] {
+      box-shadow: 0 0 0 2px #6366f1 !important;
+      border-color: #6366f1 !important;
+    }
+    /* checkbox-item highlight */
+    .checkbox-item.intent-filled {
+      background: rgba(79,142,247,.12) !important;
+      border-color: var(--accent) !important;
+      box-shadow: none !important;
+    }
+    .checkbox-item.intent-filled[data-intent-conf="inferred"] {
+      background: rgba(99,102,241,.12) !important;
+      border-color: #6366f1 !important;
+    }
+
     /* ─── Mobile responsive ──────────────────────────────────────────────────── */
     /* clip (not hidden) — visually prevents page-level horizontal scroll but does NOT
        create a scroll container, so child overflow-x:auto elements receive touch events */
@@ -742,6 +831,26 @@
       <div>
         <div class="section-title">Network Design</div>
         <div class="section-sub">Define your use case, scale, and site parameters</div>
+      </div>
+    </div>
+
+    <!-- G-01: NLP Intent Parser -->
+    <div class="nlp-box" id="nlp-box">
+      <div class="nlp-box-hdr" onclick="document.getElementById('nlp-box').classList.toggle('open')">
+        <span class="nlp-box-icon">✨</span>
+        <span class="nlp-box-title">Describe your network in plain English</span>
+        <span class="nlp-box-sub">AI intent parser</span>
+        <span class="nlp-box-chevron">▼</span>
+      </div>
+      <div class="nlp-box-body">
+        <textarea id="nlp-intent-text" class="nlp-textarea"
+          placeholder="e.g. Data center leaf-spine for 500 servers at 25G with Cisco and Arista, BGP underlay, VXLAN/EVPN overlay, full HA redundancy at 3:1 oversubscription"></textarea>
+        <div class="nlp-actions">
+          <button type="button" class="btn btn-primary" onclick="window.parseIntent()" style="padding:8px 16px;font-size:12px;">✨ Parse Intent</button>
+          <button type="button" class="btn" onclick="window.clearIntentHighlights()" style="padding:8px 14px;font-size:12px;">Clear</button>
+          <span style="font-size:11px;color:var(--text-dim);margin-left:auto;">Fields highlighted in <span style="color:var(--accent);font-weight:700;">blue</span> were auto-filled</span>
+        </div>
+        <div id="nlp-result" class="nlp-result"></div>
       </div>
     </div>
 
@@ -1482,6 +1591,7 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/deploy.js"></script>
 <script src="src/js/troubleshoot.js"></script>
 <script src="src/js/topodisc.js"></script>
+<script src="src/js/nlp_intent.js"></script>
 <script src="src/js/init.js"></script>
 
 </body>
