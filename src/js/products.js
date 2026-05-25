@@ -1,6 +1,8 @@
 'use strict';
 
 // All products must have: id, model, vendor, subLayer, ports, uplinks, speed, asic, powerW, features, useCases, detail
+// Lifecycle fields: eol_date (last purchase), eos_date (last support), successor (model name)
+// Dates are ISO strings: 'YYYY-MM-DD'. null = no announced date yet.
 var PRODUCTS = [
   // ─── Spine / Core ───────────────────────────────────────────────────────────
   {
@@ -16,7 +18,10 @@ var PRODUCTS = [
     priceUSD: 28000,
     features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
     useCases: ['dc', 'gpu', 'multisite'],
-    detail: '36x100G QSFP28, MACsec, CloudScale ASIC, 3.6Tbps'
+    detail: '36x100G QSFP28, MACsec, CloudScale ASIC, 3.6Tbps',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'nxos-9364c',
@@ -31,7 +36,10 @@ var PRODUCTS = [
     priceUSD: 72000,
     features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
     useCases: ['dc', 'gpu', 'multicloud'],
-    detail: '64x400G QSFP-DD, AI/ML optimised, 25.6Tbps'
+    detail: '64x400G QSFP-DD, AI/ML optimised, 25.6Tbps',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'arista-7800r3',
@@ -46,7 +54,10 @@ var PRODUCTS = [
     priceUSD: 95000,
     features: ['VXLAN', 'EVPN', 'BGP', 'MPLS', 'FlowSpec'],
     useCases: ['dc', 'wan', 'multisite', 'multicloud'],
-    detail: '48x400G QSFP-DD, segment routing, 19.2Tbps'
+    detail: '48x400G QSFP-DD, segment routing, 19.2Tbps',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'juniper-qfx10002',
@@ -61,7 +72,10 @@ var PRODUCTS = [
     priceUSD: 35000,
     features: ['VXLAN', 'EVPN', 'BGP', 'MPLS'],
     useCases: ['dc', 'multisite'],
-    detail: '72x40G QSFP+, 2.88Tbps, VC-capable'
+    detail: '72x40G QSFP+, 2.88Tbps, VC-capable',
+    eol_date: '2025-07-31',
+    eos_date: '2030-07-31',
+    successor: 'QFX10002-60C (Q5C ASIC, 60x100G)'
   },
 
   // ─── Leaf / ToR ─────────────────────────────────────────────────────────────
@@ -79,7 +93,10 @@ var PRODUCTS = [
     priceUSD: 14000,
     features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
     useCases: ['dc', 'gpu', 'multisite'],
-    detail: '48x25G SFP28 + 6x100G QSFP28 uplinks'
+    detail: '48x25G SFP28 + 6x100G QSFP28 uplinks',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'nxos-9332c',
@@ -95,7 +112,10 @@ var PRODUCTS = [
     priceUSD: 18000,
     features: ['VXLAN', 'EVPN', 'BGP', 'PFC'],
     useCases: ['dc', 'gpu'],
-    detail: '32x100G QSFP28 + 2x100G uplinks, GPU-optimised'
+    detail: '32x100G QSFP28 + 2x100G uplinks, GPU-optimised',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'arista-7050cx3',
@@ -111,7 +131,10 @@ var PRODUCTS = [
     priceUSD: 16000,
     features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECMP'],
     useCases: ['dc', 'multisite'],
-    detail: '32x100G QSFP28 + 2x100G uplinks, Trident3'
+    detail: '32x100G QSFP28 + 2x100G uplinks, Trident3',
+    eol_date: '2027-03-31',
+    eos_date: '2032-03-31',
+    successor: 'Arista 7050X4 (Trident4)'
   },
   {
     id: 'juniper-qfx5120',
@@ -127,7 +150,10 @@ var PRODUCTS = [
     priceUSD: 12000,
     features: ['VXLAN', 'EVPN', 'BGP', 'LLDP'],
     useCases: ['dc', 'multisite'],
-    detail: '48x25G SFP28 + 8x100G QSFP28 uplinks'
+    detail: '48x25G SFP28 + 8x100G QSFP28 uplinks',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
 
   // ─── Distribution ────────────────────────────────────────────────────────────
@@ -145,7 +171,10 @@ var PRODUCTS = [
     priceUSD: 22000,
     features: ['SDA', 'VXLAN', 'EVPN', 'BGP', 'QoS', 'MACsec'],
     useCases: ['campus', 'multisite'],
-    detail: '48x25G + 4x100G, Cisco SDA-ready'
+    detail: '48x25G + 4x100G, Cisco SDA-ready',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'cat9300l',
@@ -161,7 +190,10 @@ var PRODUCTS = [
     priceUSD: 4800,
     features: ['PoE+', 'SDA', 'QoS', 'LLDP', 'MACsec'],
     useCases: ['campus'],
-    detail: '48x1G PoE+ + 4x1G SFP uplinks, 740W PoE budget'
+    detail: '48x1G PoE+ + 4x1G SFP uplinks, 740W PoE budget',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'cat9200',
@@ -177,7 +209,10 @@ var PRODUCTS = [
     priceUSD: 3200,
     features: ['PoE+', 'QoS', 'LLDP'],
     useCases: ['campus'],
-    detail: '48x1G PoE+ + 4x1G SFP uplinks'
+    detail: '48x1G PoE+ + 4x1G SFP uplinks',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
 
   // ─── WAN / Edge ──────────────────────────────────────────────────────────────
@@ -194,7 +229,10 @@ var PRODUCTS = [
     priceUSD: 18000,
     features: ['BGP', 'MPLS', 'OSPF', 'IPSec', 'DMVPN', 'SD-WAN'],
     useCases: ['wan', 'multisite'],
-    detail: '4x10G, 60Gbps aggregate, crypto capable'
+    detail: '4x10G, 60Gbps aggregate, crypto capable',
+    eol_date: '2024-01-31',
+    eos_date: '2029-01-31',
+    successor: 'ASR 1001-X / Catalyst 8200'
   },
   {
     id: 'viptela-vedge',
@@ -209,7 +247,10 @@ var PRODUCTS = [
     priceUSD: 9500,
     features: ['SD-WAN', 'BGP', 'IPSec', 'ZTP', 'AppQoE'],
     useCases: ['wan', 'multisite', 'multicloud'],
-    detail: '8x1G, SD-WAN ZTP, AppQoE, 20Gbps'
+    detail: '8x1G, SD-WAN ZTP, AppQoE, 20Gbps',
+    eol_date: '2024-08-31',
+    eos_date: '2026-08-31',
+    successor: 'Catalyst 8300 / Catalyst SD-WAN'
   },
 
   // ─── Aviatrix ────────────────────────────────────────────────────────────────
@@ -226,7 +267,10 @@ var PRODUCTS = [
     priceUSD: 4200,
     features: ['BGP', 'IPSec', 'SNAT', 'DNAT', 'FireNet', 'TGW'],
     useCases: ['aviatrix', 'multicloud'],
-    detail: 'Cloud-native gateway, AWS/Azure/GCP'
+    detail: 'Cloud-native gateway, AWS/Azure/GCP',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'aviatrix-transit',
@@ -241,7 +285,10 @@ var PRODUCTS = [
     priceUSD: 9800,
     features: ['BGP', 'EVPN', 'Segmentation', 'FireNet', 'TGW'],
     useCases: ['aviatrix', 'multicloud'],
-    detail: 'Cloud transit, multi-cloud meshing'
+    detail: 'Cloud transit, multi-cloud meshing',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
 
   // ─── Firewalls / Security ────────────────────────────────────────────────────
@@ -258,7 +305,10 @@ var PRODUCTS = [
     priceUSD: 65000,
     features: ['IPS', 'AVC', 'TLS-decrypt', 'AMP', 'HA'],
     useCases: ['campus', 'dc', 'multisite', 'multicloud'],
-    detail: '8x40G, 80Gbps FW throughput, HA pair'
+    detail: '8x40G, 80Gbps FW throughput, HA pair',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   },
   {
     id: 'panos-pa5260',
@@ -273,7 +323,10 @@ var PRODUCTS = [
     priceUSD: 120000,
     features: ['IPS', 'URL-filter', 'GlobalProtect', 'TLS-decrypt', 'HA'],
     useCases: ['campus', 'dc', 'multicloud'],
-    detail: '16x100G, 200Gbps threat prevention'
+    detail: '16x100G, 200Gbps threat prevention',
+    eol_date: null,
+    eos_date: null,
+    successor: null
   }
 ];
 

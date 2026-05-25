@@ -267,7 +267,8 @@ function renderStep2() {
     + '<th>Hostname</th><th>Model</th><th>Role</th><th>Vendor</th><th>Speed</th><th>Location</th>'
     + '</tr></thead><tbody>' + deviceList + '</tbody></table></div>';
 
-  container.innerHTML = '<div class="table-scroll">' + html + '</div>' + deviceSection;
+  var lcBanner = window.renderLifecycleBanner ? window.renderLifecycleBanner(STATE.devices) : '';
+  container.innerHTML = lcBanner + '<div class="table-scroll">' + html + '</div>' + deviceSection;
 
   // Cabling tab
   var cableOut = document.getElementById('cabling-output');

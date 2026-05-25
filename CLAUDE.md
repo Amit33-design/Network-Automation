@@ -127,7 +127,7 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 | ~~G-05~~ | ~~No rack layout, cable schedule, or physical plant in BOM~~ | P1 | ✅ — `racklayout.js` (42U rack assignment, U-slot placement, power/cooling); `cabling.js` (cable schedule, distances, part #s, cost) |
 | ~~G-06~~ | ~~No software license or 3-year TCO in BOM~~ | P1 | ✅ — `tco.js` — per-vendor SW license %, annual support %, power cost; 3-year CapEx+OpEx rollup |
 | ~~G-07~~ | ~~Optics selection ignores fiber type/distance — always wrong without this~~ | P1 | ✅ — `optics.js` — 12 SKUs with fiberFamily (mmf/smf), reach per fiber grade, constraint-aware `recommendOptics()` |
-| G-08 | 40 SKUs only — no EoL/EoS tracking | P2 | ❌ — SKUs lack lifecycle metadata (EoL date, support timeline) |
+| ~~G-08~~ | ~~40 SKUs only — no EoL/EoS tracking~~ | P2 | ✅ 2026-05-25 — `eol_date`/`eos_date`/`successor` on all 17 SKUs in `products.js`; `getLifecycleStatus()` + `renderLifecycleBanner()` in `bom.js`; Lifecycle column in BOM table; EoL/EoS/EoL-Soon banner above BOM; lifecycle fields in CSV export |
 
 ### 4.2 Protocol Depth
 

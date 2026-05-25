@@ -203,6 +203,70 @@ function buildBOM(state) {
   return { devices: devices, summary: summary };
 }
 
+// ─── G-08: Lifecycle / EoL / EoS helpers ─────────────────────────────────────
+
+var LC_STATUS = { active: 'active', eol_soon: 'eol_soon', eol: 'eol', eos: 'eos' };
+
+window.getLifecycleStatus = function(product) {
+  if (!product) return LC_STATUS.active;
+  var now   = new Date();
+  var eol   = product.eol_date ? new Date(product.eol_date) : null;
+  var eos   = product.eos_date ? new Date(product.eos_date) : null;
+  var soon  = new Date(now.getFullYear(), now.getMonth() + 12, now.getDate()); // 12-month horizon
+  if (eos  && now >= eos)  return LC_STATUS.eos;
+  if (eol  && now >= eol)  return LC_STATUS.eol;
+  if (eol  && eol <= soon) return LC_STATUS.eol_soon;
+  return LC_STATUS.active;
+};
+
+var LC_BADGE = {
+  active:   '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 7px;border-radius:10px;background:#22c55e20;color:#22c55e;font-weight:600;white-space:nowrap;">● Active</span>',
+  eol_soon: '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 7px;border-radius:10px;background:#f59e0b20;color:#f59e0b;font-weight:600;white-space:nowrap;">⚠ EoL Soon</span>',
+  eol:      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 7px;border-radius:10px;background:#ef444420;color:#ef4444;font-weight:600;white-space:nowrap;">✕ End of Life</span>',
+  eos:      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 7px;border-radius:10px;background:#7f1d1d40;color:#fca5a5;font-weight:600;white-space:nowrap;">⛔ End of Support</span>'
+};
+
+window.renderLifecycleBanner = function(devices) {
+  if (!devices || !devices.length) return '';
+  var issues = [];
+  devices.forEach(function(dev) {
+    var prod = (window.PRODUCTS || []).find(function(p) { return p.model === dev.model; });
+    if (!prod) return;
+    var status = window.getLifecycleStatus(prod);
+    if (status === LC_STATUS.active) return;
+    var existing = issues.find(function(i) { return i.model === prod.model; });
+    if (existing) return;
+    issues.push({
+      model:     prod.model,
+      vendor:    prod.vendor,
+      status:    status,
+      eol_date:  prod.eol_date,
+      eos_date:  prod.eos_date,
+      successor: prod.successor
+    });
+  });
+  if (!issues.length) return '';
+
+  var hasEos     = issues.some(function(i) { return i.status === 'eos'; });
+  var hasEol     = issues.some(function(i) { return i.status === 'eol'; });
+  var headerClass = hasEos ? 'val-block-error' : hasEol ? 'val-block-error' : 'val-block-warn';
+  var rows = issues.map(function(i) {
+    var badge = LC_BADGE[i.status] || '';
+    var detail = '';
+    if (i.eol_date) detail += ' EoL: ' + i.eol_date + '.';
+    if (i.eos_date) detail += ' EoS: ' + i.eos_date + '.';
+    if (i.successor) detail += ' Successor: ' + i.successor + '.';
+    return '<div class="val-item">' + badge
+      + ' <span class="val-msg"><strong>' + i.vendor + ' ' + i.model + '</strong>'
+      + (detail ? ' —' + detail : '') + '</span></div>';
+  }).join('');
+
+  return '<div class="val-block ' + headerClass + '" style="margin:0 0 12px;">'
+    + '<div class="val-block-hdr">⏰ Lifecycle Warning — ' + issues.length
+    + ' SKU' + (issues.length > 1 ? 's' : '') + ' in BOM ha' + (issues.length > 1 ? 've' : 's') + ' EoL/EoS status</div>'
+    + rows + '</div>';
+};
+
 /**
  * Render BOM as an HTML table.
  */
@@ -216,8 +280,17 @@ function renderBOMTable(summary) {
         '<td>' + item.qty + '</td>' +
         '<td>—</td>' +
         '<td><strong>$' + item.totalCost.toLocaleString() + '</strong></td>' +
+        '<td>—</td>' +
         '</tr>';
     }
+    var prod   = (window.PRODUCTS || []).find(function(p) { return p.model === item.model; });
+    var status = window.getLifecycleStatus ? window.getLifecycleStatus(prod) : 'active';
+    var badge  = LC_BADGE[status] || LC_BADGE.active;
+    var eolTip = '';
+    if (prod && prod.eol_date) eolTip += ' EoL: ' + prod.eol_date + '.';
+    if (prod && prod.eos_date) eolTip += ' EoS: ' + prod.eos_date + '.';
+    if (prod && prod.successor) eolTip += ' → ' + prod.successor;
+    var lcCell = badge + (eolTip ? '<div style="font-size:10px;color:var(--text-dim);margin-top:2px;white-space:normal;">' + eolTip + '</div>' : '');
     return '<tr>' +
       '<td>' + item.vendor + '</td>' +
       '<td><strong>' + item.model + '</strong><br><small>' + item.detail + '</small></td>' +
@@ -225,15 +298,16 @@ function renderBOMTable(summary) {
       '<td>' + item.qty + '</td>' +
       '<td>$' + item.unitCost.toLocaleString() + '</td>' +
       '<td>$' + item.totalCost.toLocaleString() + '</td>' +
+      '<td style="min-width:130px;">' + lcCell + '</td>' +
       '</tr>';
   }).join('');
 
   var grandTotal = Object.values(summary).reduce(function(s, i) { return s + i.totalCost; }, 0);
 
   return '<table class="bom-table">' +
-    '<thead><tr><th>Vendor</th><th>Model</th><th>Layer</th><th>Qty</th><th>Unit $</th><th>Total $</th></tr></thead>' +
+    '<thead><tr><th>Vendor</th><th>Model</th><th>Layer</th><th>Qty</th><th>Unit $</th><th>Total $</th><th>Lifecycle</th></tr></thead>' +
     '<tbody>' + rows + '</tbody>' +
-    '<tfoot><tr><td colspan="5"><strong>Grand Total (hardware + cabling)</strong></td>' +
+    '<tfoot><tr><td colspan="6"><strong>Grand Total (hardware + cabling)</strong></td>' +
     '<td><strong>$' + grandTotal.toLocaleString() + '</strong></td></tr></tfoot>' +
     '</table>';
 }
@@ -242,12 +316,18 @@ function renderBOMTable(summary) {
  * Export BOM as CSV.
  */
 function exportBOMCSV(summary, devices) {
-  var header = ['Vendor','Model','Sub-Layer','Qty','Unit Cost USD','Total Cost USD','Speed','Ports','Features'];
+  var header = ['Vendor','Model','Sub-Layer','Qty','Unit Cost USD','Total Cost USD','Speed','Ports','Features','Lifecycle Status','EoL Date','EoS Date','Successor'];
   var rows = Object.values(summary).map(function(item) {
+    var prod   = (window.PRODUCTS || []).find(function(p) { return p.model === item.model; });
+    var status = window.getLifecycleStatus ? window.getLifecycleStatus(prod) : 'active';
     return [
       item.vendor, item.model, item.subLayer, item.qty,
       item.unitCost, item.totalCost, item.speed, item.ports,
-      (item.features || []).join(';')
+      (item.features || []).join(';'),
+      status,
+      (prod && prod.eol_date) || '',
+      (prod && prod.eos_date) || '',
+      (prod && prod.successor) || ''
     ].join(',');
   });
 
