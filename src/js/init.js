@@ -241,6 +241,542 @@ function renderCapacityMath(state) {
 }
 window.renderCapacityMath = renderCapacityMath;
 
+// ─── HLD Topology SVG Diagram ─────────────────────────────────────────────────
+function renderTopologyDiagram(state) {
+  var useCase = state.useCase || 'dc';
+  var devices = state.devices || [];
+
+  // ── Node color palette ──────────────────────────────────────────────────────
+  var NODE_COLORS = {
+    'spine':               '#3b82f6',
+    'super-spine':         '#6366f1',
+    'leaf':                '#22c55e',
+    'distribution':        '#a855f7',
+    'access':              '#14b8a6',
+    'firewall':            '#f97316',
+    'wan-edge':            '#eab308',
+    'pe-router':           '#6366f1',
+    'p-router':            '#6366f1',
+    'sdwan-controller':    '#64748b',
+    'sdwan-orchestrator':  '#64748b',
+    'cloud-transit':       '#64748b',
+    'cloud-gw':            '#64748b',
+    'fronthaul':           '#22c55e',
+    'midhaul':             '#3b82f6',
+    'storage-fabric':      '#6366f1',
+    'storage-leaf':        '#22c55e'
+  };
+
+  var COLLAPSE_THRESHOLD = 6;
+  var SVG_W = 800;
+
+  function nodeColor(role) {
+    return NODE_COLORS[role] || '#64748b';
+  }
+
+  function svgNode(cx, cy, w, h, label, role) {
+    var c    = nodeColor(role);
+    var x    = cx - w / 2;
+    var y    = cy - h / 2;
+    var fill = c + '22';
+    var maxChars = Math.floor(w / 7);
+    var disp = label.length > maxChars ? label.slice(0, maxChars - 1) + '…' : label;
+    return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="4"'
+      + ' fill="' + fill + '" stroke="' + c + '" stroke-width="1.5"/>'
+      + '<text x="' + cx + '" y="' + (cy + 4) + '" text-anchor="middle" dominant-baseline="middle"'
+      + ' font-family="monospace,sans-serif" font-size="11" fill="' + c + '" font-weight="600">' + disp + '</text>';
+  }
+
+  function svgCloud(cx, cy, w, h, label) {
+    var x = cx - w / 2;
+    var y = cy - h / 2;
+    return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="8"'
+      + ' fill="#1e293b" stroke="#475569" stroke-width="1.5" stroke-dasharray="5,3"/>'
+      + '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" dominant-baseline="middle"'
+      + ' font-family="sans-serif" font-size="12" fill="#94a3b8" font-weight="600">' + label + '</text>';
+  }
+
+  function svgLine(x1, y1, x2, y2) {
+    return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2
+      + '" stroke="#4b5563" stroke-width="1.5"/>';
+  }
+
+  function svgRow(nodeList, cy, svgW, role, label) {
+    var count = nodeList.length;
+    if (count === 0) return { svgStr: '', centers: [], topY: cy - 16, botY: cy + 16 };
+
+    var nodeW = 90, nodeH = 32, gapH = 10;
+
+    if (count > COLLAPSE_THRESHOLD) {
+      var collW = Math.min(svgW * 0.7, 300);
+      var cx    = svgW / 2;
+      var c     = nodeColor(role);
+      var fill  = c + '22';
+      var x     = cx - collW / 2;
+      var y     = cy - nodeH / 2;
+      var collLabel = count + '× ' + label;
+      var svgStr = '<rect x="' + x + '" y="' + y + '" width="' + collW + '" height="' + nodeH + '" rx="4"'
+        + ' fill="' + fill + '" stroke="' + c + '" stroke-width="1.5"/>'
+        + '<text x="' + cx + '" y="' + (cy + 4) + '" text-anchor="middle" dominant-baseline="middle"'
+        + ' font-family="monospace,sans-serif" font-size="11" fill="' + c + '" font-weight="600">' + collLabel + '</text>';
+      var phantomCount = Math.min(count, 8);
+      var step = collW / (phantomCount + 1);
+      var centers = [];
+      for (var i = 0; i < phantomCount; i++) {
+        centers.push({ x: x + step * (i + 1), y: cy });
+      }
+      return { svgStr: svgStr, centers: centers, collapsed: true, topY: cy - nodeH / 2, botY: cy + nodeH / 2 };
+    }
+
+    var totalW = count * nodeW + (count - 1) * gapH;
+    var startX = (svgW - totalW) / 2 + nodeW / 2;
+    var svgStr2 = '';
+    var centers2 = [];
+    for (var j = 0; j < count; j++) {
+      var cx2 = startX + j * (nodeW + gapH);
+      svgStr2 += svgNode(cx2, cy, nodeW, nodeH, nodeList[j].hostname || nodeList[j].model || role, role);
+      centers2.push({ x: cx2, y: cy });
+    }
+    return { svgStr: svgStr2, centers: centers2, topY: cy - nodeH / 2, botY: cy + nodeH / 2 };
+  }
+
+  function svgMesh(upperCenters, upperBotY, lowerCenters, lowerTopY) {
+    if (!upperCenters.length || !lowerCenters.length) return '';
+    var lines = '';
+    var upCount = upperCenters.length;
+    var fullMesh = (lowerCenters.length <= 4 && upCount <= 4);
+    lowerCenters.forEach(function(lc) {
+      if (fullMesh) {
+        upperCenters.forEach(function(uc) {
+          lines += svgLine(uc.x, upperBotY, lc.x, lowerTopY);
+        });
+      } else {
+        var sorted = upperCenters.slice().sort(function(a, b) {
+          return Math.abs(a.x - lc.x) - Math.abs(b.x - lc.x);
+        });
+        var take = Math.min(2, sorted.length);
+        for (var k = 0; k < take; k++) {
+          lines += svgLine(sorted[k].x, upperBotY, lc.x, lowerTopY);
+        }
+      }
+    });
+    return lines;
+  }
+
+  // ── DC / GPU ──────────────────────────────────────────────────────────────────
+  function buildDcGpu() {
+    var spines = devices.filter(function(d) { return d.subLayer === 'spine' || d.subLayer === 'super-spine'; });
+    var leaves = devices.filter(function(d) { return d.subLayer === 'leaf'; });
+    var fws    = devices.filter(function(d) { return d.subLayer === 'firewall'; });
+    var endpointCount = (state.topology && state.topology.endpoint_count) || (leaves.length * 48);
+
+    var svgParts = [];
+    var cloudCy = 44;
+    svgParts.push(svgCloud(SVG_W / 2, cloudCy, 240, 36, 'Internet / Core'));
+
+    var nextY = cloudCy + 18;
+    var fwBotCenters = [];
+    if (fws.length) {
+      nextY = cloudCy + 76;
+      var fwRow = svgRow(fws, nextY, SVG_W, 'firewall', fws[0].model || 'Firewall');
+      svgParts.push(fwRow.svgStr);
+      fwRow.centers.forEach(function(fc) {
+        svgParts.push(svgLine(SVG_W / 2, cloudCy + 18, fc.x, fwRow.topY));
+      });
+      fwBotCenters = fwRow.centers;
+      nextY = fwRow.botY;
+    }
+
+    var spineCy = nextY + 52;
+    var spineRow = svgRow(spines.length ? spines : [{ hostname: 'No spines', subLayer: 'spine' }],
+      spineCy, SVG_W, 'spine', spines.length ? (spines[0].model || 'Spine') : 'Spine');
+    svgParts.push(spineRow.svgStr);
+
+    if (fwBotCenters.length) {
+      svgParts.push(svgMesh(fwBotCenters, fwBotCenters[0].y + 16, spineRow.centers, spineRow.topY));
+    } else {
+      spineRow.centers.forEach(function(sc) {
+        svgParts.push(svgLine(SVG_W / 2, cloudCy + 18, sc.x, spineRow.topY));
+      });
+    }
+
+    var leafCy = spineCy + 76;
+    var leafRow = svgRow(leaves.length ? leaves : [{ hostname: 'No leaves', subLayer: 'leaf' }],
+      leafCy, SVG_W, 'leaf', leaves.length ? (leaves[0].model || 'Leaf') : 'Leaf');
+    svgParts.push(leafRow.svgStr);
+    svgParts.push(svgMesh(spineRow.centers, spineRow.botY, leafRow.centers, leafRow.topY));
+
+    var barY = leafCy + 50;
+    var barW = Math.min(SVG_W - 80, Math.max(200, leaves.length * 40));
+    var barX = (SVG_W - barW) / 2;
+    svgParts.push('<rect x="' + barX + '" y="' + barY + '" width="' + barW + '" height="22" rx="3"'
+      + ' fill="#374151" stroke="#4b5563" stroke-width="1"/>');
+    svgParts.push('<text x="' + (SVG_W / 2) + '" y="' + (barY + 11) + '" text-anchor="middle" dominant-baseline="middle"'
+      + ' font-family="sans-serif" font-size="11" fill="#9ca3af">' + endpointCount + ' endpoints / servers</text>');
+    var sampleLeaves = leafRow.collapsed
+      ? leafRow.centers
+      : leafRow.centers.filter(function(_, idx) { return idx % 2 === 0; });
+    sampleLeaves.forEach(function(lc) {
+      svgParts.push(svgLine(lc.x, leafRow.botY, lc.x, barY));
+    });
+
+    return { svg: svgParts.join(''), h: barY + 40 };
+  }
+
+  // ── Campus ────────────────────────────────────────────────────────────────────
+  function buildCampus() {
+    var dists = devices.filter(function(d) { return d.subLayer === 'distribution'; });
+    var accs  = devices.filter(function(d) { return d.subLayer === 'access'; });
+    var fws   = devices.filter(function(d) { return d.subLayer === 'firewall'; });
+
+    var svgParts = [];
+    var cloudCy = 44;
+    svgParts.push(svgCloud(SVG_W / 2, cloudCy, 240, 36, 'Internet / Firewall'));
+
+    var fwBotRef = { centers: [{ x: SVG_W / 2, y: cloudCy }], botY: cloudCy + 18 };
+    if (fws.length) {
+      var fwCy  = cloudCy + 66;
+      var fwRow = svgRow(fws, fwCy, SVG_W, 'firewall', fws[0].model || 'FW');
+      svgParts.push(fwRow.svgStr);
+      fwRow.centers.forEach(function(fc) {
+        svgParts.push(svgLine(SVG_W / 2, cloudCy + 18, fc.x, fwRow.topY));
+      });
+      fwBotRef = fwRow;
+    }
+
+    var distCy  = fwBotRef.botY + 58;
+    var distRow = svgRow(dists.length ? dists : [{ hostname: 'Dist-1', subLayer: 'distribution' }],
+      distCy, SVG_W, 'distribution', dists.length ? (dists[0].model || 'Distribution') : 'Distribution');
+    svgParts.push(distRow.svgStr);
+    svgParts.push(svgMesh(fwBotRef.centers, fwBotRef.botY, distRow.centers, distRow.topY));
+
+    var accCy  = distCy + 74;
+    var accRow = svgRow(accs.length ? accs : [{ hostname: 'Acc-1', subLayer: 'access' }],
+      accCy, SVG_W, 'access', accs.length ? (accs[0].model || 'Access') : 'Access');
+    svgParts.push(accRow.svgStr);
+    svgParts.push(svgMesh(distRow.centers, distRow.botY, accRow.centers, accRow.topY));
+
+    return { svg: svgParts.join(''), h: accCy + 50 };
+  }
+
+  // ── WAN / SD-WAN ──────────────────────────────────────────────────────────────
+  function buildWan() {
+    var controllers   = devices.filter(function(d) { return d.subLayer === 'sdwan-controller'; });
+    var orchestrators = devices.filter(function(d) { return d.subLayer === 'sdwan-orchestrator'; });
+    var edges         = devices.filter(function(d) { return d.subLayer === 'wan-edge'; });
+
+    var svgParts = [];
+    var cloudCy = 44;
+    svgParts.push(svgCloud(SVG_W / 2, cloudCy, 300, 36, 'WAN / SD-WAN Fabric'));
+
+    var ctrlCy  = cloudCy + 70;
+    var ctrlRow = svgRow(controllers.length ? controllers : [{ hostname: 'vSmart-1', subLayer: 'sdwan-controller' }],
+      ctrlCy, SVG_W, 'sdwan-controller', controllers.length ? (controllers[0].model || 'vSmart') : 'vSmart');
+    svgParts.push(ctrlRow.svgStr);
+    ctrlRow.centers.forEach(function(cc) {
+      svgParts.push(svgLine(SVG_W / 2, cloudCy + 18, cc.x, ctrlRow.topY));
+    });
+
+    var orchRow = null;
+    if (orchestrators.length) {
+      var orchCy = ctrlCy + 64;
+      orchRow = svgRow(orchestrators, orchCy, SVG_W, 'sdwan-orchestrator', orchestrators[0].model || 'vBond');
+      svgParts.push(orchRow.svgStr);
+      svgParts.push(svgMesh(ctrlRow.centers, ctrlRow.botY, orchRow.centers, orchRow.topY));
+    }
+
+    var connectFrom = orchRow || ctrlRow;
+    var edgeCy  = connectFrom.botY + 64;
+    var edgeRow = svgRow(edges.length ? edges : [{ hostname: 'WAN-Edge-1', subLayer: 'wan-edge' }],
+      edgeCy, SVG_W, 'wan-edge', edges.length ? (edges[0].model || 'WAN Edge') : 'WAN Edge');
+    svgParts.push(edgeRow.svgStr);
+    svgParts.push(svgMesh(connectFrom.centers, connectFrom.botY, edgeRow.centers, edgeRow.topY));
+
+    return { svg: svgParts.join(''), h: edgeCy + 50 };
+  }
+
+  // ── SP MPLS ───────────────────────────────────────────────────────────────────
+  function buildSpMpls() {
+    var peRouters = devices.filter(function(d) { return d.subLayer === 'pe-router'; });
+    var pRouters  = devices.filter(function(d) { return d.subLayer === 'p-router'; });
+
+    var svgParts = [];
+    var cloudCy = 44;
+    svgParts.push(svgCloud(SVG_W / 2, cloudCy, 280, 36, 'MPLS Core / Internet'));
+
+    var pCy  = cloudCy + 70;
+    var pRow = svgRow(pRouters.length ? pRouters : [{ hostname: 'P-1', subLayer: 'p-router' }],
+      pCy, SVG_W, 'p-router', pRouters.length ? (pRouters[0].model || 'P Router') : 'P Router');
+    svgParts.push(pRow.svgStr);
+    pRow.centers.forEach(function(pc) {
+      svgParts.push(svgLine(SVG_W / 2, cloudCy + 18, pc.x, pRow.topY));
+    });
+
+    var peCy  = pCy + 72;
+    var peRow = svgRow(peRouters.length ? peRouters : [{ hostname: 'PE-1', subLayer: 'pe-router' }],
+      peCy, SVG_W, 'pe-router', peRouters.length ? (peRouters[0].model || 'PE Router') : 'PE Router');
+    svgParts.push(peRow.svgStr);
+    svgParts.push(svgMesh(pRow.centers, pRow.botY, peRow.centers, peRow.topY));
+
+    return { svg: svgParts.join(''), h: peCy + 50 };
+  }
+
+  // ── Multi-site ────────────────────────────────────────────────────────────────
+  function buildMultisite() {
+    var sites         = Math.max(1, parseInt((state.org && state.org.sites) || 1));
+    var perSiteSpines = (state.perSiteDevices && state.perSiteDevices.spine) || 2;
+    var perSiteLeaves = (state.perSiteDevices && state.perSiteDevices.leaf)  || 4;
+    var showSpines    = Math.min(perSiteSpines, 3);
+    var showLeaves    = Math.min(perSiteLeaves, 4);
+
+    var svgParts = [];
+    var cloudCy  = 44;
+    svgParts.push(svgCloud(SVG_W / 2, cloudCy, 300, 36, 'WAN / DCI'));
+
+    var siteCount  = Math.min(sites, 6);
+    var siteBoxW   = Math.min(130, Math.floor((SVG_W - 40) / siteCount));
+    var siteBoxH   = 148;
+    var sitePad    = 10;
+    var totalSiteW = siteCount * siteBoxW + (siteCount - 1) * sitePad;
+    var siteStartX = (SVG_W - totalSiteW) / 2;
+    var siteTopY   = cloudCy + 50;
+
+    var spineColor = nodeColor('spine');
+    var leafColor  = nodeColor('leaf');
+
+    for (var s = 0; s < siteCount; s++) {
+      var sx        = siteStartX + s * (siteBoxW + sitePad);
+      var siteLabel = (state.siteCode || 'SITE') + (s + 1);
+      var innerW    = siteBoxW - 16;
+      var spineY    = siteTopY + 38;
+      var leafY     = siteTopY + 88;
+      var spNodeW   = Math.max(22, Math.floor(innerW / showSpines) - 4);
+      var lfNodeW   = Math.max(18, Math.floor(innerW / showLeaves) - 3);
+      var spineH    = 20;
+      var leafH     = 18;
+
+      svgParts.push('<rect x="' + sx + '" y="' + siteTopY + '" width="' + siteBoxW + '" height="' + siteBoxH + '" rx="6"'
+        + ' fill="#1e293b" stroke="#334155" stroke-width="1.5"/>');
+      svgParts.push('<text x="' + (sx + siteBoxW / 2) + '" y="' + (siteTopY + 14) + '" text-anchor="middle"'
+        + ' font-family="sans-serif" font-size="10" fill="#64748b" font-weight="700">' + siteLabel + '</text>');
+
+      var spineCenters = [];
+      for (var si = 0; si < showSpines; si++) {
+        var scx   = sx + 8 + (si + 0.5) * (innerW / showSpines);
+        var spFill = spineColor + '33';
+        svgParts.push('<rect x="' + (scx - spNodeW / 2) + '" y="' + (spineY - spineH / 2) + '" width="' + spNodeW + '" height="' + spineH + '" rx="3"'
+          + ' fill="' + spFill + '" stroke="' + spineColor + '" stroke-width="1"/>');
+        spineCenters.push({ x: scx, y: spineY });
+      }
+      if (showSpines < perSiteSpines) {
+        svgParts.push('<text x="' + (sx + siteBoxW / 2) + '" y="' + (spineY + 14) + '" text-anchor="middle"'
+          + ' font-family="sans-serif" font-size="8" fill="' + spineColor + '">' + perSiteSpines + '× spine</text>');
+      }
+
+      var leafCenters = [];
+      for (var li = 0; li < showLeaves; li++) {
+        var lcx   = sx + 8 + (li + 0.5) * (innerW / showLeaves);
+        var lfFill = leafColor + '33';
+        svgParts.push('<rect x="' + (lcx - lfNodeW / 2) + '" y="' + (leafY - leafH / 2) + '" width="' + lfNodeW + '" height="' + leafH + '" rx="3"'
+          + ' fill="' + lfFill + '" stroke="' + leafColor + '" stroke-width="1"/>');
+        leafCenters.push({ x: lcx, y: leafY });
+      }
+      if (showLeaves < perSiteLeaves) {
+        svgParts.push('<text x="' + (sx + siteBoxW / 2) + '" y="' + (leafY + 16) + '" text-anchor="middle"'
+          + ' font-family="sans-serif" font-size="8" fill="' + leafColor + '">' + perSiteLeaves + '× leaf</text>');
+      }
+
+      spineCenters.forEach(function(sc) {
+        leafCenters.forEach(function(lc) {
+          svgParts.push('<line x1="' + sc.x + '" y1="' + (spineY + spineH / 2) + '" x2="' + lc.x + '" y2="' + (leafY - leafH / 2) + '"'
+            + ' stroke="#334155" stroke-width="0.8"/>');
+        });
+      });
+
+      svgParts.push(svgLine(sx + siteBoxW / 2, cloudCy + 18, sx + siteBoxW / 2, siteTopY));
+    }
+
+    if (sites > 6) {
+      var overflowX = siteStartX + siteCount * (siteBoxW + sitePad) + 6;
+      svgParts.push('<text x="' + overflowX + '" y="' + (siteTopY + siteBoxH / 2) + '"'
+        + ' font-family="sans-serif" font-size="12" fill="#64748b">+' + (sites - 6) + ' more</text>');
+    }
+
+    return { svg: svgParts.join(''), h: siteTopY + siteBoxH + 30 };
+  }
+
+  // ── Storage ───────────────────────────────────────────────────────────────────
+  function buildStorage() {
+    var fabricDevs = devices.filter(function(d) { return d.subLayer === 'storage-fabric'; });
+    var leafDevs   = devices.filter(function(d) { return d.subLayer === 'storage-leaf'; });
+
+    var svgParts = [];
+    var cloudCy  = 44;
+    svgParts.push(svgCloud(SVG_W / 2, cloudCy, 280, 36, 'Storage Network / SAN'));
+
+    var fabCy  = cloudCy + 70;
+    var fabRow = svgRow(fabricDevs.length ? fabricDevs : [{ hostname: 'SAN-Fab-1', subLayer: 'storage-fabric' }],
+      fabCy, SVG_W, 'storage-fabric', fabricDevs.length ? (fabricDevs[0].model || 'SAN Fabric') : 'SAN Fabric');
+    svgParts.push(fabRow.svgStr);
+    fabRow.centers.forEach(function(fc) {
+      svgParts.push(svgLine(SVG_W / 2, cloudCy + 18, fc.x, fabRow.topY));
+    });
+
+    var leafCy  = fabCy + 72;
+    var leafRow = svgRow(leafDevs.length ? leafDevs : [{ hostname: 'SAN-Leaf-1', subLayer: 'storage-leaf' }],
+      leafCy, SVG_W, 'storage-leaf', leafDevs.length ? (leafDevs[0].model || 'Storage Leaf') : 'Storage Leaf');
+    svgParts.push(leafRow.svgStr);
+    svgParts.push(svgMesh(fabRow.centers, fabRow.botY, leafRow.centers, leafRow.topY));
+
+    return { svg: svgParts.join(''), h: leafCy + 50 };
+  }
+
+  // ── Private 5G / O-RAN ────────────────────────────────────────────────────────
+  function buildPrivate5g() {
+    var fhDevs = devices.filter(function(d) { return d.subLayer === 'fronthaul'; });
+    var mhDevs = devices.filter(function(d) { return d.subLayer === 'midhaul'; });
+
+    var svgParts = [];
+    var cloudCy  = 44;
+    svgParts.push(svgCloud(SVG_W / 2, cloudCy, 280, 36, '5G Core / O-Cloud'));
+
+    var mhCy  = cloudCy + 70;
+    var mhRow = svgRow(mhDevs.length ? mhDevs : [{ hostname: 'MH-1', subLayer: 'midhaul' }],
+      mhCy, SVG_W, 'midhaul', mhDevs.length ? (mhDevs[0].model || 'Midhaul') : 'Midhaul');
+    svgParts.push(mhRow.svgStr);
+    mhRow.centers.forEach(function(mc) {
+      svgParts.push(svgLine(SVG_W / 2, cloudCy + 18, mc.x, mhRow.topY));
+    });
+
+    var fhCy  = mhCy + 72;
+    var fhRow = svgRow(fhDevs.length ? fhDevs : [{ hostname: 'FH-1', subLayer: 'fronthaul' }],
+      fhCy, SVG_W, 'fronthaul', fhDevs.length ? (fhDevs[0].model || 'Fronthaul') : 'Fronthaul');
+    svgParts.push(fhRow.svgStr);
+    svgParts.push(svgMesh(mhRow.centers, mhRow.botY, fhRow.centers, fhRow.topY));
+
+    return { svg: svgParts.join(''), h: fhCy + 50 };
+  }
+
+  // ── Multicloud / Aviatrix ─────────────────────────────────────────────────────
+  function buildMulticloud() {
+    var transits = devices.filter(function(d) { return d.subLayer === 'cloud-transit'; });
+    var gws      = devices.filter(function(d) { return d.subLayer === 'cloud-gw'; });
+
+    var svgParts = [];
+    var cloudCy  = 44;
+    svgParts.push(svgCloud(SVG_W / 2, cloudCy, 300, 36, 'Cloud Providers (AWS / Azure / GCP)'));
+
+    var trCy  = cloudCy + 70;
+    var trRow = svgRow(transits.length ? transits : [{ hostname: 'Transit-1', subLayer: 'cloud-transit' }],
+      trCy, SVG_W, 'cloud-transit', transits.length ? (transits[0].model || 'Transit') : 'Transit GW');
+    svgParts.push(trRow.svgStr);
+    trRow.centers.forEach(function(tc) {
+      svgParts.push(svgLine(SVG_W / 2, cloudCy + 18, tc.x, trRow.topY));
+    });
+
+    var gwCy  = trCy + 72;
+    var gwRow = svgRow(gws.length ? gws : [{ hostname: 'GW-1', subLayer: 'cloud-gw' }],
+      gwCy, SVG_W, 'cloud-gw', gws.length ? (gws[0].model || 'Cloud GW') : 'Cloud GW');
+    svgParts.push(gwRow.svgStr);
+    svgParts.push(svgMesh(trRow.centers, trRow.botY, gwRow.centers, gwRow.topY));
+
+    return { svg: svgParts.join(''), h: gwCy + 50 };
+  }
+
+  // ── Legend ────────────────────────────────────────────────────────────────────
+  function buildLegend(legendEntries, topY) {
+    var itemW = 130, itemH = 20, cols = 4;
+    var svgStr = '';
+    legendEntries.forEach(function(entry, idx) {
+      var col = idx % cols;
+      var row = Math.floor(idx / cols);
+      var lx  = 20 + col * itemW;
+      var ly  = topY + row * (itemH + 4);
+      var nc  = nodeColor(entry.role);
+      svgStr += '<rect x="' + lx + '" y="' + (ly - 6) + '" width="14" height="14" rx="2"'
+        + ' fill="' + nc + '33" stroke="' + nc + '" stroke-width="1.2"/>';
+      svgStr += '<text x="' + (lx + 20) + '" y="' + (ly + 1) + '"'
+        + ' font-family="sans-serif" font-size="11" fill="#94a3b8">' + entry.label + '</text>';
+    });
+    return svgStr;
+  }
+
+  // ── Dispatch ──────────────────────────────────────────────────────────────────
+  var result;
+  var legendEntries = [];
+
+  if (useCase === 'multisite') {
+    result = buildMultisite();
+    legendEntries = [
+      { role: 'spine',    label: 'Spine' },
+      { role: 'leaf',     label: 'Leaf' },
+      { role: 'wan-edge', label: 'WAN Edge' }
+    ];
+  } else if (useCase === 'campus') {
+    result = buildCampus();
+    legendEntries = [
+      { role: 'distribution', label: 'Distribution' },
+      { role: 'access',       label: 'Access' },
+      { role: 'firewall',     label: 'Firewall' }
+    ];
+  } else if (useCase === 'wan') {
+    result = buildWan();
+    legendEntries = [
+      { role: 'sdwan-controller',   label: 'vSmart' },
+      { role: 'sdwan-orchestrator', label: 'vBond' },
+      { role: 'wan-edge',           label: 'WAN Edge' }
+    ];
+  } else if (useCase === 'sp_mpls') {
+    result = buildSpMpls();
+    legendEntries = [
+      { role: 'p-router',  label: 'P Router' },
+      { role: 'pe-router', label: 'PE Router' }
+    ];
+  } else if (useCase === 'storage') {
+    result = buildStorage();
+    legendEntries = [
+      { role: 'storage-fabric', label: 'SAN Fabric' },
+      { role: 'storage-leaf',   label: 'Storage Leaf' }
+    ];
+  } else if (useCase === 'private_5g') {
+    result = buildPrivate5g();
+    legendEntries = [
+      { role: 'midhaul',   label: 'Midhaul' },
+      { role: 'fronthaul', label: 'Fronthaul' }
+    ];
+  } else if (useCase === 'multicloud' || useCase === 'aviatrix') {
+    result = buildMulticloud();
+    legendEntries = [
+      { role: 'cloud-transit', label: 'Transit GW' },
+      { role: 'cloud-gw',      label: 'Cloud GW' }
+    ];
+  } else {
+    result = buildDcGpu();
+    legendEntries = [
+      { role: 'spine',    label: 'Spine' },
+      { role: 'leaf',     label: 'Leaf' },
+      { role: 'firewall', label: 'Firewall' }
+    ];
+  }
+
+  var legendTopY = result.h + 8;
+  var legendRows = Math.ceil(legendEntries.length / 4);
+  var totalH     = legendTopY + legendRows * 24 + 12;
+
+  var svgEl = '<svg viewBox="0 0 ' + SVG_W + ' ' + totalH + '"'
+    + ' width="100%" style="max-width:900px;display:block;margin:0 auto;"'
+    + ' xmlns="http://www.w3.org/2000/svg">'
+    + result.svg
+    + buildLegend(legendEntries, legendTopY)
+    + '</svg>';
+
+  var label = (useCase || '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+  return '<div style="text-align:center;margin-bottom:8px;font-size:13px;color:var(--text-dim);font-weight:600;">'
+    + label + ' — High-Level Design</div>'
+    + svgEl;
+}
+window.renderTopologyDiagram = renderTopologyDiagram;
+
 // ─── Step 2: BOM ──────────────────────────────────────────────────────────────
 var ROLE_COLORS = {
   'super-spine': '#6366f1', 'spine': '#3b82f6', 'core': '#8b5cf6',
@@ -323,198 +859,7 @@ function renderStep2() {
 }
 window.renderStep2 = renderStep2;
 
-// ─── HLD Topology Diagram ─────────────────────────────────────────────────────
-var _ROLE_CLR = {
-  'spine': '#3b82f6', 'super-spine': '#6366f1', 'core': '#8b5cf6',
-  'leaf': '#22c55e', 'access': '#14b8a6', 'distribution': '#a855f7',
-  'firewall': '#f97316', 'wan-edge': '#eab308',
-  'pe-router': '#6366f1', 'p-router': '#818cf8',
-  'sdwan-controller': '#64748b', 'sdwan-orchestrator': '#94a3b8'
-};
-function _roleClr(r) { return _ROLE_CLR[r] || '#64748b'; }
-
-function _svgNode(x, y, w, h, label, role, sublabel) {
-  var c = _roleClr(role);
-  return '<rect x="' + (x - w/2) + '" y="' + (y - h/2) + '" width="' + w + '" height="' + h + '" rx="5" fill="' + c + '22" stroke="' + c + '" stroke-width="1.5"/>'
-    + '<text x="' + x + '" y="' + (y + (sublabel ? -3 : 4)) + '" text-anchor="middle" font-size="11" fill="' + c + '" font-weight="600" font-family="monospace,sans-serif">' + label + '</text>'
-    + (sublabel ? '<text x="' + x + '" y="' + (y + 10) + '" text-anchor="middle" font-size="9" fill="' + c + '99" font-family="sans-serif">' + sublabel + '</text>' : '');
-}
-
-function _svgLine(x1, y1, x2, y2) {
-  return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="#4b5563" stroke-width="1.2" opacity="0.7"/>';
-}
-
-function renderTopologyDiagram(state) {
-  var devices  = state.devices || [];
-  var useCase  = state.useCase || 'dc';
-  var W = 880, H = 340, NW = 90, NH = 32;
-
-  function countByRole(role) { return devices.filter(function(d) { return d.subLayer === role; }).length; }
-  function firstModel(role) {
-    var d = devices.find(function(d) { return d.subLayer === role; });
-    return d ? (d.model || role) : role;
-  }
-
-  function rowNodes(roles, y, totalW) {
-    var all = [];
-    roles.forEach(function(r) {
-      var cnt = countByRole(r);
-      if (!cnt) return;
-      all.push({ role: r, cnt: cnt, model: firstModel(r) });
-    });
-    if (!all.length) return { svg: '', nodes: [], y: y };
-    var spacing = Math.min(totalW / (all.length + 1), 160);
-    var startX = (totalW - spacing * (all.length - 1)) / 2 + spacing / 2;
-    var svgParts = [], positions = [];
-    all.forEach(function(item, i) {
-      var cx = startX + i * spacing;
-      var label = item.cnt > 6 ? (item.cnt + '× ' + (item.model.split(' ').slice(-1)[0] || item.role)) : item.model.split(' ').slice(-1)[0];
-      svgParts.push(_svgNode(cx, y, NW + (item.cnt > 6 ? 20 : 0), NH, label, item.role, item.cnt > 1 ? ('×' + item.cnt) : ''));
-      positions.push({ cx: cx, y: y, cnt: item.cnt, role: item.role });
-    });
-    return { svg: svgParts.join(''), nodes: positions, y: y };
-  }
-
-  var svgBody = '';
-
-  // ── DC / GPU ──────────────────────────────────────────────────────────────
-  if (useCase === 'dc' || useCase === 'gpu') {
-    var spineCnt = countByRole('spine');
-    var leafCnt  = countByRole('leaf');
-    var spineSpacing = Math.min(W / (Math.min(spineCnt, 8) + 1), 150);
-    var leafSpacing  = Math.min(W / (Math.min(leafCnt, 12) + 1), 110);
-    var spineStartX  = (W - spineSpacing * (Math.min(spineCnt,8) - 1)) / 2;
-    var leafStartX   = (W - leafSpacing  * (Math.min(leafCnt,12) - 1)) / 2;
-    var spineY = 90, leafY = 190, serverY = 280;
-
-    // Internet box
-    svgBody += '<rect x="' + (W/2-70) + '" y="20" width="140" height="30" rx="5" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>'
-      + '<text x="' + W/2 + '" y="40" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="sans-serif">Internet / Core</text>';
-    svgBody += _svgLine(W/2, 50, W/2, spineY - NH/2);
-
-    // Spines
-    var spinePos = [];
-    for (var si = 0; si < Math.min(spineCnt, 8); si++) {
-      var sx = spineStartX + si * spineSpacing;
-      var lbl = spineCnt > 6 ? (spineCnt + '× ' + firstModel('spine').split(' ').pop()) : ('SP-' + (si+1));
-      svgBody += _svgNode(sx, spineY, NW, NH, lbl, 'spine', spineCnt > 6 && si === 0 ? '' : '');
-      spinePos.push(sx);
-      if (si === 0) svgBody += _svgLine(W/2, 50, sx, spineY - NH/2);
-      else svgBody += _svgLine(W/2, 50, sx, spineY - NH/2);
-    }
-
-    // Leaves + spine-leaf lines
-    var leafPos = [];
-    for (var li = 0; li < Math.min(leafCnt, 12); li++) {
-      var lx = leafStartX + li * leafSpacing;
-      var llbl = leafCnt > 10 ? (leafCnt + '× ' + firstModel('leaf').split(' ').pop()) : ('L-' + (li+1));
-      svgBody += _svgNode(lx, leafY, NW - 6, NH, llbl, 'leaf', '');
-      leafPos.push(lx);
-      // Connect to up to 4 spines (or all if <= 4)
-      var spineConnectLimit = Math.min(spinePos.length, 4);
-      for (var sc = 0; sc < spineConnectLimit; sc++) {
-        svgBody += _svgLine(lx, leafY - NH/2, spinePos[sc], spineY + NH/2);
-      }
-      if (leafCnt > 10 && li > 0) break; // collapse remaining leaves into single node
-    }
-
-    // Server bar
-    var endpointCount = (state.topology && state.topology.endpoint_count) || '—';
-    var bw = (state.topology && state.topology.bandwidth_gbps) || '';
-    svgBody += '<rect x="80" y="' + (serverY-12) + '" width="' + (W-160) + '" height="24" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>'
-      + '<text x="' + W/2 + '" y="' + (serverY+4) + '" text-anchor="middle" font-size="11" fill="#64748b" font-family="sans-serif">'
-      + endpointCount + ' endpoints' + (bw ? ' · ' + bw + 'GbE per server' : '') + '</text>';
-    // Lines from leaves to server bar
-    leafPos.slice(0, Math.min(leafPos.length, 8)).forEach(function(lx) {
-      svgBody += _svgLine(lx, leafY + NH/2, lx, serverY - 12);
-    });
-
-  // ── Multi-site ──────────────────────────────────────────────────────────────
-  } else if (useCase === 'multisite') {
-    var numSites = Math.min(state.siteCount || (state.org && state.org.sites) || 2, 8);
-    var perLeaf  = state.perSiteDevices ? state.perSiteDevices.leaf  : countByRole('leaf')  / numSites;
-    var perSpine = state.perSiteDevices ? state.perSiteDevices.spine : countByRole('spine') / numSites;
-    var boxW = Math.min(140, (W - 40) / numSites - 10);
-    var boxH = 140, spacing2 = (W - 40) / numSites, startX2 = 20 + spacing2 / 2;
-    var siteY = 140;
-
-    // WAN cloud
-    svgBody += '<ellipse cx="' + W/2 + '" cy="50" rx="80" ry="24" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>'
-      + '<text x="' + W/2 + '" y="55" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="sans-serif">WAN / DCI</text>';
-
-    for (var site = 0; site < numSites; site++) {
-      var siteCX = startX2 + site * spacing2;
-      var siteTY = siteY, siteBY = siteY + boxH;
-      // Site box
-      svgBody += '<rect x="' + (siteCX - boxW/2) + '" y="' + (siteTY - 10) + '" width="' + boxW + '" height="' + (boxH + 10) + '" rx="6" fill="#1e293b22" stroke="#334155" stroke-width="1"/>';
-      svgBody += '<text x="' + siteCX + '" y="' + (siteTY + 6) + '" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="sans-serif">Site ' + (site+1) + '</text>';
-      // Mini spine row
-      var miniSpineY = siteTY + 40, miniLeafY = siteTY + 85;
-      var spineN = Math.max(1, Math.round(perSpine));
-      var leafN  = Math.max(1, Math.round(perLeaf));
-      svgBody += '<rect x="' + (siteCX - 40) + '" y="' + (miniSpineY - 10) + '" width="80" height="20" rx="4" fill="#3b82f622" stroke="#3b82f6" stroke-width="1"/>'
-        + '<text x="' + siteCX + '" y="' + (miniSpineY + 4) + '" text-anchor="middle" font-size="9" fill="#3b82f6" font-family="monospace,sans-serif">' + spineN + '× Spine</text>';
-      svgBody += '<rect x="' + (siteCX - 40) + '" y="' + (miniLeafY - 10) + '" width="80" height="20" rx="4" fill="#22c55e22" stroke="#22c55e" stroke-width="1"/>'
-        + '<text x="' + siteCX + '" y="' + (miniLeafY + 4) + '" text-anchor="middle" font-size="9" fill="#22c55e" font-family="monospace,sans-serif">' + leafN + '× Leaf</text>';
-      svgBody += _svgLine(siteCX, miniSpineY + 10, siteCX, miniLeafY - 10);
-      // Line to WAN cloud
-      svgBody += _svgLine(siteCX, siteTY - 10, W/2 + (site - numSites/2 + 0.5) * 20, 74);
-    }
-
-  // ── Campus ────────────────────────────────────────────────────────────────
-  } else if (useCase === 'campus') {
-    var distRow = rowNodes(['distribution', 'core'], 110, W);
-    var accRow  = rowNodes(['access', 'firewall'], 220, W);
-    svgBody += '<rect x="' + (W/2-60) + '" y="20" width="120" height="28" rx="5" fill="#1e293b" stroke="#f97316" stroke-width="1.5"/>'
-      + '<text x="' + W/2 + '" y="38" text-anchor="middle" font-size="11" fill="#f97316" font-family="sans-serif">Internet / Firewall</text>';
-    svgBody += distRow.svg + accRow.svg;
-    distRow.nodes.forEach(function(dn) {
-      svgBody += _svgLine(W/2, 48, dn.cx, 110 - NH/2);
-      accRow.nodes.forEach(function(an) { svgBody += _svgLine(dn.cx, 110 + NH/2, an.cx, 220 - NH/2); });
-    });
-
-  // ── WAN / SD-WAN ──────────────────────────────────────────────────────────
-  } else if (useCase === 'wan') {
-    var ctrlRow   = rowNodes(['sdwan-controller'], 80, W);
-    var orchRow   = rowNodes(['sdwan-orchestrator'], 160, W);
-    var edgeRow   = rowNodes(['wan-edge'], 250, W);
-    svgBody += ctrlRow.svg + orchRow.svg + edgeRow.svg;
-    ctrlRow.nodes.forEach(function(cn) {
-      orchRow.nodes.forEach(function(on) { svgBody += _svgLine(cn.cx, 80 + NH/2, on.cx, 160 - NH/2); });
-    });
-    orchRow.nodes.forEach(function(on) {
-      edgeRow.nodes.forEach(function(en) { svgBody += _svgLine(on.cx, 160 + NH/2, en.cx, 250 - NH/2); });
-    });
-
-  // ── Generic (SP, storage, 5G) ─────────────────────────────────────────────
-  } else {
-    var roles = Object.keys(_ROLE_CLR).filter(function(r) { return countByRole(r) > 0; });
-    var yStep = Math.min(90, (H - 40) / Math.max(roles.length, 1));
-    roles.forEach(function(r, idx) {
-      var cnt = countByRole(r);
-      var cy  = 50 + idx * yStep;
-      var sp = Math.min(W / (Math.min(cnt, 8) + 1), 130);
-      var sx = (W - sp * (Math.min(cnt, 8) - 1)) / 2;
-      for (var ni = 0; ni < Math.min(cnt, 8); ni++) {
-        var lbl = cnt > 6 ? (cnt + '× ' + firstModel(r).split(' ').pop()) : firstModel(r).split(' ').pop();
-        svgBody += _svgNode(sx + ni * sp, cy, NW, NH, lbl, r, '');
-        if (cnt > 6 && ni === 0) break;
-      }
-    });
-  }
-
-  var useLabel = { dc:'Data Center (Spine-Leaf)', gpu:'GPU Cluster', campus:'Campus', multisite:'Multi-Site Fabric', wan:'WAN / SD-WAN' }[useCase] || useCase;
-
-  return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:12px;">'
-    + '<div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;font-weight:600;">'
-    + useLabel + ' · ' + devices.length + ' devices'
-    + ((state.org && state.org.sites > 1) ? ' · ' + state.org.sites + ' sites' : '')
-    + '</div>'
-    + '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:900px;display:block;">'
-    + svgBody
-    + '</svg></div>';
-}
-window.renderTopologyDiagram = renderTopologyDiagram;
+// ─── BOM Export ───────────────────────────────────────────────────────────────
 
 function exportBOM() {
   var result = window.buildBOM(STATE);
