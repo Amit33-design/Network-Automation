@@ -15,6 +15,194 @@ function _hasFeat(state, feat) {
          state.protocols.features.indexOf(feat) !== -1;
 }
 
+// ─── G-17: IPv6 dual-stack address derivation ────────────────────────────────
+// Addressing scheme (ULA fd00::/8):
+//   Loopback0 : fd00::<unit>/128             (e.g. fd00::1/128 for unit=1)
+//   Loopback1 : fd00:1::<unit>/128           (VTEP loopback)
+//   P2P link  : fd00:2:<unit*4+linkIdx>::/127
+//                leaf-side: ::0  spine-side: ::1
+function _v6Addrs(unit, spinePeerCount) {
+  var lo0v6   = 'fd00::' + unit;
+  var lo1v6   = 'fd00:1::' + unit;
+  var p2pBase = spinePeerCount || 2;
+  var p2pV6   = [];
+  for (var i = 0; i < p2pBase; i++) {
+    var id = unit * 4 + i;
+    p2pV6.push({ leaf: 'fd00:2::' + (id * 2), spine: 'fd00:2::' + (id * 2 + 1) });
+  }
+  return { lo0v6: lo0v6, lo1v6: lo1v6, p2pV6: p2pV6 };
+}
+
+// NX-OS — IPv6 dual-stack additions for leaf
+function _nxosIPv6Block(dev, state, d) {
+  if (!_hasFeat(state, 'ipv6')) return [];
+  var unit     = dev.unit || 1;
+  var v6       = _v6Addrs(unit, d.spinePeerIps.length);
+  var underlay = (state.protocols && state.protocols.underlay) || 'bgp';
+  var lines    = [
+    '',
+    '! --- G-17: IPv6 Dual-Stack ---',
+    'feature ospfv3',
+    'ipv6 unicast-routing',
+    '',
+    'interface loopback0',
+    '  ipv6 address ' + v6.lo0v6 + '/128',
+    '  ipv6 router ospfv3 1 area 0',
+  ];
+  if (_hasFeat(state, 'vxlan_evpn') || (state.protocols && state.protocols.overlay && state.protocols.overlay.indexOf('vxlan_evpn') !== -1)) {
+    lines.push('interface loopback1');
+    lines.push('  ipv6 address ' + v6.lo1v6 + '/128');
+  }
+  d.spinePeerIps.forEach(function(ip, idx) {
+    lines.push('! P2P to ' + (d.spineHostnames[idx] || ('SPINE-' + (idx+1))));
+    lines.push('! interface <p2p-to-spine-' + (idx+1) + '>');
+    lines.push('!   ipv6 address ' + v6.p2pV6[idx].leaf + '/127');
+    lines.push('!   ipv6 router ospfv3 1 area 0');
+  });
+  if (underlay === 'ospf') {
+    lines = lines.concat([
+      '',
+      'router ospfv3 1',
+      '  address-family ipv6 unicast',
+      '    router-id ' + (d.lo0ip || ('10.0.0.' + unit)),
+      '    passive-interface loopback0',
+    ]);
+  }
+  lines = lines.concat([
+    '',
+    '! BGP IPv6 address-family (add under router bgp ' + d.leafAsn + '):',
+    '  address-family ipv6 unicast',
+    '    network ' + v6.lo0v6 + '/128',
+    '    maximum-paths ' + ((state.ecmp && state.ecmp.max_paths) || 8),
+    '  template peer SPINES-V6',
+    '    remote-as ' + d.spineAsn,
+    '    address-family ipv6 unicast',
+    '      send-community extended',
+    '      maximum-prefix 12000 warning-only',
+  ]);
+  d.spinePeerIps.forEach(function(ip, idx) {
+    lines.push('  neighbor ' + v6.p2pV6[idx].spine + ' inherit peer SPINES-V6');
+    lines.push('    description ' + (d.spineHostnames[idx] || ('SPINE-' + (idx+1))));
+  });
+  return lines;
+}
+
+// NX-OS — IPv6 for spine
+function _nxosSpineIPv6Block(dev, state) {
+  if (!_hasFeat(state, 'ipv6')) return [];
+  var unit  = dev.unit || 1;
+  var lo0v6 = 'fd00::' + (100 + unit);
+  var lines = [
+    '',
+    '! --- G-17: IPv6 Dual-Stack (Spine) ---',
+    'feature ospfv3',
+    'ipv6 unicast-routing',
+    '',
+    'interface loopback0',
+    '  ipv6 address ' + lo0v6 + '/128',
+    '  ipv6 router ospfv3 1 area 0',
+    '',
+    '! BGP IPv6 AF (add under router bgp 65000):',
+    '  address-family ipv6 unicast',
+    '    retain route-target all',
+    '  template peer LEAFS-V6',
+    '    address-family ipv6 unicast',
+    '      send-community extended',
+    '      route-reflector-client',
+    '! Add leaf IPv6 neighbors: neighbor <fd00::N> inherit peer LEAFS-V6',
+  ];
+  return lines;
+}
+
+// Arista EOS — IPv6 dual-stack additions
+function _eosIPv6Block(dev, state, d) {
+  if (!_hasFeat(state, 'ipv6')) return [];
+  var unit     = dev.unit || 1;
+  var v6       = _v6Addrs(unit, (d && d.spinePeerIps) ? d.spinePeerIps.length : 2);
+  var underlay = (state.protocols && state.protocols.underlay) || 'bgp';
+  var lo0v6    = d ? v6.lo0v6 : 'fd00::' + (100 + unit);  // spine uses 100+unit
+  var maxPaths = (state.ecmp && state.ecmp.max_paths) || 8;
+  var lines = [
+    '',
+    '! --- G-17: IPv6 Dual-Stack ---',
+    'ipv6 unicast-routing',
+    '',
+    'interface Loopback0',
+    '   ipv6 address ' + lo0v6 + '/128',
+  ];
+  if (d) {
+    d.spinePeerIps.forEach(function(ip, idx) {
+      lines.push('! interface <Ethernet-to-SPINE-' + (idx+1) + '>');
+      lines.push('!    ipv6 address ' + v6.p2pV6[idx].leaf + '/127');
+    });
+    if (underlay === 'ospf') {
+      lines = lines.concat([
+        '',
+        'router ospf 1',
+        '   address-family ipv6',
+        '      passive-interface Loopback0',
+        '      no passive-interface default',
+      ]);
+    }
+    lines = lines.concat([
+      '',
+      '! BGP IPv6 AF (add under router bgp ' + d.leafAsn + '):',
+      '   address-family ipv6',
+      '      neighbor SPINES activate',
+      '      network ' + lo0v6 + '/128',
+      '      maximum-paths ' + maxPaths + ' ecmp ' + maxPaths,
+    ]);
+  } else {
+    lines = lines.concat([
+      '',
+      '! BGP IPv6 AF (add under router bgp 65000):',
+      '   address-family ipv6',
+      '      neighbor LEAF-PEERS activate',
+    ]);
+  }
+  return lines;
+}
+
+// Juniper JunOS — IPv6 dual-stack additions
+function _junosIPv6Block(dev, state, d) {
+  if (!_hasFeat(state, 'ipv6')) return [];
+  var unit     = dev.unit || 1;
+  var isSpine  = !d;
+  var v6       = isSpine ? null : _v6Addrs(unit, (d.spinePeerIps || []).length);
+  var lo0v6    = isSpine ? ('fd00::' + (100 + unit)) : v6.lo0v6;
+  var underlay = (state.protocols && state.protocols.underlay) || 'bgp';
+  var lines = [
+    '',
+    '# --- G-17: IPv6 Dual-Stack ---',
+    'set interfaces lo0 unit 0 family inet6 address ' + lo0v6 + '/128',
+  ];
+  if (!isSpine && v6) {
+    d.spinePeerIps.forEach(function(ip, idx) {
+      lines.push('# set interfaces <p2p-to-spine-' + (idx+1) + '> unit 0 family inet6 address ' + v6.p2pV6[idx].leaf + '/127');
+    });
+  }
+  if (underlay === 'ospf') {
+    lines = lines.concat([
+      'set protocols ospf3 area 0.0.0.0 interface lo0.0 passive',
+      isSpine ? '' : '# set protocols ospf3 area 0.0.0.0 interface <p2p-if>.0',
+    ]);
+  }
+  var bgpGroup = isSpine ? 'LEAFS-V6' : 'SPINES-V6';
+  lines = lines.concat([
+    '',
+    '# BGP IPv6 group',
+    'set protocols bgp group ' + bgpGroup + ' type ' + (isSpine ? 'internal' : 'external'),
+    'set protocols bgp group ' + bgpGroup + ' family inet6 unicast',
+    'set protocols bgp group ' + bgpGroup + ' local-address ' + lo0v6,
+  ]);
+  if (!isSpine && v6) {
+    v6.p2pV6.forEach(function(pair, idx) {
+      lines.push('set protocols bgp group SPINES-V6 neighbor ' + pair.spine + ' description ' + (d.spineHostnames[idx] || ('SPINE-' + (idx+1))));
+    });
+  }
+  return lines;
+}
+
 // NX-OS: global BFD command + ECMP hash command (appended after BGP stanza)
 function _nxosGlobalBfd(state) {
   if (!_hasFeat(state, 'bfd')) return '';
@@ -463,6 +651,10 @@ function nxosSpineConfig(dev, state) {
   // ECMP hash (G-10)
   if (hasEcmp) lines.push(_nxosEcmpHash(state).trimEnd());
 
+  // G-17: IPv6 dual-stack
+  var v6SpineLines = _nxosSpineIPv6Block(dev, state);
+  if (v6SpineLines.length) lines = lines.concat(v6SpineLines);
+
   return lines.join('\n') + '\n';
 }
 
@@ -644,6 +836,10 @@ function nxosLeafConfig(dev, state) {
   var qosLines = _nxosQosBlock(state);
   if (qosLines.length) { lines.push(''); lines = lines.concat(qosLines); }
 
+  // G-17: IPv6 dual-stack
+  var v6LeafLines = _nxosIPv6Block(dev, state, d);
+  if (v6LeafLines.length) lines = lines.concat(v6LeafLines);
+
   return lines.join('\n') + '\n';
 }
 
@@ -691,6 +887,10 @@ function aristaSpineConfig(dev, state) {
     '      neighbor LEAF-PEERS next-hop-unchanged',
   ]);
   if (hasEcmp) lines.push('      maximum-paths ' + maxPaths + ' ecmp ' + maxPaths);  // G-10
+
+  // G-17: IPv6 dual-stack (spine — no _leafDesign object)
+  var v6EosSpine = _eosIPv6Block(dev, state, null);
+  if (v6EosSpine.length) lines = lines.concat(v6EosSpine);
 
   return lines.join('\n') + '\n';
 }
@@ -822,6 +1022,10 @@ function aristaLeafConfig(dev, state) {
   var qosLinesEos = _eosQosBlock(state);
   if (qosLinesEos.length) { lines.push(''); lines = lines.concat(qosLinesEos); }
 
+  // G-17: IPv6 dual-stack
+  var v6EosLeaf = _eosIPv6Block(dev, state, d);
+  if (v6EosLeaf.length) lines = lines.concat(v6EosLeaf);
+
   return lines.join('\n') + '\n';
 }
 
@@ -896,6 +1100,10 @@ function juniperLeafConfig(dev, state) {
   // QoS 8-class policy (G-15)
   var qosLinesJunos = _junosQosBlock(state);
   if (qosLinesJunos.length) { lines.push(''); lines = lines.concat(qosLinesJunos); }
+
+  // G-17: IPv6 dual-stack
+  var v6JunosLines = _junosIPv6Block(dev, state, d);
+  if (v6JunosLines.length) lines = lines.concat(v6JunosLines);
 
   return lines.join('\n') + '\n';
 }

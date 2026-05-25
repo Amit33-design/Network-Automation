@@ -141,7 +141,7 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 | ~~G-14~~ | ~~STP design missing for DC — no BPDU guard, PortFast, MST instances~~ | P1 | ✅ — `_nxosStpBlock()` / `_eosStpBlock()` / `_junosStpBlock()` — mode (pvst/rpvst/mstp), BPDU guard, PortFast, MST instance-VLAN mapping |
 | ~~G-15~~ | ~~QoS generates policy header only — no 8-class map, no DSCP marking~~ | P1 | ✅ — 8-class DSCP map (EF/AF41/AF31/AF21/AF11/CS3/CS2/CS1) with policy-map + priority/bandwidth per platform |
 | ~~G-16~~ | ~~VRF-lite config incomplete — definition only, no RT import/export~~ | P1 | ✅ — `_nxosVrfLiteBlock()` etc. — RD, RT import/export, BGP AF redistribute direct, max-paths per VRF (MGMT/PROD/DEV) |
-| G-17 | IPv6 dual-stack is checkbox only — no OSPFv3, BGP IPv6 AF config | P2 | ❌ — no IPv6 AF, no OSPFv3, no dual-stack loopback/P2P addressing |
+| ~~G-17~~ | ~~IPv6 dual-stack is checkbox only — no OSPFv3, BGP IPv6 AF config~~ | P2 | ✅ 2026-05-25 — `configgen.js`: `_v6Addrs()` ULA addressing (fd00::/8 loopback + P2P); `_nxosIPv6Block`, `_nxosSpineIPv6Block`, `_eosIPv6Block`, `_junosIPv6Block` appended when `ipv6` in features; covers OSPFv3, BGP IPv6 AF, dual-stack loopback/P2P on NX-OS/EOS/JunOS |
 | G-18 | Multicast checkbox only — no RP address, PIM mode, interface joins | P2 | ❌ — no PIM, no RP config, no IGMP joins |
 | G-19 | BGP unnumbered not supported (eliminates P2P IP addressing in DC CLOS) | P2 | ❌ — all P2P links use numbered IPs (/30) |
 
