@@ -173,6 +173,9 @@ function updateBOMTable(layers) {
   /* Refresh rack plan */
   _updateRackPlanSection(layers);
 
+  /* Refresh port capacity report */
+  _updatePortCapacitySection(layers, capacityFromState(STATE));
+
   /* Refresh IP address & VLAN plan */
   if (typeof renderIPPlanPanel === 'function') renderIPPlanPanel();
 }
@@ -231,6 +234,212 @@ function toggleRackPlan() {
   if (caret) caret.textContent = hidden ? '▼' : '▶';
 }
 window.toggleRackPlan = toggleRackPlan;
+
+/* ── Port Capacity Report ───────────────────────────────────────── */
+
+function _parsePortCount(s) {
+  /* Returns first integer found in strings like "48x 1GbE PoE+" → 48 */
+  var m = String(s || '').match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function _portCapacityRows(layers, cap) {
+  var rows = [];
+
+  layers.forEach(function(layer) {
+    var selId = STATE.selectedProducts[layer.key];
+    var prod  = PRODUCTS[selId];
+    if (!prod) return;
+
+    /* Skip non-physical layers */
+    var lk = layer.key;
+    if (lk.startsWith('mc-') || lk === 'wan-hq' || lk === 'wan-cpe' || lk === 'fw') {
+      return;
+    }
+
+    var qty         = estimateCounts(lk);
+    var totalPorts  = _parsePortCount(prod.ports);
+    var uplinkPorts = _parsePortCount(prod.uplinks);
+
+    var downTotal = totalPorts - uplinkPorts;
+    if (downTotal < 0) downTotal = totalPorts;   // some products list total only
+
+    var downUsed  = 0;
+    var upUsed    = 0;
+    var oversubStr = '—';
+    var note = '';
+
+    /* ── DC Leaf ── */
+    if ((lk === 'dc-leaf') && cap.dc) {
+      downUsed  = Math.ceil(cap.dc.totalPorts / Math.max(1, cap.dc.leafs));
+      upUsed    = cap.dc.spines;
+      uplinkPorts = Math.max(uplinkPorts, cap.dc.uplinkPerLeaf || uplinkPorts);
+      oversubStr = cap.dc.oversub;
+    }
+    /* ── DC Spine ── */
+    else if ((lk === 'dc-spine') && cap.dc) {
+      downTotal = totalPorts;
+      downUsed  = cap.dc.leafs;
+      upUsed    = 0;
+      uplinkPorts = 0;
+      oversubStr = '1.00';
+      note = 'Non-blocking';
+    }
+    /* ── Campus Access ── */
+    else if (lk === 'campus-access' && cap.campus) {
+      downTotal = Math.max(cap.campus.usable, downTotal);
+      downUsed  = Math.ceil(cap.campus.effective / Math.max(1, cap.campus.access));
+      upUsed    = 2;   /* dual-homed to dist pair */
+      uplinkPorts = uplinkPorts || 4;
+    }
+    /* ── Campus Distribution ── */
+    else if (lk === 'campus-dist' && cap.campus) {
+      downTotal = totalPorts - (uplinkPorts || 4);
+      downUsed  = Math.ceil(cap.campus.access / Math.max(1, cap.campus.distPairs));
+      upUsed    = 2;   /* dual-homed to core */
+      uplinkPorts = uplinkPorts || 4;
+    }
+    /* ── Campus Core ── */
+    else if (lk === 'campus-core' && cap.campus) {
+      downTotal = totalPorts;
+      downUsed  = cap.campus.dist;
+      upUsed    = 1;   /* WAN / FW uplink */
+      uplinkPorts = 2;
+    }
+    /* ── GPU TOR ── */
+    else if (lk === 'gpu-tor' && cap.gpu) {
+      downTotal = cap.gpu.portsPerTOR;
+      downUsed  = Math.min(downTotal,
+        Math.ceil(cap.gpu.servers / Math.max(1, cap.gpu.tors)) * cap.gpu.nicsPerServer);
+      upUsed    = cap.gpu.spines;
+      uplinkPorts = Math.max(uplinkPorts || 0, cap.gpu.spines);
+      oversubStr = cap.gpu.oversub;
+    }
+    /* ── GPU Spine ── */
+    else if (lk === 'gpu-spine' && cap.gpu) {
+      downTotal = totalPorts;
+      downUsed  = cap.gpu.tors;
+      upUsed    = 0;
+      uplinkPorts = 0;
+      oversubStr = '1.00';
+      note = 'Non-blocking';
+    }
+    /* ── Fallback — WAN CPE / hub ── */
+    else {
+      downTotal = totalPorts;
+      downUsed  = Math.min(4, totalPorts);
+      upUsed    = 1;
+      uplinkPorts = uplinkPorts || 2;
+      note = 'Estimate';
+    }
+
+    /* Cap used at total to avoid >100% display oddities */
+    downUsed = Math.min(downUsed, downTotal);
+
+    var downPct    = downTotal > 0 ? Math.round((downUsed / downTotal) * 100) : 0;
+    var upPct      = uplinkPorts > 0 ? Math.round((upUsed / uplinkPorts) * 100) : 0;
+    var flagDown   = downPct >= 80;
+    var flagUp     = upPct  >= 80;
+
+    rows.push({
+      label: layer.label,
+      model: prod.model,
+      qty:   qty,
+      downTotal: downTotal,
+      downUsed:  downUsed,
+      downPct:   downPct,
+      upTotal:   uplinkPorts,
+      upUsed:    upUsed,
+      upPct:     upPct,
+      oversub:   oversubStr,
+      flagDown:  flagDown,
+      flagUp:    flagUp,
+      note:      note,
+    });
+  });
+
+  return rows;
+}
+
+function _updatePortCapacitySection(layers, cap) {
+  var el = document.getElementById('port-capacity-section');
+  if (!el) return;
+
+  var rows = _portCapacityRows(layers, cap);
+  if (!rows.length) { el.style.display = 'none'; return; }
+
+  var anyFlag = rows.some(function(r) { return r.flagDown || r.flagUp; });
+
+  var trs = rows.map(function(r) {
+    var downBar = '<div class="pc-fill-bar">' +
+      '<div class="pc-fill-inner ' + (r.flagDown ? 'pc-fill-warn' : '') + '" style="width:' + r.downPct + '%"></div>' +
+      '</div>';
+    var upBar = r.upTotal > 0
+      ? '<div class="pc-fill-bar">' +
+          '<div class="pc-fill-inner ' + (r.flagUp ? 'pc-fill-warn' : '') + '" style="width:' + r.upPct + '%"></div>' +
+          '</div>'
+      : '—';
+
+    var statusIcon = (!r.flagDown && !r.flagUp)
+      ? '<span class="pc-ok">✓</span>'
+      : '<span class="pc-warn">⚠</span>';
+
+    return '<tr>' +
+      '<td><span class="layer-tag">' + r.label + '</span></td>' +
+      '<td style="font-size:.79rem">' + r.model + '</td>' +
+      '<td style="text-align:center">' + r.qty + '</td>' +
+      '<td>' +
+        r.downUsed + ' / ' + r.downTotal +
+        '<span style="color:var(--txt3);font-size:.71rem"> (' + r.downPct + '%)</span>' +
+        downBar +
+      '</td>' +
+      '<td>' +
+        (r.upTotal > 0 ? r.upUsed + ' / ' + r.upTotal + '<span style="color:var(--txt3);font-size:.71rem"> (' + r.upPct + '%)</span>' : '—') +
+        upBar +
+      '</td>' +
+      '<td style="text-align:center;font-size:.8rem;color:var(--txt1)">' + r.oversub + '</td>' +
+      '<td style="text-align:center">' + statusIcon + (r.note ? '<span style="font-size:.7rem;color:var(--txt2);margin-left:.25rem">' + r.note + '</span>' : '') + '</td>' +
+    '</tr>';
+  }).join('');
+
+  var flagBanner = anyFlag
+    ? '<div class="pc-flag-banner">⚠ Some layers are at or above 80% port utilization — consider adding devices or upgrading to higher-density models.</div>'
+    : '';
+
+  el.style.display = '';
+  el.innerHTML =
+    '<div class="section-toggle-hdr" onclick="togglePortCapacity()">' +
+      '<span>📊 Port Capacity Report</span>' +
+      '<span class="toggle-caret" id="port-cap-caret">▼</span>' +
+    '</div>' +
+    '<div id="port-cap-body">' +
+      flagBanner +
+      '<table class="bom-table" style="margin-top:.5rem">' +
+        '<thead><tr>' +
+          '<th>Layer</th><th>Device</th><th style="text-align:center">Qty</th>' +
+          '<th>Downlinks used / total</th>' +
+          '<th>Uplinks used / total</th>' +
+          '<th style="text-align:center">Oversub</th>' +
+          '<th style="text-align:center">Status</th>' +
+        '</tr></thead>' +
+        '<tbody>' + trs + '</tbody>' +
+      '</table>' +
+      '<div class="bom-footer" style="margin-top:.5rem;font-size:.73rem;color:var(--txt2)">' +
+        'Downlink utilization: access-facing ports. Uplink utilization: fabric/distribution-facing ports. Oversub = downlink BW ÷ uplink BW.' +
+      '</div>' +
+    '</div>';
+}
+window._updatePortCapacitySection = _updatePortCapacitySection;
+
+function togglePortCapacity() {
+  var body  = document.getElementById('port-cap-body');
+  var caret = document.getElementById('port-cap-caret');
+  if (!body) return;
+  var hidden = body.style.display === 'none';
+  body.style.display  = hidden ? '' : 'none';
+  if (caret) caret.textContent = hidden ? '▼' : '▶';
+}
+window.togglePortCapacity = togglePortCapacity;
 
 function exportBOM() {
   const layers = getLayersForUC();

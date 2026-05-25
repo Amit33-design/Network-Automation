@@ -3319,6 +3319,18 @@ details:not([open]) > .cp-section-title::after { content: ' ▼'; font-size: .65
 .rack-fill-bar  { height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; margin-bottom: 2px; }
 .rack-fill-inner { height: 100%; background: linear-gradient(90deg, var(--blue) 0%, var(--cyan) 100%); border-radius: 4px; transition: width .4s ease; }
 
+/* Port Capacity Report */
+.pc-fill-bar   { height: 7px; background: var(--bg3); border-radius: 4px; overflow: hidden; margin-top: 3px; }
+.pc-fill-inner { height: 100%; background: linear-gradient(90deg, var(--blue) 0%, var(--cyan) 100%); border-radius: 4px; transition: width .4s ease; }
+.pc-fill-warn  { background: linear-gradient(90deg, var(--orange) 0%, #ffb347 100%); }
+.pc-ok   { color: var(--green); font-weight: 800; font-size: .88rem; }
+.pc-warn { color: var(--orange); font-weight: 800; font-size: .88rem; }
+.pc-flag-banner {
+  background: rgba(255,140,0,.08); border: 1px solid rgba(255,140,0,.25);
+  border-radius: 7px; padding: .5rem .85rem; font-size: .78rem;
+  color: var(--orange); margin-bottom: .65rem;
+}
+
 /* ── Firewall consistency checker ────────────────────────────── */
 .fw-check-pass       { display: flex; gap: .75rem; align-items: center; padding: .6rem .75rem;
                         background: rgba(0,232,122,.06); border: 1px solid rgba(0,232,122,.2);
