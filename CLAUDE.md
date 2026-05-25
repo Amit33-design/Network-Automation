@@ -177,8 +177,8 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 
 | ID | Gap | Priority | Status |
 |----|-----|----------|--------|
-| G-33 | Monitoring is export-only — no embedded TSDB or visualization | P1 | ⚠️ — Prometheus rules + Grafana dashboard JSON exported; no embedded VictoriaMetrics/Grafana stack |
-| G-34 | No gNMI/streaming telemetry — SNMP polling only | P1 | ❌ — alert rules assume SNMP polling only; no gNMI collector or streaming subscriptions |
+| ~~G-33~~ | ~~Monitoring is export-only — no embedded TSDB or visualization~~ | P1 | ✅ 2026-05-25 — `monitoring-stack.yml` (VictoriaMetrics + Grafana + snmp-exporter + gnmic); scrape.yml, datasource/dashboard provisioning YAMLs; "Stack Setup" tab in Step 6 with live Grafana/VM links |
+| ~~G-34~~ | ~~No gNMI/streaming telemetry — SNMP polling only~~ | P1 | ✅ 2026-05-25 — `gnmic.yml` with 4 OpenConfig subscriptions (interface SAMPLE/ON_CHANGE, BGP, CPU/memory); per-platform device-side gNMI config (NX-OS/EOS/JunOS/SONiC); "gNMI Telemetry" tab in Step 6 |
 | G-35 | Anomaly detection uses 2σ/30-sample window — too many false positives | P2 | ❌ — no statistical anomaly detection; thresholds are static |
 
 ### 4.7 Troubleshooting
