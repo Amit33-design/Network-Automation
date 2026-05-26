@@ -59,6 +59,7 @@ from routers.approvals import router as approvals_router
 from routers.users import router as users_router
 from routers.integrations import router as integrations_router
 from routers.export import router as export_router
+from routers.lab import router as lab_router
 from ztp.router import ztp_router
 from api.ws import deployment_stream
 from ztp.dhcp_gen import generate_dhcp_config
@@ -318,6 +319,8 @@ app.include_router(approvals_router)
 # Phase 2 — Enterprise: integrations + export
 app.include_router(integrations_router)
 app.include_router(export_router)
+# Lab simulation — demo topology, ZTP, checks, monitoring (no auth, no DB)
+app.include_router(lab_router)
 
 
 # ---------------------------------------------------------------------------
