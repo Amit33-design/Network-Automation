@@ -70,7 +70,7 @@
   }
 
   /** Network switch device card with port-row indicator */
-  function switchCard(cx, cy, hostname, model, info2, role) {
+  function switchCard(cx, cy, hostname, model, info2, role, instanceId) {
     var col = c(role), w = 118, h = 58, x = cx - w/2, y = cy - h/2;
     // 8 port pips across the top of the card
     var ports = '';
@@ -79,7 +79,7 @@
         +' rx="1" fill="'+col+'55" stroke="'+col+'88" stroke-width="0.6"/>';
     // status LED
     var led = '<circle cx="'+(x+w-7)+'" cy="'+(y+7)+'" r="3" fill="#22c55e" opacity="0.85"/>';
-    return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="5"'
+    var inner = '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="5"'
         +' fill="'+col+'18" stroke="'+col+'" stroke-width="1.5"/>'
       +ports+led
       // hostname
@@ -93,12 +93,17 @@
         ? '<text x="'+cx+'" y="'+(cy+16)+'" text-anchor="middle" font-size="8"'
           +' fill="'+CLR.DIM+'" font-family="monospace,sans-serif">'+esc(info2)+'</text>'
         : '');
+    if (instanceId) {
+      return '<g class="hld-node" data-id="'+esc(instanceId)+'" onclick="window.hldNodeClick(\''+esc(instanceId)+'\')" style="cursor:pointer;">'
+        +inner+'</g>';
+    }
+    return inner;
   }
 
   /** Router circle icon */
-  function routerCard(cx, cy, hostname, model, info2, role) {
+  function routerCard(cx, cy, hostname, model, info2, role, instanceId) {
     var col = c(role), r = 28;
-    return '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+col+'18" stroke="'+col+'" stroke-width="1.5"/>'
+    var inner = '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+col+'18" stroke="'+col+'" stroke-width="1.5"/>'
       // routing arrows
       +'<line x1="'+(cx-14)+'" y1="'+cy+'" x2="'+(cx+14)+'" y2="'+cy+'"'
       +' stroke="'+col+'" stroke-width="1.2" marker-end="url(#arr)"/>'
@@ -110,17 +115,22 @@
         ? '<text x="'+cx+'" y="'+(cy+r+21)+'" text-anchor="middle" font-size="8" fill="'+CLR.DIM+'"'
           +' font-family="monospace,sans-serif">'+esc(info2)+'</text>'
         : '');
+    if (instanceId) {
+      return '<g class="hld-node" data-id="'+esc(instanceId)+'" onclick="window.hldNodeClick(\''+esc(instanceId)+'\')" style="cursor:pointer;">'
+        +inner+'</g>';
+    }
+    return inner;
   }
 
   /** Firewall shield icon */
-  function firewallCard(cx, cy, hostname, model) {
+  function firewallCard(cx, cy, hostname, model, instanceId) {
     var col = c('firewall'), w = 118, h = 58, x = cx - w/2, y = cy - h/2;
     // Shield chevrons on the card
     var chevrons = '';
     for (var ci = 0; ci < 3; ci++)
       chevrons += '<line x1="'+(x+10+ci*8)+'" y1="'+(y+10)+'" x2="'+(x+10+ci*8)+'" y2="'+(y+h-10)+'"'
         +' stroke="'+col+'44" stroke-width="1"/>';
-    return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="5"'
+    var inner = '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="5"'
         +' fill="'+col+'18" stroke="'+col+'" stroke-width="1.5" stroke-dasharray="5,2"/>'
       +chevrons
       +'<circle cx="'+(x+w-8)+'" cy="'+(y+8)+'" r="3" fill="'+col+'" opacity="0.85"/>'
@@ -130,6 +140,11 @@
       +' fill="'+col+'cc" font-family="monospace,sans-serif">'+esc((model||'').split(' ').slice(-2).join(' '))+'</text>'
       +'<text x="'+cx+'" y="'+(cy+16)+'" text-anchor="middle" font-size="8"'
       +' fill="'+CLR.DIM+'" font-family="monospace,sans-serif">STATEFUL FW</text>';
+    if (instanceId) {
+      return '<g class="hld-node" data-id="'+esc(instanceId)+'" onclick="window.hldNodeClick(\''+esc(instanceId)+'\')" style="cursor:pointer;">'
+        +inner+'</g>';
+    }
+    return inner;
   }
 
   /** Internet / cloud oval */
@@ -287,12 +302,13 @@
       else if (role === 'pe-router') info2 = 'AS 65001 · SR-MPLS';
       else if (role === 'p-router')  info2 = 'AS 65001 · Transit';
 
+      var iid = d.instanceId || null;
       if (role === 'firewall') {
-        svgParts.push(firewallCard(cx2, cy, hn, d.model || ''));
+        svgParts.push(firewallCard(cx2, cy, hn, d.model || '', iid));
       } else if (role === 'pe-router' || role === 'p-router' || role === 'wan-edge') {
-        svgParts.push(routerCard(cx2, cy, hn, d.model || '', info2, role));
+        svgParts.push(routerCard(cx2, cy, hn, d.model || '', info2, role, iid));
       } else {
-        svgParts.push(switchCard(cx2, cy, hn, d.model || '', info2, role));
+        svgParts.push(switchCard(cx2, cy, hn, d.model || '', info2, role, iid));
       }
     });
     return { svg:svgParts.join(''), cx:cxArr, topY:cy-CARD_H/2, botY:cy+CARD_H/2 };
@@ -353,59 +369,59 @@
 
     var ZY = { border:10, spine:130, leaf:285, server:435 };
     var H  = 510;
-    var svg = '';
+    var physSvg = '', linkSvg = '', overlaySvg = '';
 
-    /* zones */
-    svg += zone(10, ZY.border, W-20, 100,  'BORDER / TRANSIT', 'firewall',
+    /* zones (physical background — goes in physical layer) */
+    physSvg += zone(10, ZY.border, W-20, 100,  'BORDER / TRANSIT', 'firewall',
       fws.length ? fws[0].model : 'Internet Edge');
-    svg += zone(10, ZY.spine,  W-20, 135,  'SPINE FABRIC LAYER', 'spine',
+    physSvg += zone(10, ZY.spine,  W-20, 135,  'SPINE FABRIC LAYER', 'spine',
       'eBGP CLOS · AS 65000');
-    svg += zone(10, ZY.leaf,   W-20, 130,  'LEAF / ToR LAYER',   'leaf',
+    physSvg += zone(10, ZY.leaf,   W-20, 130,  'LEAF / ToR LAYER',   'leaf',
       'eBGP AS 651XX · VXLAN/EVPN · Anycast-GW');
-    svg += zone(10, ZY.server, W-20, 65,   'COMPUTE / SERVER TIER', 'internet',
+    physSvg += zone(10, ZY.server, W-20, 65,   'COMPUTE / SERVER TIER', 'internet',
       (state.topology&&state.topology.bandwidth_gbps
         ? state.topology.bandwidth_gbps+'GbE downlinks' : ''));
 
     /* Internet cloud */
-    svg += cloudNode(W/2, ZY.border+28, 'Internet / WAN', 'BGP Peering');
+    physSvg += cloudNode(W/2, ZY.border+28, 'Internet / WAN', 'BGP Peering');
 
     /* Firewall row */
     var fwRow = null;
     if (fws.length) {
       fwRow = row(fws, 'firewall', ZY.border+68, W);
-      svg  += fwRow.svg;
+      physSvg += fwRow.svg;
       fwRow.cx.forEach(function(fx) {
-        svg += link(W/2, ZY.border+47, fx, fwRow.topY, '10G', false, 'firewall');
+        linkSvg += link(W/2, ZY.border+47, fx, fwRow.topY, '10G', false, 'firewall');
       });
     } else {
       /* no FW → direct line from cloud to spine zone */
-      svg += link(W/2, ZY.border+47, W/2, ZY.spine, '100G', false, 'spine');
+      linkSvg += link(W/2, ZY.border+47, W/2, ZY.spine, '100G', false, 'spine');
     }
 
     /* Spine row */
     var spineRow = row(spines, 'spine', ZY.spine+68, W);
-    svg += spineRow.svg;
+    physSvg += spineRow.svg;
     if (fwRow) {
-      svg += mesh(fwRow.cx, fwRow.botY, spineRow.cx, spineRow.topY, '100G', false, 'firewall');
+      linkSvg += mesh(fwRow.cx, fwRow.botY, spineRow.cx, spineRow.topY, '100G', false, 'firewall');
     }
 
-    /* Protocol badges under spines */
-    svg += protoBadges(state, W/2, ZY.spine+128);
+    /* Protocol badges under spines — overlay layer */
+    overlaySvg += protoBadges(state, W/2, ZY.spine+128);
 
     /* Leaf row */
     var leafRow = row(leaves, 'leaf', ZY.leaf+62, W);
-    svg += leafRow.svg;
+    physSvg += leafRow.svg;
     /* Dual (redundant) uplinks: each leaf → every spine */
-    svg += mesh(spineRow.cx, spineRow.botY, leafRow.cx, leafRow.topY, '100G', true, 'leaf');
+    linkSvg += mesh(spineRow.cx, spineRow.botY, leafRow.cx, leafRow.topY, '100G', true, 'leaf');
 
     /* Server bar */
     var ep = (state.topology&&state.topology.endpoint_count) || leaves.length*24;
     var bw = (state.topology&&state.topology.bandwidth_gbps) || 25;
-    svg += serverBar(W/2, ZY.server+26, ep, bw+'G', '');
-    svg += mesh(leafRow.cx.slice(0,Math.min(leafRow.cx.length,6)),
+    physSvg += serverBar(W/2, ZY.server+26, ep, bw+'G', '');
+    linkSvg += mesh(leafRow.cx.slice(0,Math.min(leafRow.cx.length,6)),
       leafRow.botY, [W/2], ZY.server+12, bw+'G', false, 'internet');
 
-    return { svg:svg, h:H };
+    return { physSvg:physSvg, linkSvg:linkSvg, overlaySvg:overlaySvg, rocev2Svg:'', h:H };
   }
 
   /* ── AI / GPU Cluster ───────────────────────────────────────────────────── */
@@ -416,38 +432,38 @@
 
     var ZY = { oob:10, spine:105, leaf:265, gpu:415 };
     var H  = 510;
-    var svg = '';
+    var physSvg = '', linkSvg = '', overlaySvg = '', rocev2Svg = '';
 
-    svg += zone(10, ZY.oob,   W-20, 80,  'OOB / STORAGE NETWORK', 'internet', 'Out-of-Band Mgmt · NFS');
-    svg += zone(10, ZY.spine, W-20, 140, 'GPU SPINE FABRIC',       'spine',
+    physSvg += zone(10, ZY.oob,   W-20, 80,  'OOB / STORAGE NETWORK', 'internet', 'Out-of-Band Mgmt · NFS');
+    physSvg += zone(10, ZY.spine, W-20, 140, 'GPU SPINE FABRIC',       'spine',
       'RoCEv2 · PFC Priority 3 · ECN/DCQCN · lossless');
-    svg += zone(10, ZY.leaf,  W-20, 130, 'GPU ToR / RAIL LAYER',   'leaf',
+    physSvg += zone(10, ZY.leaf,  W-20, 130, 'GPU ToR / RAIL LAYER',   'leaf',
       'Rail-optimized · 400G uplinks · 100G to GPU');
-    svg += zone(10, ZY.gpu,   W-20, 90,  'GPU COMPUTE NODES',      'core',
+    physSvg += zone(10, ZY.gpu,   W-20, 90,  'GPU COMPUTE NODES',      'core',
       'A100 / H100 / H200 · NVLink · RDMA');
 
-    svg += cloudNode(W/4,   ZY.oob+38, 'OOB Mgmt', '');
-    svg += cloudNode(3*W/4, ZY.oob+38, 'Storage', 'NFS/NVMe-oF');
+    physSvg += cloudNode(W/4,   ZY.oob+38, 'OOB Mgmt', '');
+    physSvg += cloudNode(3*W/4, ZY.oob+38, 'Storage', 'NFS/NVMe-oF');
 
     var spineRow = row(spines, 'spine', ZY.spine+70, W);
-    svg += spineRow.svg;
+    physSvg += spineRow.svg;
 
-    /* RoCEv2 badges */
+    /* RoCEv2 badges — rocev2 layer */
     [['RoCEv2','core'],['PFC','spine'],['ECN','firewall'],['DCQCN','core'],
      ['RDMA','leaf'],['BFD','access']].forEach(function(b,i) {
-      svg += badge(80 + i*140, ZY.spine+136, b[0], b[1]);
+      rocev2Svg += badge(80 + i*140, ZY.spine+136, b[0], b[1]);
     });
 
     var leafRow = row(leaves, 'leaf', ZY.leaf+62, W);
-    svg += leafRow.svg;
-    svg += mesh(spineRow.cx, spineRow.botY, leafRow.cx, leafRow.topY, '400G', true, 'leaf');
+    physSvg += leafRow.svg;
+    linkSvg += mesh(spineRow.cx, spineRow.botY, leafRow.cx, leafRow.topY, '400G', true, 'leaf');
 
     var gpuCount = (state.topology&&state.topology.endpoint_count) || leaves.length*8;
-    svg += gpuBar(W/2, ZY.gpu+38, gpuCount);
-    svg += mesh(leafRow.cx.slice(0,Math.min(leafRow.cx.length,6)),
+    physSvg += gpuBar(W/2, ZY.gpu+38, gpuCount);
+    linkSvg += mesh(leafRow.cx.slice(0,Math.min(leafRow.cx.length,6)),
       leafRow.botY, [W/2], ZY.gpu+18, '100G', false, 'core');
 
-    return { svg:svg, h:H };
+    return { physSvg:physSvg, linkSvg:linkSvg, overlaySvg:overlaySvg, rocev2Svg:rocev2Svg, h:H };
   }
 
   /* ── Campus / Enterprise LAN ────────────────────────────────────────────── */
@@ -461,51 +477,51 @@
 
     var ZY = { wan:10, core:115, access:265, end:400 };
     var H  = 480;
-    var svg = '';
+    var physSvg = '', linkSvg = '', overlaySvg = '';
 
-    svg += zone(10, ZY.wan,    W-20, 90,  'WAN / INTERNET EDGE', 'firewall', 'BGP · IPSec · DMVPN');
-    svg += zone(10, ZY.core,   W-20, 130, 'CORE / DISTRIBUTION', 'spine',
+    physSvg += zone(10, ZY.wan,    W-20, 90,  'WAN / INTERNET EDGE', 'firewall', 'BGP · IPSec · DMVPN');
+    physSvg += zone(10, ZY.core,   W-20, 130, 'CORE / DISTRIBUTION', 'spine',
       'OSPF/EIGRP · HSRP/VRRP · Layer 3 Routed · QoS');
-    svg += zone(10, ZY.access, W-20, 115, 'ACCESS / EDGE LAYER', 'leaf',
+    physSvg += zone(10, ZY.access, W-20, 115, 'ACCESS / EDGE LAYER', 'leaf',
       '802.1X NAC · PoE · VLAN Segmentation · STP RSTP');
-    svg += zone(10, ZY.end,    W-20, 70,  'END DEVICES',         'internet', 'Wired · Wireless · IoT · VoIP');
+    physSvg += zone(10, ZY.end,    W-20, 70,  'END DEVICES',         'internet', 'Wired · Wireless · IoT · VoIP');
 
-    svg += cloudNode(W/2, ZY.wan+30, 'Internet / WAN', 'MPLS / DIA');
+    physSvg += cloudNode(W/2, ZY.wan+30, 'Internet / WAN', 'MPLS / DIA');
 
     var fwRow = null;
     if (fws.length) {
       fwRow = row(fws, 'firewall', ZY.wan+72, W);
-      svg  += fwRow.svg;
-      svg  += mesh([W/2], ZY.wan+49, fwRow.cx, fwRow.topY, '10G', false, 'firewall');
+      physSvg += fwRow.svg;
+      linkSvg += mesh([W/2], ZY.wan+49, fwRow.cx, fwRow.topY, '10G', false, 'firewall');
     }
 
     var coreRole = (cores[0]&&cores[0].subLayer==='core') ? 'core' : 'distribution';
     var coreRow  = row(cores, coreRole, ZY.core+65, W);
-    svg += coreRow.svg;
+    physSvg += coreRow.svg;
     if (fwRow) {
-      svg += mesh(fwRow.cx, fwRow.botY, coreRow.cx, coreRow.topY, '10G', false, 'firewall');
+      linkSvg += mesh(fwRow.cx, fwRow.botY, coreRow.cx, coreRow.topY, '10G', false, 'firewall');
     } else {
-      svg += link(W/2, ZY.wan+49, W/2, coreRow.topY, '10G', false, 'spine');
+      linkSvg += link(W/2, ZY.wan+49, W/2, coreRow.topY, '10G', false, 'spine');
     }
 
     [['OSPF','spine'],['HSRP','spine'],['QoS','leaf'],['VTP','access']].forEach(function(b,i){
-      svg += badge(120+i*160, ZY.core+128, b[0], b[1]);
+      overlaySvg += badge(120+i*160, ZY.core+128, b[0], b[1]);
     });
 
     var accRow = row(accs, 'access', ZY.access+55, W);
-    svg += accRow.svg;
-    svg += mesh(coreRow.cx, coreRow.botY, accRow.cx, accRow.topY, '1G', false, 'leaf');
+    physSvg += accRow.svg;
+    linkSvg += mesh(coreRow.cx, coreRow.botY, accRow.cx, accRow.topY, '1G', false, 'leaf');
 
     [['802.1X','access'],['PoE','leaf'],['RSTP','access'],['DHCP Snooping','internet']].forEach(function(b,i){
-      svg += badge(100+i*195, ZY.access+108, b[0], b[1]);
+      overlaySvg += badge(100+i*195, ZY.access+108, b[0], b[1]);
     });
 
     var ep = (state.topology&&state.topology.endpoint_count) || accs.length*24;
-    svg += serverBar(W/2, ZY.end+28, ep, '1G', 'VoIP · WiFi');
-    svg += mesh(accRow.cx.slice(0,Math.min(accRow.cx.length,6)),
+    physSvg += serverBar(W/2, ZY.end+28, ep, '1G', 'VoIP · WiFi');
+    linkSvg += mesh(accRow.cx.slice(0,Math.min(accRow.cx.length,6)),
       accRow.botY, [W/2], ZY.end+12, '', false, 'internet');
 
-    return { svg:svg, h:H };
+    return { physSvg:physSvg, linkSvg:linkSvg, overlaySvg:overlaySvg, rocev2Svg:'', h:H };
   }
 
   /* ── WAN / SD-WAN ───────────────────────────────────────────────────────── */
@@ -517,29 +533,29 @@
 
     var ZY = { ctrl:10, orch:145, edge:280 };
     var H  = 400;
-    var svg = '';
+    var physSvg = '', linkSvg = '', overlaySvg = '';
 
-    svg += zone(10, ZY.ctrl, W-20, 115, 'SD-WAN CONTROL PLANE', 'sdwan-controller',
+    physSvg += zone(10, ZY.ctrl, W-20, 115, 'SD-WAN CONTROL PLANE', 'sdwan-controller',
       'OMP · Policy · App-aware Routing');
-    svg += zone(10, ZY.orch, W-20, 115, 'SD-WAN ORCHESTRATION', 'wan-edge',
+    physSvg += zone(10, ZY.orch, W-20, 115, 'SD-WAN ORCHESTRATION', 'wan-edge',
       'NAT Traversal · WAN Edge Onboarding');
-    svg += zone(10, ZY.edge, W-20, 100, 'WAN EDGE SITES',       'wan-edge',
+    physSvg += zone(10, ZY.edge, W-20, 100, 'WAN EDGE SITES',       'wan-edge',
       'TLOC · IPSec · DMVPN · ZTP');
 
     var ctrlRow = row(ctrls.length ? ctrls : [{subLayer:'sdwan-controller',model:'vSmart'}],
       'sdwan-controller', ZY.ctrl+58, W);
-    svg += ctrlRow.svg;
+    physSvg += ctrlRow.svg;
 
     var orchRow = row(orcls.length ? orcls : [{subLayer:'sdwan-orchestrator',model:'vBond'}],
       'sdwan-orchestrator', ZY.orch+58, W);
-    svg += orchRow.svg;
-    svg += mesh(ctrlRow.cx, ctrlRow.botY, orchRow.cx, orchRow.topY, 'DTLS', false, 'sdwan-controller');
+    physSvg += orchRow.svg;
+    linkSvg += mesh(ctrlRow.cx, ctrlRow.botY, orchRow.cx, orchRow.topY, 'DTLS', false, 'sdwan-controller');
 
     var edgeRow = row(edges, 'wan-edge', ZY.edge+50, W);
-    svg += edgeRow.svg;
-    svg += mesh(orchRow.cx, orchRow.botY, edgeRow.cx, edgeRow.topY, 'IPSec', false, 'wan-edge');
+    physSvg += edgeRow.svg;
+    linkSvg += mesh(orchRow.cx, orchRow.botY, edgeRow.cx, edgeRow.topY, 'IPSec', false, 'wan-edge');
 
-    return { svg:svg, h:H };
+    return { physSvg:physSvg, linkSvg:linkSvg, overlaySvg:overlaySvg, rocev2Svg:'', h:H };
   }
 
   /* ── Multi-Site Fabric ──────────────────────────────────────────────────── */
@@ -553,22 +569,22 @@
     var wan        = devs.filter(function(d){return d.subLayer==='wan-edge';});
 
     var H = 420;
-    var svg = '';
+    var physSvg = '', linkSvg = '', overlaySvg = '';
 
-    svg += zone(10, 10, W-20, 85,  'WAN / DCI BACKBONE', 'wan-edge',
+    physSvg += zone(10, 10, W-20, 85,  'WAN / DCI BACKBONE', 'wan-edge',
       'MPLS · VXLAN-EVPN DCI · BGP Route-Reflector');
-    svg += cloudNode(W/2, 52, 'WAN / DCI Cloud', 'MP-BGP EVPN');
+    physSvg += cloudNode(W/2, 52, 'WAN / DCI Cloud', 'MP-BGP EVPN');
 
     /* WAN edge devices above cloud */
     if (wan.length) {
       var wanRow = row(wan, 'wan-edge', 50, W);
-      svg += wanRow.svg;
+      physSvg += wanRow.svg;
     }
 
     var boxW = Math.min(160, (W - 40) / numSites - 12);
     var boxH = 295;
     var siteZoneY = 108;
-    svg += zone(10, siteZoneY, W-20, boxH, 'SITE FABRICS', 'internet', numSites+' sites');
+    physSvg += zone(10, siteZoneY, W-20, boxH, 'SITE FABRICS', 'internet', numSites+' sites');
 
     var totalRowW2 = numSites * boxW + (numSites - 1) * 12;
     var siteStartX = W/2 - totalRowW2/2;
@@ -577,7 +593,7 @@
       var siteCX  = siteStartX + s * (boxW + 12) + boxW/2;
       var siteTop = siteZoneY + 22;
       /* site box */
-      svg += '<rect x="'+(siteCX-boxW/2)+'" y="'+siteTop+'" width="'+boxW+'"'
+      physSvg += '<rect x="'+(siteCX-boxW/2)+'" y="'+siteTop+'" width="'+boxW+'"'
         +' height="'+(boxH-28)+'" rx="6" fill="'+CLR.SURFACE+'88" stroke="'+CLR.BORDER+'" stroke-width="1"/>'
         +'<text x="'+siteCX+'" y="'+(siteTop+14)+'" text-anchor="middle" font-size="10"'
         +' fill="'+CLR.DIM+'" font-weight="800" font-family="sans-serif">'
@@ -590,7 +606,7 @@
 
       for (var sp = 0; sp < mSpineN; sp++) {
         var msx = siteCX - (mSpineN-1)*(mW+6)/2 + sp*(mW+6);
-        svg += '<rect x="'+(msx-mW/2)+'" y="'+(mSY-12)+'" width="'+mW+'" height="24" rx="3"'
+        physSvg += '<rect x="'+(msx-mW/2)+'" y="'+(mSY-12)+'" width="'+mW+'" height="24" rx="3"'
           +' fill="#3b82f622" stroke="#3b82f6" stroke-width="1.2"/>'
           +'<text x="'+msx+'" y="'+(mSY+4)+'" text-anchor="middle" font-size="8"'
           +' fill="#3b82f6" font-family="monospace,sans-serif">SP-'+String(sp+1).padStart(2,'0')+'</text>';
@@ -598,35 +614,35 @@
 
       for (var lf = 0; lf < mLeafN; lf++) {
         var mlx = siteCX - (mLeafN-1)*(mW+4)/2 + lf*(mW+4);
-        svg += '<rect x="'+(mlx-mW/2)+'" y="'+(mLY-12)+'" width="'+mW+'" height="24" rx="3"'
+        physSvg += '<rect x="'+(mlx-mW/2)+'" y="'+(mLY-12)+'" width="'+mW+'" height="24" rx="3"'
           +' fill="#22c55e22" stroke="#22c55e" stroke-width="1.2"/>'
           +'<text x="'+mlx+'" y="'+(mLY+4)+'" text-anchor="middle" font-size="8"'
           +' fill="#22c55e" font-family="monospace,sans-serif">L-'+String(lf+1).padStart(2,'0')+'</text>';
         /* mini spine → leaf */
         for (var msp2 = 0; msp2 < mSpineN; msp2++) {
           var msx2 = siteCX - (mSpineN-1)*(mW+6)/2 + msp2*(mW+6);
-          svg += '<line x1="'+msx2+'" y1="'+(mSY+12)+'" x2="'+mlx+'" y2="'+(mLY-12)+'"'
+          linkSvg += '<line x1="'+msx2+'" y1="'+(mSY+12)+'" x2="'+mlx+'" y2="'+(mLY-12)+'"'
             +' stroke="#4b5563" stroke-width="0.8" opacity="0.6"/>';
         }
       }
 
       /* counts if compressed */
       if (perSpine > mSpineN)
-        svg += '<text x="'+siteCX+'" y="'+(mSY-20)+'" text-anchor="middle" font-size="8"'
+        physSvg += '<text x="'+siteCX+'" y="'+(mSY-20)+'" text-anchor="middle" font-size="8"'
           +' fill="#3b82f688" font-family="sans-serif">'+perSpine+'× spine</text>';
       if (perLeaf > mLeafN)
-        svg += '<text x="'+siteCX+'" y="'+(mLY+22)+'" text-anchor="middle" font-size="8"'
+        physSvg += '<text x="'+siteCX+'" y="'+(mLY+22)+'" text-anchor="middle" font-size="8"'
           +' fill="#22c55e88" font-family="sans-serif">'+perLeaf+'× leaf</text>';
 
-      /* VXLAN DCI badge */
-      svg += badge(siteCX, siteTop+246, 'VXLAN DCI', 'wan-edge');
+      /* VXLAN DCI badge — overlay */
+      overlaySvg += badge(siteCX, siteTop+246, 'VXLAN DCI', 'wan-edge');
 
       /* WAN line from site to cloud */
-      svg += '<line x1="'+siteCX+'" y1="'+siteTop+'" x2="'+(W/2+(s-(numSites-1)/2)*36)+'" y2="71"'
+      linkSvg += '<line x1="'+siteCX+'" y1="'+siteTop+'" x2="'+(W/2+(s-(numSites-1)/2)*36)+'" y2="71"'
         +' stroke="#eab308" stroke-width="1.2" stroke-dasharray="5,2" opacity="0.8"/>';
     }
 
-    return { svg:svg, h:H };
+    return { physSvg:physSvg, linkSvg:linkSvg, overlaySvg:overlaySvg, rocev2Svg:'', h:H };
   }
 
   /* ── Service Provider MPLS ──────────────────────────────────────────────── */
@@ -637,24 +653,24 @@
 
     var ZY = { p:10, pe:175 };
     var H  = 340;
-    var svg = '';
+    var physSvg = '', linkSvg = '', overlaySvg = '';
 
-    svg += zone(10, ZY.p,  W-20, 145, 'MPLS CORE (P ROUTERS)',  'p-router',
+    physSvg += zone(10, ZY.p,  W-20, 145, 'MPLS CORE (P ROUTERS)',  'p-router',
       'IS-IS SR-MPLS · TI-LFA · AS 65001');
-    svg += zone(10, ZY.pe, W-20, 145, 'PE ROUTERS / EDGE',       'pe-router',
+    physSvg += zone(10, ZY.pe, W-20, 145, 'PE ROUTERS / EDGE',       'pe-router',
       'L3VPN · VPNv4/VPNv6 · BGP RR · LDP/SR');
 
     var pRow  = row(ps,  'p-router',  ZY.p  + 75, W);
     var peRow = row(pes, 'pe-router', ZY.pe + 75, W);
-    svg += pRow.svg + peRow.svg;
-    svg += mesh(pRow.cx, pRow.botY, peRow.cx, peRow.topY, 'SR-MPLS', false, 'pe-router');
+    physSvg += pRow.svg + peRow.svg;
+    linkSvg += mesh(pRow.cx, pRow.botY, peRow.cx, peRow.topY, 'SR-MPLS', false, 'pe-router');
 
     [['IS-IS','p-router'],['SR-MPLS','pe-router'],['TI-LFA','spine'],
      ['LDP','p-router'],['VPNv4','pe-router']].forEach(function(b,i){
-      svg += badge(80+i*175, ZY.p+138, b[0], b[1]);
+      overlaySvg += badge(80+i*175, ZY.p+138, b[0], b[1]);
     });
 
-    return { svg:svg, h:H };
+    return { physSvg:physSvg, linkSvg:linkSvg, overlaySvg:overlaySvg, rocev2Svg:'', h:H };
   }
 
   /* ══════════════════════════════════════════════════════════════════════════
@@ -672,8 +688,24 @@
     else if (uc === 'sp_mpls')   result = spMpls(state);
     else                         result = dcFabric(state);   // dc, hybrid, storage, private_5g
 
-    var H   = result.h + 42;
-    var body = result.svg + legend(result.h + 4);
+    var H        = result.h + 42;
+    var legendSvg = legend(result.h + 4);
+
+    /* ── CSS hover rules injected via <defs> ── */
+    var defs = '<defs>'
+      +'<style>'
+      +'.hld-node:hover > rect { filter: brightness(1.2); }'
+      +'.hld-node:hover > circle { filter: brightness(1.2); }'
+      +'</style>'
+      +'</defs>';
+
+    /* ── Layer groups ── */
+    var body = defs
+      +'<g id="hld-layer-physical">'  + result.physSvg  + '</g>'
+      +'<g id="hld-layer-links">'     + result.linkSvg   + '</g>'
+      +'<g id="hld-layer-overlay">'   + result.overlaySvg + '</g>'
+      +'<g id="hld-layer-rocev2">'    + (result.rocev2Svg||'') + '</g>'
+      + legendSvg;
 
     var ucLabel = {
       dc:'Data Center Leaf-Spine', gpu:'AI / GPU Cluster',
@@ -685,18 +717,39 @@
       ? ' &nbsp;·&nbsp; <span style="color:var(--accent);">' + state.org.sites + ' sites</span>' : '';
     var devCount = (state.devices||[]).length;
 
+    /* Show RoCEv2 layer button only for GPU use case */
+    var isGpu = (uc === 'gpu' || (state.gpu && state.gpu.transport === 'rocev2'));
+    var rocev2Btn = isGpu
+      ? '<button class="btn btn-secondary hld-layer-btn" data-layer="rocev2" '
+        +'onclick="window.hldToggleLayer(\'rocev2\')" style="font-size:10px;padding:3px 8px;">RoCEv2</button>'
+      : '';
+
     return '<div style="background:var(--surface);border:1px solid var(--border);'
       +'border-radius:8px;padding:14px 16px;">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:6px;">'
       +'<div style="font-size:13px;font-weight:700;color:var(--text);">'
       +'HLD &nbsp;—&nbsp; <span style="color:var(--accent);">'+esc(ucLabel)+'</span>'
       +'&nbsp;·&nbsp; '+devCount+' devices'+sites
       +'</div>'
-      +'<div style="display:flex;gap:6px;align-items:center;">'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+      /* Layer toggles */
+      +'<div style="display:flex;gap:4px;align-items:center;">'
+      +'<span style="font-size:10px;color:var(--text-dim,#64748b);margin-right:4px;">Layers:</span>'
+      +'<button class="btn btn-secondary hld-layer-btn" data-layer="physical" '
+      +'onclick="window.hldToggleLayer(\'physical\')" style="font-size:10px;padding:3px 8px;">Physical</button>'
+      +'<button class="btn btn-secondary hld-layer-btn" data-layer="links" '
+      +'onclick="window.hldToggleLayer(\'links\')" style="font-size:10px;padding:3px 8px;">Links</button>'
+      +'<button class="btn btn-secondary hld-layer-btn" data-layer="overlay" '
+      +'onclick="window.hldToggleLayer(\'overlay\')" style="font-size:10px;padding:3px 8px;">Overlay</button>'
+      +rocev2Btn
+      +'</div>'
+      /* Export / reset buttons */
       +'<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" '
       +'onclick="window.exportHLDSvg()">&#8595; Export SVG</button>'
       +'<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" '
       +'onclick="window.exportHLDPng()">&#8595; Export PNG</button>'
+      +'<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" '
+      +'onclick="window.exportHLDDrawio(window.STATE)">&#8595; Export Draw.io</button>'
       +'<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" '
       +'onclick="window.resetHLDView()" title="Reset pan/zoom (also: double-click diagram)">&#8635; Reset</button>'
       +'</div>'
@@ -706,6 +759,10 @@
       +'style="max-width:1000px;display:block;background:transparent;cursor:grab;overflow:hidden;">'
       +body
       +'</svg>'
+      +'<div id="hld-tooltip" style="position:absolute;background:#1e293b;border:1px solid #334155;'
+      +'border-radius:6px;padding:8px 12px;font-size:11px;color:#e2e8f0;pointer-events:none;'
+      +'display:none;z-index:100;max-width:220px;line-height:1.6;box-shadow:0 8px 24px rgba(0,0,0,.4);">'
+      +'</div>'
       +'<div id="hld-minimap-wrap" style="position:absolute;bottom:12px;right:12px;width:180px;height:90px;'
       +'background:rgba(15,17,23,.85);border:1px solid #334155;border-radius:6px;'
       +'overflow:hidden;cursor:pointer;z-index:10;" '
@@ -717,6 +774,30 @@
       +'</div>'
       +'</div>'
       +'</div>';
+  };
+
+  /* ── G-56: Node click → jump to config viewer ───────────────────────────── */
+  window.hldNodeClick = function(instanceId) {
+    if (!instanceId) return;
+    if (window.goToStep) window.goToStep(3);
+    setTimeout(function() {
+      if (window.renderStep3 && window.STATE && window.STATE.devices && window.STATE.devices.length) {
+        if (!window.STATE.configs || !Object.keys(window.STATE.configs).length) {
+          window.renderStep3();
+        }
+      }
+      if (window.showDeviceConfig) window.showDeviceConfig(instanceId);
+    }, 80);
+  };
+
+  /* ── G-57: Layer toggle ──────────────────────────────────────────────────── */
+  window.hldToggleLayer = function(layer) {
+    var g = document.getElementById('hld-layer-' + layer);
+    if (!g) return;
+    var visible = g.style.display !== 'none';
+    g.style.display = visible ? 'none' : '';
+    var btn = document.querySelector('.hld-layer-btn[data-layer="' + layer + '"]');
+    if (btn) btn.style.opacity = visible ? '0.4' : '1';
   };
 
   window.exportHLDSvg = function() {

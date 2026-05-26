@@ -932,15 +932,43 @@
       .content-area {
         padding: 12px 8px;
       }
-      .fs-grid { grid-template-columns: 1fr; }
-      .bom-table { font-size: 11px; }
+      .fs-grid { grid-template-columns: 1fr !important; }
+      .form-grid { grid-template-columns: 1fr !important; }
+      .form-row { flex-direction: column !important; }
+      .bom-table { font-size: 11px; min-width: 520px; }
       .bom-table th, .bom-table td { padding: 6px 8px; }
       h1 { font-size: 20px; }
-      .form-row { flex-direction: column; }
+      /* Bug 1: BOM table horizontal scroll — critical fix */
+      .main-content { overflow-x: hidden; padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+      .step-panel { overflow-x: hidden; }
+      .table-scroll {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+        max-width: 100vw;
+      }
+      .cable-table  { min-width: 600px; }
+      .optics-table { min-width: 560px; }
+      .accordion-body { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      /* Bug 2: HLD SVG touch handling */
+      #hld-svg { touch-action: none; }
+      #hld-minimap-wrap { bottom: 4px; right: 4px; width: 120px; height: 60px; }
+      /* Config layout: stack vertically on mobile */
+      .cfg-layout { flex-direction: column; height: auto; min-height: 400px; }
+      .cfg-device-list { width: 100% !important; min-width: 0 !important; max-height: 160px; border-right: none; border-bottom: 1px solid var(--border); }
+      .cfg-resize-handle { display: none; }
+      .cfg-panel .config-pre { max-height: 50vh; }
+      /* G-65: Safe area insets */
+      header { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+      .app-header { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+      .content-area { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+      /* G-64: Show mobile bottom nav */
+      .mobile-bottom-nav { display: flex; }
     }
     @media (max-width: 480px) {
-      .wizard-tabs { gap: 2px; }
-      .step-tab { min-width: 60px; padding: 6px 6px; font-size: 10px; }
+      /* Bug 3: Wizard tabs — strengthen fix */
+      .wizard-tabs { gap: 0; padding: 0; }
+      .step-tab { min-width: 44px; padding: 8px 4px; font-size: 9px; border-radius: 0; }
+      .step-tab .step-num { display: none; }
       .accordion-header { font-size: 12px; padding: 10px 12px; }
     }
     /* G-51: Config Section Folding */
@@ -981,6 +1009,78 @@
       font-size: 13px; font-weight: 600; text-decoration: none; transition: top .2s;
     }
     .skip-link:focus { top: 8px; }
+
+    /* G-60: Loading skeletons */
+    @keyframes shimmer { 0%{background-position:-800px 0} 100%{background-position:800px 0} }
+    .skeleton {
+      background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+      background-size: 800px 100%; animation: shimmer 1.4s infinite linear;
+      border-radius: 4px; display: block;
+    }
+    .skeleton-text  { height: 14px; margin-bottom: 8px; width: 80%; }
+    .skeleton-text.w60 { width: 60%; }
+    .skeleton-text.w40 { width: 40%; }
+    .skeleton-row   { height: 36px; margin-bottom: 4px; width: 100%; border-radius: 4px; }
+    .skeleton-card  { height: 120px; width: 100%; border-radius: 8px; margin-bottom: 12px; }
+
+    /* ─── G-64: Mobile bottom navigation ──────────────────────────────────── */
+    .mobile-bottom-nav {
+      display: none; /* hidden on desktop */
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      z-index: 1000;
+      flex-direction: row;
+      justify-content: space-around;
+      align-items: stretch;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      box-shadow: 0 -4px 16px rgba(0,0,0,.3);
+    }
+    .mobile-nav-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 8px 2px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 10px;
+      min-width: 0;
+      transition: color .12s;
+    }
+    .mobile-nav-btn.active { color: var(--accent); }
+    .mobile-nav-btn:active { background: rgba(79,142,247,.08); }
+    .mobile-nav-icon { font-size: 16px; line-height: 1; }
+    .mobile-nav-label { font-size: 9px; font-weight: 600; }
+
+    /* ─── G-65: Floating action buttons (mobile only) ──────────────────────── */
+    .mobile-fab {
+      display: none;
+      position: fixed;
+      bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+      right: 16px;
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(0,0,0,.3);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      transition: transform .12s;
+    }
+    .mobile-fab:active { transform: scale(.92); }
+    @media (max-width: 768px) {
+      .mobile-fab { display: flex; }
+    }
   </style>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#3b82f6">
@@ -2367,6 +2467,46 @@ curl -X POST http://localhost:9090/-/reload</pre>
 <script src="src/js/command_palette.js"></script>
 <script src="src/js/init.js"></script>
 
+<!-- G-64: Mobile bottom navigation bar -->
+<nav id="mobile-bottom-nav" class="mobile-bottom-nav" aria-label="Step navigation">
+  <button class="mobile-nav-btn active" data-step="1" onclick="window.goToStep&&window.goToStep(1);window._mobileNavActive(1)">
+    <span class="mobile-nav-icon">&#127760;</span>
+    <span class="mobile-nav-label">Intent</span>
+  </button>
+  <button class="mobile-nav-btn" data-step="2" onclick="window.goToStep&&window.goToStep(2);window.renderStep2&&window.renderStep2();window._mobileNavActive(2)">
+    <span class="mobile-nav-icon">&#128203;</span>
+    <span class="mobile-nav-label">BOM</span>
+  </button>
+  <button class="mobile-nav-btn" data-step="3" onclick="window.renderStep3&&window.renderStep3();window.goToStep&&window.goToStep(3);window._mobileNavActive(3)">
+    <span class="mobile-nav-icon">&#128196;</span>
+    <span class="mobile-nav-label">Config</span>
+  </button>
+  <button class="mobile-nav-btn" data-step="4" onclick="window.goToStep&&window.goToStep(4);window._mobileNavActive(4)">
+    <span class="mobile-nav-icon">&#128640;</span>
+    <span class="mobile-nav-label">Deploy</span>
+  </button>
+  <button class="mobile-nav-btn" data-step="5" onclick="window.goToStep&&window.goToStep(5);window._mobileNavActive(5)">
+    <span class="mobile-nav-icon">&#128202;</span>
+    <span class="mobile-nav-label">Monitor</span>
+  </button>
+  <button class="mobile-nav-btn" data-step="6" onclick="window.goToStep&&window.goToStep(6);window._mobileNavActive(6)">
+    <span class="mobile-nav-icon">&#128257;</span>
+    <span class="mobile-nav-label">ZTP</span>
+  </button>
+  <button class="mobile-nav-btn" data-step="7" onclick="window.goToStep&&window.goToStep(7);window._mobileNavActive(7)">
+    <span class="mobile-nav-icon">&#9881;</span>
+    <span class="mobile-nav-label">Engine</span>
+  </button>
+</nav>
+
+<!-- G-65: Mobile floating action buttons -->
+<button id="fab-generate" class="mobile-fab" style="background:var(--success);"
+  onclick="document.getElementById('btn-generate-bom')&&document.getElementById('btn-generate-bom').click()"
+  title="Generate BOM" aria-label="Generate BOM">&#9654;</button>
+<button id="fab-export-hld" class="mobile-fab" style="display:none;right:72px;"
+  onclick="window.exportHLDSvg&&window.exportHLDSvg()"
+  title="Export HLD diagram" aria-label="Export HLD">&#8595;</button>
+
 <script>
 window.toggleTheme = function() {
   var current = document.documentElement.getAttribute('data-theme') ||
@@ -2389,6 +2529,17 @@ window.toggleTheme = function() {
     }
   } catch(e) {}
 })();
+
+// G-64 + G-65: Mobile nav active state + FAB visibility
+window._mobileNavActive = function(n) {
+  document.querySelectorAll('.mobile-nav-btn').forEach(function(b) {
+    b.classList.toggle('active', parseInt(b.getAttribute('data-step')) === n);
+  });
+  var fabGen = document.getElementById('fab-generate');
+  var fabHld = document.getElementById('fab-export-hld');
+  if (fabGen) fabGen.style.display = (n === 1) ? 'flex' : 'none';
+  if (fabHld) fabHld.style.display = (n === 2) ? 'flex' : 'none';
+};
 </script>
 
 </body>

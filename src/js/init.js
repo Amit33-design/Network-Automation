@@ -791,6 +791,11 @@ function _roleBadge(role) {
 }
 
 function renderStep2() {
+  // G-60: show skeleton immediately so browser paints before synchronous BOM calc
+  window.showSkeleton('bom-output', 'table');
+  setTimeout(function() { _renderStep2Body(); }, 0);
+}
+function _renderStep2Body() {
   var result = window.buildBOM(STATE);
   var html   = window.renderBOMTable(result.summary);
 
@@ -1470,12 +1475,42 @@ function escapeHtml(str) {
   return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// ─── G-60: Loading Skeletons ──────────────────────────────────────────────────
+window.showSkeleton = function(containerId, type) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  var rows = type === 'table' ? 6 : type === 'card' ? 3 : 4;
+  var html = '';
+  for (var i = 0; i < rows; i++) {
+    if (type === 'table') {
+      html += '<div class="skeleton skeleton-row" style="opacity:' + (1 - i*0.12) + ';"></div>';
+    } else if (type === 'card') {
+      html += '<div class="skeleton skeleton-card" style="opacity:' + (1 - i*0.2) + ';"></div>';
+    } else {
+      html += '<div class="skeleton skeleton-text' + (i%3===2?' w40':i%3===1?' w60':'') + '"></div>';
+    }
+  }
+  el._preSkeletonContent = el.innerHTML;
+  el.innerHTML = '<div style="padding:16px;">' + html + '</div>';
+};
+
+window.hideSkeleton = function(containerId) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  // hideSkeleton is a no-op for content set by the caller — caller replaces innerHTML
+};
+
 // ─── Step 3: Config generation ────────────────────────────────────────────────
 function renderStep3() {
   if (!STATE.devices || !STATE.devices.length) {
     showToast('Complete Step 1 first', 'warning');
     return;
   }
+  // G-60: show skeleton so browser paints before synchronous config generation
+  window.showSkeleton('config-output', 'card');
+  setTimeout(function() { _renderStep3Body(); }, 0);
+}
+function _renderStep3Body() {
   window.generateAllConfigs(STATE);
   var container = document.getElementById('config-output');
   if (container) container.innerHTML = window.renderConfigViewer(STATE);
@@ -1492,6 +1527,55 @@ function renderStep3() {
   setTimeout(window.initCfgResizeHandle, 0);
   // G-50: reset diff state on new generation
   window._cfgDiffOpen = false;
+
+  // G-62: Inject compare panel + button into config viewer
+  var cfgPanel = document.getElementById('cfg-panel');
+  if (cfgPanel) {
+    if (!document.getElementById('cfg-compare-panel')) {
+      var cmpPanel = document.createElement('div');
+      cmpPanel.id = 'cfg-compare-panel';
+      cmpPanel.style.display = 'none';
+      cfgPanel.appendChild(cmpPanel);
+    }
+    var cfgHdr = cfgPanel.querySelector('.cfg-panel-hdr');
+    if (cfgHdr && !document.getElementById('cfg-compare-btn')) {
+      var cmpBtn = document.createElement('button');
+      cmpBtn.id = 'cfg-compare-btn';
+      cmpBtn.className = 'btn btn-secondary';
+      cmpBtn.setAttribute('title', 'Compare two device configs side-by-side');
+      cmpBtn.innerHTML = '&#8644; Compare';
+      cmpBtn.setAttribute('onclick', 'window.cfgToggleCompare()');
+      var dlBtn = cfgHdr.querySelector('[onclick*="downloadConfig"]');
+      if (dlBtn) cfgHdr.insertBefore(cmpBtn, dlBtn);
+      else cfgHdr.appendChild(cmpBtn);
+    }
+  }
+
+  // G-63: Inject section filter tab bar below config panel header
+  var cfgPanelEl = document.getElementById('cfg-panel');
+  if (cfgPanelEl && !document.getElementById('cfg-section-bar')) {
+    var bar = document.createElement('div');
+    bar.id = 'cfg-section-bar';
+    bar.style.cssText = 'display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap;';
+    var sections = [
+      {id:'all',        label:'All'},
+      {id:'interfaces', label:'Interfaces'},
+      {id:'bgp',        label:'BGP'},
+      {id:'qos',        label:'QoS'},
+      {id:'vxlan',      label:'VXLAN'},
+      {id:'rocev2',     label:'RoCEv2'},
+      {id:'security',   label:'Security'}
+    ];
+    bar.innerHTML = sections.map(function(s) {
+      return '<button class="btn btn-secondary cfg-sec-btn" style="font-size:10px;padding:2px 8px;" '
+        + 'data-sec="' + s.id + '" '
+        + 'onclick="window.cfgFilterSection(\'' + (s.id==='all'?'':s.id) + '\');document.querySelectorAll(\'.cfg-sec-btn\').forEach(function(b){b.style.opacity=\'0.5\';});this.style.opacity=\'1\';">'
+        + s.label + '</button>';
+    }).join('');
+    var hdrEl = cfgPanelEl.querySelector('.cfg-panel-hdr');
+    if (hdrEl) cfgPanelEl.insertBefore(bar, hdrEl.nextSibling);
+  }
+
   showToast('Configs generated for ' + STATE.devices.length + ' devices', 'success');
 }
 window.renderStep3 = renderStep3;
@@ -1834,6 +1918,151 @@ function initCfgResizeHandle() {
   handle.addEventListener('pointerleave', function() { if (dragging) { dragging = false; handle.classList.remove('dragging'); } });
 }
 window.initCfgResizeHandle = initCfgResizeHandle;
+
+// ─── G-61: Global Error Boundary ─────────────────────────────────────────────
+window.addEventListener('error', function(e) {
+  var msg  = e && e.message  ? e.message              : 'Unknown error';
+  var file = e && e.filename ? e.filename.split('/').pop() : '';
+  var line = e && e.lineno   ? e.lineno               : '';
+  if (msg.indexOf('Script error') !== -1) return;
+  var banner = document.getElementById('global-error-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'global-error-banner';
+    banner.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);'
+      + 'background:#450a0a;border:1px solid #ef4444;color:#fca5a5;padding:12px 18px;'
+      + 'border-radius:8px;font-size:12px;z-index:99999;max-width:480px;display:flex;'
+      + 'align-items:center;gap:12px;box-shadow:0 8px 24px rgba(0,0,0,.5);';
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML = '<span>&#9888; JS Error: ' + msg.replace(/</g,'&lt;')
+    + (file ? ' (' + file + ':' + line + ')' : '') + '</span>'
+    + '<button onclick="document.getElementById(\'global-error-banner\').style.display=\'none\'" '
+    + 'style="background:none;border:none;color:#fca5a5;cursor:pointer;font-size:16px;padding:0;">&#215;</button>';
+  banner.style.display = 'flex';
+  setTimeout(function() { if (banner) banner.style.display = 'none'; }, 8000);
+  return false;
+});
+
+window.addEventListener('unhandledrejection', function(e) {
+  var msg = e && e.reason ? String(e.reason).slice(0, 120) : 'Unhandled promise rejection';
+  window.dispatchEvent(new ErrorEvent('error', {message: msg}));
+});
+
+// ─── G-62: Multi-device config comparison ────────────────────────────────────
+window.renderConfigCompare = function(state) {
+  var devices = state.devices || [];
+  if (devices.length < 2) {
+    return '<p style="color:var(--text-dim);padding:16px;">Generate configs for at least 2 devices first.</p>';
+  }
+  var opts = devices.map(function(d, i) {
+    return '<option value="' + d.instanceId + '"' + (i===0?' selected':'') + '>' + (d.hostname||d.instanceId) + '</option>';
+  }).join('');
+  var opts2 = devices.map(function(d, i) {
+    return '<option value="' + d.instanceId + '"' + (i===1?' selected':'') + '>' + (d.hostname||d.instanceId) + '</option>';
+  }).join('');
+  return '<div style="display:flex;gap:8px;padding:8px;border-bottom:1px solid var(--border);background:var(--surface2);">'
+    + '<select onchange="window.cfgCompareUpdate()" id="cmp-sel-a" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:4px 8px;font-size:12px;">' + opts + '</select>'
+    + '<span style="color:var(--text-dim);align-self:center;">vs</span>'
+    + '<select onchange="window.cfgCompareUpdate()" id="cmp-sel-b" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:4px 8px;font-size:12px;">' + opts2 + '</select>'
+    + '</div>'
+    + '<div style="display:flex;flex:1;overflow:hidden;">'
+    + '<div style="flex:1;overflow:auto;border-right:1px solid var(--border);"><pre id="cmp-out-a" class="config-pre" style="margin:0;border:none;border-radius:0;max-height:none;"></pre></div>'
+    + '<div style="flex:1;overflow:auto;"><pre id="cmp-out-b" class="config-pre" style="margin:0;border:none;border-radius:0;max-height:none;"></pre></div>'
+    + '</div>';
+};
+
+window.cfgCompareUpdate = function() {
+  var selA = document.getElementById('cmp-sel-a');
+  var selB = document.getElementById('cmp-sel-b');
+  var outA = document.getElementById('cmp-out-a');
+  var outB = document.getElementById('cmp-out-b');
+  if (!selA || !selB || !outA || !outB) return;
+  var cfgA = (STATE.configs && STATE.configs[selA.value]) || '! No config';
+  var cfgB = (STATE.configs && STATE.configs[selB.value]) || '! No config';
+  if (window.applyConfigHighlight) {
+    window.applyConfigHighlight(outA, cfgA);
+    window.applyConfigHighlight(outB, cfgB);
+  } else {
+    outA.textContent = cfgA;
+    outB.textContent = cfgB;
+  }
+};
+
+window._cfgCompareOpen = false;
+window.cfgToggleCompare = function() {
+  var pre   = document.getElementById('cfg-output');
+  var diff  = document.getElementById('cfg-diff-panel');
+  var panel = document.getElementById('cfg-compare-panel');
+  var btn   = document.getElementById('cfg-compare-btn');
+  if (!pre || !panel) return;
+  window._cfgCompareOpen = !window._cfgCompareOpen;
+  if (window._cfgCompareOpen) {
+    if (pre)  pre.style.display  = 'none';
+    if (diff) diff.style.display = 'none';
+    panel.style.display     = 'flex';
+    panel.style.flexDirection = 'column';
+    panel.style.flex        = '1';
+    panel.style.overflow    = 'hidden';
+    panel.innerHTML = window.renderConfigCompare(STATE);
+    setTimeout(window.cfgCompareUpdate, 0);
+    if (btn) { btn.style.background = 'rgba(79,142,247,.18)'; btn.style.color = 'var(--accent)'; }
+    window._cfgDiffOpen = false;
+    var diffBtn = document.getElementById('cfg-diff-btn');
+    if (diffBtn) { diffBtn.style.background = ''; diffBtn.style.color = ''; }
+  } else {
+    if (pre)  pre.style.display  = '';
+    panel.style.display = 'none';
+    if (btn) { btn.style.background = ''; btn.style.color = ''; }
+  }
+};
+
+// ─── G-63: Config section filter ─────────────────────────────────────────────
+window._cfgFilter = '';
+window.cfgFilterSection = function(keyword) {
+  window._cfgFilter = keyword;
+  var pre = document.getElementById('cfg-output');
+  if (!pre) return;
+  var cfgText = STATE.configs && window._currentCfgId ? (STATE.configs[window._currentCfgId] || '') : '';
+  if (!keyword) {
+    if (window.applyConfigHighlight) window.applyConfigHighlight(pre, cfgText);
+    else pre.textContent = cfgText;
+    return;
+  }
+  var SECTION_KEYWORDS = {
+    'interfaces': /^interface /i,
+    'bgp':        /^router bgp|^address-family|^neighbor |^template peer/i,
+    'qos':        /^policy-map|^class-map|^service-policy/i,
+    'rocev2':     /pfc|ecn|dcqcn|roce|priority-flow|congestion/i,
+    'security':   /^crypto|^ip access-list|^aaa|dot1x|^nac/i,
+    'vxlan':      /^nve|vxlan|evpn|vni|vn-segment/i
+  };
+  var re = SECTION_KEYWORDS[keyword];
+  if (!re) {
+    if (window.applyConfigHighlight) window.applyConfigHighlight(pre, cfgText);
+    return;
+  }
+  var lines = cfgText.split('\n');
+  var out = [];
+  var inBlock = false;
+  for (var i = 0; i < lines.length; i++) {
+    var trimmed = lines[i].trim();
+    if (re.test(trimmed)) {
+      inBlock = true;
+      out.push(lines[i]);
+    } else if (inBlock) {
+      if (trimmed === '!' || (trimmed && trimmed.charAt(0) !== ' ')) {
+        out.push(lines[i]);
+        inBlock = false;
+      } else {
+        out.push(lines[i]);
+      }
+    }
+  }
+  var filtered = out.length ? out.join('\n') : '! No ' + keyword + ' sections found in this config.';
+  if (window.applyConfigHighlight) window.applyConfigHighlight(pre, filtered);
+  else pre.textContent = filtered;
+};
 
 // ─── G-49: Policy Editor helper exposed to HTML ───────────────────────────────
 window.policyGenConfigAndShow = function() {
