@@ -1,34 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" fill="none">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#1d4ed8"/>
-      <stop offset="100%" stop-color="#0ea5e9"/>
+    <!-- Dark navy background matching the brand -->
+    <linearGradient id="bg" x1="0" y1="0" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0b1120"/>
+      <stop offset="100%" stop-color="#0d1a38"/>
     </linearGradient>
-    <linearGradient id="glow" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.4"/>
-      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.1"/>
+    <!-- Blue→cyan accent gradient -->
+    <linearGradient id="accent" x1="0" y1="0" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#1a7fff"/>
+      <stop offset="100%" stop-color="#00d4ff"/>
     </linearGradient>
+    <!-- Subtle glow for nodes -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
   </defs>
 
-  <!-- Background rounded square -->
-  <rect width="48" height="48" rx="12" fill="url(#bg)"/>
-  <rect width="48" height="48" rx="12" fill="url(#glow)"/>
+  <!-- Background -->
+  <rect width="56" height="56" rx="14" fill="url(#bg)"/>
+  <!-- Inner glow overlay -->
+  <rect width="56" height="56" rx="14" fill="url(#accent)" fill-opacity="0.06"/>
 
-  <!-- Network nodes -->
-  <circle cx="9"  cy="9"  r="3" fill="white" fill-opacity="0.9"/>
-  <circle cx="39" cy="9"  r="3" fill="white" fill-opacity="0.9"/>
-  <circle cx="9"  cy="39" r="3" fill="white" fill-opacity="0.5"/>
-  <circle cx="39" cy="39" r="3" fill="white" fill-opacity="0.5"/>
-  <circle cx="24" cy="8"  r="2" fill="#93c5fd" fill-opacity="0.8"/>
-  <circle cx="40" cy="24" r="2" fill="#93c5fd" fill-opacity="0.8"/>
-
-  <!-- Node connector lines -->
-  <line x1="9"  y1="9"  x2="39" y2="9"  stroke="white" stroke-opacity="0.2" stroke-width="0.8"/>
-  <line x1="9"  y1="9"  x2="9"  y2="39" stroke="white" stroke-opacity="0.2" stroke-width="0.8"/>
-  <line x1="39" y1="9"  x2="39" y2="39" stroke="white" stroke-opacity="0.2" stroke-width="0.8"/>
-  <line x1="9"  y1="9"  x2="24" y2="8"  stroke="#93c5fd" stroke-opacity="0.4" stroke-width="0.6"/>
-  <line x1="39" y1="9"  x2="40" y2="24" stroke="#93c5fd" stroke-opacity="0.4" stroke-width="0.6"/>
+  <!-- Network edge lines (connecting the nodes) -->
+  <!-- Vertical left spine -->
+  <line x1="13" y1="10" x2="13" y2="46" stroke="#1a7fff" stroke-opacity="0.25" stroke-width="1"/>
+  <!-- Vertical right spine -->
+  <line x1="43" y1="10" x2="43" y2="46" stroke="#1a7fff" stroke-opacity="0.25" stroke-width="1"/>
+  <!-- Diagonal cross (the N stroke) -->
+  <line x1="13" y1="10" x2="43" y2="46" stroke="url(#accent)" stroke-opacity="0.3" stroke-width="1"/>
+  <!-- Horizontal top connector -->
+  <line x1="13" y1="10" x2="43" y2="10" stroke="#00d4ff" stroke-opacity="0.18" stroke-width="0.8"/>
+  <!-- Horizontal bottom connector -->
+  <line x1="13" y1="46" x2="43" y2="46" stroke="#00d4ff" stroke-opacity="0.18" stroke-width="0.8"/>
+  <!-- Mid spurs -->
+  <line x1="13" y1="28" x2="28" y2="20" stroke="#1a7fff" stroke-opacity="0.15" stroke-width="0.7"/>
+  <line x1="43" y1="28" x2="28" y2="36" stroke="#1a7fff" stroke-opacity="0.15" stroke-width="0.7"/>
 
   <!-- Bold N letterform -->
-  <path d="M13 36V12l22 24V12" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path
+    d="M13 46 L13 10 L43 46 L43 10"
+    stroke="url(#accent)"
+    stroke-width="4.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    fill="none"
+    filter="url(#glow)"
+  />
+
+  <!-- Network nodes at key junctions -->
+  <!-- Top-left -->
+  <circle cx="13" cy="10" r="3.5" fill="url(#accent)" filter="url(#glow)"/>
+  <!-- Top-right -->
+  <circle cx="43" cy="10" r="3.5" fill="#00d4ff" fill-opacity="0.9" filter="url(#glow)"/>
+  <!-- Bottom-left -->
+  <circle cx="13" cy="46" r="3.5" fill="#1a7fff" fill-opacity="0.85"/>
+  <!-- Bottom-right -->
+  <circle cx="43" cy="46" r="3.5" fill="#00d4ff" fill-opacity="0.85"/>
+  <!-- Mid-cross node (where the diagonal meets) -->
+  <circle cx="28" cy="28" r="2.5" fill="white" fill-opacity="0.6"/>
+
+  <!-- Small accent dots — satellite nodes -->
+  <circle cx="28" cy="10" r="1.8" fill="#00d4ff" fill-opacity="0.5"/>
+  <circle cx="43" cy="28" r="1.8" fill="#1a7fff" fill-opacity="0.5"/>
 </svg>
