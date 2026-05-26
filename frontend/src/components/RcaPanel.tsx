@@ -1,9 +1,9 @@
 /**
  * RcaPanel — run hypothesis-based root cause analysis.
- * Submits to /api/rca/analyze and renders ranked hypotheses.
+ * Uses TanStack Query useMutation (replaces useState loading/error + try/catch).
  */
 import React, { useState } from 'react'
-import { runRca } from '@/api/client'
+import { useRunRca } from '@/hooks/useRca'
 import { useStore, selectRca } from '@/store'
 import type { RcaHypothesis } from '@/types'
 
@@ -61,26 +61,16 @@ function HypothesisCard({ h, rank }: { h: RcaHypothesis; rank: number }) {
 }
 
 export function RcaPanel() {
-  const results    = useStore(selectRca)
-  const setResults = useStore((s) => s.setRcaResults)
-  const [symptom, setSymptom]   = useState('')
-  const [devices, setDevices]   = useState('')
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState<string | null>(null)
+  const results = useStore(selectRca)
+  const [symptom, setSymptom] = useState('')
+  const [devices, setDevices] = useState('')
+  const { mutate: analyze, isPending, isError, error, reset } = useRunRca()
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!symptom.trim()) return
-    setLoading(true)
-    setError(null)
-    try {
-      const affected = devices.split(',').map((s) => s.trim()).filter(Boolean)
-      setResults(await runRca(symptom.trim(), affected))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'RCA failed')
-    } finally {
-      setLoading(false)
-    }
+    const affected = devices.split(',').map((s) => s.trim()).filter(Boolean)
+    analyze({ symptom: symptom.trim(), devices: affected })
   }
 
   return (
@@ -98,17 +88,28 @@ export function RcaPanel() {
           value={devices}
           onChange={(e) => setDevices(e.target.value)}
         />
-        <button className="rca-btn" type="submit" disabled={loading || !symptom.trim()}>
-          {loading ? '🔍 Analyzing…' : '🔍 Analyze'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button className="rca-btn" type="submit" disabled={isPending || !symptom.trim()}>
+            {isPending ? '🔍 Analyzing…' : '🔍 Analyze'}
+          </button>
+          {(results.length > 0 || isError) && (
+            <button type="button" className="rca-btn" onClick={reset}>
+              Clear
+            </button>
+          )}
+        </div>
       </form>
 
-      {error && <div className="rca-error">❌ {error}</div>}
+      {isError && <div className="rca-error">❌ {error?.message ?? 'RCA failed'}</div>}
 
       {results.length > 0 && (
         <div className="rca-results">
-          <p className="rca-count">{results.length} hypothesis{results.length !== 1 ? 'es' : ''} found</p>
-          {results.map((h, i) => <HypothesisCard key={i} h={h} rank={i} />)}
+          <p className="rca-count">
+            {results.length} hypothesis{results.length !== 1 ? 'es' : ''} found
+          </p>
+          {results.map((h, i) => (
+            <HypothesisCard key={i} h={h} rank={i} />
+          ))}
         </div>
       )}
     </div>

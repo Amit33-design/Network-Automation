@@ -1,22 +1,30 @@
 /**
- * App shell — houses the new React components.
+ * App shell — houses the React components.
+ * Wraps everything in QueryClientProvider for TanStack Query.
  * Incremental migration: renders alongside the existing vanilla-JS index.html
  * by mounting into a dedicated <div id="root"> widget when embedded,
  * or as a full SPA when running `npm run dev`.
  */
 import React, { useState } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { LiveProgressFeed } from './components/LiveProgressFeed'
 import { AlertsPanel } from './components/AlertsPanel'
 import { RcaPanel } from './components/RcaPanel'
 import { useStore } from './store'
 import { isLiveMode } from './api/client'
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, staleTime: 10_000 },
+  },
+})
+
 type Tab = 'deploy' | 'alerts' | 'rca'
 
-export function App() {
+function AppShell() {
   const [tab, setTab] = useState<Tab>('deploy')
-  const deploymentId  = useStore((s) => s.deploymentId)
-  const clearEvents   = useStore((s) => s.clearDeployEvents)
+  const deploymentId = useStore((s) => s.deploymentId)
+  const clearEvents  = useStore((s) => s.clearDeployEvents)
 
   if (!isLiveMode()) {
     return (
@@ -44,12 +52,10 @@ export function App() {
       {tab === 'deploy' && (
         <section className="nd-panel">
           {deploymentId ? (
-            <>
-              <LiveProgressFeed
-                deploymentId={deploymentId}
-                onComplete={() => setTimeout(clearEvents, 5000)}
-              />
-            </>
+            <LiveProgressFeed
+              deploymentId={deploymentId}
+              onComplete={() => setTimeout(clearEvents, 5000)}
+            />
           ) : (
             <div className="nd-placeholder">
               No active deployment. Trigger a deploy from the main panel.
@@ -70,5 +76,13 @@ export function App() {
         </section>
       )}
     </div>
+  )
+}
+
+export function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppShell />
+    </QueryClientProvider>
   )
 }
