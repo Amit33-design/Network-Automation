@@ -15,7 +15,7 @@
 | Phase | Status | Commits | What's done |
 |-------|--------|---------|-------------|
 | **Phase 1** — Scaffold | ✅ DONE | `922325b` | Vite+React+TS, Zustand store, React Router v7, 7 routes, AppShell, CI workflow, deploy workflow, Dockerfile.frontend, docker-compose.local.yml |
-| **Phase 2** — Domain Port | 🔄 IN PROGRESS | — | Porting 15 JS modules → TypeScript pure functions in `react-app/src/domain/` |
+| **Phase 2** — Domain Port | ✅ DONE | `a77649f` | 15 JS modules → TypeScript pure functions in `react-app/src/domain/`; tsc clean + Vite build passing |
 | **Phase 3** — React UI | ❌ NOT STARTED | — | @xyflow/react topology, CodeMirror 6 config viewer, TanStack Table BOM, all 7 step pages |
 | **Phase 4** — Mobile + Launch | ❌ NOT STARTED | — | Capacitor iOS/Android, retire index.html, tag v2.0.0 |
 
@@ -23,21 +23,21 @@
 
 | Module | Source | Target | Status |
 |--------|--------|--------|--------|
-| products | `src/js/products.js` | `react-app/src/domain/products.ts` | ❌ |
-| bom | `src/js/bom.js` + `bom_calculator.js` | `react-app/src/domain/bom.ts` | ❌ |
-| constraints | `src/js/intent_constraints.js` | `react-app/src/domain/constraints.ts` | ❌ |
-| naming | `src/js/naming.js` | `react-app/src/domain/naming.ts` | ❌ |
-| optics | `src/js/optics.js` | `react-app/src/domain/optics.ts` | ❌ |
-| tco | `src/js/tco.js` | `react-app/src/domain/tco.ts` | ❌ |
-| cabling | `src/js/cabling.js` | `react-app/src/domain/cabling.ts` | ❌ |
-| rack | `src/js/racklayout.js` | `react-app/src/domain/rack.ts` | ❌ |
-| rollback | `src/js/rollback.js` | `react-app/src/domain/rollback.ts` | ❌ |
-| configgen | `src/js/configgen.js` | `react-app/src/domain/configgen.ts` | ❌ |
-| topology | `src/js/hld_diagram.js` (logic) | `react-app/src/domain/topology.ts` | ❌ |
-| troubleshoot | `src/js/troubleshoot.js` | `react-app/src/domain/troubleshoot.ts` | ❌ |
-| ztp | `src/js/ztp.js` | `react-app/src/domain/ztp.ts` | ❌ |
-| monitoring | `src/js/monitoring.js` | `react-app/src/domain/monitoring.ts` | ❌ |
-| deploy | `src/js/deploy.js` + `checks.js` | `react-app/src/domain/deploy.ts` | ❌ |
+| products | `src/js/products.js` | `react-app/src/domain/products.ts` | ✅ |
+| bom | `src/js/bom.js` + `bom_calculator.js` | `react-app/src/domain/bom.ts` | ✅ |
+| constraints | `src/js/intent_constraints.js` | `react-app/src/domain/constraints.ts` | ✅ |
+| naming | `src/js/naming.js` | `react-app/src/domain/naming.ts` | ✅ |
+| optics | `src/js/optics.js` | `react-app/src/domain/optics.ts` | ✅ |
+| tco | `src/js/tco.js` | `react-app/src/domain/tco.ts` | ✅ |
+| cabling | `src/js/cabling.js` | `react-app/src/domain/cabling.ts` | ✅ |
+| rack | `src/js/racklayout.js` | `react-app/src/domain/rack.ts` | ✅ |
+| rollback | `src/js/rollback.js` | `react-app/src/domain/rollback.ts` | ✅ |
+| configgen | `src/js/configgen.js` | `react-app/src/domain/configgen.ts` | ✅ |
+| topology | `src/js/hld_diagram.js` (logic) | `react-app/src/domain/topology.ts` | ✅ |
+| troubleshoot | `src/js/troubleshoot.js` | `react-app/src/domain/troubleshoot.ts` | ✅ |
+| ztp | `src/js/ztp.js` | `react-app/src/domain/ztp.ts` | ✅ |
+| monitoring | `src/js/monitoring.js` | `react-app/src/domain/monitoring.ts` | ✅ |
+| deploy | `src/js/deploy.js` + `checks.js` | `react-app/src/domain/deploy.ts` | ✅ |
 
 ### Session Quick-Start Commands
 
