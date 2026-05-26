@@ -186,3 +186,88 @@ export interface MonitoringResult {
     alerts: Array<{ device: string; alert: string }>
   }
 }
+
+// ── Observability (alerts / RCA) ──────────────────────────────────────────────
+
+export interface Alert {
+  id: string
+  device: string
+  severity: 'critical' | 'warning' | 'info'
+  summary: string
+  detail?: string
+  timestamp: string
+  resolved: boolean
+}
+
+export interface RcaHypothesis {
+  rank: number
+  cause: string
+  confidence: number
+  evidence: string[]
+  remediation: string
+}
+
+// ── Deploy pipeline ───────────────────────────────────────────────────────────
+
+export type DeployStage =
+  | 'queued'
+  | 'connecting'
+  | 'pre_checks'
+  | 'pushing_config'
+  | 'post_checks'
+  | 'done'
+  | 'failed'
+
+export interface DeployEvent {
+  deployment_id: string
+  stage: DeployStage
+  device?: string
+  message: string
+  progress: number
+  timestamp: string
+}
+
+export interface DesignState {
+  useCase: string
+  scale: string
+  siteCode: string
+  devices: BOMDevice[]
+}
+
+export interface DeployRequest {
+  design_id?: string
+  state?: DesignState
+  target_devices?: string[]
+}
+
+export interface DeployResponse {
+  deployment_id: string
+  status: string
+  started_at: number
+}
+
+export interface CheckResponse {
+  phase: string
+  ok: boolean
+  results: CheckResult[]
+}
+
+// ── Design / Deployment records ───────────────────────────────────────────────
+
+export interface Design {
+  id: string
+  name: string
+  use_case: string
+  state: DesignState
+  created_at: string
+  updated_at: string
+}
+
+export interface Deployment {
+  id: string
+  design_id: string
+  status: string
+  started_at: string
+  finished_at?: string
+  events: DeployEvent[]
+}
