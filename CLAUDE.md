@@ -7,9 +7,10 @@
 
 | Key | Value |
 |-----|-------|
-| Name | NetDesign AI (NDAL v1.0) |
+| Name | NetDesign AI (NDAL v1.0 → v2.0 migration in progress) |
 | Type | Browser-native, AI-powered, intent-driven network design & automation tool |
-| Stack | Vanilla JS/HTML/CSS frontend · Python (Flask) backend · Nornir + Netmiko · Claude API (Anthropic) |
+| Stack | **v1.0 (current)**: Vanilla JS/HTML/CSS · **v2.0 (next cycle)**: React 18 + TypeScript + Vite · Python (Flask) backend · Nornir + Netmiko · Claude API (Anthropic) |
+| Migration Plan | See `REACT_MIGRATION_PLAN.md` for phase-by-phase React migration with CI/CD |
 | Author | Amit Tiwari — solo build via Claude Code |
 | Deployment | Docker Compose (local/offline) · GitHub Pages (demo) |
 | Repo | https://github.com/Amit33-design/Network-Automation |
@@ -209,6 +210,22 @@ Status: ✅ = resolved · ⚠️ = partial · ❌ = open
 | ~~G-47~~ | ~~No command palette — step-by-step navigation only~~ | P3 | ✅ 2026-05-25 — `command_palette.js`: 17 commands (Navigate/Action/Export/UI/Danger/Help); Ctrl+K/Cmd+K global hotkey; fuzzy search; arrow-key nav; Enter execute; CSS-injected overlay; self-initializes on load |
 | ~~G-48~~ | ~~Topology export to PNG/SVG download — inline SVG only~~ | P3 | ✅ 2026-05-25 — `hld_diagram.js`: `exportHLDSvg()` (XMLSerializer → SVG blob); `exportHLDPng()` (SVG→canvas 2× DPR → PNG blob); Export SVG + Export PNG buttons in HLD header |
 | ~~G-49~~ | ~~Visual policy editor for ACL/QoS/route-map rules — text-only~~ | P3 | ✅ 2026-05-25 — `policy_editor.js`: 521-line IIFE; `POLICY_STORE[]` data model; route-map/ACL/QoS policy cards with inline rule table; per-rule match (prefix/DSCP/proto) + set (next-hop/DSCP/local-pref); IOS-XE CLI generator; `policyToIntent()` syncs to `STATE.policies`; Policy Editor accordion in Step 7 |
+| ~~G-50~~ | ~~Config diff view — no before/after comparison~~ | P2 | ✅ 2026-05-26 — `config_diff.js`: LCS O(m×n) diff, fast set-based fallback for m×n>250000; `diffConfigs()`, `renderDiffView()`, `showConfigDiff()`; Diff toggle button in config panel |
+| ~~G-51~~ | ~~Config section folding — all sections always expanded~~ | P2 | ✅ 2026-05-26 — `foldConfigSections(html, text)` in `init.js`: 14 block-start patterns; wraps ≥3-line sections in `<details open>` with summary + body; integrated into `applyConfigHighlight` |
+| ~~G-52~~ | ~~No topology mini-map for large diagrams~~ | P2 | ✅ 2026-05-26 — `hld_diagram.js`: 180×90px SVG minimap overlay bottom-right; `updateMinimap()` maps pan/zoom viewport to indicator rect; `minimapClick()` click-to-navigate |
+| ~~G-53~~ | ~~No ARIA accessibility on wizard tabs and interactive controls~~ | P2 | ✅ 2026-05-26 — `index.html`: skip link; wizard nav `role="tablist"`; 7 tabs `role="tab"/aria-selected/aria-controls`; 7 panels `role="tabpanel"/aria-labelledby`; 50 aria-label attributes |
+| ~~G-54~~ | ~~No light/dark theme toggle~~ | P2 | ✅ 2026-05-26 — CSS `[data-theme]` vars; `toggleTheme()` + localStorage; `@media (prefers-color-scheme: light)` auto-detect; theme-toggle-btn in header |
+| ~~G-55~~ | ~~Config panel fixed width — no resize~~ | P2 | ✅ 2026-05-26 — `.cfg-resize-handle` 5px drag bar; `initCfgResizeHandle()` in `init.js`: pointerdown/move/up capture, min 120px / max 420px |
+| ~~G-56~~ | ~~HLD nodes not clickable — no drill-down to device config~~ | P1 | ✅ 2026-05-26 — `hld_diagram.js`: node cards wrapped in `<g class="hld-node" onclick="hldNodeClick(id)">`, `hldNodeClick()` calls `goToStep(3)` + `showDeviceConfig()` with 80ms delay |
+| ~~G-57~~ | ~~No HLD layer toggles (Physical/Links/Overlay/RoCEv2)~~ | P2 | ✅ 2026-05-26 — `hld_diagram.js`: SVG split into 4 `<g id="hld-layer-*">` groups; `hldToggleLayer(layer)` toggle buttons in HLD header |
+| ~~G-58~~ | ~~No hover tooltips on HLD nodes~~ | P2 | ✅ 2026-05-26 — `hld_diagram.js`: `<div id="hld-tooltip">` absolute div; mouseover/move/leave in `initHLDInteraction` showing hostname/model/role |
+| ~~G-59~~ | ~~No Draw.io export~~ | P3 | ✅ 2026-05-26 — `hld_diagram.js`: `exportHLDDrawio(state)` generates mxGraph XML with device mxCell elements + role-based styles + edges; downloads as `.drawio` |
+| ~~G-60~~ | ~~No loading skeletons — UI feels unresponsive during BOM/config render~~ | P2 | ✅ 2026-05-26 — `init.js`: `showSkeleton(containerId, type)` / `hideSkeleton()`; shimmer CSS in `index.html`; BOM + config renders deferred via `setTimeout` behind skeleton |
+| ~~G-61~~ | ~~No global error boundary — JS errors are silent~~ | P1 | ✅ 2026-05-26 — `init.js`: `window.onerror` + `unhandledrejection` → fixed `#global-error-banner` bottom-center; auto-dismisses 8s; skips cross-origin noise |
+| ~~G-62~~ | ~~No multi-device config comparison~~ | P2 | ✅ 2026-05-26 — `init.js`: `renderConfigCompare(state)` dual-pane; `cfgCompareUpdate()` with syntax highlighting; `cfgToggleCompare()` toggle; Compare button in config panel header |
+| ~~G-63~~ | ~~Config viewer no section filtering~~ | P2 | ✅ 2026-05-26 — `init.js`: `cfgFilterSection(keyword)` parses config into blocks by regex; `#cfg-section-bar` tab row (All/Interfaces/BGP/QoS/VXLAN/RoCEv2/Security) injected in `renderStep3` |
+| ~~G-64~~ | ~~No mobile bottom navigation~~ | P1 | ✅ 2026-05-26 — `index.html`: `<nav id="mobile-bottom-nav">` 7-step fixed bottom bar; `_mobileNavActive(n)` syncs active state; visible only ≤768px; safe-area-inset-bottom aware |
+| ~~G-65~~ | ~~No mobile FABs or safe-area handling~~ | P2 | ✅ 2026-05-26 — `index.html`: `#fab-generate` (step 1) + `#fab-export-hld` (step 2); `env(safe-area-inset-*)` on header + content-area; FAB visibility controlled by `_mobileNavActive` |
 
 **Frontend stack recommendation (aspirational roadmap — NOT current):**
 - Topology: `@xyflow/react` or vanilla `<canvas>` with D3-force layout
