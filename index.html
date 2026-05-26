@@ -309,6 +309,60 @@
     .dist-row { display: flex; align-items: center; gap: 8px; }
     .dist-row input { width: 80px; }
     .dist-row span { font-size: 12px; color: var(--text-dim); }
+
+    /* ─── Demo Lab UI ────────────────────────────────────────────────────── */
+    .demo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .demo-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 10px;
+      text-align: center;
+    }
+    .demo-card .dc-val { font-size: 26px; font-weight: 700; line-height: 1.2; }
+    .demo-card .dc-label { color: var(--text-dim); font-size: 11px; margin-top: 4px; text-transform: uppercase; letter-spacing: .05em; }
+    .dc-healthy .dc-val  { color: var(--success); }
+    .dc-degraded .dc-val { color: var(--warn); }
+    .dc-down .dc-val     { color: var(--danger); }
+    .dc-total .dc-val    { color: var(--accent); }
+
+    .check-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 2px 9px; border-radius: 4px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+    }
+    .check-pass { background: rgba(34,197,94,.12);  color: var(--success); }
+    .check-fail { background: rgba(239,68,68,.12);  color: var(--danger); }
+    .check-warn { background: rgba(245,158,11,.12); color: var(--warn); }
+    .check-skip { background: var(--surface2);      color: var(--text-dim); }
+
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block; margin-right: 5px; flex-shrink: 0;
+    }
+    .dot-healthy  { background: var(--success); box-shadow: 0 0 5px var(--success); }
+    .dot-degraded { background: var(--warn);    box-shadow: 0 0 5px var(--warn); }
+    .dot-down     { background: var(--danger);  box-shadow: 0 0 5px var(--danger); }
+
+    .alert-item {
+      background: rgba(239,68,68,.06);
+      border: 1px solid rgba(239,68,68,.2);
+      border-left: 3px solid var(--danger);
+      padding: 8px 12px; border-radius: 4px;
+      font-size: 12px; margin-bottom: 6px;
+      display: flex; gap: 10px; align-items: center;
+    }
+    .alert-device { font-weight: 700; color: var(--danger); white-space: nowrap; }
+
+    .ztp-row-failed td     { background: rgba(239,68,68,.05) !important; }
+    .checks-row-fail td    { background: rgba(239,68,68,.05) !important; }
+    .mon-row-degraded td   { background: rgba(245,158,11,.04) !important; }
+    .mon-row-down td       { background: rgba(239,68,68,.05) !important; }
   </style>
 </head>
 <body>
@@ -503,14 +557,76 @@
     <div class="section-header">
       <div>
         <div class="section-title">ZTP &amp; Policy Management</div>
-        <div class="section-sub">Zero-touch provisioning and network policies</div>
+        <div class="section-sub">Zero-touch provisioning across all demo lab devices</div>
       </div>
     </div>
-    <div class="coming-soon">
-      <div class="cs-icon">⚙️</div>
-      <h3>Coming soon</h3>
-      <p>ZTP scripts, DHCP scopes, boot scripts, and policy engine.<br>
-         Implement from AGENT_ROADMAP.md: Ansible playbook generator + BGP route-policy validator.</p>
+
+    <!-- Topology overview -->
+    <div class="form-section">
+      <h3>Lab Topology</h3>
+      <div class="demo-grid">
+        <div class="demo-card dc-total"><div class="dc-val" id="ztp-total">—</div><div class="dc-label">Total</div></div>
+        <div class="demo-card"><div class="dc-val" id="ztp-routers" style="color:var(--accent)">—</div><div class="dc-label">Routers</div></div>
+        <div class="demo-card"><div class="dc-val" id="ztp-switches" style="color:var(--accent)">—</div><div class="dc-label">Switches</div></div>
+        <div class="demo-card"><div class="dc-val" id="ztp-firewalls" style="color:var(--accent)">—</div><div class="dc-label">Firewalls</div></div>
+        <div class="demo-card"><div class="dc-val" id="ztp-lbs" style="color:var(--accent)">—</div><div class="dc-label">Load Balancers</div></div>
+        <div class="demo-card"><div class="dc-val" id="ztp-gpu-fws" style="color:var(--accent)">—</div><div class="dc-label">GPU Firewalls</div></div>
+        <div class="demo-card"><div class="dc-val" id="ztp-gpu-srvs" style="color:var(--accent)">—</div><div class="dc-label">GPU Servers</div></div>
+      </div>
+    </div>
+
+    <!-- Fault injection -->
+    <div class="form-section">
+      <h3>Fault Injection <span style="font-weight:400;color:var(--text-dim)">(optional — simulate a ZTP failure &amp; recovery)</span></h3>
+      <div class="form-grid" style="margin-top:12px">
+        <div class="form-group">
+          <label>Device to fail</label>
+          <select id="ztp-fail-device">
+            <option value="">— No failure —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Fail at stage</label>
+          <select id="ztp-fail-at">
+            <option value="dhcp_requested">DHCP Request</option>
+            <option value="bootstrap_downloaded">Bootstrap Download</option>
+            <option value="config_applied" selected>Config Apply</option>
+            <option value="registered">Registration</option>
+            <option value="pre_checks_running">Pre-Check Run</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="btn-toolbar">
+      <button id="ztp-run-btn" class="btn btn-primary" onclick="window.runZTP()">▶ Run ZTP</button>
+      <button class="btn btn-secondary" onclick="window.resetZTPLog()">↺ Reset</button>
+    </div>
+
+    <!-- Result summary cards -->
+    <div id="ztp-result-summary" style="display:none;margin-bottom:16px">
+      <div class="demo-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="demo-card dc-total"><div class="dc-val" id="ztp-res-total">—</div><div class="dc-label">Events</div></div>
+        <div class="demo-card dc-healthy"><div class="dc-val" id="ztp-res-online">—</div><div class="dc-label">Online</div></div>
+        <div class="demo-card dc-down"><div class="dc-val" id="ztp-res-failed">—</div><div class="dc-label">Failed</div></div>
+      </div>
+    </div>
+
+    <!-- Event log -->
+    <div id="ztp-log-wrap" style="display:none">
+      <div class="form-section" style="padding:0;overflow:hidden">
+        <table class="bom-table" id="ztp-log-table">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Stage</th>
+              <th>Message</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody id="ztp-log-body"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -521,14 +637,70 @@
     <div class="section-header">
       <div>
         <div class="section-title">Pre / Post Deployment Checks</div>
-        <div class="section-sub">Netmiko-based validation scripts</div>
+        <div class="section-sub">Automated validation for every device type — routers, switches, firewalls, LBs, GPU FW</div>
       </div>
     </div>
-    <div class="coming-soon">
-      <div class="cs-icon">🔍</div>
-      <h3>Coming soon</h3>
-      <p>Auto-generated Python scripts using Netmiko to verify interface states,<br>
-         BGP neighbor counts, and LLDP neighbors before and after deployment.</p>
+
+    <!-- Fault injection -->
+    <div class="form-section">
+      <h3>Fault Injection <span style="font-weight:400;color:var(--text-dim)">(optional — inject a failing condition into one device)</span></h3>
+      <div class="form-grid" style="margin-top:12px">
+        <div class="form-group">
+          <label>Device</label>
+          <select id="checks-fail-device">
+            <option value="">— No failure —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Check to fail</label>
+          <select id="checks-fail-check">
+            <option value="">— None —</option>
+            <option value="interfaces_up">interfaces_up (any device)</option>
+            <option value="bgp_sessions">bgp_sessions (routers)</option>
+            <option value="routing_table">routing_table (routers)</option>
+            <option value="vlans_active">vlans_active (switches)</option>
+            <option value="stp_mode">stp_mode (switches)</option>
+            <option value="ha_active">ha_active — FW HA sync</option>
+            <option value="virtual_servers">virtual_servers — LB VIPs</option>
+            <option value="pool_members">pool_members — LB pool</option>
+            <option value="rdma_policy">rdma_policy — GPU FW RDMA</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="btn-toolbar">
+      <button id="checks-pre-btn"  class="btn btn-primary"   onclick="window.runChecks('pre')">▶ Run Pre-Checks</button>
+      <button id="checks-post-btn" class="btn btn-success"   onclick="window.runChecks('post')">▶ Run Post-Checks</button>
+      <button                      class="btn btn-secondary" onclick="window.clearChecks()">↺ Clear</button>
+    </div>
+
+    <!-- Summary -->
+    <div id="checks-summary" style="display:none;margin-bottom:16px">
+      <div class="demo-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="demo-card dc-total"><div class="dc-val" id="chk-phase" style="font-size:16px">—</div><div class="dc-label">Phase</div></div>
+        <div class="demo-card dc-healthy"><div class="dc-val" id="chk-pass">—</div><div class="dc-label">PASS</div></div>
+        <div class="demo-card dc-down"><div class="dc-val" id="chk-fail">—</div><div class="dc-label">FAIL</div></div>
+        <div class="demo-card dc-degraded"><div class="dc-val" id="chk-warn">—</div><div class="dc-label">WARN</div></div>
+      </div>
+    </div>
+
+    <!-- Results table -->
+    <div id="checks-table-wrap" style="display:none">
+      <div class="form-section" style="padding:0;overflow:hidden">
+        <table class="bom-table">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Check</th>
+              <th>Status</th>
+              <th>Message</th>
+              <th>Remediation</th>
+            </tr>
+          </thead>
+          <tbody id="checks-body"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -539,14 +711,52 @@
     <div class="section-header">
       <div>
         <div class="section-title">Monitoring &amp; Observability</div>
-        <div class="section-sub">Prometheus alerts, Grafana dashboards</div>
+        <div class="section-sub">Live health polling — CPU, interfaces, BGP, HA sync, VIPs, RDMA, GPU state</div>
       </div>
     </div>
-    <div class="coming-soon">
-      <div class="cs-icon">📊</div>
-      <h3>Coming soon</h3>
-      <p>Prometheus alert rules, Grafana dashboard JSON, and ML-based RCA.<br>
-         Implement from AGENT_ROADMAP.md: Prometheus alerts + Grafana dashboard generator.</p>
+
+    <div class="btn-toolbar">
+      <button id="mon-poll-btn" class="btn btn-primary"   onclick="window.pollMonitoring({})">▶ Poll All Devices</button>
+      <button                   class="btn btn-secondary" onclick="window.pollMonitoringDegraded()">⚠ Simulate Degraded</button>
+      <button                   class="btn btn-secondary" onclick="window.clearMonitoring()">↺ Clear</button>
+    </div>
+
+    <!-- Summary cards -->
+    <div id="mon-summary" style="display:none;margin-bottom:16px">
+      <div class="demo-grid" style="grid-template-columns:repeat(5,1fr)">
+        <div class="demo-card dc-total">   <div class="dc-val" id="mon-total">—</div>        <div class="dc-label">Total</div></div>
+        <div class="demo-card dc-healthy"> <div class="dc-val" id="mon-healthy">—</div>      <div class="dc-label">Healthy</div></div>
+        <div class="demo-card dc-degraded"><div class="dc-val" id="mon-degraded">—</div>     <div class="dc-label">Degraded</div></div>
+        <div class="demo-card dc-down">    <div class="dc-val" id="mon-down">—</div>         <div class="dc-label">Down</div></div>
+        <div class="demo-card">            <div class="dc-val" id="mon-alerts-count" style="color:var(--danger)">—</div><div class="dc-label">Alerts</div></div>
+      </div>
+    </div>
+
+    <!-- Health table -->
+    <div id="mon-table-wrap" style="display:none;margin-bottom:16px">
+      <div class="form-section" style="padding:0;overflow:hidden">
+        <table class="bom-table">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>CPU %</th>
+              <th>Uptime</th>
+              <th>Alerts</th>
+            </tr>
+          </thead>
+          <tbody id="mon-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Active alerts -->
+    <div id="mon-alerts-wrap" style="display:none">
+      <div class="form-section">
+        <h3>Active Alerts</h3>
+        <div id="mon-alerts-list"></div>
+      </div>
     </div>
   </section>
 
@@ -563,6 +773,7 @@
 <script src="src/js/optics.js"></script>
 <script src="src/js/configgen.js"></script>
 <script src="src/js/init.js"></script>
+<script src="src/js/demo.js"></script>
 
 </body>
 </html>
