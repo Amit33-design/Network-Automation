@@ -1,0 +1,69 @@
+version: "3.9"
+
+# NDAL v2.0 — Local development stack
+# Credentials ALWAYS via environment variables: NET_USER, NET_PASS, NET_ENABLE
+
+services:
+  # ── React Frontend (v2.0) ────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./react-app
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_BASE_URL=http://localhost:5000
+    restart: unless-stopped
+
+  # ── Flask Backend ────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - NET_USER=${NET_USER}
+      - NET_PASS=${NET_PASS}
+      - NET_ENABLE=${NET_ENABLE}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+
+  # ── Monitoring Stack ─────────────────────────────────────────────────
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    ports:
+      - "8428:8428"
+    volumes:
+      - vm_data:/storage
+    command: -retentionPeriod=90d
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    restart: unless-stopped
+
+  # ── ZTP Services ─────────────────────────────────────────────────────
+  ztp-nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./ztp/configs:/usr/share/nginx/html/ztp/configs:ro
+      - ./ztp/scripts:/usr/share/nginx/html/ztp/scripts:ro
+    restart: unless-stopped
+
+volumes:
+  vm_data:
+  grafana_data:

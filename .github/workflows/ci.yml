@@ -7,6 +7,41 @@ on:
     branches: [master, main]
 
 jobs:
+  # ── Job 0: React App Build (v2.0 migration) ──────────────────────────
+  react-build:
+    name: React App — TypeCheck + Build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: react-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: react-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc -b --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload React dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-dist-${{ github.sha }}
+          path: react-app/dist/
+          retention-days: 7
+
+
   # ── Job 1: Unit Tests ────────────────────────────────────────────────
   test:
     name: Run Tests
