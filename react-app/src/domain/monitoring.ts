@@ -2,7 +2,7 @@ import type { IntentObject } from '../types/intent';
 import type { DeviceEntry } from './bom';
 
 function complianceThresholds(compliance: string[]) {
-  const strict = compliance.some((c) => c.includes('PCI') || c.includes('HIPAA'));
+  const strict = compliance.some((c) => c.toLowerCase().includes('pci') || c.toLowerCase().includes('hipaa'));
   return {
     cpuWarnPct:  strict ? 70  : 80,
     cpuCritPct:  strict ? 85  : 95,

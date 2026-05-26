@@ -334,7 +334,9 @@ export function getPreferredProducts(
     primary === 'arista'  ? PREFERRED_PRODUCTS_ARISTA :
     primary === 'juniper' ? PREFERRED_PRODUCTS_JUNIPER :
     PREFERRED_PRODUCTS_CISCO;
-  return map[useCase] ?? PREFERRED_PRODUCTS_CISCO[useCase] ?? PREFERRED_PRODUCTS_CISCO.dc;
+  const UC_ALIAS: Record<string, string> = { dc_fabric: 'dc', gpu_cluster: 'gpu' };
+  const uc = UC_ALIAS[useCase] ?? useCase;
+  return map[uc] ?? PREFERRED_PRODUCTS_CISCO[uc] ?? PREFERRED_PRODUCTS_CISCO.dc;
 }
 
 export function lookupProduct(id: string, products: Product[] = PRODUCTS): Product | null {
