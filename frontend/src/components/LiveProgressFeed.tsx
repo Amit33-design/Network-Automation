@@ -1,126 +1,134 @@
-/**
- * LiveProgressFeed — real-time WebSocket deploy event stream.
- *
- * Connects to /ws/deploy/{deploymentId} and renders each stage event
- * as a timeline card. Replaces the vanilla-JS LiveDeployFeed in deploy.js.
- *
- * Usage:
- *   <LiveProgressFeed deploymentId={id} onComplete={handleComplete} />
- */
-import React, { useEffect, useRef } from 'react'
-import { useStore, selectDeployFlow } from '@/store'
+import { useEffect, useRef, useState } from 'react'
 import { openDeployStream } from '@/api/client'
-import type { DeployEvent, DeployStage } from '@/types'
+import { Badge } from '@/components/ui/Badge'
+import type { DeployEvent } from '@/types'
 
-// ── Stage metadata ────────────────────────────────────────────────────────────
-
-const STAGE_META: Record<DeployStage, { label: string; icon: string }> = {
-  pre_checks:  { label: 'Pre-Checks',   icon: '🔍' },
-  deploy:      { label: 'Push Configs', icon: '🚀' },
-  post_checks: { label: 'Post-Checks',  icon: '✅' },
-  rollback:    { label: 'Rollback',     icon: '↩️' },
-  error:       { label: 'Error',        icon: '❌' },
+const STAGE_VARIANT: Record<string, 'pass' | 'fail' | 'warn' | 'info' | 'neutral'> = {
+  done:          'pass',
+  failed:        'fail',
+  pre_checks:    'info',
+  post_checks:   'info',
+  pushing_config:'warn',
+  connecting:    'neutral',
+  queued:        'neutral',
 }
-
-const TERMINAL_STAGES = new Set<DeployStage>(['post_checks', 'error', 'rollback'])
-
-// ── Status → CSS class ────────────────────────────────────────────────────────
-
-function statusClass(stage: DeployStage, status: string): string {
-  if (stage === 'error' || status === 'failed' || status === 'error') return 'lp-err'
-  if (stage === 'rollback') return 'lp-warn'
-  if (status === 'passed' || status === 'success' || status === 'terminal') return 'lp-ok'
-  if (status === 'running') return 'lp-info'
-  return 'lp-dim'
-}
-
-// ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props {
-  deploymentId: string
-  onComplete?: (finalStatus: 'success' | 'failed' | 'rolled_back') => void
+  deploymentId: string | null
+  onDone?: () => void
 }
 
-export function LiveProgressFeed({ deploymentId, onComplete }: Props) {
-  const { deployEvents, deployStatus, addDeployEvent, setDeployStatus } = useStore(selectDeployFlow)
-  const wsRef    = useRef<WebSocket | null>(null)
-  const bottomRef = useRef<HTMLDivElement | null>(null)
+export function LiveProgressFeed({ deploymentId, onDone }: Props) {
+  const [events, setEvents]       = useState<DeployEvent[]>([])
+  const [connected, setConnected] = useState(false)
+  const [closed, setClosed]       = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!deploymentId) return
 
-    wsRef.current = openDeployStream(
+    setEvents([])
+    setConnected(false)
+    setClosed(false)
+
+    const ws = openDeployStream(
       deploymentId,
-      (event: DeployEvent) => {
-        addDeployEvent(event)
-
-        // Update aggregate status
-        if (event.stage === 'pre_checks' && event.status === 'running') setDeployStatus('pre_checks')
-        if (event.stage === 'deploy'     && event.status === 'running') setDeployStatus('deploying')
-        if (event.stage === 'post_checks'&& event.status === 'running') setDeployStatus('post_checks')
-
-        // Terminal events
-        if (TERMINAL_STAGES.has(event.stage) && event.status === 'terminal') {
-          const final =
-            event.stage === 'post_checks' ? 'success'
-            : event.stage === 'rollback'  ? 'rolled_back'
-            : 'failed'
-          setDeployStatus(final === 'success' ? 'done' : 'failed')
-          wsRef.current?.close()
-          onComplete?.(final)
+      (evt) => {
+        setEvents(prev => [...prev, evt])
+        if (evt.stage === 'done' || evt.stage === 'failed') {
+          setClosed(true)
+          onDone?.()
         }
       },
-      () => { /* onClose — no-op, handled via terminal event above */ },
-      () => { setDeployStatus('failed') },
+      () => setClosed(true),
     )
 
-    return () => { wsRef.current?.close() }
-  }, [deploymentId]) // eslint-disable-line react-hooks/exhaustive-deps
+    wsRef.current = ws
+    setConnected(true)
 
-  // Auto-scroll to bottom on new events
+    return () => {
+      ws.close()
+      wsRef.current = null
+    }
+  }, [deploymentId, onDone])
+
+  // Auto-scroll to latest event
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [deployEvents.length])
+  }, [events])
 
-  const statusLabel: Record<string, string> = {
-    idle:        '⏸ Idle',
-    pre_checks:  '🔍 Running Pre-Checks…',
-    deploying:   '🚀 Pushing Configs…',
-    post_checks: '✅ Verifying…',
-    done:        '✅ Complete',
-    failed:      '❌ Failed',
+  if (!deploymentId) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/5 p-6 text-center">
+        <p className="text-sm text-gray-500">No active deployment.</p>
+      </div>
+    )
   }
 
+  const latest = events[events.length - 1]
+  const progress = latest?.progress ?? 0
+
   return (
-    <div className="lp-feed">
-      <div className="lp-status-bar">
-        <span className={`lp-badge lp-badge-${deployStatus}`}>
-          {statusLabel[deployStatus] ?? deployStatus}
-        </span>
-        <span className="lp-dep-id">ID: {deploymentId.slice(0, 8)}…</span>
+    <div className="space-y-3">
+      {/* Header status bar */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {!closed && connected && (
+            <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          )}
+          <span className="text-sm font-medium text-gray-300">
+            Deployment <code className="text-blue-400 text-xs">{deploymentId}</code>
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {latest && (
+            <Badge variant={STAGE_VARIANT[latest.stage] ?? 'neutral'}>
+              {latest.stage.replace(/_/g, ' ')}
+            </Badge>
+          )}
+          {closed && <Badge variant={latest?.stage === 'done' ? 'pass' : 'fail'}>
+            {latest?.stage === 'done' ? 'Complete' : 'Failed'}
+          </Badge>}
+        </div>
       </div>
 
-      <div className="lp-events" role="log" aria-live="polite">
-        {deployEvents.length === 0 && (
-          <div className="lp-placeholder">Connecting to deploy stream…</div>
-        )}
-        {deployEvents.map((ev, i) => {
-          const meta = STAGE_META[ev.stage]
-          return (
-            <div key={i} className={`lp-event ${statusClass(ev.stage, ev.status)}`}>
-              <span className="lp-event-icon">{meta?.icon ?? 'ℹ️'}</span>
-              <span className="lp-event-stage">{meta?.label ?? ev.stage}</span>
-              <span className="lp-event-status">{ev.status}</span>
-              {ev.detail && <span className="lp-event-detail">{ev.detail}</span>}
-              {ev.timestamp && (
-                <span className="lp-event-ts">
-                  {new Date(ev.timestamp * 1000).toLocaleTimeString()}
+      {/* Progress bar */}
+      <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${
+            latest?.stage === 'failed' ? 'bg-red-500' :
+            latest?.stage === 'done'   ? 'bg-green-500' : 'bg-blue-500'
+          }`}
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
+      {/* Event log */}
+      <div className="rounded-xl border border-white/10 bg-black/30 overflow-y-auto max-h-64 font-mono text-xs">
+        {events.length === 0 ? (
+          <div className="p-4 text-gray-600 text-center">Waiting for events…</div>
+        ) : (
+          <div className="p-3 space-y-1">
+            {events.map((evt, i) => (
+              <div key={i} className="flex gap-3 items-start">
+                <span className="text-gray-600 shrink-0">
+                  {new Date(evt.timestamp).toLocaleTimeString()}
                 </span>
-              )}
-            </div>
-          )
-        })}
-        <div ref={bottomRef} />
+                {evt.device && (
+                  <span className="text-blue-400 shrink-0">{evt.device}</span>
+                )}
+                <span className={
+                  evt.stage === 'failed' ? 'text-red-400' :
+                  evt.stage === 'done'   ? 'text-green-400' : 'text-gray-300'
+                }>
+                  {evt.message}
+                </span>
+              </div>
+            ))}
+            <div ref={bottomRef} />
+          </div>
+        )}
       </div>
     </div>
   )

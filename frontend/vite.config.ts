@@ -1,22 +1,22 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: { '@': resolve(__dirname, 'src') },
   },
   server: {
-    port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:8000', changeOrigin: true },
-      '/ws':  { target: 'ws://localhost:8000',  ws: true },
+      '/api': 'http://localhost:8000',
     },
   },
-  build: {
-    outDir: '../dist-frontend',
-    emptyOutDir: true,
-    sourcemap: true,
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    coverage: { provider: 'v8', reporter: ['text', 'lcov'] },
   },
 })
