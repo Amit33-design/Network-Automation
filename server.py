@@ -231,10 +231,34 @@ def poll_monitoring_with_failures(req: FailDevicesPayload):
 
 # ── Static file serving ───────────────────────────────────────────────────────
 
+# Serve the built React app from frontend/dist when available;
+# fall back to the legacy vanilla index.html for development without a build.
+
+_REACT_DIST = ROOT / "frontend" / "dist"
+_LEGACY_INDEX = ROOT / "index.html"
+
+
 @app.get("/")
 async def serve_index():
-    return FileResponse(ROOT / "index.html")
+    if (_REACT_DIST / "index.html").exists():
+        return FileResponse(_REACT_DIST / "index.html")
+    return FileResponse(_LEGACY_INDEX)
 
+
+# SPA catch-all: serve React index for any non-API path (client-side routing)
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    if full_path.startswith("api/"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404)
+    react_index = _REACT_DIST / "index.html"
+    if react_index.exists():
+        return FileResponse(react_index)
+    return FileResponse(_LEGACY_INDEX)
+
+
+if (_REACT_DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(_REACT_DIST / "assets")), name="assets")
 
 app.mount("/src", StaticFiles(directory=str(ROOT / "src")), name="src")
 

@@ -48,6 +48,34 @@ jobs:
           name: coverage-report
           path: coverage.xml
 
+  # ── Job 1b: React Frontend Tests ────────────────────────────────────
+  frontend-test:
+    name: React Frontend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run Vitest
+        working-directory: frontend
+        run: npm test -- --reporter=verbose
+
+      - name: Build React app
+        working-directory: frontend
+        run: npm run build
+
   # ── Job 2: DC Readiness Dry-Run ──────────────────────────────────────
   readiness-dry-run:
     name: DC Readiness Dry-Run (mock)
