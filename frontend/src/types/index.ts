@@ -1,134 +1,273 @@
-// ── Domain types mirroring the backend Pydantic models ─────────────────────
+// ── Use-case / scale enums ────────────────────────────────────────────────────
 
-export interface DesignState {
-  uc: string
-  orgName: string
-  orgSize: 'small' | 'medium' | 'large'
-  redundancy: 'none' | 'ha' | 'full'
-  fwModel: string | null
-  selectedProducts: Record<string, string>
-  protocols: string[]
-  security: string[]
-  compliance: string[]
-  vlans: Vlan[]
-  appFlows: AppFlow[]
-  include_bgp_policy: boolean
-  include_acl: boolean
-  include_dot1x: boolean
-  include_qos: boolean
-  include_aaa: boolean
-}
+export type UseCase =
+  | 'campus'
+  | 'dc'
+  | 'gpu'
+  | 'wan'
+  | 'multisite'
+  | 'multicloud'
+  | 'aviatrix'
 
-export interface Vlan {
-  id: number
-  name: string
-  description?: string
-  subnet?: string
-}
+export type AppType = 'voice' | 'video' | 'storage' | 'hpc' | 'internet'
+export type Scale = 'small' | 'medium' | 'large'
+export type Redundancy = 'single' | 'dual'
+export type Compliance = 'QoS' | 'PCI' | 'HIPAA' | 'SOC2'
 
-export interface AppFlow {
-  name: string
-  src: string
-  dst: string
-  protocol: string
-  port?: number
-}
+// ── Product catalog ───────────────────────────────────────────────────────────
 
-export interface DeviceInventory {
-  [hostId: string]: {
-    hostname: string
-    platform: string
-    username: string
-    password: string
-    port?: number
-  }
-}
-
-export interface DeployRequest {
-  state: DesignState
-  inventory: DeviceInventory
-  dry_run: boolean
-}
-
-export interface CheckResult {
-  host: string
-  check: string
-  passed: boolean
+export interface Product {
+  id: string
+  model: string
+  vendor: string
+  subLayer: string
+  ports: number
+  uplinks: number
+  speed: string
+  asic: string
+  powerW: number
+  priceUSD: number
+  features: string[]
+  useCases: UseCase[]
   detail: string
 }
 
-export interface CheckResponse {
-  results: CheckResult[]
-  all_passed: boolean
-  duration_s: number
+// ── BOM device entry ──────────────────────────────────────────────────────────
+
+export interface BOMDevice {
+  id: string
+  hostname: string
+  role: string
+  subLayer: string
+  model: string
+  vendor: string
+  count: number
+  unitPrice: number
+  totalPrice: number
+  speed: string
+  ports: number
+  features: string[]
 }
 
-export interface AsyncDeployResponse {
-  deployment_id: string
-  status: 'queued'
+// ── Cabling entry ─────────────────────────────────────────────────────────────
+
+export interface CableLink {
+  id: string
+  fromLayer: string
+  toLayer: string
+  fromDevice: string
+  toDevice: string
+  cableType: string
+  speed: string
+  lengthM: number
+  quantity: number
+  pricePerUnit: number
+  totalPrice: number
+}
+
+// ── Optics entry ──────────────────────────────────────────────────────────────
+
+export interface OpticsEntry {
+  id: string
+  linkGroup: string
+  formFactor: string
+  speed: string
+  reach: string
+  priceUSD: number
+  quantity: number
+  totalPrice: number
+  vendor: string
+  partNumber: string
+}
+
+// ── Link distances ────────────────────────────────────────────────────────────
+
+export interface LinkDistances {
+  'spine-leaf': number
+  'dist-access': number
+  'core-dist': number
+  'wan-edge': number
+  [key: string]: number
+}
+
+// ── App-wide state ────────────────────────────────────────────────────────────
+
+export interface AppState {
+  useCase: UseCase | ''
+  appTypes: AppType[]
+  siteName: string
+  siteCode: string
+  scale: Scale
+  redundancy: Redundancy
+  linkDistances: LinkDistances
+  devices: BOMDevice[]
+  cabling: CableLink[]
+  optics: OpticsEntry[]
+  configs: Record<string, string>
+  ztpConfig: Record<string, unknown>
+  policies: unknown[]
+  preCheckScript: string
+  postCheckScript: string
+  prometheusAlerts: string
+  grafanaDashboard: Record<string, unknown>
+  ansiblePlaybook: Record<string, unknown>
+  compliance: Compliance[]
+  step: number
+}
+
+// ── Lab Demo API types ────────────────────────────────────────────────────────
+
+export interface TopologySummary {
+  total: number
+  routers: number
+  switches: number
+  firewalls: number
+  load_balancers: number
+  gpu_firewalls: number
+  gpu_servers: number
+}
+
+export interface TopologyDevice {
+  name: string
+  role: string
+  platform: string
+  management_ip: string
+  model: string
+  ztp_state: string
+  tags: string[]
+}
+
+export interface ZTPEvent {
+  device_name: string
+  state: string
   message: string
+  success: boolean
+  timestamp: string
 }
 
-export interface SyncDeployResponse {
-  results: Record<string, unknown>
-  dry_run: boolean
-  duration_s: number
-  deployment_id: string
+export interface ZTPResult {
+  results: Record<string, string>
+  events: ZTPEvent[]
+  summary: {
+    total_events: number
+    online: number
+    failed: number
+  }
 }
 
-export type DeployResponse = AsyncDeployResponse | SyncDeployResponse
+export interface CheckResult {
+  device: string
+  name: string
+  status: 'PASS' | 'FAIL' | 'WARN' | 'SKIP'
+  message: string
+  remediation: string | null
+}
 
-// ── Deploy stream event (WebSocket) ─────────────────────────────────────────
+export interface ChecksResult {
+  phase: string
+  results: CheckResult[]
+}
 
-export type DeployStage = 'pre_checks' | 'deploy' | 'post_checks' | 'rollback' | 'error'
-export type DeployStatus = 'running' | 'passed' | 'success' | 'failed' | 'terminal' | 'error'
+export interface DeviceHealth {
+  device_name: string
+  role: string
+  status: 'healthy' | 'degraded' | 'down' | 'unknown'
+  metrics: { cpu: number; uptime_seconds: number; [key: string]: number }
+  alerts: string[]
+}
+
+export interface MonitoringResult {
+  health: Record<string, DeviceHealth>
+  summary: {
+    total: number
+    healthy: number
+    degraded: number
+    down: number
+    alerts: Array<{ device: string; alert: string }>
+  }
+}
+
+// ── Observability (alerts / RCA) ──────────────────────────────────────────────
+
+export interface Alert {
+  id: string
+  device: string
+  severity: 'critical' | 'warning' | 'info'
+  summary: string
+  detail?: string
+  timestamp: string
+  resolved: boolean
+}
+
+export interface RcaHypothesis {
+  rank: number
+  cause: string
+  confidence: number
+  evidence: string[]
+  remediation: string
+}
+
+// ── Deploy pipeline ───────────────────────────────────────────────────────────
+
+export type DeployStage =
+  | 'queued'
+  | 'connecting'
+  | 'pre_checks'
+  | 'pushing_config'
+  | 'post_checks'
+  | 'done'
+  | 'failed'
 
 export interface DeployEvent {
   deployment_id: string
   stage: DeployStage
-  status: DeployStatus
-  detail: string
-  timestamp?: number
-}
-
-// ── Observability ────────────────────────────────────────────────────────────
-
-export interface Alert {
-  hostname: string
-  check: string
-  severity: 'critical' | 'warning' | 'info'
+  device?: string
   message: string
-  metric_value: number
-  fired_at: number
+  progress: number
+  timestamp: string
 }
 
-export interface RcaHypothesis {
-  root_cause: string
-  confidence: number
-  evidence: string[]
-  blast_radius: string[]
-  remediation_steps: string[]
-  automation_available: boolean
-  automation_playbook: string | null
+export interface DesignState {
+  useCase: string
+  scale: string
+  siteCode: string
+  devices: BOMDevice[]
 }
 
-// ── Design/Deployment persistence ────────────────────────────────────────────
+export interface DeployRequest {
+  design_id?: string
+  state?: DesignState
+  target_devices?: string[]
+}
+
+export interface DeployResponse {
+  deployment_id: string
+  status: string
+  started_at: number
+}
+
+export interface CheckResponse {
+  phase: string
+  ok: boolean
+  results: CheckResult[]
+}
+
+// ── Design / Deployment records ───────────────────────────────────────────────
 
 export interface Design {
   id: string
   name: string
   use_case: string
+  state: DesignState
   created_at: string
   updated_at: string
-  owner_id: string
 }
 
 export interface Deployment {
   id: string
   design_id: string
-  environment: string
   status: string
-  triggered_by: string
   started_at: string
-  completed_at: string | null
+  finished_at?: string
+  events: DeployEvent[]
 }

@@ -1,74 +1,50 @@
-/**
- * App shell — houses the new React components.
- * Incremental migration: renders alongside the existing vanilla-JS index.html
- * by mounting into a dedicated <div id="root"> widget when embedded,
- * or as a full SPA when running `npm run dev`.
- */
-import React, { useState } from 'react'
-import { LiveProgressFeed } from './components/LiveProgressFeed'
-import { AlertsPanel } from './components/AlertsPanel'
-import { RcaPanel } from './components/RcaPanel'
-import { useStore } from './store'
-import { isLiveMode } from './api/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ToastProvider } from '@/components/ui/Toast'
+import { WizardNav } from '@/components/wizard/WizardNav'
+import { useAppStore } from '@/store/useAppStore'
+import { Step1UseCase } from '@/pages/Step1UseCase'
+import { Step2Design } from '@/pages/Step2Design'
+import { Step3Config } from '@/pages/Step3Config'
+import { Step4ZTP } from '@/pages/Step4ZTP'
+import { Step5Checks } from '@/pages/Step5Checks'
+import { Step6Monitor } from '@/pages/Step6Monitor'
 
-type Tab = 'deploy' | 'alerts' | 'rca'
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, staleTime: 10_000 },
+  },
+})
 
-export function App() {
-  const [tab, setTab] = useState<Tab>('deploy')
-  const deploymentId  = useStore((s) => s.deploymentId)
-  const clearEvents   = useStore((s) => s.clearDeployEvents)
+function WizardContent() {
+  const { step } = useAppStore()
+  const pages = [Step1UseCase, Step2Design, Step3Config, Step4ZTP, Step5Checks, Step6Monitor]
+  const Page = pages[step - 1] ?? Step1UseCase
+  return <Page />
+}
 
-  if (!isLiveMode()) {
-    return (
-      <div className="nd-shell nd-offline">
-        <h2>⚙️ NetDesign AI — React Shell</h2>
-        <p>Backend not configured. Open the backend settings panel and enable Live Mode.</p>
-      </div>
-    )
-  }
-
+export default function App() {
   return (
-    <div className="nd-shell">
-      <nav className="nd-tabs">
-        {(['deploy', 'alerts', 'rca'] as Tab[]).map((t) => (
-          <button
-            key={t}
-            className={`nd-tab ${tab === t ? 'nd-tab-active' : ''}`}
-            onClick={() => setTab(t)}
-          >
-            {{ deploy: '🚀 Deploy', alerts: '🔔 Alerts', rca: '🔬 RCA' }[t]}
-          </button>
-        ))}
-      </nav>
-
-      {tab === 'deploy' && (
-        <section className="nd-panel">
-          {deploymentId ? (
-            <>
-              <LiveProgressFeed
-                deploymentId={deploymentId}
-                onComplete={() => setTimeout(clearEvents, 5000)}
-              />
-            </>
-          ) : (
-            <div className="nd-placeholder">
-              No active deployment. Trigger a deploy from the main panel.
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <div className="min-h-screen bg-gray-950 text-gray-200">
+          <header className="border-b border-white/10 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-40">
+            <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
+                  N
+                </div>
+                <span className="font-semibold text-gray-100">NetDesign AI</span>
+              </div>
+              <span className="text-xs text-gray-500">Network Design Wizard</span>
             </div>
-          )}
-        </section>
-      )}
+          </header>
 
-      {tab === 'alerts' && (
-        <section className="nd-panel">
-          <AlertsPanel />
-        </section>
-      )}
-
-      {tab === 'rca' && (
-        <section className="nd-panel">
-          <RcaPanel />
-        </section>
-      )}
-    </div>
+          <main className="max-w-6xl mx-auto px-6 py-8">
+            <WizardNav />
+            <WizardContent />
+          </main>
+        </div>
+      </ToastProvider>
+    </QueryClientProvider>
   )
 }

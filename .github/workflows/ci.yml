@@ -1,87 +1,19 @@
-name: CI
+name: Network Automation CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 jobs:
-
-  # ── Python backend tests ──────────────────────────────────────
-  backend-tests:
-    name: Backend Tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install --prefer-binary jinja2 pytest pytest-cov pytest-asyncio
-          # Minimal subset needed for tests (skip heavy network/grpc libs)
-          pip install fastapi pydantic pydantic-settings cryptography pyyaml pyjwt
-
-      - name: Run tests with coverage
-        working-directory: backend
-        env:
-          JWT_SECRET: ci-test-secret-not-for-prod
-          AUTO_CREATE_TABLES: "false"
-        run: |
-          pytest tests/ -v --tb=short \
-            --cov=. \
-            --cov-omit="tests/*,.venv/*,alembic/*" \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
-            --cov-fail-under=60
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-py${{ matrix.python-version }}
-          path: backend/coverage.xml
-
-  # ── Frontend TypeScript typecheck ────────────────────────────
-  frontend-typecheck:
-    name: Frontend TypeScript
+  # ── Job 1: Unit Tests ────────────────────────────────────────────────
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package.json
-
-      - name: Install frontend deps
-        working-directory: frontend
-        run: npm install
-
-      - name: TypeScript typecheck
-        working-directory: frontend
-        run: npm run typecheck
-
-  # ── Ansible playbook syntax check ────────────────────────────
-  ansible-lint:
-    name: Ansible Syntax Check
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -89,44 +21,140 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Ansible
-        run: pip install ansible
-
-      - name: Syntax check — campus playbook
+      - name: Install dependencies
         run: |
-          cd playbooks
-          ansible-playbook deploy_campus.yml -i inventory/hosts.yml \
-            --syntax-check \
-            -e "vault_campus_password=test vault_dc_password=test vault_gpu_password=test vault_fw_password=test" \
-            || true   # don't fail on missing collections in CI
+          pip install pytest pytest-cov pyyaml jinja2
 
-      - name: Syntax check — DC playbook
+      - name: Run port scanner tests
         run: |
-          cd playbooks
-          ansible-playbook deploy_dc.yml -i inventory/hosts.yml \
-            --syntax-check \
-            -e "vault_campus_password=test vault_dc_password=test vault_gpu_password=test vault_fw_password=test" \
-            || true
+          PYTHONPATH=. pytest tests/ -v --tb=short
 
-  # ── Docker build check ────────────────────────────────────────
-  docker-build:
-    name: Docker Build
+      - name: Run GPU cluster tests
+        run: |
+          PYTHONPATH=. pytest tests_gpu/ -v --tb=short
+
+      - name: Combined test run with coverage
+        run: |
+          PYTHONPATH=. pytest tests/ tests_gpu/ \
+            --cov=network_scanner \
+            --cov=gpu_cluster_net \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -q
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # ── Job 1b: React Frontend Tests ────────────────────────────────────
+  frontend-test:
+    name: React Frontend Tests
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build backend image
-        run: docker build -t netdesign-api:ci ./backend
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Smoke test — API starts
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run Vitest
+        working-directory: frontend
+        run: npm test -- --reporter=verbose
+
+      - name: Build React app
+        working-directory: frontend
+        run: npm run build
+
+  # ── Job 2: DC Readiness Dry-Run ──────────────────────────────────────
+  readiness-dry-run:
+    name: DC Readiness Dry-Run (mock)
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml jinja2
+
+      - name: Pre-deployment readiness check (mock)
         run: |
-          docker run -d --name netdesign-test -p 8000:8000 \
-            -e CORS_ORIGINS=http://localhost:8080 \
-            -e ADMIN_USER=admin \
-            -e ADMIN_PASS=testpassword \
-            netdesign-api:ci
-          sleep 10
-          curl -f http://localhost:8000/health || (docker logs netdesign-test && exit 1)
-          docker stop netdesign-test && docker rm netdesign-test
+          PYTHONPATH=. python -m gpu_cluster_net.cli check pre \
+            --topology topology.example.yaml \
+            --mock \
+            -o pre-report.json -f json
+
+      - name: Post-deployment readiness check (mock)
+        run: |
+          PYTHONPATH=. python -m gpu_cluster_net.cli check post \
+            --topology topology.example.yaml \
+            --mock \
+            -o post-report.json -f json
+
+      - name: Generate HTML readiness report
+        run: |
+          PYTHONPATH=. python -m gpu_cluster_net.cli readiness \
+            --topology topology.example.yaml \
+            --phase both \
+            --mock \
+            -o dc-readiness -f html
+
+      - name: Upload readiness reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc-readiness-reports
+          path: |
+            pre-report.json
+            post-report.json
+            dc-readiness.pre.html
+            dc-readiness.post.html
+
+  # ── Job 3: Config Generation ─────────────────────────────────────────
+  config-build:
+    name: Generate Device Configs
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml jinja2
+
+      - name: Build NX-OS configs from topology
+        run: |
+          mkdir -p configs/
+          PYTHONPATH=. python -m gpu_cluster_net.cli build \
+            --topology topology.example.yaml \
+            --output-dir configs/
+          echo "Generated configs:"
+          ls -lh configs/
+
+      - name: Upload generated configs
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-configs
+          path: configs/

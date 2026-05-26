@@ -1,114 +1,149 @@
-/**
- * RcaPanel — run hypothesis-based root cause analysis.
- * Submits to /api/rca/analyze and renders ranked hypotheses.
- */
-import React, { useState } from 'react'
-import { runRca } from '@/api/client'
-import { useStore, selectRca } from '@/store'
+import { useState } from 'react'
+import { useRunRca } from '@/hooks/useRca'
+import { isLiveMode } from '@/api/client'
+import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
 import type { RcaHypothesis } from '@/types'
 
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100)
-  const colour = pct >= 80 ? '#e53' : pct >= 50 ? '#f90' : '#09f'
+  const color = pct >= 75 ? 'bg-red-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-blue-500'
   return (
-    <div className="rca-bar-wrap" title={`${pct}% confidence`}>
-      <div className="rca-bar" style={{ width: `${pct}%`, background: colour }} />
-      <span className="rca-bar-label">{pct}%</span>
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs text-gray-400 w-8 text-right">{pct}%</span>
     </div>
   )
 }
 
-function HypothesisCard({ h, rank }: { h: RcaHypothesis; rank: number }) {
-  const [open, setOpen] = useState(rank === 0)
+function HypothesisCard({ h }: { h: RcaHypothesis }) {
   return (
-    <div className={`rca-card ${open ? 'rca-card-open' : ''}`}>
-      <button className="rca-card-header" onClick={() => setOpen(!open)}>
-        <span className="rca-rank">#{rank + 1}</span>
-        <span className="rca-cause">{h.root_cause}</span>
-        <ConfidenceBar value={h.confidence} />
-        <span className="rca-chevron">{open ? '▲' : '▼'}</span>
-      </button>
-
-      {open && (
-        <div className="rca-card-body">
-          {h.evidence.length > 0 && (
-            <section>
-              <h4>Evidence</h4>
-              <ul>{h.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
-            </section>
-          )}
-          {h.blast_radius.length > 0 && (
-            <section>
-              <h4>Blast Radius</h4>
-              <ul>{h.blast_radius.map((d, i) => <li key={i}>{d}</li>)}</ul>
-            </section>
-          )}
-          {h.remediation_steps.length > 0 && (
-            <section>
-              <h4>Remediation Steps</h4>
-              <ol>{h.remediation_steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
-            </section>
-          )}
-          {h.automation_available && h.automation_playbook && (
-            <div className="rca-playbook">
-              🤖 Automation available: <code>{h.automation_playbook}</code>
-            </div>
-          )}
+    <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Badge variant="neutral" className="text-xs">#{h.rank}</Badge>
+          <span className="font-semibold text-gray-200 text-sm">{h.cause}</span>
         </div>
+        <ConfidenceBar value={h.confidence} />
+      </div>
+
+      {h.evidence.length > 0 && (
+        <ul className="space-y-1">
+          {h.evidence.map((e, i) => (
+            <li key={i} className="text-xs text-gray-400 flex items-start gap-1.5">
+              <span className="text-gray-600 shrink-0">·</span>
+              {e}
+            </li>
+          ))}
+        </ul>
       )}
+
+      <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2">
+        <span className="text-xs font-medium text-blue-400">Remediation: </span>
+        <span className="text-xs text-gray-300">{h.remediation}</span>
+      </div>
     </div>
   )
 }
 
-export function RcaPanel() {
-  const results    = useStore(selectRca)
-  const setResults = useStore((s) => s.setRcaResults)
+export function RcaPanel({ deviceNames = [] }: { deviceNames?: string[] }) {
   const [symptom, setSymptom]   = useState('')
-  const [devices, setDevices]   = useState('')
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState<string | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const { mutate, data, isPending, isError, error, reset } = useRunRca()
+  const liveMode = isLiveMode()
 
-  async function handleSubmit(e: React.FormEvent) {
+  function toggleDevice(name: string) {
+    setSelected(prev =>
+      prev.includes(name) ? prev.filter(d => d !== name) : [...prev, name],
+    )
+  }
+
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!symptom.trim()) return
-    setLoading(true)
-    setError(null)
-    try {
-      const affected = devices.split(',').map((s) => s.trim()).filter(Boolean)
-      setResults(await runRca(symptom.trim(), affected))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'RCA failed')
-    } finally {
-      setLoading(false)
-    }
+    mutate({ symptom: symptom.trim(), devices: selected })
+  }
+
+  if (!liveMode) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/5 p-6 text-center">
+        <p className="text-sm text-gray-500">
+          Configure a backend URL in settings to enable RCA analysis.
+        </p>
+      </div>
+    )
   }
 
   return (
-    <div className="rca-panel">
-      <form className="rca-form" onSubmit={handleSubmit}>
-        <input
-          className="rca-input"
-          placeholder="Describe the symptom (e.g. BGP session flapping on core-01)"
-          value={symptom}
-          onChange={(e) => setSymptom(e.target.value)}
-        />
-        <input
-          className="rca-input"
-          placeholder="Affected devices (comma-separated, optional)"
-          value={devices}
-          onChange={(e) => setDevices(e.target.value)}
-        />
-        <button className="rca-btn" type="submit" disabled={loading || !symptom.trim()}>
-          {loading ? '🔍 Analyzing…' : '🔍 Analyze'}
-        </button>
+    <div className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div>
+          <label className="text-xs text-gray-400 block mb-1">Symptom description</label>
+          <textarea
+            value={symptom}
+            onChange={e => setSymptom(e.target.value)}
+            placeholder="e.g. High packet loss between spine-01 and leaf-03 after maintenance window"
+            rows={3}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm
+                       text-gray-200 placeholder-gray-600 resize-none
+                       focus:outline-none focus:border-blue-500"
+          />
+        </div>
+
+        {deviceNames.length > 0 && (
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">
+              Affected devices (optional)
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {deviceNames.map(name => (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => toggleDevice(name)}
+                  className={`px-2 py-1 rounded text-xs border transition-colors ${
+                    selected.includes(name)
+                      ? 'bg-blue-600/30 border-blue-500/50 text-blue-300'
+                      : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                  }`}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Button type="submit" disabled={isPending || !symptom.trim()}>
+            {isPending ? 'Analyzing…' : '⚡ Run RCA'}
+          </Button>
+          {(data || isError) && (
+            <Button type="button" variant="ghost" onClick={reset}>Clear</Button>
+          )}
+        </div>
       </form>
 
-      {error && <div className="rca-error">❌ {error}</div>}
+      {isError && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+          <p className="text-sm text-red-400">RCA failed: {error?.message}</p>
+        </div>
+      )}
 
-      {results.length > 0 && (
-        <div className="rca-results">
-          <p className="rca-count">{results.length} hypothesis{results.length !== 1 ? 'es' : ''} found</p>
-          {results.map((h, i) => <HypothesisCard key={i} h={h} rank={i} />)}
+      {data && data.length > 0 && (
+        <div className="space-y-3">
+          <h4 className="text-sm font-semibold text-gray-300">
+            {data.length} Root Cause Hypothesis{data.length !== 1 ? 'es' : ''}
+          </h4>
+          {data.map(h => <HypothesisCard key={h.rank} h={h} />)}
+        </div>
+      )}
+
+      {data && data.length === 0 && (
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center">
+          <p className="text-sm text-gray-500">No hypotheses generated for this symptom.</p>
         </div>
       )}
     </div>
