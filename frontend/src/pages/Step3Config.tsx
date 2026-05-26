@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { downloadText } from '@/lib/utils'
 
 export function Step3Config() {
-  const { devices, configs, setConfigs, nextStep, prevStep } = useAppStore()
+  const { devices, configs, setConfigs, useCase, nextStep, prevStep } = useAppStore()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -16,7 +16,7 @@ export function Step3Config() {
   // Generate configs once
   useEffect(() => {
     if (devices.length && Object.keys(configs).length === 0) {
-      setConfigs(generateAllConfigs(devices))
+      setConfigs(generateAllConfigs(devices, useCase))
     }
   }, [devices, configs, setConfigs])
 
