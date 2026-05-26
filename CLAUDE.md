@@ -3,6 +3,66 @@
 
 ---
 
+## 0. Migration Status — READ THIS FIRST EVERY SESSION
+
+**Active branch**: `claude/netdesignai-claude-md-rMcLF`
+**React app lives at**: `react-app/` (Vite + React 18 + TypeScript)
+**v1.0 monolith**: `index.html` + `src/js/*.js` — kept working, do NOT break it
+**Full plan**: `REACT_MIGRATION_PLAN.md`
+
+### Phase Completion
+
+| Phase | Status | Commits | What's done |
+|-------|--------|---------|-------------|
+| **Phase 1** — Scaffold | ✅ DONE | `922325b` | Vite+React+TS, Zustand store, React Router v7, 7 routes, AppShell, CI workflow, deploy workflow, Dockerfile.frontend, docker-compose.local.yml |
+| **Phase 2** — Domain Port | 🔄 IN PROGRESS | — | Porting 15 JS modules → TypeScript pure functions in `react-app/src/domain/` |
+| **Phase 3** — React UI | ❌ NOT STARTED | — | @xyflow/react topology, CodeMirror 6 config viewer, TanStack Table BOM, all 7 step pages |
+| **Phase 4** — Mobile + Launch | ❌ NOT STARTED | — | Capacitor iOS/Android, retire index.html, tag v2.0.0 |
+
+### Phase 2 Domain Module Status
+
+| Module | Source | Target | Status |
+|--------|--------|--------|--------|
+| products | `src/js/products.js` | `react-app/src/domain/products.ts` | ❌ |
+| bom | `src/js/bom.js` + `bom_calculator.js` | `react-app/src/domain/bom.ts` | ❌ |
+| constraints | `src/js/intent_constraints.js` | `react-app/src/domain/constraints.ts` | ❌ |
+| naming | `src/js/naming.js` | `react-app/src/domain/naming.ts` | ❌ |
+| optics | `src/js/optics.js` | `react-app/src/domain/optics.ts` | ❌ |
+| tco | `src/js/tco.js` | `react-app/src/domain/tco.ts` | ❌ |
+| cabling | `src/js/cabling.js` | `react-app/src/domain/cabling.ts` | ❌ |
+| rack | `src/js/racklayout.js` | `react-app/src/domain/rack.ts` | ❌ |
+| rollback | `src/js/rollback.js` | `react-app/src/domain/rollback.ts` | ❌ |
+| configgen | `src/js/configgen.js` | `react-app/src/domain/configgen.ts` | ❌ |
+| topology | `src/js/hld_diagram.js` (logic) | `react-app/src/domain/topology.ts` | ❌ |
+| troubleshoot | `src/js/troubleshoot.js` | `react-app/src/domain/troubleshoot.ts` | ❌ |
+| ztp | `src/js/ztp.js` | `react-app/src/domain/ztp.ts` | ❌ |
+| monitoring | `src/js/monitoring.js` | `react-app/src/domain/monitoring.ts` | ❌ |
+| deploy | `src/js/deploy.js` + `checks.js` | `react-app/src/domain/deploy.ts` | ❌ |
+
+### Session Quick-Start Commands
+
+```bash
+# Check migration progress
+git log --oneline -10
+ls react-app/src/domain/
+
+# Build check (run after any domain module port)
+cd react-app && npm run build
+
+# Typecheck only (faster)
+cd react-app && npx tsc -b --noEmit
+```
+
+### Port Rules (memorize these)
+1. Each domain `.ts` file: **zero React imports**, **zero DOM references** — pure functions only
+2. All functions take `IntentObject` (from `react-app/src/types/intent.ts`) and return plain data
+3. Remove all `window.*` assignments and IIFE wrappers — use ES module `export` instead
+4. Keep all business logic identical to the JS source — do not redesign
+5. Use `export const`, `export function`, `export interface`, `export type`
+6. After porting each module: run `cd react-app && npx tsc -b --noEmit` to verify
+
+---
+
 ## 1. Project Identity
 
 | Key | Value |
