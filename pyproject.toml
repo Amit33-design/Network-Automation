@@ -21,7 +21,7 @@ where = ["."]
 include = ["network_scanner*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "tests_gpu"]
+testpaths = ["tests", "tests_gpu", "tests_lab"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
