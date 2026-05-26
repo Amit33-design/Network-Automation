@@ -1,0 +1,25 @@
+{
+  "name": "NetDesign AI",
+  "short_name": "NDAL",
+  "description": "Intent-driven network design and automation tool",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#3b82f6",
+  "orientation": "any",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "New Design",    "url": "/",       "description": "Start a new network design" },
+    { "name": "BOM & Topology","url": "/bom",    "description": "View hardware BOM and topology" },
+    { "name": "Config Gen",    "url": "/config", "description": "Generate device configs" },
+    { "name": "ZTP",           "url": "/ztp",    "description": "Zero-touch provisioning" }
+  ]
+}

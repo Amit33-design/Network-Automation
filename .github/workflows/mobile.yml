@@ -1,0 +1,105 @@
+name: Mobile Build (Capacitor)
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform'
+        required: true
+        default: 'android'
+        type: choice
+        options: [android, ios, both]
+
+# Build is triggered manually (workflow_dispatch) since native project trees
+# (android/ and ios/) must be bootstrapped locally first via:
+#   cd react-app && npm run cap:add:android && npm run cap:add:ios
+# Committed native projects are then synced in CI.
+
+jobs:
+  build-android:
+    name: Android APK (Debug)
+    runs-on: ubuntu-latest
+    if: ${{ inputs.platform == 'android' || inputs.platform == 'both' }}
+
+    defaults:
+      run:
+        working-directory: react-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: react-app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Capacitor sync
+        run: npx cap sync android
+
+      - name: Build Android debug APK
+        run: cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ndal-android-debug-${{ github.sha }}
+          path: react-app/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+  build-ios:
+    name: iOS Build (Simulator)
+    runs-on: macos-latest
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'both' }}
+
+    defaults:
+      run:
+        working-directory: react-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: react-app/package-lock.json
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Capacitor sync
+        run: npx cap sync ios
+
+      - name: Build iOS (simulator, no signing)
+        run: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -configuration Debug \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            build | xcpretty || true
+
+      - name: Upload iOS build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log-${{ github.sha }}
+          path: ~/Library/Logs/gym/
+          retention-days: 7

@@ -16,8 +16,8 @@
 |-------|--------|---------|-------------|
 | **Phase 1** — Scaffold | ✅ DONE | `922325b` | Vite+React+TS, Zustand store, React Router v7, 7 routes, AppShell, CI workflow, deploy workflow, Dockerfile.frontend, docker-compose.local.yml |
 | **Phase 2** — Domain Port | ✅ DONE | `a77649f` | 15 JS modules → TypeScript pure functions in `react-app/src/domain/`; tsc clean + Vite build passing |
-| **Phase 3** — React UI | ✅ DONE | `pending` | @xyflow/react topology, CodeMirror 6 config viewer, all 7 step pages live; tsc clean + Vite build passing |
-| **Phase 4** — Mobile + Launch | ❌ NOT STARTED | — | Capacitor iOS/Android, retire index.html, tag v2.0.0 |
+| **Phase 3** — React UI | ✅ DONE | `2f5912c` | @xyflow/react topology, CodeMirror 6 config viewer, all 7 step pages live; tsc clean + Vite build passing |
+| **Phase 4** — Mobile + Launch | ✅ DONE | `pending` | Capacitor 8 config, PWA manifest, offline banner, mobile CI workflow, npm cap:* scripts; docker-compose serves React app on :3000 |
 
 ### Phase 2 Domain Module Status
 

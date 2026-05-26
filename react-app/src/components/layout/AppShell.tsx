@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useIntentStore } from '@/store/intentStore';
+import { useOffline } from '@/hooks/useOffline';
 
 const STEPS = [
   { to: '/', label: 'Intent', num: 1 },
@@ -14,9 +15,15 @@ const STEPS = [
 export function AppShell() {
   const { intent, resetIntent } = useIntentStore();
   const navigate = useNavigate();
+  const offline = useOffline();
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex flex-col">
+      {offline && (
+        <div className="bg-yellow-900/80 border-b border-yellow-700 text-yellow-200 text-xs text-center py-1.5 px-4">
+          📡 Offline — all design tools work locally; deployment scripts require network access
+        </div>
+      )}
       {/* Header */}
       <header className="border-b border-slate-700 bg-slate-900/95 backdrop-blur sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
