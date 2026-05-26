@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1d4ed8"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="48" height="48" rx="12" fill="url(#bg)"/>
+  <rect width="48" height="48" rx="12" fill="url(#glow)"/>
+
+  <!-- Network nodes -->
+  <circle cx="9"  cy="9"  r="3" fill="white" fill-opacity="0.9"/>
+  <circle cx="39" cy="9"  r="3" fill="white" fill-opacity="0.9"/>
+  <circle cx="9"  cy="39" r="3" fill="white" fill-opacity="0.5"/>
+  <circle cx="39" cy="39" r="3" fill="white" fill-opacity="0.5"/>
+  <circle cx="24" cy="8"  r="2" fill="#93c5fd" fill-opacity="0.8"/>
+  <circle cx="40" cy="24" r="2" fill="#93c5fd" fill-opacity="0.8"/>
+
+  <!-- Node connector lines -->
+  <line x1="9"  y1="9"  x2="39" y2="9"  stroke="white" stroke-opacity="0.2" stroke-width="0.8"/>
+  <line x1="9"  y1="9"  x2="9"  y2="39" stroke="white" stroke-opacity="0.2" stroke-width="0.8"/>
+  <line x1="39" y1="9"  x2="39" y2="39" stroke="white" stroke-opacity="0.2" stroke-width="0.8"/>
+  <line x1="9"  y1="9"  x2="24" y2="8"  stroke="#93c5fd" stroke-opacity="0.4" stroke-width="0.6"/>
+  <line x1="39" y1="9"  x2="40" y2="24" stroke="#93c5fd" stroke-opacity="0.4" stroke-width="0.6"/>
+
+  <!-- Bold N letterform -->
+  <path d="M13 36V12l22 24V12" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
