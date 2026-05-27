@@ -3,7 +3,7 @@ name: Deploy — Vercel Production
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -31,11 +31,21 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: '--prod'
-          working-directory: ./frontend
+      - name: Check Vercel secrets are set
+        run: |
+          if [ -z "${{ secrets.VERCEL_TOKEN }}" ]; then
+            echo "❌ VERCEL_TOKEN secret is not set."
+            echo "   Add it at: https://github.com/Amit33-design/Network-Automation/settings/secrets/actions"
+            exit 1
+          fi
+          echo "✅ Vercel secrets found — deploying"
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Deploy to Vercel (production)
+        working-directory: frontend
+        run: vercel deploy --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
