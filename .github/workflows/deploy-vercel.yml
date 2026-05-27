@@ -13,6 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      
+      - name: Setup Git User for Vercel
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "atiwari824@gmail.com"
+          
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
