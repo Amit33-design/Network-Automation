@@ -69,8 +69,7 @@ jobs:
               "buildCommand": "npm run build",
               "outputDirectory": "dist",
               "installCommand": "npm ci",
-              "framework": "vite",
-              "nodeVersion": "20.x"
+              "framework": "vite"
             }' | python3 -c "import sys,json; d=json.load(sys.stdin); print('Project updated:', d.get('name','?'), '| rootDir:', d.get('rootDirectory','?'))"
 
       - name: Install Vercel CLI

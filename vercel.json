@@ -4,7 +4,6 @@
   "outputDirectory": "frontend/dist",
   "installCommand": "cd frontend && npm ci",
   "framework": null,
-  "nodeVersion": "20.x",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ],
