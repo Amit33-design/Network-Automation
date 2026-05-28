@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ToastProvider } from '@/components/ui/Toast'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { WizardNav } from '@/components/wizard/WizardNav'
 import { useAppStore } from '@/store/useAppStore'
 import { Step1UseCase } from '@/pages/Step1UseCase'
@@ -29,6 +30,7 @@ export default function App() {
   function goHome() { setStep(1) }
 
   return (
+    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <div className="min-h-screen bg-gray-950 text-gray-200">
@@ -96,5 +98,6 @@ export default function App() {
         </div>
       </ToastProvider>
     </QueryClientProvider>
+    </ErrorBoundary>
   )
 }
