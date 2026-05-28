@@ -1,31 +1,26 @@
-name: Deploy — Vercel Production
+name: CI — Test & Build
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
 
 jobs:
-  deploy:
-    name: Build & Deploy to Vercel
+  test:
+    name: Test & Build
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      
-      - name: Setup Git User for Vercel
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "atiwari824@gmail.com"
-          
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install frontend dependencies
+      - name: Install dependencies
         working-directory: frontend
         run: npm ci
 
@@ -33,31 +28,6 @@ jobs:
         working-directory: frontend
         run: npm test
 
-      - name: Build React app
+      - name: Build (smoke-test)
         working-directory: frontend
         run: npm run build
-
-      - name: Install Vercel CLI
-        run: npm install -g vercel@latest
-
-      - name: Resolve Vercel Org ID (auto-fetch for personal accounts)
-        id: org
-        run: |
-          # Use secret if provided, otherwise fetch the user ID from Vercel API
-          if [ -n "${{ secrets.VERCEL_ORG_ID }}" ]; then
-            echo "org_id=${{ secrets.VERCEL_ORG_ID }}" >> $GITHUB_OUTPUT
-            echo "Using VERCEL_ORG_ID secret"
-          else
-            USER_ID=$(curl -sf https://api.vercel.com/v2/user \
-              -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
-              | python3 -c "import sys,json; print(json.load(sys.stdin)['user']['id'])")
-            echo "org_id=$USER_ID" >> $GITHUB_OUTPUT
-            echo "Auto-resolved org ID: $USER_ID"
-          fi
-
-      - name: Deploy to Vercel (production)
-        working-directory: frontend
-        run: vercel deploy --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
-        env:
-          VERCEL_ORG_ID: ${{ steps.org.outputs.org_id }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
