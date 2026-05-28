@@ -7,6 +7,9 @@ interface AppStore extends AppState {
   setStep: (step: number) => void
   nextStep: () => void
   prevStep: () => void
+  showLanding: boolean
+  startProject: () => void
+  goHome: () => void
 
   // Step 1 setters
   setUseCase: (useCase: UseCase | '') => void
@@ -17,6 +20,7 @@ interface AppStore extends AppState {
   setRedundancy: (r: Redundancy) => void
   setCompliance: (c: Compliance[]) => void
   setLinkDistance: (key: string, metres: number) => void
+  setBudget: (budget: number | null) => void
 
   // Design computed results
   setDevices: (devices: BOMDevice[]) => void
@@ -37,6 +41,7 @@ const DEFAULT_STATE: AppState = {
   appTypes: [],
   siteName: '',
   siteCode: '',
+  budget: null,
   scale: 'small',
   redundancy: 'dual',
   linkDistances: {
@@ -64,10 +69,13 @@ export const useAppStore = create<AppStore>()(
   persist(
     (set) => ({
       ...DEFAULT_STATE,
+      showLanding: true,
 
       setStep: step => set({ step }),
       nextStep: () => set(s => ({ step: Math.min(s.step + 1, 6) })),
       prevStep: () => set(s => ({ step: Math.max(s.step - 1, 1) })),
+      startProject: () => set({ showLanding: false, step: 1 }),
+      goHome: () => set({ showLanding: true, step: 1 }),
 
       setUseCase: useCase => set({ useCase }),
       setAppTypes: appTypes => set({ appTypes }),
@@ -78,6 +86,7 @@ export const useAppStore = create<AppStore>()(
       setCompliance: compliance => set({ compliance }),
       setLinkDistance: (key, metres) =>
         set(s => ({ linkDistances: { ...s.linkDistances, [key]: metres } })),
+      setBudget: budget => set({ budget }),
 
       setDevices: devices => set({ devices }),
       setCabling: cabling => set({ cabling }),
