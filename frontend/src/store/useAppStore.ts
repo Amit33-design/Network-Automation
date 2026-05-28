@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry } from '@/types'
+import type {
+  AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry,
+  OrgSize, BudgetTier, TrafficPattern, BandwidthPerServer, UnderlayProtocol, FirewallModel, RedundancyModel,
+} from '@/types'
 
 interface AppStore extends AppState {
   // Navigation
@@ -8,7 +11,7 @@ interface AppStore extends AppState {
   nextStep: () => void
   prevStep: () => void
 
-  // Step 1 setters
+  // Step 1 setters — site / org
   setUseCase: (useCase: UseCase | '') => void
   setAppTypes: (types: AppType[]) => void
   setSiteName: (name: string) => void
@@ -17,6 +20,22 @@ interface AppStore extends AppState {
   setRedundancy: (r: Redundancy) => void
   setCompliance: (c: Compliance[]) => void
   setLinkDistance: (key: string, metres: number) => void
+  setOrgName: (name: string) => void
+  setOrgSize: (size: OrgSize) => void
+  setBudgetTier: (tier: BudgetTier) => void
+  setVendorPrefs: (prefs: string[]) => void
+  setIndustry: (industry: string) => void
+
+  // Step 2 setters — requirements
+  setTrafficPattern: (p: TrafficPattern) => void
+  setTotalEndpoints: (n: number) => void
+  setBandwidthPerServer: (b: BandwidthPerServer) => void
+  setOversubscription: (r: number) => void
+  setUnderlayProtocol: (p: UnderlayProtocol) => void
+  setOverlayProtocols: (o: string[]) => void
+  setProtoFeatures: (f: string[]) => void
+  setFirewallModel: (m: FirewallModel) => void
+  setRedundancyModel: (m: RedundancyModel) => void
 
   // Design computed results
   setDevices: (devices: BOMDevice[]) => void
@@ -58,6 +77,22 @@ const DEFAULT_STATE: AppState = {
   ansiblePlaybook: {},
   compliance: [],
   step: 1,
+  // Step 1 — Organisation Details
+  orgName: '',
+  orgSize: '',
+  budgetTier: '',
+  vendorPrefs: [],
+  industry: '',
+  // Step 2 — Network Requirements
+  trafficPattern: 'ew',
+  totalEndpoints: 500,
+  bandwidthPerServer: '25G',
+  oversubscription: 3,
+  underlayProtocol: 'ospf',
+  overlayProtocols: [],
+  protoFeatures: [],
+  firewallModel: '',
+  redundancyModel: 'ha',
 }
 
 export const useAppStore = create<AppStore>()(
@@ -78,6 +113,21 @@ export const useAppStore = create<AppStore>()(
       setCompliance: compliance => set({ compliance }),
       setLinkDistance: (key, metres) =>
         set(s => ({ linkDistances: { ...s.linkDistances, [key]: metres } })),
+      setOrgName: orgName => set({ orgName }),
+      setOrgSize: orgSize => set({ orgSize }),
+      setBudgetTier: budgetTier => set({ budgetTier }),
+      setVendorPrefs: vendorPrefs => set({ vendorPrefs }),
+      setIndustry: industry => set({ industry }),
+
+      setTrafficPattern: trafficPattern => set({ trafficPattern }),
+      setTotalEndpoints: totalEndpoints => set({ totalEndpoints }),
+      setBandwidthPerServer: bandwidthPerServer => set({ bandwidthPerServer }),
+      setOversubscription: oversubscription => set({ oversubscription }),
+      setUnderlayProtocol: underlayProtocol => set({ underlayProtocol }),
+      setOverlayProtocols: overlayProtocols => set({ overlayProtocols }),
+      setProtoFeatures: protoFeatures => set({ protoFeatures }),
+      setFirewallModel: firewallModel => set({ firewallModel }),
+      setRedundancyModel: redundancyModel => set({ redundancyModel }),
 
       setDevices: devices => set({ devices }),
       setCabling: cabling => set({ cabling }),
