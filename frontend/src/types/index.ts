@@ -97,7 +97,6 @@ export interface AppState {
   appTypes: AppType[]
   siteName: string
   siteCode: string
-  budget: number | null
   scale: Scale
   redundancy: Redundancy
   linkDistances: LinkDistances
