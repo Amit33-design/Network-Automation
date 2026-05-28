@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { useAppStore } from '@/store/useAppStore'
-import type { ZTPEvent } from '@/types'
+import { TopologyDiagram } from '@/components/TopologyDiagram'
+import type { ZTPEvent, BOMDevice } from '@/types'
 
 const ZTP_STAGES = [
   'dhcp_requested',
@@ -25,6 +26,21 @@ export function Step4ZTP() {
 
   const { data: summary } = useTopologySummary()
   const { data: allDevices = [] } = useTopologyDevices()
+
+  const bomDevices: BOMDevice[] = allDevices.map(d => ({
+    id:         d.name,
+    hostname:   d.name,
+    role:       d.role,
+    subLayer:   d.role,
+    model:      d.model || d.platform,
+    vendor:     d.platform,
+    count:      1,
+    unitPrice:  0,
+    totalPrice: 0,
+    speed:      '100G',
+    ports:      48,
+    features:   d.tags ?? [],
+  }))
 
   const [failDevice, setFailDevice] = useState('')
   const [failAt, setFailAt] = useState('config_applied')
@@ -81,6 +97,16 @@ export function Step4ZTP() {
             </Card>
           ))}
         </div>
+      )}
+
+      {/* Demo lab topology diagram */}
+      {bomDevices.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>Lab Topology</CardTitle></CardHeader>
+          <div className="mt-2">
+            <TopologyDiagram devices={bomDevices} />
+          </div>
+        </Card>
       )}
 
       {/* Fault injection */}

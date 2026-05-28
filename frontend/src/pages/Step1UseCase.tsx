@@ -37,9 +37,9 @@ const COMPLIANCE_OPTIONS: Array<{ id: Compliance; label: string }> = [
 
 export function Step1UseCase() {
   const {
-    useCase, appTypes, siteName, siteCode, scale, redundancy, compliance,
+    useCase, appTypes, siteName, siteCode, scale, redundancy, compliance, linkDistances,
     setUseCase, setAppTypes, setSiteName, setSiteCode, setScale, setRedundancy, setCompliance,
-    nextStep,
+    setLinkDistance, nextStep,
   } = useAppStore()
 
   function toggleAppType(id: AppType) {
@@ -153,6 +153,35 @@ export function Step1UseCase() {
           </div>
         </Card>
       </div>
+
+      {/* Link Distances */}
+      <Card>
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">Link Distances</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {([
+            { key: 'spine-leaf',  label: 'Spine ↔ Leaf' },
+            { key: 'dist-access', label: 'Dist ↔ Access' },
+            { key: 'core-dist',   label: 'Core ↔ Dist' },
+            { key: 'wan-edge',    label: 'WAN Edge' },
+          ] as const).map(({ key, label }) => (
+            <div key={key}>
+              <label className="text-xs text-gray-400 block mb-1">{label}</label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={1}
+                  max={80000}
+                  value={linkDistances[key]}
+                  onChange={e => setLinkDistance(key, Number(e.target.value))}
+                  className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm
+                             text-gray-200 focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-xs text-gray-500 whitespace-nowrap">m</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
 
       {/* App types */}
       <Card>

@@ -1,4 +1,4 @@
-import type { AppState, BOMDevice, Scale, UseCase } from '@/types'
+import type { AppState, BOMDevice, Scale, UseCase, CableLink, OpticsEntry } from '@/types'
 import { PRODUCTS } from './products'
 
 // ── Scale definitions ────────────────────────────────────────────────────────
@@ -166,3 +166,146 @@ export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>
 }
 
 export { SCALE_DEFS }
+
+// ── Cable catalog ─────────────────────────────────────────────────────────────
+
+interface CableSpec {
+  type: 'DAC' | 'AOC' | 'LC-LC' | 'MPO'
+  desc: string
+  maxDist: number
+  speeds: string[]
+  unitCost: number
+  costPerM: number
+}
+
+const CABLE_SPECS: CableSpec[] = [
+  { type: 'DAC',   desc: 'Direct Attach Copper 1m',     maxDist: 1,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 25,  costPerM: 0   },
+  { type: 'DAC',   desc: 'Direct Attach Copper 3m',     maxDist: 3,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 35,  costPerM: 0   },
+  { type: 'DAC',   desc: 'Direct Attach Copper 5m',     maxDist: 5,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 45,  costPerM: 0   },
+  { type: 'DAC',   desc: 'QSFP DAC 3m',                 maxDist: 3,     speeds: ['40G','100G','400G'],           unitCost: 65,  costPerM: 0   },
+  { type: 'AOC',   desc: 'Active Optical Cable 10m',    maxDist: 10,    speeds: ['10G','25G','40G','100G'],      unitCost: 80,  costPerM: 8   },
+  { type: 'AOC',   desc: 'Active Optical Cable 30m',    maxDist: 30,    speeds: ['10G','25G','40G','100G'],      unitCost: 240, costPerM: 8   },
+  { type: 'MPO',   desc: 'MPO-12 OM4 100m',             maxDist: 100,   speeds: ['40G','100G','400G'],           unitCost: 20,  costPerM: 1.2 },
+  { type: 'LC-LC', desc: 'LC-LC Single-mode Fiber',     maxDist: 10000, speeds: ['1G','10G','25G','100G'],       unitCost: 15,  costPerM: 0.5 },
+]
+
+const CABLE_PRIORITY: Record<string, number> = { DAC: 0, AOC: 1, MPO: 2, 'LC-LC': 3 }
+
+function selectCable(distM: number, speed: string): CableSpec {
+  const candidates = CABLE_SPECS.filter(c => c.maxDist >= distM && c.speeds.includes(speed))
+  if (!candidates.length) return CABLE_SPECS.find(c => c.type === 'LC-LC')!
+  return candidates.sort((a, b) => CABLE_PRIORITY[a.type] - CABLE_PRIORITY[b.type])[0]
+}
+
+const LAYER_CONNECTS: Array<{ from: string; to: string; key: string }> = [
+  { from: 'spine',         to: 'leaf',         key: 'spine-leaf'  },
+  { from: 'core',          to: 'distribution', key: 'core-dist'   },
+  { from: 'distribution',  to: 'access',       key: 'dist-access' },
+  { from: 'wan-edge',      to: 'distribution', key: 'wan-edge'    },
+  { from: 'wan-edge',      to: 'spine',        key: 'wan-edge'    },
+  { from: 'firewall',      to: 'distribution', key: 'wan-edge'    },
+  { from: 'firewall',      to: 'spine',        key: 'spine-leaf'  },
+]
+
+export function buildCabling(
+  devices: BOMDevice[],
+  linkDistances: AppState['linkDistances'],
+): CableLink[] {
+  const byLayer = devices.reduce<Record<string, BOMDevice[]>>((acc, d) => {
+    acc[d.subLayer] = [...(acc[d.subLayer] ?? []), d]
+    return acc
+  }, {})
+
+  const links: CableLink[] = []
+  let id = 1
+
+  for (const conn of LAYER_CONNECTS) {
+    const froms = byLayer[conn.from] ?? []
+    const tos   = byLayer[conn.to]   ?? []
+    if (!froms.length || !tos.length) continue
+
+    const distM  = linkDistances[conn.key] ?? 5
+    const speed  = froms[0].speed ?? '100G'
+    const cable  = selectCable(distM, speed)
+    const qty    = froms.length * tos.length
+    const unit   = cable.unitCost + cable.costPerM * distM
+
+    links.push({
+      id:           `cable-${id++}`,
+      fromLayer:    conn.from,
+      toLayer:      conn.to,
+      fromDevice:   `${froms.length}x ${conn.from}`,
+      toDevice:     `${tos.length}x ${conn.to}`,
+      cableType:    cable.type,
+      speed,
+      lengthM:      distM,
+      quantity:     qty,
+      pricePerUnit: Math.round(unit),
+      totalPrice:   Math.round(unit * qty),
+    })
+  }
+
+  return links
+}
+
+// ── Optics catalog ────────────────────────────────────────────────────────────
+
+interface OpticSpec {
+  formFactor: string
+  speed:      string
+  reach:      string
+  reachM:     number
+  priceUSD:   number
+  vendor:     string
+  partNumber: string
+  subLayers:  string[]
+}
+
+const OPTIC_CATALOG: OpticSpec[] = [
+  { formFactor: 'SFP+',   speed: '10G',  reach: '300m',  reachM: 300,   priceUSD: 25,  vendor: 'Generic', partNumber: 'SFP-10G-SR',      subLayers: ['leaf','access','distribution'] },
+  { formFactor: 'SFP+',   speed: '10G',  reach: '10km',  reachM: 10000, priceUSD: 55,  vendor: 'Generic', partNumber: 'SFP-10G-LR',      subLayers: ['leaf','distribution','wan-edge','firewall'] },
+  { formFactor: 'SFP28',  speed: '25G',  reach: '100m',  reachM: 100,   priceUSD: 45,  vendor: 'Generic', partNumber: 'SFP28-25G-SR',    subLayers: ['leaf','distribution'] },
+  { formFactor: 'SFP28',  speed: '25G',  reach: '10km',  reachM: 10000, priceUSD: 120, vendor: 'Generic', partNumber: 'SFP28-25G-LR',    subLayers: ['leaf','distribution','wan-edge'] },
+  { formFactor: 'QSFP28', speed: '100G', reach: '100m',  reachM: 100,   priceUSD: 180, vendor: 'Generic', partNumber: 'QSFP-100G-SR4',   subLayers: ['spine','leaf','distribution'] },
+  { formFactor: 'QSFP28', speed: '100G', reach: '10km',  reachM: 10000, priceUSD: 420, vendor: 'Generic', partNumber: 'QSFP-100G-LR4',   subLayers: ['spine','wan-edge'] },
+  { formFactor: 'QSFP28', speed: '100G', reach: '500m',  reachM: 500,   priceUSD: 95,  vendor: 'Generic', partNumber: 'QSFP-100G-PSM4',  subLayers: ['spine','leaf'] },
+  { formFactor: 'QSFP-DD', speed: '400G', reach: '100m', reachM: 100,   priceUSD: 950, vendor: 'Generic', partNumber: 'QSFP-DD-400G-SR4',subLayers: ['spine'] },
+  { formFactor: 'QSFP-DD', speed: '400G', reach: '2km',  reachM: 2000,  priceUSD: 1800,vendor: 'Generic', partNumber: 'QSFP-DD-400G-FR4',subLayers: ['spine','wan-edge'] },
+]
+
+export function buildOptics(
+  devices: BOMDevice[],
+  linkDistances: AppState['linkDistances'],
+): OpticsEntry[] {
+  const cabling = buildCabling(devices, linkDistances)
+  const entries: OpticsEntry[] = []
+
+  for (const link of cabling) {
+    const speed   = link.speed
+    const distM   = link.lengthM
+
+    const optic = OPTIC_CATALOG
+      .filter(o => o.speed === speed && o.reachM >= distM)
+      .sort((a, b) => a.priceUSD - b.priceUSD)[0]
+
+    if (!optic) continue
+
+    const qty        = link.quantity * 2  // both ends
+    const totalPrice = optic.priceUSD * qty
+
+    entries.push({
+      id:          `optic-${link.id}`,
+      linkGroup:   `${link.fromLayer} → ${link.toLayer}`,
+      formFactor:  optic.formFactor,
+      speed:       optic.speed,
+      reach:       optic.reach,
+      priceUSD:    optic.priceUSD,
+      quantity:    qty,
+      totalPrice,
+      vendor:      optic.vendor,
+      partNumber:  optic.partNumber,
+    })
+  }
+
+  return entries
+}
