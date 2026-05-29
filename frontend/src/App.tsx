@@ -1,14 +1,16 @@
+import { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ToastProvider } from '@/components/ui/Toast'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { WizardNav } from '@/components/wizard/WizardNav'
+import { LandingPage } from '@/components/LandingPage'
 import { useAppStore } from '@/store/useAppStore'
 import { Step1UseCase } from '@/pages/Step1UseCase'
+import { Step2Requirements } from '@/pages/Step2Requirements'
 import { Step2Design } from '@/pages/Step2Design'
+import { Step4NetworkDesign } from '@/pages/Step4NetworkDesign'
 import { Step3Config } from '@/pages/Step3Config'
-import { Step4ZTP } from '@/pages/Step4ZTP'
-import { Step5Checks } from '@/pages/Step5Checks'
-import { Step6Monitor } from '@/pages/Step6Monitor'
+import { Step6Deploy } from '@/pages/Step6Deploy'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -16,18 +18,41 @@ const queryClient = new QueryClient({
   },
 })
 
-function WizardContent() {
+function WizardContent({ onBackToLanding }: { onBackToLanding: () => void }) {
   const step = useAppStore(s => s.step)
-  const pages = [Step1UseCase, Step2Design, Step3Config, Step4ZTP, Step5Checks, Step6Monitor]
-  const Page = pages[step - 1] ?? Step1UseCase
-  return <Page />
+
+  switch (step) {
+    case 1: return <Step1UseCase onBack={onBackToLanding} />
+    case 2: return <Step2Requirements />
+    case 3: return <Step2Design />
+    case 4: return <Step4NetworkDesign />
+    case 5: return <Step3Config />
+    case 6: return <Step6Deploy />
+    default: return <Step1UseCase onBack={onBackToLanding} />
+  }
 }
 
 export default function App() {
+  const [showLanding, setShowLanding] = useState(true)
   const step    = useAppStore(s => s.step)
   const setStep = useAppStore(s => s.setStep)
 
-  function goHome() { setStep(1) }
+  function goHome() {
+    setShowLanding(true)
+    setStep(1)
+  }
+
+  if (showLanding) {
+    return (
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <LandingPage onStart={() => setShowLanding(false)} />
+          </ToastProvider>
+        </QueryClientProvider>
+      </ErrorBoundary>
+    )
+  }
 
   return (
     <ErrorBoundary>
@@ -39,7 +64,6 @@ export default function App() {
           <header className="border-b border-white/10 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-40">
             <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
 
-              {/* Logo — always goes home on click */}
               <button
                 type="button"
                 onClick={goHome}
@@ -47,11 +71,7 @@ export default function App() {
                            hover:opacity-80 active:opacity-60 transition-opacity"
                 aria-label="NetDesign AI — go to home"
               >
-                <img
-                  src="/favicon.svg"
-                  alt=""
-                  className="w-8 h-8"
-                />
+                <img src="/favicon.svg" alt="" className="w-8 h-8" />
                 <div className="flex flex-col leading-tight text-left">
                   <span className="font-bold text-white text-[15px] tracking-wide">
                     NetDesign <span className="text-blue-400">AI</span>
@@ -62,12 +82,10 @@ export default function App() {
                 </div>
               </button>
 
-              {/* Right — step counter + Home button (always visible) */}
               <div className="flex items-center gap-3">
                 <span className="text-xs text-gray-600 tabular-nums hidden sm:block">
                   Step {step} / 6
                 </span>
-
                 <button
                   type="button"
                   onClick={goHome}
@@ -92,7 +110,7 @@ export default function App() {
           {/* ── Wizard ──────────────────────────────────────────────────── */}
           <main className="max-w-6xl mx-auto px-6 py-8">
             <WizardNav />
-            <WizardContent />
+            <WizardContent onBackToLanding={() => setShowLanding(true)} />
           </main>
 
         </div>

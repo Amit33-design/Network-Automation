@@ -3,11 +3,11 @@ import { useAppStore } from '@/store/useAppStore'
 
 const STEPS = [
   { label: 'Use Case' },
-  { label: 'Design' },
-  { label: 'Config' },
-  { label: 'ZTP' },
-  { label: 'Checks' },
-  { label: 'Monitor' },
+  { label: 'Requirements' },
+  { label: 'Products & BOM' },
+  { label: 'Network Design' },
+  { label: 'Config Gen' },
+  { label: 'Deploy & Validate' },
 ]
 
 export function WizardNav() {
