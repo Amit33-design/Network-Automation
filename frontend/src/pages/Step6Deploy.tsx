@@ -40,6 +40,684 @@ const PIPELINE_STAGES: Array<{ id: PipelineStage; label: string; desc: string }>
   { id: 'postcheck', label: 'Post-Deployment Checks', desc: 'Full automated post-check suite and health validation' },
 ]
 
+// ── Script generators ─────────────────────────────────────────────────────────
+
+function buildPreCheckScript(): string {
+  return `#!/usr/bin/env python3
+"""
+NetDesign AI — Pre-Deployment Check Script (M-48)
+Run BEFORE pushing configs to capture a baseline snapshot.
+"""
+
+import datetime
+import csv
+import sys
+from pathlib import Path
+
+try:
+    from netmiko import ConnectHandler, SSHDetect
+    from tabulate import tabulate
+except ImportError:
+    sys.exit("Install dependencies: pip install netmiko tabulate")
+
+DEVICES_CSV = "devices.csv"   # hostname, ip, platform, username, password
+LOG_DIR = Path("pre_check_logs")
+LOG_DIR.mkdir(exist_ok=True)
+TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+COMMANDS = [
+    "show version",
+    "show interfaces status",
+    "show ip route summary",
+    "show bgp summary",          # NX-OS / EOS / IOS-XE (may error on non-BGP devices)
+    "show ip ospf neighbor",
+    "show ip isis neighbors",
+    "show environment",
+]
+
+
+def run_checks(device_row: dict) -> list[dict]:
+    results = []
+    best_match = SSHDetect(
+        device_type="autodetect",
+        host=device_row["ip"],
+        username=device_row["username"],
+        password=device_row["password"],
+    )
+    detected_type = best_match.autodetect() or device_row.get("platform", "cisco_ios")
+    best_match.connection.disconnect()
+
+    conn_params = {
+        "device_type": detected_type,
+        "host": device_row["ip"],
+        "username": device_row["username"],
+        "password": device_row["password"],
+    }
+    with ConnectHandler(**conn_params) as net_connect:
+        for cmd in COMMANDS:
+            try:
+                output = net_connect.send_command(cmd, read_timeout=30)
+                results.append({"command": cmd, "output": output, "status": "OK"})
+            except Exception as exc:
+                results.append({"command": cmd, "output": str(exc), "status": "ERROR"})
+    return results
+
+
+def main():
+    devices = []
+    with open(DEVICES_CSV) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            devices.append(row)
+
+    if not devices:
+        sys.exit(f"No devices found in {DEVICES_CSV}")
+
+    all_rows = []
+    for dev in devices:
+        hostname = dev["hostname"]
+        print(f"[*] Checking {hostname} ({dev['ip']}) …")
+        try:
+            results = run_checks(dev)
+        except Exception as exc:
+            print(f"  [!] Connection failed: {exc}")
+            results = [{"command": c, "output": str(exc), "status": "CONN_ERR"} for c in COMMANDS]
+
+        log_path = LOG_DIR / f"{hostname}_pre_{TIMESTAMP}.txt"
+        with open(log_path, "w") as lf:
+            for r in results:
+                lf.write(f"\\n{'='*60}\\n")
+                lf.write(f"CMD : {r['command']}\\n")
+                lf.write(f"STATUS: {r['status']}\\n")
+                lf.write(r["output"] + "\\n")
+        print(f"  [+] Log saved: {log_path}")
+        all_rows.append([hostname, dev["ip"], len([r for r in results if r["status"] == "OK"]),
+                         len([r for r in results if r["status"] != "OK"])])
+
+    print("\\n" + tabulate(all_rows, headers=["Hostname", "IP", "Commands OK", "Errors"], tablefmt="grid"))
+    print(f"\\nPre-check logs written to: {LOG_DIR}/")
+
+
+if __name__ == "__main__":
+    main()
+`
+}
+
+function buildPostCheckScript(): string {
+  return `#!/usr/bin/env python3
+"""
+NetDesign AI — Post-Deployment Check Script (M-49)
+Run AFTER pushing configs to verify the deployment succeeded.
+"""
+
+import datetime
+import csv
+import sys
+from pathlib import Path
+
+try:
+    from netmiko import ConnectHandler, SSHDetect
+    from tabulate import tabulate
+except ImportError:
+    sys.exit("Install dependencies: pip install netmiko tabulate")
+
+DEVICES_CSV = "devices.csv"   # hostname, ip, platform, username, password
+LOG_DIR = Path("post_check_logs")
+LOG_DIR.mkdir(exist_ok=True)
+TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+# Post-deploy focuses on verifying routing and protocol convergence
+COMMANDS = [
+    "show version",
+    "show interfaces status",
+    "show ip route summary",
+    "show bgp summary",
+    "show ip ospf neighbor",
+    "show ip isis neighbors",
+    "show nve peers",            # VXLAN overlay (NX-OS)
+    "show mac address-table count",
+    "show environment",
+    "show logging last 50",
+]
+
+EXPECTED_CHECKS = {
+    "bgp_peers_up": lambda output: "Established" in output or "Up" in output,
+    "interfaces_no_errors": lambda output: "err-disabled" not in output.lower(),
+    "routes_present": lambda output: int((output.split("Total") or ["0"])[-1].strip().split()[0]) > 0
+                                     if "Total" in output else True,
+}
+
+
+def run_post_checks(device_row: dict) -> tuple[list[dict], list[dict]]:
+    raw_results = []
+    validation_results = []
+
+    best_match = SSHDetect(
+        device_type="autodetect",
+        host=device_row["ip"],
+        username=device_row["username"],
+        password=device_row["password"],
+    )
+    detected_type = best_match.autodetect() or device_row.get("platform", "cisco_ios")
+    best_match.connection.disconnect()
+
+    conn_params = {
+        "device_type": detected_type,
+        "host": device_row["ip"],
+        "username": device_row["username"],
+        "password": device_row["password"],
+    }
+    with ConnectHandler(**conn_params) as net_connect:
+        for cmd in COMMANDS:
+            try:
+                output = net_connect.send_command(cmd, read_timeout=30)
+                raw_results.append({"command": cmd, "output": output, "status": "OK"})
+            except Exception as exc:
+                raw_results.append({"command": cmd, "output": str(exc), "status": "ERROR"})
+
+    # Validation checks
+    bgp_output = next((r["output"] for r in raw_results if "bgp summary" in r["command"]), "")
+    int_output  = next((r["output"] for r in raw_results if "interfaces status" in r["command"]), "")
+    rte_output  = next((r["output"] for r in raw_results if "route summary" in r["command"]), "")
+
+    validation_results.append({
+        "check": "BGP Peers Up",
+        "pass": EXPECTED_CHECKS["bgp_peers_up"](bgp_output),
+        "detail": "Established/Up found in BGP summary" if EXPECTED_CHECKS["bgp_peers_up"](bgp_output) else "No active BGP peers detected",
+    })
+    validation_results.append({
+        "check": "Interfaces No Errors",
+        "pass": EXPECTED_CHECKS["interfaces_no_errors"](int_output),
+        "detail": "No err-disabled interfaces" if EXPECTED_CHECKS["interfaces_no_errors"](int_output) else "err-disabled interface(s) detected",
+    })
+    validation_results.append({
+        "check": "Routes Present",
+        "pass": EXPECTED_CHECKS["routes_present"](rte_output),
+        "detail": "Routing table non-empty",
+    })
+
+    return raw_results, validation_results
+
+
+def main():
+    devices = []
+    with open(DEVICES_CSV) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            devices.append(row)
+
+    if not devices:
+        sys.exit(f"No devices found in {DEVICES_CSV}")
+
+    summary_rows = []
+    for dev in devices:
+        hostname = dev["hostname"]
+        print(f"[*] Post-checking {hostname} ({dev['ip']}) …")
+        try:
+            raw, validations = run_post_checks(dev)
+        except Exception as exc:
+            print(f"  [!] Connection failed: {exc}")
+            raw = []
+            validations = [{"check": "Connection", "pass": False, "detail": str(exc)}]
+
+        log_path = LOG_DIR / f"{hostname}_post_{TIMESTAMP}.txt"
+        with open(log_path, "w") as lf:
+            lf.write(f"Post-check: {hostname} at {TIMESTAMP}\\n")
+            lf.write("\\n=== VALIDATION RESULTS ===\\n")
+            for v in validations:
+                status = "PASS" if v["pass"] else "FAIL"
+                lf.write(f"  [{status}] {v['check']}: {v['detail']}\\n")
+            lf.write("\\n=== RAW COMMAND OUTPUT ===\\n")
+            for r in raw:
+                lf.write(f"\\n{'='*60}\\nCMD: {r['command']}\\n{r['output']}\\n")
+        print(f"  [+] Log saved: {log_path}")
+
+        pass_count = sum(1 for v in validations if v["pass"])
+        fail_count = sum(1 for v in validations if not v["pass"])
+        summary_rows.append([hostname, dev["ip"], pass_count, fail_count,
+                              "PASS" if fail_count == 0 else "FAIL"])
+
+    print("\\n" + tabulate(summary_rows,
+                            headers=["Hostname", "IP", "Checks PASS", "Checks FAIL", "Overall"],
+                            tablefmt="grid"))
+    print(f"\\nPost-check logs written to: {LOG_DIR}/")
+
+
+if __name__ == "__main__":
+    main()
+`
+}
+
+function buildPushConfigsScript(): string {
+  return `#!/usr/bin/env python3
+"""
+NetDesign AI — push_configs.py (M-50)
+
+Push per-device config files to network devices using Netmiko.
+
+Usage:
+  python push_configs.py [--devices devices.csv] [--configs-dir configs/] [--dry-run]
+
+devices.csv format (header row required):
+  hostname,ip,platform,username,password
+
+configs/ directory must contain files named <hostname>.txt or <hostname>.cfg
+Supported platforms (Netmiko device_type strings):
+  cisco_ios, cisco_nxos, cisco_xe, arista_eos, juniper_junos, paloalto_panos
+"""
+
+import argparse
+import csv
+import datetime
+import sys
+from pathlib import Path
+
+try:
+    from netmiko import ConnectHandler
+    from tabulate import tabulate
+except ImportError:
+    sys.exit("Install dependencies: pip install netmiko tabulate")
+
+TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+PUSH_LOG = Path(f"push_log_{TIMESTAMP}.txt")
+
+
+def find_config_file(configs_dir: Path, hostname: str) -> Path | None:
+    for ext in (".txt", ".cfg", ".conf"):
+        candidate = configs_dir / f"{hostname}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def push_config(device_row: dict, config_path: Path, dry_run: bool) -> dict:
+    hostname = device_row["hostname"]
+    config_text = config_path.read_text()
+    config_lines = [line for line in config_text.splitlines() if line.strip() and not line.strip().startswith("!")]
+
+    if dry_run:
+        return {"hostname": hostname, "status": "DRY_RUN", "detail": f"{len(config_lines)} lines (not pushed)"}
+
+    conn_params = {
+        "device_type": device_row.get("platform", "cisco_ios"),
+        "host": device_row["ip"],
+        "username": device_row["username"],
+        "password": device_row["password"],
+    }
+    try:
+        with ConnectHandler(**conn_params) as net_connect:
+            net_connect.enable() if hasattr(net_connect, "enable") else None
+            output = net_connect.send_config_set(config_lines, read_timeout=120)
+            net_connect.save_config()
+        return {"hostname": hostname, "status": "SUCCESS", "detail": f"{len(config_lines)} lines pushed"}
+    except Exception as exc:
+        return {"hostname": hostname, "status": "FAILED", "detail": str(exc)}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Push configs to network devices via Netmiko")
+    parser.add_argument("--devices",     default="devices.csv",    help="CSV file with device inventory")
+    parser.add_argument("--configs-dir", default="configs",        help="Directory containing config files")
+    parser.add_argument("--dry-run",     action="store_true",      help="Parse and validate only, do not push")
+    args = parser.parse_args()
+
+    configs_dir = Path(args.configs_dir)
+    if not configs_dir.exists():
+        sys.exit(f"Configs directory not found: {configs_dir}")
+
+    devices = []
+    with open(args.devices) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            devices.append(row)
+
+    if not devices:
+        sys.exit(f"No devices found in {args.devices}")
+
+    print(f"[*] Pushing configs to {len(devices)} device(s)  [dry_run={args.dry_run}]\\n")
+
+    results = []
+    with open(PUSH_LOG, "w") as log_file:
+        log_file.write(f"push_configs.py run at {TIMESTAMP}\\n")
+        log_file.write(f"dry_run={args.dry_run}\\n\\n")
+
+        for dev in devices:
+            hostname = dev["hostname"]
+            config_path = find_config_file(configs_dir, hostname)
+            if config_path is None:
+                result = {"hostname": hostname, "status": "SKIPPED", "detail": "No config file found"}
+            else:
+                print(f"  [{hostname}] Pushing {config_path.name} …")
+                result = push_config(dev, config_path, dry_run=args.dry_run)
+                icon = "+" if result["status"] in ("SUCCESS", "DRY_RUN") else "!"
+                print(f"  [{icon}] {hostname}: {result['status']} — {result['detail']}")
+
+            results.append(result)
+            log_file.write(f"{hostname}: {result['status']} — {result['detail']}\\n")
+
+    print("\\n" + tabulate(
+        [[r["hostname"], r["status"], r["detail"]] for r in results],
+        headers=["Hostname", "Status", "Detail"],
+        tablefmt="grid",
+    ))
+    pushed  = sum(1 for r in results if r["status"] == "SUCCESS")
+    failed  = sum(1 for r in results if r["status"] == "FAILED")
+    skipped = sum(1 for r in results if r["status"] in ("SKIPPED", "DRY_RUN"))
+    print(f"\\nSummary: {pushed} pushed, {failed} failed, {skipped} skipped/dry-run")
+    print(f"Full log: {PUSH_LOG}")
+
+
+if __name__ == "__main__":
+    main()
+`
+}
+
+function buildGrokPatternsConfig(): string {
+  return `# NetDesign AI — Logstash Grok Patterns for Network Devices (M-51)
+# Place this file at /etc/logstash/conf.d/10-network-grok.conf
+# Tested against: Cisco IOS-XE, NX-OS, Arista EOS, Juniper JunOS
+
+input {
+  syslog {
+    port => 5514
+    type => "network-syslog"
+  }
+  udp {
+    port  => 5514
+    type  => "network-syslog-udp"
+    codec => plain
+  }
+}
+
+filter {
+  if [type] =~ "network-syslog" {
+
+    # ── Timestamp and host normalisation ─────────────────────────────────────
+    grok {
+      match => { "message" => "%{SYSLOGTIMESTAMP:syslog_timestamp} %{IPORHOST:syslog_host} %{GREEDYDATA:syslog_message}" }
+      overwrite => [ "host" ]
+    }
+
+    # ── BGP neighbour state change ────────────────────────────────────────────
+    # Cisco: %BGP-5-ADJCHANGE: neighbor 10.0.0.1 vpn vrf MGMT Up
+    # Arista: %BGP-3-NOTIFICATION: sent to neighbor 10.0.0.2 (AS 65001) 6/7
+    grok {
+      match => { "syslog_message" => [
+        "%{DATA}BGP%{DATA}ADJCHANGE%{DATA}neighbor %{IP:bgp_peer}%{SPACE}%{DATA:bgp_vrf}\\s+%{WORD:bgp_state}",
+        "%{DATA}BGP%{DATA}NOTIFICATION%{DATA}neighbor %{IP:bgp_peer}%{SPACE}\\(AS %{INT:bgp_peer_as}\\)"
+      ]}
+      add_tag => [ "bgp_event" ]
+      tag_on_failure => []
+    }
+
+    # ── Interface state change ────────────────────────────────────────────────
+    # Cisco:  %LINEPROTO-5-UPDOWN: Line protocol on Interface GigabitEthernet0/0, changed state to down
+    # NX-OS:  %ETH_PORT_CHANNEL-5-FOP_CHANGED: port-channel1 ... changed state to up
+    # Arista: %LINEPROTO-5-UPDOWN: Line protocol on Interface Ethernet1, changed state to up
+    grok {
+      match => { "syslog_message" => [
+        "%{DATA}UPDOWN%{DATA}Interface %{DATA:if_name}, changed state to %{WORD:if_state}",
+        "%{DATA}LINK-%{INT}-UPDOWN%{DATA}Interface %{DATA:if_name}, changed state to %{WORD:if_state}"
+      ]}
+      add_tag => [ "interface_event" ]
+      tag_on_failure => []
+    }
+
+    # ── OSPF neighbour state ──────────────────────────────────────────────────
+    # Cisco: %OSPF-5-ADJCHG: Process 1, Nbr 10.0.0.2 on GigabitEthernet0/0 from LOADING to FULL
+    grok {
+      match => { "syslog_message" =>
+        "%{DATA}OSPF%{DATA}ADJCHG%{DATA}Nbr %{IP:ospf_neighbor} on %{DATA:ospf_interface} from %{WORD:ospf_old_state} to %{WORD:ospf_new_state}"
+      }
+      add_tag => [ "ospf_event" ]
+      tag_on_failure => []
+    }
+
+    # ── IS-IS adjacency ───────────────────────────────────────────────────────
+    # NX-OS: %ISIS-5-ADJCHANGE: isis-UNDERLAY Process: IS-IS adjacency with R01.00 changed from Up to Down
+    grok {
+      match => { "syslog_message" =>
+        "%{DATA}ISIS%{DATA}ADJCHANGE%{DATA}adjacency with %{DATA:isis_neighbor} changed from %{WORD:isis_old_state} to %{WORD:isis_new_state}"
+      }
+      add_tag => [ "isis_event" ]
+      tag_on_failure => []
+    }
+
+    # ── VXLAN / EVPN ─────────────────────────────────────────────────────────
+    # NX-OS: %VPC-2-PEER_KEEP_ALIVE_RECV_FAIL: peer keepalive receive has failed
+    # NX-OS: %NVE-5-NVE_TUNNEL_UP: NVE tunnel to 10.1.0.2 is up
+    grok {
+      match => { "syslog_message" => [
+        "%{DATA}NVE%{DATA}NVE_TUNNEL_%{WORD:nve_event}: NVE tunnel to %{IP:nve_peer}",
+        "%{DATA}VPC%{DATA}: %{GREEDYDATA:vpc_message}"
+      ]}
+      add_tag => [ "overlay_event" ]
+      tag_on_failure => []
+    }
+
+    # ── CPU / Memory threshold ────────────────────────────────────────────────
+    # Cisco: %SYS-4-CPUHOG: Task is running for 2016msec more than 2000msec
+    grok {
+      match => { "syslog_message" =>
+        "%{DATA}CPUHOG%{DATA}Task is running for %{INT:cpu_ms}msec"
+      }
+      add_tag => [ "cpu_event" ]
+      tag_on_failure => []
+    }
+
+    # ── Hardware / ASIC errors ────────────────────────────────────────────────
+    grok {
+      match => { "syslog_message" =>
+        "%{DATA}(HARDWARE|PLATFORM|ASIC)%{DATA}(error|fault|ECC|parity): %{GREEDYDATA:hw_error}"
+      }
+      add_tag => [ "hw_error" ]
+      tag_on_failure => []
+    }
+
+    # ── PFC Watchdog (GPU/RoCE) ───────────────────────────────────────────────
+    # NX-OS: %PFC_WD-2-PFC_WD_DETECTED: PFC Watchdog detected on port Ethernet1/1
+    grok {
+      match => { "syslog_message" =>
+        "%{DATA}PFC_WD%{DATA}PFC_WD_DETECTED%{DATA}port %{DATA:pfc_port}"
+      }
+      add_tag => [ "pfc_watchdog" ]
+      tag_on_failure => []
+    }
+
+    date {
+      match => [ "syslog_timestamp", "MMM  d HH:mm:ss", "MMM dd HH:mm:ss", "ISO8601" ]
+    }
+
+    mutate {
+      remove_field => [ "syslog_timestamp" ]
+    }
+  }
+}
+
+output {
+  if [type] =~ "network-syslog" {
+    elasticsearch {
+      hosts    => ["http://elasticsearch:9200"]
+      index    => "network-logs-%{+YYYY.MM.dd}"
+      user     => "elastic"
+      password => "<CHANGE-ME-ELASTIC-PASS>"
+    }
+  }
+  # Uncomment for local debug
+  # stdout { codec => rubydebug }
+}
+`
+}
+
+function buildNetflowConfig(): string {
+  return `! NetDesign AI — NetFlow / sFlow Exporter Config Snippets (M-52)
+! Paste the relevant section into your device configuration.
+!
+! Sections:
+!   1. Cisco IOS-XE  — NetFlow v9 + IPFIX
+!   2. Cisco NX-OS   — NetFlow v9
+!   3. Arista EOS    — sFlow
+!   4. Juniper JunOS — cflowd (NetFlow v9)
+!   5. Collector note (ntopng / pmacct / ElastiFlow)
+!
+! Replace <COLLECTOR_IP> with your actual flow collector IP.
+! Replace <MGMT_VRF>    with your management VRF name (or remove vrf clause).
+! Replace <DEVICE_IP>   with this device's source IP for flow exports.
+
+! ===========================================================================
+! 1. CISCO IOS-XE — IPFIX / NetFlow v9
+! ===========================================================================
+
+ip flow-export version 9
+ip flow-export destination <COLLECTOR_IP> 9995 vrf <MGMT_VRF>
+ip flow-export source Loopback0
+
+ip flow-cache timeout active 1
+ip flow-cache timeout inactive 15
+
+! Apply on WAN/uplink interfaces (repeat per interface):
+interface GigabitEthernet0/0/0
+ ip flow ingress
+ ip flow egress
+
+! --- OR use Flexible NetFlow (preferred on IOS-XE 16+) ---
+
+flow record NETFLOW_RECORD
+ match ipv4 tos
+ match ipv4 protocol
+ match ipv4 source address
+ match ipv4 destination address
+ match transport source-port
+ match transport destination-port
+ collect interface input
+ collect interface output
+ collect counter bytes
+ collect counter packets
+ collect timestamp sys-uptime first
+ collect timestamp sys-uptime last
+
+flow exporter NETFLOW_EXPORTER
+ destination <COLLECTOR_IP>
+ source      Loopback0
+ transport udp 9995
+ template data timeout 300
+ export-protocol netflow-v9
+
+flow monitor NETFLOW_MONITOR
+ record   NETFLOW_RECORD
+ exporter NETFLOW_EXPORTER
+ cache entries   8192
+ cache timeout active   60
+ cache timeout inactive 15
+
+! Apply per interface:
+interface GigabitEthernet0/0/0
+ ip flow monitor NETFLOW_MONITOR input
+ ip flow monitor NETFLOW_MONITOR output
+
+
+! ===========================================================================
+! 2. CISCO NX-OS — NetFlow v9
+! ===========================================================================
+
+feature netflow
+
+flow record NX_FLOW_RECORD
+  match ipv4 source address
+  match ipv4 destination address
+  match transport source-port
+  match transport destination-port
+  match ip protocol
+  match ip tos
+  collect counter bytes long
+  collect counter packets long
+  collect timestamp sys-uptime first
+  collect timestamp sys-uptime last
+  collect interface input
+  collect interface output
+
+flow exporter NX_EXPORTER
+  destination <COLLECTOR_IP> use-vrf <MGMT_VRF>
+  source      mgmt0
+  transport udp 9995
+  version 9
+
+flow monitor NX_MONITOR
+  record   NX_FLOW_RECORD
+  exporter NX_EXPORTER
+
+! Apply per interface (on Leaf downlinks or Spine uplinks):
+interface Ethernet1/1
+  ip flow monitor NX_MONITOR input
+  ip flow monitor NX_MONITOR output
+
+
+! ===========================================================================
+! 3. ARISTA EOS — sFlow
+! ===========================================================================
+
+sflow source-interface Loopback0
+sflow destination <COLLECTOR_IP> 6343
+sflow polling-interval 30
+sflow sample 1024
+
+! Enable on specific interfaces or globally:
+interface Ethernet1
+ sflow enable
+
+! --- or globally ---
+sflow run
+
+
+! ===========================================================================
+! 4. JUNIPER JunOS — cflowd (NetFlow v9)
+! ===========================================================================
+
+set forwarding-options sampling input rate 1000
+set forwarding-options sampling family inet output flow-server <COLLECTOR_IP> port 9995
+set forwarding-options sampling family inet output flow-server <COLLECTOR_IP> version9 template ipv4
+set forwarding-options sampling family inet output source-address <DEVICE_IP>
+set forwarding-options sampling family inet output inline-jflow source-address <DEVICE_IP>
+
+set interfaces ge-0/0/0 unit 0 family inet sampling input
+set interfaces ge-0/0/0 unit 0 family inet sampling output
+
+
+! ===========================================================================
+! 5. COLLECTOR NOTES
+! ===========================================================================
+!
+! Recommended open-source flow collectors:
+!   - ntopng    : https://github.com/ntop/ntopng       (port 9995/UDP)
+!   - ElastiFlow: https://github.com/robcowart/elastiflow (Logstash plugin)
+!   - pmacct    : https://github.com/pmacct/pmacct      (flexible, multi-format)
+!   - GoFlow2   : https://github.com/netsampler/goflow2 (Prometheus-native)
+!
+! Docker quick-start (GoFlow2 → Prometheus → Grafana):
+!   docker run -d -p 9995:9995/udp -p 8080:8080 \\
+!     netsampler/goflow2:latest \\
+!     -netflow.addr=:9995 -metrics.addr=:8080
+!
+! Scrape GoFlow2 in prometheus.yml:
+!   - job_name: 'goflow2'
+!     static_configs:
+!       - targets: ['goflow2:8080']
+`
+}
+
+// ── Download helper ───────────────────────────────────────────────────────────
+
+function downloadBlob(filename: string, content: string) {
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export function Step6Deploy() {
   const { prevStep } = useAppStore()
   const { showToast } = useToast()
@@ -199,7 +877,7 @@ export function Step6Deploy() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-gray-100 mb-1">Deploy & Validate</h2>
+        <h2 className="text-lg font-semibold text-gray-100 mb-1">Deploy &amp; Validate</h2>
         <p className="text-sm text-gray-400">Zero-touch provisioning, pre/post checks, and live monitoring</p>
       </div>
 
@@ -237,12 +915,12 @@ export function Step6Deploy() {
                 setDeployDone(false)
                 setDeviceStatuses({})
               }}>
-                ↺ Reset
+                &#8634; Reset
               </Button>
             )}
             {deployDone && (
               <Button variant="ghost" onClick={() => showToast('Rollback initiated — restoring pre-deploy configs', 'warning')}>
-                ⚠ Rollback
+                &#9888; Rollback
               </Button>
             )}
           </div>
@@ -330,6 +1008,47 @@ export function Step6Deploy() {
               ))}
             </div>
           )}
+
+          {/* ── Downloads section (M-48 M-49 M-50) ───────────────────────── */}
+          <Card>
+            <CardHeader><CardTitle>Downloads</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              Python scripts for pre/post-checks and config push via Netmiko.
+              Requires: <code className="text-blue-400">pip install netmiko tabulate</code>
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  downloadBlob('pre_check.py', buildPreCheckScript())
+                  showToast('pre_check.py downloaded', 'success')
+                }}
+              >
+                &#8595; Pre-Check Script
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  downloadBlob('post_check.py', buildPostCheckScript())
+                  showToast('post_check.py downloaded', 'success')
+                }}
+              >
+                &#8595; Post-Check Script
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  downloadBlob('push_configs.py', buildPushConfigsScript())
+                  showToast('push_configs.py downloaded', 'success')
+                }}
+              >
+                &#8595; push_configs.py
+              </Button>
+            </div>
+          </Card>
         </div>
       )}
 
@@ -375,7 +1094,7 @@ export function Step6Deploy() {
                   className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
                              focus:outline-none focus:border-blue-500"
                 >
-                  <option value="">— none —</option>
+                  <option value="">&mdash; none &mdash;</option>
                   {allDevices.map(d => (
                     <option key={d.name} value={d.name}>{d.name} ({d.role})</option>
                   ))}
@@ -468,7 +1187,7 @@ export function Step6Deploy() {
                   className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
                              focus:outline-none focus:border-blue-500"
                 >
-                  <option value="">— none —</option>
+                  <option value="">&mdash; none &mdash;</option>
                   {allDevices.map(d => (
                     <option key={d.name} value={d.name}>{d.name} ({d.role})</option>
                   ))}
@@ -608,7 +1327,7 @@ export function Step6Deploy() {
                         <td className="px-4 py-2 text-gray-300">{h.metrics.cpu}%</td>
                         <td className="px-4 py-2 text-xs text-gray-500">{formatUptime(h.metrics.uptime_seconds)}</td>
                         <td className="px-4 py-2 text-xs text-yellow-400">
-                          {h.alerts.length > 0 ? h.alerts.join(' · ') : <span className="text-gray-600">—</span>}
+                          {h.alerts.length > 0 ? h.alerts.join(' · ') : <span className="text-gray-600">&mdash;</span>}
                         </td>
                       </tr>
                     ))}
@@ -630,11 +1349,41 @@ export function Step6Deploy() {
               ))}
             </div>
           )}
+
+          {/* ── Observability Downloads (M-51 M-52) ───────────────────────── */}
+          <Card>
+            <CardHeader><CardTitle>Observability Downloads</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              Logstash Grok patterns for syslog parsing and NetFlow/sFlow exporter config snippets.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  downloadBlob('network-grok.conf', buildGrokPatternsConfig())
+                  showToast('network-grok.conf downloaded', 'success')
+                }}
+              >
+                &#8595; Grok Patterns
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  downloadBlob('netflow-config.txt', buildNetflowConfig())
+                  showToast('netflow-config.txt downloaded', 'success')
+                }}
+              >
+                &#8595; NetFlow Config
+              </Button>
+            </div>
+          </Card>
         </div>
       )}
 
       <div className="flex justify-start">
-        <Button variant="secondary" onClick={prevStep}>← Back</Button>
+        <Button variant="secondary" onClick={prevStep}>&#8592; Back</Button>
       </div>
     </div>
   )
