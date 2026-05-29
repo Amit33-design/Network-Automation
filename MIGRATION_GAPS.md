@@ -14,14 +14,32 @@
 | M-37 | Deploy pipeline 5-stage UI | ✅ Done | a3bca3e |
 | M-43 | Troubleshooting Engine panel | ✅ Done | 0910dd1 |
 | M-53 | Collapsible sidebar navigation | ✅ Done | 0910dd1 |
-| M-04 | VPN type select Step 2 | 🔄 In progress | — |
-| M-05 | NAC chip group Step 2 | 🔄 In progress | — |
-| M-06 | Additional notes textarea Step 2 | 🔄 In progress | — |
-| M-07 | FedRAMP + NIST CSF compliance chips | 🔄 In progress | — |
-| M-08 | GENEVE overlay option | 🔄 In progress | — |
-| M-09 | Richer routing features list | 🔄 In progress | — |
-| M-10 | Live summary sidebar Step 2 | 🔄 In progress | — |
-| M-13 | Requirement validator | 🔄 In progress | — |
+| M-04 | VPN type select Step 2 | ✅ Done | afb1382 |
+| M-05 | NAC chip group Step 2 | ✅ Done | afb1382 |
+| M-06 | Additional notes textarea Step 2 | ✅ Done | afb1382 |
+| M-07 | FedRAMP + NIST CSF compliance chips | ✅ Done | afb1382 |
+| M-08 | GENEVE overlay option | ✅ Done | afb1382 |
+| M-09 | Richer routing features list | ✅ Done | afb1382 |
+| M-10 | Live summary sidebar Step 2 | ✅ Done | afb1382 |
+| M-13 | Requirement validator | ✅ Done | afb1382 |
+| M-15 | AI product scoring badges | 🔄 In progress | — |
+| M-16 | EOL alert panel | 🔄 In progress | — |
+| M-19 | IP plan tab Step 3 | 🔄 In progress | — |
+| M-23 | Physical Links tab Step 4 | 🔄 In progress | — |
+| M-25 | Mermaid Diagram tab Step 4 | 🔄 In progress | — |
+| M-26 | Simulate tab Step 4 | 🔄 In progress | — |
+| M-27 | Summary tab Step 4 | 🔄 In progress | — |
+| M-33 | Config section nav Step 5 | 🔄 In progress | — |
+| M-35 | Layer filter tabs Step 5 | 🔄 In progress | — |
+| M-48 | Download pre-check script | 🔄 In progress | — |
+| M-49 | Download post-check script | 🔄 In progress | — |
+| M-50 | Download push_configs.py | 🔄 In progress | — |
+| M-51 | Grok log parsing config download | 🔄 In progress | — |
+| M-52 | NetFlow/sFlow exporter config | 🔄 In progress | — |
+| M-54 | Config Policy modal | 🔄 In progress | — |
+| M-56 | My Designs panel | 🔄 In progress | — |
+| M-58 | Backend toggle | 🔄 In progress | — |
+| M-59 | Export modal | 🔄 In progress | — |
 
 > **Session resume**: check this table first — start from first row that is not ✅ Done.
 > Implement in order. After each item: run `cd frontend && npm test -- --run && npm run build`, commit, push to `main`.

@@ -21,6 +21,96 @@ const SYMPTOMS: Array<{ keywords: string[]; cause: string; severity: string; fix
   { keywords: ['routing','blackhole','null','drop','unreachable'], cause: 'Routing blackhole — static route to null0 or missing prefix', severity: 'high', fix: 'Check: show ip route | traceroute | Verify next-hop reachable. Check for null0 summarization.', ref: 'RFC 1918' },
 ]
 
+// ── M-47: RCA playbook generator ─────────────────────────────────
+const RCA_PLAYBOOKS: Record<string, { title: string; steps: string[]; commands: string[] }> = {
+  bgp: {
+    title: 'BGP Session Failure Playbook',
+    steps: [
+      '1. Verify TCP/179 is open between peers — telnet <peer> 179',
+      '2. Confirm hold-timer configuration matches on both sides',
+      '3. Check BGP authentication (MD5 key mismatch is common)',
+      '4. Verify route policy / prefix-list is not filtering all routes',
+      '5. Confirm BFD session is up if BFD is configured',
+      '6. Review syslog for BGP notification codes (code 4 = Hold Timer Expired)',
+    ],
+    commands: ['show bgp summary', 'show bgp neighbors <ip>', 'show ip bgp flap-statistics', 'debug ip bgp <ip> events'],
+  },
+  ospf: {
+    title: 'OSPF Adjacency Playbook',
+    steps: [
+      '1. Verify both interfaces are in the same OSPF area',
+      '2. Check MTU matches on both sides — or set ip ospf mtu-ignore',
+      '3. Verify hello and dead timer intervals match (default 10/40 broadcast)',
+      '4. Check OSPF authentication type and key',
+      '5. Verify network type (broadcast vs point-to-point) matches',
+      '6. Confirm stub/NSSA flags are identical on both routers',
+    ],
+    commands: ['show ip ospf neighbor', 'show ip ospf interface', 'debug ip ospf adj', 'show ip ospf database'],
+  },
+  vxlan: {
+    title: 'VXLAN/EVPN Playbook',
+    steps: [
+      '1. Ping VTEP loopback from all other VTEPs (ping source loopback0)',
+      '2. Check BGP EVPN address-family — all peers sending type-2/type-5',
+      '3. Verify VNI-to-VLAN mapping is consistent across all VTEPs',
+      '4. Check ARP suppression and MAC aging settings match',
+      '5. Verify anycast gateway MAC (GARP) is same on all leaf switches',
+      '6. Inspect BGP type-2 (MAC/IP) and type-5 (IP prefix) route counts',
+    ],
+    commands: ['show bgp l2vpn evpn', 'show nve peers', 'show nve vni', 'show mac address-table'],
+  },
+  interface: {
+    title: 'Interface Flap / Error Playbook',
+    steps: [
+      '1. Check CRC/input error counters on both ends of the link',
+      '2. Replace SFP/DAC cable if CRC or FCS errors are incrementing',
+      '3. Verify auto-negotiation — hardcode speed/duplex if mismatched',
+      '4. Check cable length vs SFP reach spec (SMF vs MMF)',
+      '5. Inspect DOM diagnostics — Tx/Rx optical power within spec',
+      '6. Test with a known-good cable or SFP to isolate HW fault',
+    ],
+    commands: ['show interface <intf>', 'show interface <intf> counters errors', 'show transceiver detail', 'show log | include <intf>'],
+  },
+  cpu: {
+    title: 'High CPU Playbook',
+    steps: [
+      '1. Identify top CPU processes and correlate with recent events',
+      '2. Check if a route flap is driving reconvergence',
+      '3. Rate-limit SNMP polling — reduce frequency or scope',
+      '4. Verify CoPP is configured and not exhausted',
+      '5. Check for logging storms — reduce logging level if needed',
+      '6. Tune BGP scan-time and update-delay to reduce background load',
+    ],
+    commands: ['show proc cpu sorted', 'show proc cpu history', 'show ip bgp summary', 'show policy-map control-plane'],
+  },
+  pfc: {
+    title: 'PFC/RoCEv2 Lossless Fabric Playbook',
+    steps: [
+      '1. Identify ports where PFC watchdog triggered and action taken (drop/pause)',
+      '2. Verify ECN thresholds — min/max marking thresholds consistent across switches',
+      '3. Review DCQCN parameters — Rp/Np/Cp rates and timer settings',
+      '4. Check for fabric congestion — buffer drops on spine uplinks',
+      '5. Confirm RDMA NIC QoS priority matches switch PFC priority 3',
+      '6. Ensure no-drop class (PFC priority 3) is set end-to-end including ToR',
+    ],
+    commands: ['show pfc watchdog', 'show interface counters pfc', 'show qos interface', 'show hardware buffer'],
+  },
+  stp: {
+    title: 'Spanning Tree Loop Playbook',
+    steps: [
+      '1. Identify port generating topology changes (TC flood)',
+      '2. Enable BPDU Guard on all access ports — auto-error-disable on BPDU receipt',
+      '3. Enable Root Guard on designated ports toward untrusted switches',
+      '4. Verify PortFast is only on server-facing and end-device ports',
+      '5. Consider migrating to MSTP for multi-VLAN scale',
+      '6. Check for rogue/unmanaged consumer switches on the network',
+    ],
+    commands: ['show spanning-tree', 'show spanning-tree detail', 'show log | include STP|TCN', 'show spanning-tree inconsistentports'],
+  },
+}
+
+type PlaybookKey = keyof typeof RCA_PLAYBOOKS
+
 function classifySymptom(query: string): typeof SYMPTOMS {
   if (!query.trim()) return []
   const words = query.toLowerCase().split(/\s+/)
@@ -51,6 +141,8 @@ export function TroubleshootingEngine() {
   const devices = useAppStore(s => s.devices)
   const [symptomQuery, setSymptomQuery] = useState('')
   const [incidentQuery, setIncidentQuery] = useState('')
+  const [selectedPlaybook, setSelectedPlaybook] = useState<PlaybookKey>('bgp')
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null)
 
   const results = useMemo(() => classifySymptom(symptomQuery), [symptomQuery])
   const convergence = useMemo(() => predictConvergence(devices.length || 10, underlayProtocol), [devices.length, underlayProtocol])
@@ -61,11 +153,35 @@ export function TroubleshootingEngine() {
     return SYMPTOMS.filter(s => s.cause.toLowerCase().includes(q) || s.keywords.some(k => k.includes(q)))
   }, [incidentQuery])
 
+  const playbook = RCA_PLAYBOOKS[selectedPlaybook]
+
+  function copyCmd(cmd: string) {
+    navigator.clipboard.writeText(cmd).catch(() => {})
+    setCopiedCmd(cmd)
+    setTimeout(() => setCopiedCmd(null), 1500)
+  }
+
+  function downloadPlaybook() {
+    const text = [
+      `# ${playbook.title}`,
+      '',
+      '## Steps',
+      ...playbook.steps,
+      '',
+      '## Commands',
+      ...playbook.commands.map(c => `  ${c}`),
+    ].join('\n')
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
+    a.download = `rca_playbook_${String(selectedPlaybook)}.txt`
+    a.click()
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-gray-100 mb-1">Troubleshooting Engine</h2>
-        <p className="text-sm text-gray-400">Symptom classifier, BGP convergence predictor, and incident knowledge base</p>
+        <p className="text-sm text-gray-400">Symptom classifier, BGP convergence predictor, RCA playbooks, and incident knowledge base</p>
       </div>
 
       {/* Symptom classifier */}
@@ -120,6 +236,52 @@ export function TroubleshootingEngine() {
         </div>
         <div className="mt-3 text-xs text-gray-500">
           Hold timer: {convergence.holdTimer}s · Estimated BGP peers: {convergence.peers} · Enable BFD for sub-second failover
+        </div>
+      </Card>
+
+      {/* M-47: RCA Playbook Generator */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-300">📋 RCA Playbook Generator</h3>
+          <button
+            onClick={downloadPlaybook}
+            className="text-xs px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-400 hover:bg-blue-600/30 transition-colors"
+          >
+            ↓ Download .txt
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2 mb-4">
+          {(Object.keys(RCA_PLAYBOOKS) as PlaybookKey[]).map(key => (
+            <button
+              key={key}
+              onClick={() => setSelectedPlaybook(key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer ${selectedPlaybook === key ? 'bg-blue-600/30 border-blue-500 text-blue-300' : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30'}`}
+            >
+              {String(key).toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <div className="bg-white/[0.02] border border-white/10 rounded-lg p-4">
+          <div className="text-sm font-semibold text-gray-200 mb-3">{playbook.title}</div>
+          <div className="space-y-1.5 mb-4">
+            {playbook.steps.map((step, i) => (
+              <div key={i} className="text-xs text-gray-400">{step}</div>
+            ))}
+          </div>
+          <div className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-2">Commands</div>
+          <div className="space-y-1">
+            {playbook.commands.map((cmd, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 group">
+                <code className="text-xs text-green-400 font-mono bg-black/30 px-2 py-1 rounded flex-1">{cmd}</code>
+                <button
+                  onClick={() => copyCmd(cmd)}
+                  className="text-xs text-gray-600 hover:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded"
+                >
+                  {copiedCmd === cmd ? '✓' : 'copy'}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       </Card>
 
