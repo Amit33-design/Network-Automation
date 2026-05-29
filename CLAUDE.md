@@ -24,19 +24,27 @@ Allowed tools: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`, `We
 ```
 frontend/
   src/
-    pages/          ← Step1UseCase – Step6Monitor (6-step wizard)
+    pages/          ← Step1UseCase – Step6Deploy (6-step wizard)
     lib/            ← bom.ts, configgen.ts, products.ts, utils.ts
     hooks/          ← useAlerts, useRca, useZTP, useChecks, useMonitoring, useTopology
-    components/ui/  ← Badge, Button, Card, Toast
+    components/
+      ui/           ← Badge, Button, Card, Toast
+      wizard/       ← Sidebar.tsx (deep-nav with Deploy sub-items)
+      HLDTopologyDiagram.tsx  ← pure-SVG HLD topology with packet-flow scenarios
+      BackendToggle.tsx       ← useBackendMode() context: { isLive, baseUrl }
+      LandingPage.tsx         ← brand logo hero, feature cards, use-case chips
     store/          ← useAppStore (Zustand 5 + persist)
     api/client.ts   ← typed fetch + WebSocket wrapper
-    test/           ← 101 Vitest tests across 8 suites
+    test/           ← 127 Vitest tests across 8 suites
+  public/
+    favicon.svg     ← circuit-board "N" SVG icon (no thunder symbol)
+    logo-brand.jpg  ← brand image: AI robot + "NetDesign AI" + "INTENT-DRIVEN NETWORK AUTOMATION"
 ```
 
 ### Quick start
 ```bash
 git checkout main && git pull origin main
-cd frontend && npm ci && npm test   # 101 tests
+cd frontend && npm ci && npm test   # 127 tests
 npm run build                       # Vite build
 npm run dev                         # dev server :5173, proxies /api → :8000
 ```
@@ -66,12 +74,21 @@ Always work on `main` (not `master` — that is a separate project)
 ```
 INTENT OBJECT (JSON)  ←  single source of truth
        │
-       ├─ Step 1: Use Case selection (7 use cases)
-       ├─ Step 2: BOM (TanStack Table, port-math sizing, 17 SKUs)
-       ├─ Step 3: Config generation (CodeMirror viewer, per-device download)
-       ├─ Step 4: ZTP demo (fault injection, per-device state machine)
-       ├─ Step 5: Pre/Post checks (PASS/FAIL/WARN, remediation hints)
-       └─ Step 6: Monitoring (health polling, alerts, degraded simulation)
+       ├─ Step 1: Use Case selection (7 use cases + org details)
+       ├─ Step 2: Network Requirements (traffic, protocols, compliance)
+       ├─ Step 3: BOM (TanStack Table, port-math sizing, 40+ SKUs)
+       ├─ Step 4: Config generation + HLD Topology diagram
+       ├─ Step 5: HLD Review / Design Workbench
+       └─ Step 6: Deploy & Validate (9 sub-tabs — see below)
+
+Step 6 sub-tabs (sidebar deep-nav via activeDeployTab store field):
+  🚀 deploy   — Deploy Pipeline (policy gate, canary, terminal log, Config Automation)
+  📡 ztp      — ZTP Provisioning (state-machine visual, fault injection, demo simulation)
+  ✅ checks   — Pre/Post Checks (grouped by device, pre→post diff panel)
+  🖧 netconf  — NETCONF (interactive XML editor, per-vendor RPC, mock responses)
+  📊 monitor  — Monitoring (health polling, alerts, degraded simulation)
+  ⚙️ day2ops  — Day-2 Ops (drift detection, re-push, compliance scan)
+  🦟 batfish  — Batfish Validate (dry-run validation placeholder)
 
 Observability panel (alongside wizard):
   🔔 Alerts    — useAlerts (TanStack Query, 30 s refetch)
@@ -90,19 +107,87 @@ Observability panel (alongside wizard):
 GET  /api/alerts              ← AlertsPanel polling
 POST /api/rca/analyze         ← RcaPanel mutation
 POST /api/generate-configs    ← Step 3 config generation
-POST /api/pre-checks          ← Step 5
-POST /api/post-checks         ← Step 5
+POST /api/pre-checks          ← Step 6 checks tab
+POST /api/post-checks         ← Step 6 checks tab
 POST /api/deploy              ← deploy trigger
 WS   /ws/deploy/{id}         ← LiveProgressFeed stream
-GET  /api/lab/topology        ← Step 4 demo devices
-POST /api/lab/ztp             ← Step 4 ZTP simulation
-POST /api/lab/checks          ← Step 5 check simulation
-POST /api/lab/monitoring      ← Step 6 health simulation
+GET  /api/lab/topology        ← demo devices list
+POST /api/lab/ztp             ← ZTP simulation
+POST /api/lab/checks          ← checks simulation
+POST /api/lab/monitoring      ← health simulation
+POST /api/ztp/run             ← ZTP run (falls back to client-side sim when not live)
+POST /api/checks/pre          ← pre-checks (falls back to client-side sim when not live)
+POST /api/checks/post         ← post-checks (falls back to client-side sim when not live)
 ```
 
 ---
 
-## 3. Intent Object Schema
+## 3. Demo Mode (no backend required)
+
+The app is fully functional without a backend. The `BackendToggle` component
+provides `useBackendMode()` context: `{ isLive: boolean, baseUrl: string }`.
+
+When `!isLive`, Step 6 uses client-side simulation functions:
+
+### ZTP simulation (`simulateZTPResult`)
+- State machine per device: `REGISTERED → POWERED_ON → DHCP_ACK → SCRIPT_DOWNLOADED → CONFIG_APPLYING → CALLBACK_RECEIVED → VERIFIED → ONLINE`
+- Fault injection: specify `failDevice` + `failAt` stage → device gets FAILED event at that stage
+- Returns `ZTPResult` with per-device events + summary
+
+### Checks simulation (`simulateChecksResult`)
+- 8–12 checks per device across categories: Connectivity, Protocols, Config, Hardware
+- Status distribution: ~85% PASS, 10% WARN, 5% FAIL
+- Fault injection: `failDevice` + `failCheck` → targeted FAIL injection
+- Pre and post results stored separately for delta diff panel
+
+---
+
+## 4. Zustand Store — Key Fields
+
+`frontend/src/store/useAppStore.ts` — Zustand 5 + persist middleware
+
+```typescript
+// Navigation
+step: number                  // current wizard step (1–6)
+setStep(step: number)
+nextStep() / prevStep()
+
+// Step 6 sub-tab deep-navigation
+activeDeployTab: string       // default: 'deploy' — synced with Sidebar sub-items
+setActiveDeployTab(tab: string)
+
+// Step 1 — site / org
+useCase: UseCase | ''
+scale: Scale                  // 'small' | 'medium' | 'large'
+redundancy: Redundancy        // 'single' | 'dual'
+compliance: Compliance[]
+orgName, orgSize, budgetTier, vendorPrefs, industry, primaryContact
+
+// Step 2 — requirements
+trafficPattern, totalEndpoints, bandwidthPerServer, oversubscription
+underlayProtocol, overlayProtocols, protoFeatures
+firewallModel, redundancyModel, numSites, vpnType, nacOptions
+
+// Design outputs
+devices: BOMDevice[]
+cabling: CableLink[]
+optics: OpticsEntry[]
+configs: Record<string, string>
+
+// Policy
+customPolicyRules: string     // custom policy rules for deploy gate (M-55)
+
+// Scripts
+preCheckScript, postCheckScript, prometheusAlerts
+policyBlocks: string[]
+
+// M-11: Multi-cloud fields
+cloudProviders, dcTopology, coloProvider, dcEdgeVendor, bgpAsn, orgCidr, aviatrixOptions
+```
+
+---
+
+## 5. Intent Object Schema
 
 ```jsonc
 {
@@ -134,7 +219,7 @@ POST /api/lab/monitoring      ← Step 6 health simulation
 
 ---
 
-## 4. Config Generation Rules (configgen.ts)
+## 6. Config Generation Rules (configgen.ts)
 
 These 5 rules are tested by 36 Vitest tests. Never break them.
 
@@ -148,7 +233,7 @@ Run `cd frontend && npm test` after any configgen.ts change to verify all 36 pas
 
 ---
 
-## 5. Constraint Rules — Intent Coherence
+## 7. Constraint Rules — Intent Coherence
 
 ```javascript
 const CONSTRAINTS = [
@@ -193,7 +278,7 @@ const CONSTRAINTS = [
 
 ---
 
-## 6. Port-Math BOM Formulas
+## 8. Port-Math BOM Formulas
 
 ```javascript
 // lib/bom.ts — always derive quantities from port math, never hardcode
@@ -218,7 +303,7 @@ function calculateBOM(intent, leafSku, spineSku) {
 
 ---
 
-## 7. Platform-Native Rollback
+## 9. Platform-Native Rollback
 
 ```python
 ROLLBACK_STRATEGIES = {
@@ -236,7 +321,7 @@ ROLLBACK_STRATEGIES = {
 
 ---
 
-## 8. EVPN Config Reference — NX-OS Complete Leaf Template
+## 10. EVPN Config Reference — NX-OS Complete Leaf Template
 
 ```
 feature bgp
@@ -290,17 +375,26 @@ evpn
 
 ---
 
-## 9. ZTP Architecture
+## 11. ZTP Architecture
 
 ```
 State machine per device:
   REGISTERED → POWERED_ON → DHCP_ACK → SCRIPT_DOWNLOADED →
   CONFIG_APPLYING → CALLBACK_RECEIVED → VERIFIED → ONLINE | FAILED
 
+ZTP Provisioning tab features:
+  - Device list from BOM store (expanded by count, capped at 4 per model)
+  - Fault injection: select fail device + fail stage
+  - Per-device state-machine visual: horizontal step strip
+    (green=done, yellow=current, red=failed, gray=pending)
+  - Events table with timestamps
+  - Demo simulation when backend not live (simulateZTPResult)
+
 API endpoints:
   POST /api/ztp/register    ← pre-register device
   POST /api/ztp/callback    ← device calls when ZTP completes
   GET  /api/ztp/state       ← per-device provisioning state
+  POST /api/ztp/run         ← run ZTP (client fallback when not live)
 
 Day-0 bootstrap (management plane ONLY):
   mgmt IP + gateway · SSH v2 only · NTP · Syslog → tool IP
@@ -312,7 +406,139 @@ Day-N: full production config pushed after VERIFIED state
 
 ---
 
-## 10. BGP Timer Presets
+## 12. Pre/Post Checks Architecture
+
+```
+Check categories per device (8–12 checks):
+  Connectivity : ICMP reachability, management SSH, LLDP neighbors
+  Protocols    : BGP session state, OSPF adjacency, interface state
+  Config       : Hostname match, running vs startup diff, ACL presence
+  Hardware     : CPU/memory thresholds, interface error counters, power/fan status
+
+Display:
+  - Grouped by device (expandable rows)
+  - Summary pill badges: PASS (green) / WARN (yellow) / FAIL (red) counts
+  - Pre→Post delta panel when both phases completed (highlights changed checks)
+  - Demo simulation (simulateChecksResult) when backend not live
+
+API endpoints:
+  POST /api/checks/pre      ← pre-checks
+  POST /api/checks/post     ← post-checks
+```
+
+---
+
+## 13. NETCONF Interactive Panel
+
+```
+Controls:
+  Device selector    ← dropdown from BOM devices
+  Operation          ← get-config | edit-config | get | lock | unlock
+  Datastore          ← running | candidate | startup
+  XML editor pane    ← pre-populated per vendor (JunOS/IOS-XE/EOS/NX-OS) and operation
+  Execute (Demo)     ← shows mock NETCONF response (<ok/> or realistic config XML)
+  Download Script    ← downloads full NETCONF Python script
+
+Vendor XML patterns:
+  JunOS   — <get-configuration> with <format>text</format>
+  IOS-XE  — ietf-interfaces YANG model
+  EOS     — <get-config> with arista-specific namespaces
+  Generic — RFC 6241 standard RPC
+```
+
+---
+
+## 14. Config Automation Section (Deploy Pipeline tab)
+
+Three sub-tabs inside the "Config Automation" section at the bottom of the Deploy Pipeline:
+
+### Ansible Tower / AWX
+- Tower URL input (default: `http://tower.corp.local`)
+- Job Template selector: Deploy Network Config | ZTP Bootstrap | Pre-check Baseline | Post-check Validation | Config Rollback
+- Extra vars editor: JSON pre-populated from intent (`site_code`, `use_case`, `devices`)
+- Launch Job button (demo: fake job ID + status progression)
+- Download Ansible Inventory (INI format from BOM devices)
+- Download Playbook (existing netmiko scripts)
+
+### Terraform
+- Provider selector: Cisco NSO | Netbox | Nautobot | Ansible | Generic
+- Shows `main.tf`, `variables.tf`, `terraform.tfvars` snippets for selected provider
+- Download all three files
+- "Terraform Plan (Demo)" shows realistic plan output
+
+### Manual / Script
+- Script type: Push Configs | Pre-check | Post-check | Rollback
+- Shows existing Python netmiko scripts prominently
+- Copy + Download buttons
+
+---
+
+## 15. Policy & Approval Gate (Deploy Pipeline tab)
+
+```
+Panel appears before "Start Deployment" button:
+  ✅ Change window: Business hours (Mon–Fri 06:00–22:00)
+  ✅ Peer review: Required (0 of 1 approver confirmed)
+  ⚠️  Blast radius: N devices (>3 triggers approval gate)
+  ✅ Rollback plan: Checkpoint backup strategy selected
+
+  [ ] I confirm this change has been reviewed  ← checkbox
+                                  [Approve & Lock] ← button
+
+Start Deployment button is DISABLED until policyApproved = true.
+Reset button clears policyApproved and policyConfirmed.
+Custom rules drawn from useAppStore().customPolicyRules (M-55).
+```
+
+---
+
+## 16. HLD Topology Diagram (`HLDTopologyDiagram.tsx`)
+
+```
+Pure SVG — no react-flow, no d3, no cytoscape.
+
+Features:
+  - Multi-layer topology (core/spine/leaf/access/firewall/wan-edge)
+  - Packet-flow scenarios (clickable flows highlight active path)
+  - "Primary Path Only" toggle (shows/hides non-flow devices when flow active)
+  - Device-inspect panel on click (shows hostname, role, IP, protocols)
+  - Cloud provider node overlays for multicloud use case
+  - Animated ambient particles on links
+
+SVG sizing fix (responsive):
+  - No fixed width/height attrs on <svg>
+  - style={{ width: '100%', height: 'auto', display: 'block' }}
+  - viewBox set from computed topo dimensions
+
+Non-flow nodes: always fully visible (no dimming/opacity reduction).
+```
+
+---
+
+## 17. Sidebar Deep-Navigation
+
+`frontend/src/components/wizard/Sidebar.tsx` — "Deploy & Validate" section
+expands into 7 sub-items when step === 6 (or user expands):
+
+```typescript
+const DEPLOY_SUB_ITEMS = [
+  { tab: 'deploy',   icon: '🚀', label: 'Deploy Pipeline'  },
+  { tab: 'ztp',      icon: '📡', label: 'ZTP Provisioning' },
+  { tab: 'checks',   icon: '✅', label: 'Pre/Post Checks'  },
+  { tab: 'netconf',  icon: '🖧', label: 'NETCONF'          },
+  { tab: 'monitor',  icon: '📊', label: 'Monitoring'       },
+  { tab: 'day2ops',  icon: '⚙️', label: 'Day-2 Ops'       },
+  { tab: 'batfish',  icon: '🦟', label: 'Batfish Validate' },
+]
+```
+
+Click handler: `setStep(6); setActiveDeployTab(sub.tab); onClose?.()`
+Active style: `step === 6 && activeDeployTab === sub.tab`
+Indentation: `pl-8` to nest under group header
+
+---
+
+## 18. BGP Timer Presets
 
 ```javascript
 const BGP_TIMER_PRESETS = {
@@ -325,7 +551,7 @@ const BGP_TIMER_PRESETS = {
 
 ---
 
-## 11. Monitoring Stack
+## 19. Monitoring Stack
 
 ```yaml
 # Add to docker-compose.local.yml
@@ -345,7 +571,7 @@ device reachability, RoCEv2 CNP rate (GPU), PFC watchdog events (GPU).
 
 ---
 
-## 12. Known Gaps (open items)
+## 20. Known Gaps (open items)
 
 All items below are **open** (not yet implemented in the React wizard).
 Use gap IDs in commit messages and conversations.
@@ -354,9 +580,9 @@ Use gap IDs in commit messages and conversations.
 |----|-----|----------|
 | G-A1 | Intent NLP parser — free-text → Step 1 form fields (Claude API) | P1 |
 | G-A2 | ✅ 2026-05-29 Professional HLD diagram — all layers interlinked, packet-flow scenarios, device-inspect panel | P1 |
-| G-A3 | Batfish/pyATS dry-run validation before config push | P1 |
+| G-A3 | ✅ 2026-05-29 Batfish/pyATS dry-run validation placeholder tab (Batfish Validate in Step 6) | P1 |
 | G-A4 | Config drift detection (running vs intended diff) | P1 |
-| G-A5 | Canary deployment (1 device first, confirm gate) | P1 |
+| G-A5 | ✅ 2026-05-29 Canary deployment (1 device first, confirm gate) — canary mode in Deploy Pipeline | P1 |
 | G-A6 | ZTP file server (nginx + TFTP in docker-compose) | P1 |
 | G-A7 | Embedded monitoring stack (VictoriaMetrics + Grafana auto-provision) | P1 |
 | G-A8 | gNMI / streaming telemetry (currently SNMP polling only) | P2 |
@@ -366,10 +592,12 @@ Use gap IDs in commit messages and conversations.
 | G-A12 | SD-WAN design (vEdge/vSmart/vBond architecture) | P2 |
 | G-A13 | TCO / 3-year cost model in BOM | P2 |
 | G-A14 | Rack layout and cable schedule in BOM | P2 |
+| G-A15 | Intent NLP: free-text → structured wizard fields via Claude API | P1 |
+| G-A16 | Config drift detection: running vs intended diff with inline remediation | P1 |
 
 ---
 
-## 13. Implementation Rules
+## 21. Implementation Rules
 
 1. Run `cd frontend && npm test` after every change to `lib/configgen.ts` — 36 tests cover all config rules.
 2. New backend types go in `frontend/src/types/index.ts`.
@@ -378,8 +606,12 @@ Use gap IDs in commit messages and conversations.
 5. Never hardcode device counts — use `buildDeviceList()` in `lib/bom.ts`.
 6. Secrets always use `<CHANGE-ME-*>` — never hardcode credentials in generated configs.
 7. IS-IS for DC/GPU underlay; OSPF for WAN/campus. Never emit both in one config.
+8. Demo mode: when `!isLive` (from `useBackendMode()`), use client-side simulation instead of API calls.
+9. No new npm packages for UI — pure React + Tailwind only (no react-flow, d3, cytoscape, etc.).
+10. `activeDeployTab` in Zustand store (not local state) enables sidebar-to-Step6 deep-linking.
 
 ---
 
-*Last updated: 2026-05-26. React 19 migration complete (PR #23).*
-*Mark resolved gaps with ✅ and date. Add new gaps as G-A15, G-A16, etc.*
+*Last updated: 2026-05-29. Step 6 enterprise-grade overhaul complete.*
+*HLD topology diagram complete (G-A2 ✅). Sidebar deep-nav complete. ZTP/Checks demo simulation complete. NETCONF interactive complete. Config Automation (Ansible Tower + Terraform + Manual) complete. Policy Gate complete.*
+*Mark resolved gaps with ✅ and date. Add new gaps as G-A17, G-A18, etc.*
