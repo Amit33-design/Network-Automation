@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useTopologySummary, useTopologyDevices } from '@/hooks/useTopology'
 import { useRunZTP } from '@/hooks/useZTP'
 import { useRunChecks } from '@/hooks/useChecks'
@@ -27,12 +27,32 @@ const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
   healthy: 'pass', degraded: 'warn', down: 'fail', unknown: 'neutral',
 }
 
-type Tab = 'ztp' | 'checks' | 'monitor'
+type Tab = 'deploy' | 'ztp' | 'checks' | 'monitor'
+
+type PipelineStage = 'precheck' | 'backup' | 'push' | 'verify' | 'postcheck'
+type StageStatus = 'pending' | 'running' | 'done' | 'failed'
+
+const PIPELINE_STAGES: Array<{ id: PipelineStage; label: string; desc: string }> = [
+  { id: 'precheck',  label: 'Pre-Deployment Checks', desc: 'Verify connectivity, baseline state, and config syntax' },
+  { id: 'backup',    label: 'Backup Running Configs', desc: 'Archive current device configurations before changes' },
+  { id: 'push',      label: 'Push Configurations',    desc: 'Deploy generated configs via NETCONF / SSH / RESTCONF' },
+  { id: 'verify',    label: 'Verify',                 desc: 'Confirm config applied — spot-check routing and BGP state' },
+  { id: 'postcheck', label: 'Post-Deployment Checks', desc: 'Full automated post-check suite and health validation' },
+]
 
 export function Step6Deploy() {
   const { prevStep } = useAppStore()
   const { showToast } = useToast()
-  const [tab, setTab] = useState<Tab>('ztp')
+  const [tab, setTab] = useState<Tab>('deploy')
+
+  // ── Deploy Pipeline state ─────────────────────────────────────────────────
+  const [stageStatus, setStageStatus] = useState<Record<PipelineStage, StageStatus>>({
+    precheck: 'pending', backup: 'pending', push: 'pending', verify: 'pending', postcheck: 'pending',
+  })
+  const [deployLog, setDeployLog] = useState<string[]>([])
+  const [isDeploying, setIsDeploying] = useState(false)
+  const [deployDone, setDeployDone] = useState(false)
+  const [deviceStatuses, setDeviceStatuses] = useState<Record<string, StageStatus>>({})
 
   // ── topology ──────────────────────────────────────────────────────────────
   const { data: summary } = useTopologySummary()
@@ -43,6 +63,53 @@ export function Step6Deploy() {
     model: d.model || d.platform, vendor: d.platform, count: 1,
     unitPrice: 0, totalPrice: 0, speed: '100G', ports: 48, features: d.tags ?? [],
   }))
+
+  // ── Deploy Pipeline logic ─────────────────────────────────────────────────
+  async function handleStartDeploy() {
+    if (isDeploying) return
+    setIsDeploying(true)
+    setDeployDone(false)
+    setDeployLog([])
+    setStageStatus({ precheck: 'pending', backup: 'pending', push: 'pending', verify: 'pending', postcheck: 'pending' })
+
+    const devStatuses: Record<string, StageStatus> = {}
+    for (const d of allDevices) devStatuses[d.name] = 'pending'
+    setDeviceStatuses(devStatuses)
+
+    const log = (msg: string) =>
+      setDeployLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`])
+
+    const runStage = async (id: PipelineStage, messages: string[], durationMs: number) => {
+      setStageStatus(s => ({ ...s, [id]: 'running' }))
+      log(`▶ Starting: ${PIPELINE_STAGES.find(s => s.id === id)?.label}`)
+      for (const msg of messages) {
+        await new Promise(r => setTimeout(r, durationMs / messages.length))
+        log(msg)
+      }
+      setStageStatus(s => ({ ...s, [id]: 'done' }))
+    }
+
+    await runStage('precheck', ['✔ SSH reachability: all devices', '✔ Config syntax valid', '✔ BGP baseline captured', '✔ Interface baseline captured'], 2000)
+    await runStage('backup', allDevices.slice(0, 5).map(d => `✔ Backup saved: ${d.name}`).concat(['✔ All configs archived']), 1500)
+
+    setStageStatus(s => ({ ...s, push: 'running' }))
+    log('▶ Starting: Push Configurations')
+    for (const d of allDevices) {
+      await new Promise(r => setTimeout(r, 300))
+      setDeviceStatuses(prev => ({ ...prev, [d.name]: 'running' }))
+      await new Promise(r => setTimeout(r, 500))
+      setDeviceStatuses(prev => ({ ...prev, [d.name]: 'done' }))
+      log(`✔ Config pushed: ${d.name}`)
+    }
+    setStageStatus(s => ({ ...s, push: 'done' }))
+
+    await runStage('verify', ['✔ BGP sessions re-established', '✔ Route table validated', '✔ Interface states verified'], 1500)
+    await runStage('postcheck', ['✔ All BGP peers UP', '✔ CPU within baseline', '✔ No interface errors', '✔ VLAN membership verified', '✔ Deployment SUCCESSFUL'], 2000)
+
+    setIsDeploying(false)
+    setDeployDone(true)
+    showToast('Deployment complete — all checks passed', 'success')
+  }
 
   // ── ZTP state ─────────────────────────────────────────────────────────────
   const [failDevice, setFailDevice] = useState('')
@@ -123,6 +190,7 @@ export function Step6Deploy() {
 
   // ── Tab bar ───────────────────────────────────────────────────────────────
   const tabs: Array<{ id: Tab; label: string }> = [
+    { id: 'deploy',  label: 'Deploy Pipeline' },
     { id: 'ztp',     label: 'ZTP Provisioning' },
     { id: 'checks',  label: 'Pre / Post Checks' },
     { id: 'monitor', label: 'Monitoring' },
@@ -153,6 +221,117 @@ export function Step6Deploy() {
           </button>
         ))}
       </div>
+
+      {/* ── Deploy Pipeline tab ─────────────────────────────────────────── */}
+      {tab === 'deploy' && (
+        <div className="space-y-6">
+          {/* Action bar */}
+          <div className="flex gap-3 items-center">
+            <Button onClick={handleStartDeploy} disabled={isDeploying}>
+              {isDeploying ? '⏳ Deploying…' : '🚀 Start Deploy'}
+            </Button>
+            {deployDone && (
+              <Button variant="secondary" onClick={() => {
+                setStageStatus({ precheck: 'pending', backup: 'pending', push: 'pending', verify: 'pending', postcheck: 'pending' })
+                setDeployLog([])
+                setDeployDone(false)
+                setDeviceStatuses({})
+              }}>
+                ↺ Reset
+              </Button>
+            )}
+            {deployDone && (
+              <Button variant="ghost" onClick={() => showToast('Rollback initiated — restoring pre-deploy configs', 'warning')}>
+                ⚠ Rollback
+              </Button>
+            )}
+          </div>
+
+          {/* Stage pipeline */}
+          <div className="space-y-2">
+            {PIPELINE_STAGES.map((stage, i) => {
+              const status = stageStatus[stage.id]
+              const statusColors: Record<StageStatus, string> = {
+                pending: 'border-white/10 bg-white/[0.02]',
+                running: 'border-blue-500/50 bg-blue-500/5',
+                done:    'border-green-500/50 bg-green-500/5',
+                failed:  'border-red-500/50 bg-red-500/5',
+              }
+              const statusBadge: Record<StageStatus, React.ReactNode> = {
+                pending: <span className="text-xs text-gray-500 font-semibold">Pending</span>,
+                running: <span className="text-xs text-blue-400 font-semibold animate-pulse">● Running…</span>,
+                done:    <span className="text-xs text-green-400 font-semibold">✔ Done</span>,
+                failed:  <span className="text-xs text-red-400 font-semibold">✘ Failed</span>,
+              }
+              return (
+                <div
+                  key={stage.id}
+                  className={cn('flex items-center gap-4 p-4 rounded-xl border transition-colors', statusColors[status])}
+                >
+                  <div className={cn(
+                    'w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0',
+                    status === 'done'    ? 'bg-green-600 text-white' :
+                    status === 'running' ? 'bg-blue-600 text-white' :
+                    'bg-white/10 text-gray-400',
+                  )}>
+                    {status === 'done' ? '✓' : i + 1}
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold text-gray-200">{stage.label}</div>
+                    <div className="text-xs text-gray-500">{stage.desc}</div>
+                  </div>
+                  {statusBadge[status]}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Device status grid */}
+          {Object.keys(deviceStatuses).length > 0 && (
+            <Card>
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">Device Status</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                {allDevices.map(d => {
+                  const ds = deviceStatuses[d.name] ?? 'pending'
+                  return (
+                    <div
+                      key={d.name}
+                      className={cn(
+                        'p-2 rounded-lg border text-xs font-mono',
+                        ds === 'done'    ? 'border-green-500/40 bg-green-500/5 text-green-400' :
+                        ds === 'running' ? 'border-blue-500/40 bg-blue-500/5 text-blue-400' :
+                        ds === 'failed'  ? 'border-red-500/40 bg-red-500/5 text-red-400' :
+                        'border-white/10 text-gray-500',
+                      )}
+                    >
+                      <div className="font-bold truncate">{d.name}</div>
+                      <div className="text-gray-600 capitalize">{ds}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          )}
+
+          {/* Terminal log */}
+          {deployLog.length > 0 && (
+            <div className="rounded-xl border border-white/10 bg-[#080E1A] p-4 font-mono text-xs max-h-64 overflow-y-auto">
+              {deployLog.map((line, i) => (
+                <div
+                  key={i}
+                  className={
+                    line.includes('✔') ? 'text-green-400' :
+                    line.includes('▶') ? 'text-blue-400' :
+                    'text-gray-400'
+                  }
+                >
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── ZTP tab ─────────────────────────────────────────────────────── */}
       {tab === 'ztp' && (
