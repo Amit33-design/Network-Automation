@@ -145,11 +145,11 @@ export const useAppStore = create<AppStore>()(
       nextStep: () => set(s => ({ step: Math.min(s.step + 1, 6) })),
       prevStep: () => set(s => ({ step: Math.max(s.step - 1, 1) })),
 
-      setUseCase: useCase => set({ useCase }),
+      setUseCase: useCase => set({ useCase, configs: {} }),
       setAppTypes: appTypes => set({ appTypes }),
       setSiteName: siteName => set({ siteName }),
       setSiteCode: siteCode => set({ siteCode }),
-      setScale: scale => set({ scale }),
+      setScale: scale => set({ scale, configs: {} }),
       setRedundancy: redundancy => set({ redundancy }),
       setCompliance: compliance => set({ compliance }),
       setLinkDistance: (key, metres) =>
@@ -157,7 +157,9 @@ export const useAppStore = create<AppStore>()(
       setOrgName: orgName => set({ orgName }),
       setOrgSize: orgSize => set({ orgSize }),
       setBudgetTier: budgetTier => set({ budgetTier }),
-      setVendorPrefs: vendorPrefs => set({ vendorPrefs }),
+      // Vendor change invalidates generated configs so Step 3 regenerates them
+      // for the newly-selected hardware instead of showing stale (e.g. Cisco) output.
+      setVendorPrefs: vendorPrefs => set({ vendorPrefs, configs: {} }),
       setIndustry: industry => set({ industry }),
       setPrimaryContact: primaryContact => set({ primaryContact }),
       setCustomPolicyRules: customPolicyRules => set({ customPolicyRules }),

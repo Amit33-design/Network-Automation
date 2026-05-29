@@ -84,6 +84,11 @@ const VENDOR_PRODUCT_MAP: Record<string, Partial<Record<UseCase, Record<string, 
     gpu:       { spine: 'nvidia-sn5600', leaf: 'nvidia-sn4600c' },
     dc:        { spine: 'nvidia-sn5600', leaf: 'nvidia-sn4600c' },
   },
+  'Extreme Networks': {
+    dc:        { spine: 'extreme-8720',  leaf: 'extreme-8520' },
+    multisite: { spine: 'extreme-8720',  leaf: 'extreme-8520' },
+    campus:    { distribution: 'extreme-5720', access: 'extreme-5420' },
+  },
 }
 
 /** Build role→productId prefs by layering vendorPrefs on top of Cisco defaults. */
