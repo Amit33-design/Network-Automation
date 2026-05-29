@@ -29,6 +29,7 @@ interface AppStore extends AppState {
   setPrimaryContact: (contact: string) => void
   // M-55
   setCustomPolicyRules: (rules: string) => void
+  setActiveDeployTab: (tab: string) => void
 
   // Step 2 setters — requirements
   setTrafficPattern: (p: TrafficPattern) => void
@@ -104,6 +105,7 @@ const DEFAULT_STATE: AppState = {
   industry: '',
   primaryContact: '',
   customPolicyRules: '',
+  activeDeployTab: 'deploy',
   // Step 2 — Network Requirements
   trafficPattern: 'ew',
   totalEndpoints: 500,
@@ -154,6 +156,7 @@ export const useAppStore = create<AppStore>()(
       setIndustry: industry => set({ industry }),
       setPrimaryContact: primaryContact => set({ primaryContact }),
       setCustomPolicyRules: customPolicyRules => set({ customPolicyRules }),
+      setActiveDeployTab: activeDeployTab => set({ activeDeployTab }),
 
       setTrafficPattern: trafficPattern => set({ trafficPattern }),
       setTotalEndpoints: totalEndpoints => set({ totalEndpoints }),

@@ -131,6 +131,8 @@ export interface AppState {
   primaryContact: string
   // Custom policy rules (M-55)
   customPolicyRules: string
+  // Active deploy sub-tab
+  activeDeployTab: string
   // Step 2 — Network Requirements
   trafficPattern: TrafficPattern
   totalEndpoints: number

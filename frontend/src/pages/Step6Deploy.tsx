@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useMemo } from 'react'
 import { useTopologySummary, useTopologyDevices } from '@/hooks/useTopology'
 import { useRunZTP } from '@/hooks/useZTP'
 import { useRunChecks } from '@/hooks/useChecks'
@@ -8,20 +8,11 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { useAppStore } from '@/store/useAppStore'
+import { useBackendMode } from '@/components/BackendToggle'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult } from '@/types'
-
-const ZTP_STAGES = [
-  'dhcp_requested', 'bootstrap_downloaded', 'config_applied',
-  'registered', 'pre_checks_running', 'pre_checks_passed', 'online', 'failed',
-]
-
-const CHECK_OPTIONS = [
-  'interfaces_up', 'bgp_sessions', 'routing_table', 'cpu_baseline',
-  'stp_mode', 'vlans_active', 'ha_sync', 'virtual_servers', 'pool_members',
-]
+import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
   healthy: 'pass', degraded: 'warn', down: 'fail', unknown: 'neutral',
@@ -854,12 +845,332 @@ if __name__ == "__main__":
 `
 }
 
+// ── ZTP simulation state machine ──────────────────────────────────────────────
+
+const ZTP_SIM_STAGES = [
+  { id: 'REGISTERED',        label: 'Registered',         icon: '📋' },
+  { id: 'POWERED_ON',        label: 'Powered On',          icon: '⚡' },
+  { id: 'DHCP_ACK',          label: 'DHCP ACK',            icon: '🌐' },
+  { id: 'SCRIPT_DOWNLOADED', label: 'Script Downloaded',   icon: '📥' },
+  { id: 'CONFIG_APPLYING',   label: 'Config Applying',     icon: '⚙️' },
+  { id: 'CALLBACK_RECEIVED', label: 'Callback Received',   icon: '📡' },
+  { id: 'VERIFIED',          label: 'Verified',            icon: '✔' },
+  { id: 'ONLINE',            label: 'Online',              icon: '🟢' },
+]
+
+const ZTP_STAGE_MSGS: Record<string, string> = {
+  REGISTERED:        'Device MAC registered in DHCP/ZTP database',
+  POWERED_ON:        'Device boot sequence initiated, BIOS POST complete',
+  DHCP_ACK:          'DHCP lease acquired, management IP assigned',
+  SCRIPT_DOWNLOADED: 'ZTP bootstrap script downloaded via TFTP/HTTP',
+  CONFIG_APPLYING:   'Day-0 config being pushed via CLI/NETCONF',
+  CALLBACK_RECEIVED: 'Device sent ZTP completion callback to server',
+  VERIFIED:          'SSH reachability + hostname + mgmt ACL verified',
+  ONLINE:            'Device fully provisioned and in production state',
+}
+
+function simulateZTPResult(
+  devList: Array<{name: string; role: string}>,
+  failDevice: string,
+  failAt: string,
+): ZTPResult {
+  const events: ZTPEvent[] = []
+  const results: Record<string, string> = {}
+  let online = 0, failed = 0
+  const failStageIdx = ZTP_SIM_STAGES.findIndex(s => s.id === failAt.toUpperCase())
+
+  for (const dev of devList) {
+    let devFailed = false
+    for (let i = 0; i < ZTP_SIM_STAGES.length; i++) {
+      const stage = ZTP_SIM_STAGES[i]
+      const isFailHere = dev.name === failDevice && i === (failStageIdx >= 0 ? failStageIdx : -1)
+      if (isFailHere) {
+        events.push({
+          device_name: dev.name,
+          state: stage.id.toLowerCase(),
+          message: `[FAULT INJECTED] Simulated failure at ${stage.label} stage`,
+          success: false,
+          timestamp: new Date().toISOString(),
+        })
+        devFailed = true
+        break
+      }
+      events.push({
+        device_name: dev.name,
+        state: stage.id.toLowerCase(),
+        message: ZTP_STAGE_MSGS[stage.id] ?? stage.label,
+        success: true,
+        timestamp: new Date().toISOString(),
+      })
+    }
+    if (devFailed) { failed++; results[dev.name] = 'FAILED' }
+    else { online++;  results[dev.name] = 'ONLINE' }
+  }
+  return { results, events, summary: { total_events: events.length, online, failed } }
+}
+
+// ── Checks simulation ─────────────────────────────────────────────────────────
+
+const CHECK_TEMPLATES = [
+  // connectivity
+  { cat: 'Connectivity', name: 'ICMP Reachability',   ok: (h: string) => `Ping ${h} 0% loss, RTT 0.8ms`   },
+  { cat: 'Connectivity', name: 'SSH Access',           ok: (h: string) => `SSH ${h}:22 ok in 0.3s`          },
+  { cat: 'Connectivity', name: 'LLDP Neighbors',       ok: (h: string) => `${h}: 4 LLDP neighbors`          },
+  // protocols
+  { cat: 'Protocols',    name: 'BGP Session State',    ok: (h: string) => `${h}: 2 BGP peers Established`   },
+  { cat: 'Protocols',    name: 'OSPF Adjacency',       ok: (h: string) => `${h}: FULL state on 3 interfaces` },
+  { cat: 'Protocols',    name: 'Interface Status',     ok: (h: string) => `${h}: 46/48 interfaces Up`        },
+  // config
+  { cat: 'Config',       name: 'Hostname Match',       ok: (h: string) => `Running hostname matches: ${h}`  },
+  { cat: 'Config',       name: 'Running vs Startup',   ok: (_h: string) => `Startup config in sync`         },
+  { cat: 'Config',       name: 'ACL Present',          ok: (_h: string) => `Management ACL MGMT-ACCESS found`},
+  // hardware
+  { cat: 'Hardware',     name: 'CPU Utilization',      ok: (_h: string) => `CPU: 18% (threshold 75%)`       },
+  { cat: 'Hardware',     name: 'Memory Utilization',   ok: (_h: string) => `Memory: 34% (threshold 85%)`    },
+  { cat: 'Hardware',     name: 'Interface Errors',     ok: (_h: string) => `0 errors on all interfaces`      },
+  { cat: 'Hardware',     name: 'Power & Fan Status',   ok: (_h: string) => `All PSUs OK, all fans OK`        },
+]
+
+function simulateChecksResult(
+  devList: Array<{name: string; role: string}>,
+  phase: 'pre' | 'post',
+  failDevice: string,
+  failCheck: string,
+): ChecksResult {
+  const results: CheckResult[] = []
+  for (const dev of devList) {
+    for (const tpl of CHECK_TEMPLATES) {
+      const isFail = dev.name === failDevice && tpl.name === failCheck
+      const roll = Math.random()
+      const status: CheckResult['status'] = isFail ? 'FAIL'
+        : roll < 0.05 ? 'FAIL'
+        : roll < 0.15 ? 'WARN'
+        : 'PASS'
+      results.push({
+        device: dev.name,
+        name: tpl.name,
+        status,
+        message: status === 'PASS' ? tpl.ok(dev.name)
+          : status === 'WARN' ? `${tpl.ok(dev.name)} — minor deviation`
+          : `FAILED: ${tpl.name} check failed on ${dev.name}`,
+        remediation: status === 'FAIL'
+          ? `Review ${tpl.name} on ${dev.name}; check ${phase === 'pre' ? 'connectivity and baseline' : 'post-deploy state'}`
+          : null,
+      })
+    }
+  }
+  return { phase, results }
+}
+
+// ── NETCONF XML helpers ───────────────────────────────────────────────────────
+
+function buildNetconfXMLForOp(op: string, datastore: string, vendor: string): string {
+  const isJunos = /juniper|junos/i.test(vendor)
+  switch (op) {
+    case 'get-config': return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="1">
+  <get-config>
+    <source><${datastore}/></source>
+    <filter type="subtree">
+      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces"/>
+    </filter>
+  </get-config>
+</rpc>`
+    case 'edit-config':
+      if (isJunos) return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="2">
+  <edit-config>
+    <target><${datastore}/></target>
+    <config>
+      <configuration xmlns="http://xml.juniper.net/xnm/1.1/xnm">
+        <interfaces>
+          <interface>
+            <name>ge-0/0/0</name>
+            <description>NetDesign AI managed</description>
+          </interface>
+        </interfaces>
+      </configuration>
+    </config>
+  </edit-config>
+</rpc>`
+      return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="2">
+  <edit-config>
+    <target><${datastore}/></target>
+    <config>
+      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+        <interface>
+          <name>GigabitEthernet1</name>
+          <description>NetDesign AI — managed</description>
+          <enabled>true</enabled>
+          <ipv4 xmlns="urn:ietf:params:xml:ns:yang:ietf-ip">
+            <address><ip>10.0.0.1</ip><prefix-length>24</prefix-length></address>
+          </ipv4>
+        </interface>
+      </interfaces>
+    </config>
+  </edit-config>
+</rpc>`
+    case 'get': return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="3">
+  <get>
+    <filter type="subtree">
+      <interfaces-state xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces"/>
+    </filter>
+  </get>
+</rpc>`
+    case 'lock': return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="4">
+  <lock><target><${datastore}/></target></lock>
+</rpc>`
+    case 'unlock': return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="5">
+  <unlock><target><${datastore}/></target></unlock>
+</rpc>`
+    default: return ''
+  }
+}
+
+function buildNetconfMockResponse(op: string): string {
+  if (op === 'get-config') return `<?xml version="1.0" encoding="UTF-8"?>
+<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="1">
+  <data>
+    <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+      <interface>
+        <name>GigabitEthernet1</name>
+        <description>WAN Uplink</description>
+        <enabled>true</enabled>
+        <type xmlns:ianaift="urn:ietf:params:xml:ns:yang:iana-if-type">ianaift:ethernetCsmacd</type>
+        <ipv4 xmlns="urn:ietf:params:xml:ns:yang:ietf-ip">
+          <address><ip>10.0.0.1</ip><prefix-length>30</prefix-length></address>
+        </ipv4>
+      </interface>
+    </interfaces>
+  </data>
+</rpc-reply>`
+  if (op === 'get') return `<?xml version="1.0" encoding="UTF-8"?>
+<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="3">
+  <data>
+    <interfaces-state xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+      <interface>
+        <name>GigabitEthernet1</name>
+        <admin-status>up</admin-status><oper-status>up</oper-status>
+        <statistics>
+          <in-octets>1048576</in-octets><out-octets>2097152</out-octets>
+          <in-errors>0</in-errors><out-errors>0</out-errors>
+        </statistics>
+      </interface>
+    </interfaces-state>
+  </data>
+</rpc-reply>`
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="1">
+  <ok/>
+</rpc-reply>`
+}
+
+// ── Automation helpers ────────────────────────────────────────────────────────
+
+function buildAnsibleInventory(deviceNames: string[]): string {
+  const lines = ['[network_devices]']
+  deviceNames.forEach((n, i) => {
+    lines.push(`${n} ansible_host=10.0.0.${i + 10} ansible_user=<CHANGE-ME-USER> ansible_password=<CHANGE-ME-PASS> ansible_network_os=ios`)
+  })
+  lines.push('', '[network_devices:vars]', 'ansible_connection=network_cli', 'ansible_become=yes', 'ansible_become_method=enable')
+  return lines.join('\n')
+}
+
+function buildTerraformMain(provider: string, deviceNames: string[]): string {
+  if (provider === 'cisco_nso') return `terraform {
+  required_providers {
+    nso = { source = "CiscoDevNet/nso", version = "~> 0.5" }
+  }
+}
+provider "nso" {
+  url      = "http://nso.corp.local:8080"
+  username = "<CHANGE-ME-NSO-USER>"
+  password = "<CHANGE-ME-NSO-PASS>"
+  insecure = true
+}
+resource "nso_device" "managed" {
+  for_each    = toset(${JSON.stringify(deviceNames)})
+  name        = each.key
+  address     = "10.0.0.\${index(tolist(toset(${JSON.stringify(deviceNames)})), each.key) + 10}"
+  port        = 22
+  authgroup   = "default"
+  device_type = "cli"
+  ned_id      = "cisco-ios-cli-6.85"
+}`
+  if (provider === 'netbox') return `terraform {
+  required_providers {
+    netbox = { source = "e-breuninger/netbox", version = "~> 3.0" }
+  }
+}
+provider "netbox" {
+  server_url = "http://netbox.corp.local"
+  api_token  = "<CHANGE-ME-NETBOX-TOKEN>"
+}
+resource "netbox_device" "managed" {
+  for_each    = toset(${JSON.stringify(deviceNames)})
+  name        = each.key
+  device_type = 1
+  site        = netbox_site.main.id
+  status      = "active"
+}
+resource "netbox_site" "main" {
+  name = "Main Site"; slug = "main-site"; status = "active"
+}`
+  return `terraform {
+  required_version = ">= 1.5"
+}
+variable "devices" {
+  type = list(object({ hostname = string; ip = string; platform = string }))
+  default = ${JSON.stringify(deviceNames.map((n,i) => ({ hostname: n, ip: `10.0.0.${i+10}`, platform: 'cisco_ios' })), null, 2)}
+}
+resource "null_resource" "deploy_configs" {
+  for_each = { for d in var.devices : d.hostname => d }
+  provisioner "local-exec" {
+    command = "python3 push_configs.py --host \${each.value.ip} --device \${each.key}"
+  }
+  triggers = { config_hash = sha256(file("\${each.key}.cfg")) }
+}`
+}
+
+function buildTerraformVars(deviceNames: string[]): string {
+  return `# terraform.tfvars — NetDesign AI generated
+# Edit IP addresses before applying
+
+devices = [
+${deviceNames.map((n, i) => `  { hostname = "${n}", ip = "10.0.0.${i + 10}", platform = "cisco_ios" }`).join(',\n')}
+]
+`
+}
+
+function buildTerraformPlanOutput(deviceNames: string[]): string {
+  const adds = deviceNames.slice(0, 6)
+  return `Terraform will perform the following actions:
+
+${adds.map(n => `  # null_resource.deploy_configs["${n}"] will be created
+  + resource "null_resource" "deploy_configs" {
+      + id       = (known after apply)
+      + triggers = {
+          + "config_hash" = (known after apply)
+        }
+    }
+`).join('\n')}
+Plan: ${adds.length} to add, 0 to change, 0 to destroy.`
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function Step6Deploy() {
   const { prevStep } = useAppStore()
+  const activeDeployTab    = useAppStore(s => s.activeDeployTab)
+  const setActiveDeployTab = useAppStore(s => s.setActiveDeployTab)
+  const storeDevices       = useAppStore(s => s.devices)
+  const storeSiteCode      = useAppStore(s => s.siteCode)
+  const storeUseCase       = useAppStore(s => s.useCase)
+  const customPolicyRules  = useAppStore(s => s.customPolicyRules)
+  const { isLive } = useBackendMode()
   const { showToast } = useToast()
-  const [tab, setTab] = useState<Tab>('deploy')
+
+  // Use activeDeployTab as the tab — no separate local state needed
+  const tab    = (activeDeployTab || 'deploy') as Tab
+  const setTab = setActiveDeployTab
 
   // ── Deploy Pipeline state ─────────────────────────────────────────────────
   const [stageStatus, setStageStatus] = useState<Record<PipelineStage, StageStatus>>({
@@ -1005,23 +1316,35 @@ export function Step6Deploy() {
 
   // ── ZTP state ─────────────────────────────────────────────────────────────
   const [failDevice, setFailDevice] = useState('')
-  const [failAt, setFailAt] = useState('config_applied')
+  const [failAt, setFailAt] = useState(ZTP_SIM_STAGES[4].id) // CONFIG_APPLYING
   const [ztpEvents, setZtpEvents] = useState<ZTPEvent[]>([])
   const [ztpSummary, setZtpSummary] = useState<{ total_events: number; online: number; failed: number } | null>(null)
   const { mutate: runZTP, isPending: ztpPending } = useRunZTP()
 
   function handleRunZTP() {
+    if (!isLive) {
+      const data = simulateZTPResult(simDevices, failDevice, failAt)
+      setZtpEvents(data.events)
+      setZtpSummary(data.summary)
+      showToast(`ZTP (demo) — ${data.summary.online} online, ${data.summary.failed} failed`,
+        data.summary.failed ? 'warning' : 'success')
+      return
+    }
     const req = failDevice ? { fail_device: failDevice, fail_at: failAt } : {}
     runZTP(req, {
       onSuccess(data) {
         setZtpEvents(data.events)
         setZtpSummary(data.summary)
-        showToast(
-          `ZTP complete — ${data.summary.online} online, ${data.summary.failed} failed`,
-          data.summary.failed ? 'warning' : 'success',
-        )
+        showToast(`ZTP complete — ${data.summary.online} online, ${data.summary.failed} failed`,
+          data.summary.failed ? 'warning' : 'success')
       },
-      onError(e) { showToast('ZTP failed: ' + e.message, 'error') },
+      onError() {
+        const data = simulateZTPResult(simDevices, failDevice, failAt)
+        setZtpEvents(data.events)
+        setZtpSummary(data.summary)
+        showToast(`ZTP (demo fallback) — ${data.summary.online} online, ${data.summary.failed} failed`,
+          data.summary.failed ? 'warning' : 'success')
+      },
     })
   }
 
@@ -1033,29 +1356,28 @@ export function Step6Deploy() {
   const { mutate: runPre,  isPending: prePending }  = useRunChecks('pre')
   const { mutate: runPost, isPending: postPending } = useRunChecks('post')
 
-  function handleRunChecks(p: 'pre' | 'post') {
-    const req = failCheckDevice && failCheck
-      ? { fail_devices: { [failCheckDevice]: [failCheck] } }
-      : {}
-    const mutate = p === 'pre' ? runPre : runPost
-    mutate(req, {
-      onSuccess(data) {
-        setCheckPhase(p)
-        setCheckResults(data.results)
-        const pass = data.results.filter(r => r.status === 'PASS').length
-        const fail = data.results.filter(r => r.status === 'FAIL').length
-        showToast(
-          `${p.toUpperCase()}-checks done — ${pass} PASS, ${fail} FAIL`,
-          fail ? 'warning' : 'success',
-        )
-      },
-      onError(e) { showToast('Checks failed: ' + e.message, 'error') },
-    })
+  function applyChecksResult(data: ChecksResult, p: 'pre' | 'post') {
+    setCheckPhase(p)
+    setCheckResults(data.results)
+    if (p === 'pre') setPreResults(data.results)
+    else setPostResults(data.results)
+    const pass = data.results.filter(r => r.status === 'PASS').length
+    const fail = data.results.filter(r => r.status === 'FAIL').length
+    showToast(`${p.toUpperCase()}-checks — ${pass} PASS, ${fail} FAIL`, fail ? 'warning' : 'success')
   }
 
-  const checkPass = checkResults.filter(r => r.status === 'PASS').length
-  const checkFail = checkResults.filter(r => r.status === 'FAIL').length
-  const checkWarn = checkResults.filter(r => r.status === 'WARN').length
+  function handleRunChecks(p: 'pre' | 'post') {
+    if (!isLive) {
+      applyChecksResult(simulateChecksResult(simDevices, p, failCheckDevice, failCheck), p)
+      return
+    }
+    const req = failCheckDevice && failCheck ? { fail_devices: { [failCheckDevice]: [failCheck] } } : {}
+    const mutate = p === 'pre' ? runPre : runPost
+    mutate(req, {
+      onSuccess(data) { applyChecksResult(data, p) },
+      onError() { applyChecksResult(simulateChecksResult(simDevices, p, failCheckDevice, failCheck), p) },
+    })
+  }
 
   const badgeVariant = (s: string) =>
     ({ PASS: 'pass', FAIL: 'fail', WARN: 'warn', SKIP: 'skip' } as const)[s] ?? 'neutral'
@@ -1119,6 +1441,97 @@ export function Step6Deploy() {
     setBatfishDone(true)
   }
 
+  // ── Policy Gate state ─────────────────────────────────────────────────────
+  const [policyConfirmed, setPolicyConfirmed] = useState(false)
+  const [policyApproved, setPolicyApproved] = useState(false)
+
+  // ── NETCONF interactive state ──────────────────────────────────────────────
+  const [netconfDevice, setNetconfDevice] = useState('')
+  const [netconfOp, setNetconfOp] = useState('get-config')
+  const [netconfDatastore, setNetconfDatastore] = useState('running')
+  const [netconfResponse, setNetconfResponse] = useState('')
+  const [netconfRunning, setNetconfRunning] = useState(false)
+
+  const netconfDeviceObj = storeDevices.find(d => d.id === netconfDevice)
+  const netconfXML = useMemo(
+    () => buildNetconfXMLForOp(netconfOp, netconfDatastore, netconfDeviceObj?.vendor ?? ''),
+    [netconfOp, netconfDatastore, netconfDeviceObj],
+  )
+
+  async function handleNetconfExecute() {
+    setNetconfRunning(true)
+    setNetconfResponse('')
+    await new Promise(r => setTimeout(r, 800))
+    setNetconfResponse(buildNetconfMockResponse(netconfOp))
+    setNetconfRunning(false)
+  }
+
+  // ── Config Automation state ────────────────────────────────────────────────
+  const [automationTab, setAutomationTab] = useState<'ansible' | 'terraform' | 'manual'>('ansible')
+  const [towerUrl, setTowerUrl] = useState('http://tower.corp.local')
+  const [towerTemplate, setTowerTemplate] = useState('Deploy Network Config')
+  const [towerJobId, setTowerJobId] = useState<number | null>(null)
+  const [towerJobStatus, setTowerJobStatus] = useState('')
+  const [towerJobRunning, setTowerJobRunning] = useState(false)
+  const [tfProvider, setTfProvider] = useState('cisco_nso')
+  const [tfPlanOutput, setTfPlanOutput] = useState('')
+  const [tfPlanRunning, setTfPlanRunning] = useState(false)
+  const [scriptType, setScriptType] = useState<'precheck' | 'postcheck' | 'push' | 'rollback'>('push')
+
+  const autoDeviceNames = useMemo(() => {
+    if (storeDevices.length > 0) return storeDevices.map(d => d.hostname || d.id)
+    return allDevices.map(d => d.name)
+  }, [storeDevices, allDevices])
+
+  const towerExtraVars = JSON.stringify({
+    site_code: storeSiteCode || 'SITE01',
+    use_case: storeUseCase || 'dc',
+    devices: autoDeviceNames.slice(0, 5),
+  }, null, 2)
+
+  async function handleTowerLaunch() {
+    setTowerJobRunning(true)
+    setTowerJobId(null)
+    setTowerJobStatus('Pending')
+    await new Promise(r => setTimeout(r, 600))
+    const jobId = Math.floor(Math.random() * 9000) + 1000
+    setTowerJobId(jobId)
+    for (const status of ['Waiting', 'Running', 'Running', 'Running', 'Successful']) {
+      setTowerJobStatus(status)
+      await new Promise(r => setTimeout(r, 700))
+    }
+    setTowerJobRunning(false)
+    showToast(`Tower job #${jobId} completed successfully`, 'success')
+  }
+
+  async function handleTfPlan() {
+    setTfPlanRunning(true)
+    setTfPlanOutput('')
+    await new Promise(r => setTimeout(r, 1200))
+    setTfPlanOutput(buildTerraformPlanOutput(autoDeviceNames))
+    setTfPlanRunning(false)
+  }
+
+  // ── Derived: device list for ZTP / checks selectors ───────────────────────
+  const simDevices = useMemo(() => {
+    if (storeDevices.length > 0) {
+      const flat: Array<{name: string; role: string}> = []
+      for (const d of storeDevices) {
+        const count = Math.min(d.count, 4)
+        for (let i = 1; i <= count; i++) {
+          flat.push({ name: `${d.hostname}-${String(i).padStart(2,'0')}`, role: d.role })
+        }
+      }
+      return flat
+    }
+    return allDevices.map(d => ({ name: d.name, role: d.role }))
+  }, [storeDevices, allDevices])
+
+  // ── Expanded state for grouped checks display ──────────────────────────────
+  const [expandedCheckDevices, setExpandedCheckDevices] = useState<Set<string>>(new Set())
+  const [preResults, setPreResults] = useState<CheckResult[]>([])
+  const [postResults, setPostResults] = useState<CheckResult[]>([])
+
   // ── Tab bar ───────────────────────────────────────────────────────────────
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: 'deploy',  label: 'Deploy Pipeline' },
@@ -1159,6 +1572,74 @@ export function Step6Deploy() {
       {/* ── Deploy Pipeline tab ─────────────────────────────────────────── */}
       {tab === 'deploy' && (
         <div className="space-y-6">
+
+          {/* ── Policy & Approval Gate ────────────────────────────────────── */}
+          {!isDeploying && !deployDone && (
+            <div className="rounded-xl border border-white/15 bg-white/[0.02] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-200">Policy &amp; Approval Gate</h3>
+                <span className={cn('text-xs font-bold px-2 py-0.5 rounded-full border',
+                  policyApproved
+                    ? 'bg-green-500/15 border-green-500/40 text-green-300'
+                    : 'bg-yellow-500/15 border-yellow-500/40 text-yellow-300')}>
+                  {policyApproved ? '🔒 LOCKED & APPROVED' : '⚠ PENDING APPROVAL'}
+                </span>
+              </div>
+              <div className="space-y-1.5 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-green-400">✅</span>
+                  <span className="text-gray-300">Change window: Business hours (Mon–Fri 06:00–22:00)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={customPolicyRules ? 'text-green-400' : 'text-yellow-400'}>
+                    {customPolicyRules ? '✅' : '⚠️'}
+                  </span>
+                  <span className="text-gray-300">
+                    {customPolicyRules ? 'Custom policy rules loaded' : 'Peer review: Required (0 of 1 approver confirmed)'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={simDevices.length > 3 ? 'text-yellow-400' : 'text-green-400'}>
+                    {simDevices.length > 3 ? '⚠️' : '✅'}
+                  </span>
+                  <span className="text-gray-300">
+                    Blast radius: {Math.max(simDevices.length, storeDevices.length)} device(s)
+                    {simDevices.length > 3 ? ' — large change, approval gate active' : ' — within safe threshold'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-green-400">✅</span>
+                  <span className="text-gray-300">Rollback plan: Platform-native checkpoint strategy configured</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-white/10">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={policyConfirmed}
+                    onChange={e => { setPolicyConfirmed(e.target.checked); if (!e.target.checked) setPolicyApproved(false) }}
+                    className="accent-blue-500 w-4 h-4"
+                  />
+                  <span className="text-xs text-gray-300">I confirm this change has been reviewed and approved</span>
+                </label>
+                <button
+                  disabled={!policyConfirmed || policyApproved}
+                  onClick={() => { setPolicyApproved(true); showToast('Change approved and locked', 'success') }}
+                  className={cn(
+                    'ml-auto px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all',
+                    policyConfirmed && !policyApproved
+                      ? 'bg-green-600/20 border-green-500/40 text-green-300 hover:bg-green-600/30 cursor-pointer'
+                      : policyApproved
+                      ? 'bg-green-700/20 border-green-600/30 text-green-500 cursor-default'
+                      : 'opacity-40 border-white/10 text-gray-500 cursor-not-allowed',
+                  )}
+                >
+                  {policyApproved ? '🔒 Approved & Locked' : 'Approve & Lock'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* M-39 — Canary mode toggle + Action bar */}
           <div className="flex flex-wrap gap-3 items-center">
             {/* Canary toggle (only before deploy starts) */}
@@ -1180,9 +1661,12 @@ export function Step6Deploy() {
               </label>
             )}
 
-            <Button onClick={handleStartDeploy} disabled={isDeploying}>
+            <Button onClick={handleStartDeploy} disabled={isDeploying || (!deployDone && !policyApproved)}>
               {isDeploying ? '⏳ Deploying…' : '🚀 Start Deploy'}
             </Button>
+            {!deployDone && !policyApproved && !isDeploying && (
+              <span className="text-xs text-yellow-400 italic">Approve policy gate to enable deployment</span>
+            )}
 
             {/* M-39 — CANARY badge in action bar */}
             {canaryMode && (
@@ -1199,6 +1683,8 @@ export function Step6Deploy() {
                 setDeviceStatuses({})
                 setAwaitingCanaryConfirm(false)
                 setCanaryHostname('')
+                setPolicyApproved(false)
+                setPolicyConfirmed(false)
               }}>
                 &#8634; Reset
               </Button>
@@ -1469,6 +1955,153 @@ export function Step6Deploy() {
               <p className="text-xs text-gray-600 mt-2">Ansible playbook available after deployment completes.</p>
             )}
           </Card>
+
+          {/* ── Config Automation section ─────────────────────────────────── */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Config Automation</CardTitle>
+            </CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              Push configurations via Ansible Tower/AWX, Terraform, or download standalone scripts.
+            </p>
+            {/* Sub-tab strip */}
+            <div className="flex gap-1 mb-5 bg-white/[0.03] rounded-lg p-1 w-fit">
+              {(['ansible', 'terraform', 'manual'] as const).map(at => (
+                <button key={at} onClick={() => setAutomationTab(at)}
+                  className={cn('px-4 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer',
+                    automationTab === at ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200')}>
+                  {at === 'ansible' ? '🔧 Ansible Tower' : at === 'terraform' ? '🏗 Terraform' : '📜 Script'}
+                </button>
+              ))}
+            </div>
+
+            {/* Ansible Tower panel */}
+            {automationTab === 'ansible' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Tower / AWX URL</label>
+                    <input value={towerUrl} onChange={e => setTowerUrl(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 font-mono" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Job Template</label>
+                    <select value={towerTemplate} onChange={e => setTowerTemplate(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                      {['Deploy Network Config', 'ZTP Bootstrap', 'Pre-check Baseline', 'Post-check Validation', 'Config Rollback'].map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Extra Variables (JSON)</label>
+                  <pre className="bg-[#080E1A] border border-white/10 rounded p-3 text-xs text-green-300 font-mono overflow-x-auto">
+                    {towerExtraVars}
+                  </pre>
+                </div>
+                <div className="flex flex-wrap gap-3 items-center">
+                  <Button onClick={handleTowerLaunch} disabled={towerJobRunning}>
+                    {towerJobRunning ? '⏳ Launching…' : '▶ Launch Job'}
+                  </Button>
+                  <Button variant="secondary" size="sm"
+                    onClick={() => { downloadBlob('inventory.ini', buildAnsibleInventory(autoDeviceNames)); showToast('inventory.ini downloaded', 'success') }}>
+                    ↓ Download Inventory
+                  </Button>
+                  <Button variant="secondary" size="sm"
+                    onClick={() => { downloadBlob('deploy_playbook.yml', buildAnsiblePlaybook(deployLog, autoDeviceNames)); showToast('deploy_playbook.yml downloaded', 'success') }}>
+                    ↓ Download Playbook
+                  </Button>
+                  {towerJobId && (
+                    <span className={cn('text-xs font-mono px-3 py-1 rounded border',
+                      towerJobStatus === 'Successful' ? 'bg-green-500/10 border-green-500/30 text-green-300'
+                      : towerJobStatus === 'Failed' ? 'bg-red-500/10 border-red-500/30 text-red-300'
+                      : 'bg-blue-500/10 border-blue-500/30 text-blue-300 animate-pulse')}>
+                      Job #{towerJobId} · {towerJobStatus}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Terraform panel */}
+            {automationTab === 'terraform' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Provider</label>
+                  <select value={tfProvider} onChange={e => setTfProvider(e.target.value)}
+                    className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                    <option value="cisco_nso">Cisco NSO</option>
+                    <option value="netbox">Netbox</option>
+                    <option value="nautobot">Nautobot</option>
+                    <option value="generic">Generic / null_resource</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">main.tf</label>
+                  <pre className="bg-[#080E1A] border border-white/10 rounded p-3 text-xs text-green-300 font-mono overflow-x-auto max-h-64">
+                    {buildTerraformMain(tfProvider, autoDeviceNames.slice(0, 6))}
+                  </pre>
+                </div>
+                {tfPlanOutput && (
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">terraform plan output</label>
+                    <pre className="bg-[#080E1A] border border-white/10 rounded p-3 text-xs text-yellow-300 font-mono overflow-x-auto max-h-48">
+                      {tfPlanOutput}
+                    </pre>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={handleTfPlan} disabled={tfPlanRunning}>
+                    {tfPlanRunning ? '⏳ Planning…' : '▶ Terraform Plan (Demo)'}
+                  </Button>
+                  <Button variant="secondary" size="sm"
+                    onClick={() => { downloadBlob('main.tf', buildTerraformMain(tfProvider, autoDeviceNames)); showToast('main.tf downloaded', 'success') }}>
+                    ↓ main.tf
+                  </Button>
+                  <Button variant="secondary" size="sm"
+                    onClick={() => { downloadBlob('terraform.tfvars', buildTerraformVars(autoDeviceNames)); showToast('terraform.tfvars downloaded', 'success') }}>
+                    ↓ terraform.tfvars
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Manual / Script panel */}
+            {automationTab === 'manual' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Script</label>
+                  <div className="flex gap-2 flex-wrap mb-3">
+                    {(['push', 'precheck', 'postcheck'] as const).map(s => (
+                      <button key={s} onClick={() => setScriptType(s)}
+                        className={cn('px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer',
+                          scriptType === s ? 'bg-blue-600/20 border-blue-500/40 text-blue-300' : 'border-white/10 text-gray-400 hover:border-white/20')}>
+                        {s === 'push' ? '🚀 Push Configs' : s === 'precheck' ? '🔍 Pre-Check' : '✅ Post-Check'}
+                      </button>
+                    ))}
+                  </div>
+                  <pre className="bg-[#080E1A] border border-white/10 rounded p-3 text-xs text-green-300 font-mono overflow-x-auto max-h-72">
+                    {scriptType === 'push' ? buildPushConfigsScript().slice(0, 800) + '\n# ... (download for full script)'
+                     : scriptType === 'precheck' ? buildPreCheckScript().slice(0, 800) + '\n# ... (download for full script)'
+                     : buildPostCheckScript().slice(0, 800) + '\n# ... (download for full script)'}
+                  </pre>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="secondary" size="sm"
+                    onClick={() => {
+                      const [fn, content] = scriptType === 'push' ? ['push_configs.py', buildPushConfigsScript()]
+                        : scriptType === 'precheck' ? ['pre_check.py', buildPreCheckScript()]
+                        : ['post_check.py', buildPostCheckScript()]
+                      downloadBlob(fn, content)
+                      showToast(`${fn} downloaded`, 'success')
+                    }}>
+                    ↓ Download Script
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
         </div>
       )}
 
@@ -1497,9 +2130,7 @@ export function Step6Deploy() {
           {bomDevices.length > 0 && (
             <Card>
               <CardHeader><CardTitle>Lab Topology</CardTitle></CardHeader>
-              <div className="mt-2">
-                <TopologyDiagram devices={bomDevices} />
-              </div>
+              <div className="mt-2"><TopologyDiagram devices={bomDevices} /></div>
             </Card>
           )}
 
@@ -1508,28 +2139,20 @@ export function Step6Deploy() {
             <div className="flex flex-wrap gap-3 items-end">
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Fail Device</label>
-                <select
-                  value={failDevice}
-                  onChange={e => setFailDevice(e.target.value)}
-                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
-                             focus:outline-none focus:border-blue-500"
-                >
+                <select value={failDevice} onChange={e => setFailDevice(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
                   <option value="">&mdash; none &mdash;</option>
-                  {allDevices.map(d => (
+                  {simDevices.slice(0, 20).map(d => (
                     <option key={d.name} value={d.name}>{d.name} ({d.role})</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Fail At Stage</label>
-                <select
-                  value={failAt}
-                  onChange={e => setFailAt(e.target.value)}
-                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
-                             focus:outline-none focus:border-blue-500"
-                >
-                  {ZTP_STAGES.map(s => (
-                    <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+                <select value={failAt} onChange={e => setFailAt(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                  {ZTP_SIM_STAGES.map(s => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
                   ))}
                 </select>
               </div>
@@ -1561,6 +2184,54 @@ export function Step6Deploy() {
             </div>
           )}
 
+          {/* State machine visual — per-device progress strip */}
+          {ztpEvents.length > 0 && (() => {
+            const deviceNames = Array.from(new Set(ztpEvents.map(e => e.device_name)))
+            return (
+              <Card>
+                <CardHeader><CardTitle>Device State Machine</CardTitle></CardHeader>
+                <div className="space-y-3 mt-2">
+                  {deviceNames.slice(0, 12).map(devName => {
+                    const devEvents = ztpEvents.filter(e => e.device_name === devName)
+                    const stageStatus: Record<string, 'done' | 'failed' | 'pending'> = {}
+                    for (const ev of devEvents) {
+                      stageStatus[ev.state.toUpperCase()] = ev.success ? 'done' : 'failed'
+                    }
+                    const hasFailed = devEvents.some(e => !e.success)
+                    return (
+                      <div key={devName}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={cn('text-xs font-semibold font-mono', hasFailed ? 'text-red-400' : 'text-green-400')}>
+                            {devName}
+                          </span>
+                          <Badge variant={hasFailed ? 'fail' : 'pass'}>{hasFailed ? 'FAILED' : 'ONLINE'}</Badge>
+                        </div>
+                        <div className="flex gap-1 flex-wrap">
+                          {ZTP_SIM_STAGES.map(stage => {
+                            const s = stageStatus[stage.id]
+                            return (
+                              <div key={stage.id} title={stage.label}
+                                className={cn('px-2 py-1 rounded text-xs font-medium border',
+                                  s === 'done'   ? 'bg-green-500/15 border-green-500/30 text-green-300' :
+                                  s === 'failed' ? 'bg-red-500/15 border-red-500/30 text-red-300' :
+                                  'bg-white/5 border-white/10 text-gray-600')}>
+                                {stage.icon}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {deviceNames.length > 12 && (
+                    <p className="text-xs text-gray-500">… and {deviceNames.length - 12} more devices</p>
+                  )}
+                </div>
+              </Card>
+            )
+          })()}
+
+          {/* Events table */}
           {ztpEvents.length > 0 && (
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full text-sm">
@@ -1601,28 +2272,20 @@ export function Step6Deploy() {
             <div className="flex flex-wrap gap-3 items-end">
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Fail Device</label>
-                <select
-                  value={failCheckDevice}
-                  onChange={e => setFailCheckDevice(e.target.value)}
-                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
-                             focus:outline-none focus:border-blue-500"
-                >
+                <select value={failCheckDevice} onChange={e => setFailCheckDevice(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
                   <option value="">&mdash; none &mdash;</option>
-                  {allDevices.map(d => (
+                  {simDevices.slice(0, 20).map(d => (
                     <option key={d.name} value={d.name}>{d.name} ({d.role})</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Fail Check</label>
-                <select
-                  value={failCheck}
-                  onChange={e => setFailCheck(e.target.value)}
-                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
-                             focus:outline-none focus:border-blue-500"
-                >
-                  {CHECK_OPTIONS.map(c => (
-                    <option key={c} value={c}>{c}</option>
+                <select value={failCheck} onChange={e => setFailCheck(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                  {CHECK_TEMPLATES.map(c => (
+                    <option key={c.name} value={c.name}>{c.name}</option>
                   ))}
                 </select>
               </div>
@@ -1633,58 +2296,129 @@ export function Step6Deploy() {
                 <Button variant="secondary" onClick={() => handleRunChecks('post')} disabled={prePending || postPending}>
                   {postPending ? 'Running…' : '▶ Post-Checks'}
                 </Button>
-                <Button variant="ghost" onClick={() => { setCheckResults([]); setCheckPhase(null) }}>Clear</Button>
+                <Button variant="ghost" onClick={() => { setCheckResults([]); setCheckPhase(null); setPreResults([]); setPostResults([]) }}>Clear</Button>
               </div>
             </div>
           </Card>
 
-          {checkResults.length > 0 && (
-            <div className="grid grid-cols-4 gap-3">
-              <Card className="text-center">
-                <div className="text-lg font-bold text-gray-300">{checkPhase?.toUpperCase()}-DEPLOY</div>
-                <div className="text-xs text-gray-500">Phase</div>
-              </Card>
-              <Card className="text-center">
-                <div className="text-xl font-bold text-green-400">{checkPass}</div>
-                <div className="text-xs text-gray-500">PASS</div>
-              </Card>
-              <Card className="text-center">
-                <div className="text-xl font-bold text-red-400">{checkFail}</div>
-                <div className="text-xs text-gray-500">FAIL</div>
-              </Card>
-              <Card className="text-center">
-                <div className="text-xl font-bold text-yellow-400">{checkWarn}</div>
-                <div className="text-xs text-gray-500">WARN</div>
-              </Card>
-            </div>
-          )}
+          {checkResults.length > 0 && (() => {
+            const pass = checkResults.filter(r => r.status === 'PASS').length
+            const fail = checkResults.filter(r => r.status === 'FAIL').length
+            const warn = checkResults.filter(r => r.status === 'WARN').length
+            const deviceNames = Array.from(new Set(checkResults.map(r => r.device)))
+            const grouped: Record<string, CheckResult[]> = {}
+            for (const r of checkResults) { (grouped[r.device] ??= []).push(r) }
 
-          {checkResults.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-white/10">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 bg-white/5">
-                    {['Device', 'Check', 'Status', 'Message', 'Remediation'].map(h => (
-                      <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {checkResults.map((r, i) => (
-                    <tr key={i} className={`border-b border-white/5 ${r.status === 'FAIL' ? 'bg-red-500/5' : ''}`}>
-                      <td className="px-4 py-2 font-semibold text-gray-200">{r.device}</td>
-                      <td className="px-4 py-2"><code className="text-xs text-blue-400">{r.name}</code></td>
-                      <td className="px-4 py-2">
-                        <Badge variant={badgeVariant(r.status)}>{badgeIcon(r.status)} {r.status}</Badge>
-                      </td>
-                      <td className="px-4 py-2 text-xs text-gray-400">{r.message}</td>
-                      <td className="px-4 py-2 text-xs text-yellow-500">{r.remediation ?? ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+            return (
+              <>
+                {/* Summary bar */}
+                <div className="grid grid-cols-4 gap-3">
+                  <Card className="text-center">
+                    <div className="text-lg font-bold text-blue-400">{checkPhase?.toUpperCase()}</div>
+                    <div className="text-xs text-gray-500">Phase</div>
+                  </Card>
+                  <Card className="text-center">
+                    <div className="text-xl font-bold text-green-400">{pass}</div>
+                    <div className="text-xs text-gray-500">PASS</div>
+                  </Card>
+                  <Card className="text-center">
+                    <div className="text-xl font-bold text-red-400">{fail}</div>
+                    <div className="text-xs text-gray-500">FAIL</div>
+                  </Card>
+                  <Card className="text-center">
+                    <div className="text-xl font-bold text-yellow-400">{warn}</div>
+                    <div className="text-xs text-gray-500">WARN</div>
+                  </Card>
+                </div>
+
+                {/* Pre vs Post diff panel */}
+                {preResults.length > 0 && postResults.length > 0 && (() => {
+                  const diffs = preResults.map(pre => {
+                    const post = postResults.find(p => p.device === pre.device && p.name === pre.name)
+                    if (!post || pre.status === post.status) return null
+                    return { device: pre.device, check: pre.name, before: pre.status, after: post.status }
+                  }).filter(Boolean)
+                  if (!diffs.length) return null
+                  return (
+                    <Card>
+                      <CardHeader><CardTitle>Pre → Post Delta ({diffs.length} changes)</CardTitle></CardHeader>
+                      <div className="space-y-1 mt-2">
+                        {diffs.map((d, i) => d && (
+                          <div key={i} className="flex items-center gap-3 text-xs px-1 py-1">
+                            <span className="font-mono text-gray-400 w-40 truncate">{d.device}</span>
+                            <span className="text-gray-500 flex-1">{d.check}</span>
+                            <Badge variant={badgeVariant(d.before)}>{d.before}</Badge>
+                            <span className="text-gray-500">→</span>
+                            <Badge variant={badgeVariant(d.after)}>{d.after}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  )
+                })()}
+
+                {/* Grouped by device — expandable rows */}
+                <div className="space-y-2">
+                  {deviceNames.map(devName => {
+                    const devResults = grouped[devName] ?? []
+                    const devFail = devResults.filter(r => r.status === 'FAIL').length
+                    const devWarn = devResults.filter(r => r.status === 'WARN').length
+                    const expanded = expandedCheckDevices.has(devName)
+                    return (
+                      <div key={devName} className="rounded-xl border border-white/10 overflow-hidden">
+                        <button
+                          onClick={() => setExpandedCheckDevices(prev => {
+                            const next = new Set(prev)
+                            next.has(devName) ? next.delete(devName) : next.add(devName)
+                            return next
+                          })}
+                          className="w-full flex items-center gap-3 px-4 py-3 bg-white/[0.02] hover:bg-white/5 transition-colors cursor-pointer text-left"
+                        >
+                          <span className="font-mono text-sm font-semibold text-gray-200">{devName}</span>
+                          <div className="flex gap-2 ml-2">
+                            {devFail > 0 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-500/15 text-red-400 border border-red-500/30">{devFail} FAIL</span>}
+                            {devWarn > 0 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-500/15 text-yellow-400 border border-yellow-500/30">{devWarn} WARN</span>}
+                            {devFail === 0 && devWarn === 0 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/30">ALL PASS</span>}
+                          </div>
+                          <span className="ml-auto text-gray-500 text-xs">{expanded ? '▲' : '▼'}</span>
+                        </button>
+                        {expanded && (
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-t border-white/10 bg-white/[0.015]">
+                                {['Category', 'Check', 'Status', 'Message'].map(h => (
+                                  <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {devResults.map((r, i) => {
+                                const tpl = CHECK_TEMPLATES.find(t => t.name === r.name)
+                                return (
+                                  <tr key={i} className={cn('border-t border-white/5',
+                                    r.status === 'FAIL' ? 'bg-red-500/5' : r.status === 'WARN' ? 'bg-yellow-500/5' : '')}>
+                                    <td className="px-4 py-2 text-xs text-gray-500">{tpl?.cat ?? '—'}</td>
+                                    <td className="px-4 py-2"><code className="text-xs text-blue-400">{r.name}</code></td>
+                                    <td className="px-4 py-2">
+                                      <Badge variant={badgeVariant(r.status)}>{badgeIcon(r.status)} {r.status}</Badge>
+                                    </td>
+                                    <td className="px-4 py-2 text-xs text-gray-400">
+                                      {r.message}
+                                      {r.remediation && <div className="text-yellow-500 mt-0.5">↳ {r.remediation}</div>}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )
+          })()}
         </div>
       )}
 
@@ -1805,64 +2539,96 @@ export function Step6Deploy() {
       {/* ── NETCONF tab (M-65) ─────────────────────────────────────────── */}
       {tab === 'netconf' && (
         <div className="space-y-6">
+          {/* Interactive NETCONF panel */}
           <Card>
-            <CardHeader><CardTitle>NETCONF Push</CardTitle></CardHeader>
-            <p className="text-sm text-gray-400 mb-4">
-              NETCONF is a standards-based network management protocol (RFC 6241) that provides a
-              programmatic interface for managing network devices. It is supported on:
+            <CardHeader><CardTitle>NETCONF Interactive Demo</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              RFC 6241 — NETCONF over SSH (port 830). Build and execute NETCONF RPCs against your devices.
+              Supported on Juniper JunOS, Cisco IOS-XE 16.6+, Cisco NX-OS (feature netconf), Arista EOS.
             </p>
-            <ul className="list-disc list-inside text-sm text-gray-400 space-y-1 mb-4">
-              <li>Juniper JunOS — native ncclient support</li>
-              <li>Cisco IOS-XE 16.6+ — NETCONF/YANG over SSH (port 830)</li>
-              <li>Cisco NX-OS — enable with <code className="text-blue-400">feature netconf</code></li>
-            </ul>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Device</label>
+                <select value={netconfDevice} onChange={e => setNetconfDevice(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                  <option value="">&mdash; select device &mdash;</option>
+                  {storeDevices.map(d => (
+                    <option key={d.id} value={d.id}>{d.hostname} ({d.vendor})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Operation</label>
+                <select value={netconfOp} onChange={e => setNetconfOp(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                  <option value="get-config">get-config</option>
+                  <option value="edit-config">edit-config</option>
+                  <option value="get">get</option>
+                  <option value="lock">lock</option>
+                  <option value="unlock">unlock</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Datastore</label>
+                <select value={netconfDatastore} onChange={e => setNetconfDatastore(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                  <option value="running">running</option>
+                  <option value="candidate">candidate</option>
+                  <option value="startup">startup</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                <div className="text-xs text-gray-500 mb-1 font-semibold uppercase tracking-wider">RPC Request</div>
+                <pre className="bg-[#080E1A] border border-white/10 rounded-lg p-4 text-xs text-green-300 font-mono overflow-x-auto leading-relaxed min-h-[180px]">
+                  {netconfXML || buildNetconfXMLForOp('get-config', 'running', '')}
+                </pre>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 mb-1 font-semibold uppercase tracking-wider">
+                  RPC Response {netconfResponse && <span className="text-green-400 ml-1">✔</span>}
+                </div>
+                <pre className={cn(
+                  'bg-[#080E1A] border border-white/10 rounded-lg p-4 text-xs font-mono overflow-x-auto leading-relaxed min-h-[180px]',
+                  netconfResponse ? 'text-blue-300' : 'text-gray-600')}>
+                  {netconfResponse || '// Click "Execute (Demo)" to see response'}
+                </pre>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <Button onClick={handleNetconfExecute} disabled={netconfRunning}>
+                {netconfRunning ? '⏳ Executing…' : '▶ Execute (Demo)'}
+              </Button>
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadText(buildNetconfScript(), 'netconf_push.py'); showToast('netconf_push.py downloaded', 'success') }}>
+                ↓ Download NETCONF Script (Python)
+              </Button>
+              {netconfResponse && (
+                <Button variant="ghost" size="sm" onClick={() => setNetconfResponse('')}>Clear</Button>
+              )}
+            </div>
           </Card>
 
+          {/* YANG reference */}
           <Card>
-            <CardHeader><CardTitle>Sample NETCONF RPC — Interface Configuration</CardTitle></CardHeader>
-            <p className="text-xs text-gray-500 mb-3">
-              IETF interfaces YANG model (RFC 8343). Send via ncclient <code className="text-blue-400">edit-config</code>.
-            </p>
-            <pre className="bg-[#080E1A] border border-white/10 rounded-lg p-4 text-xs text-green-300 font-mono overflow-x-auto leading-relaxed">
-{`<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="1">
-  <edit-config>
-    <target><running/></target>
-    <config>
-      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
-        <interface>
-          <name>GigabitEthernet1</name>
-          <description>NetDesign AI — managed port</description>
-          <enabled>true</enabled>
-          <ipv4 xmlns="urn:ietf:params:xml:ns:yang:ietf-ip">
-            <address>
-              <ip>10.0.0.1</ip>
-              <prefix-length>24</prefix-length>
-            </address>
-          </ipv4>
-        </interface>
-      </interfaces>
-    </config>
-  </edit-config>
-</rpc>`}
-            </pre>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle>Download</CardTitle></CardHeader>
-            <p className="text-xs text-gray-500 mb-3">
-              Python ncclient script template with connect, edit-config, validate, and get-interfaces functions.
-              Requires: <code className="text-blue-400">pip install ncclient lxml</code>
-            </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                downloadText(buildNetconfScript(), 'netconf_push.py')
-                showToast('netconf_push.py downloaded', 'success')
-              }}
-            >
-              &#8595; Download NETCONF Script (Python)
-            </Button>
+            <CardHeader><CardTitle>Supported YANG Models</CardTitle></CardHeader>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 text-xs">
+              {[
+                { model: 'ietf-interfaces', rfc: 'RFC 8343', desc: 'Interface management' },
+                { model: 'ietf-ip',          rfc: 'RFC 8344', desc: 'IPv4/IPv6 addressing' },
+                { model: 'ietf-routing',     rfc: 'RFC 8349', desc: 'Routing instance model' },
+                { model: 'openconfig-bgp',   rfc: 'OC Model', desc: 'BGP configuration' },
+                { model: 'openconfig-vlan',  rfc: 'OC Model', desc: 'VLAN management' },
+                { model: 'Cisco-IOS-XE-native', rfc: 'Native', desc: 'IOS-XE native YANG' },
+              ].map(y => (
+                <div key={y.model} className="flex gap-2 items-start p-2 rounded-lg bg-white/[0.02] border border-white/10">
+                  <code className="text-blue-400 font-mono">{y.model}</code>
+                  <span className="text-gray-500 ml-auto shrink-0">{y.rfc}</span>
+                  <span className="text-gray-500">{y.desc}</span>
+                </div>
+              ))}
+            </div>
           </Card>
         </div>
       )}

@@ -29,11 +29,23 @@ const DEPLOY_STEPS = [
   { step: 6, label: 'Deploy & Validate', icon: '🚀' },
 ]
 
+const DEPLOY_SUB_ITEMS = [
+  { tab: 'deploy',   icon: '🚀', label: 'Deploy Pipeline'  },
+  { tab: 'ztp',      icon: '📡', label: 'ZTP Provisioning' },
+  { tab: 'checks',   icon: '✅', label: 'Pre/Post Checks'  },
+  { tab: 'netconf',  icon: '🖧', label: 'NETCONF'          },
+  { tab: 'monitor',  icon: '📊', label: 'Monitoring'       },
+  { tab: 'day2ops',  icon: '⚙️', label: 'Day-2 Ops'       },
+  { tab: 'batfish',  icon: '🦟', label: 'Batfish Validate' },
+]
+
 export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, mobileOpen = false, onMobileClose }: SidebarProps) {
-  const step    = useAppStore(s => s.step)
-  const setStep = useAppStore(s => s.setStep)
-  const devices = useAppStore(s => s.devices)
-  const configs = useAppStore(s => s.configs)
+  const step              = useAppStore(s => s.step)
+  const setStep           = useAppStore(s => s.setStep)
+  const devices           = useAppStore(s => s.devices)
+  const configs           = useAppStore(s => s.configs)
+  const activeDeployTab   = useAppStore(s => s.activeDeployTab)
+  const setActiveDeployTab = useAppStore(s => s.setActiveDeployTab)
   const [collapsed, setCollapsed] = useState(false)
   const [deployOpen, setDeployOpen] = useState(true)
   const [showMyDesigns, setShowMyDesigns] = useState(false)
@@ -135,15 +147,39 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
           <button onClick={() => setDeployOpen(o => !o)}
             className="flex items-center justify-between w-full text-xs font-bold text-gray-500 uppercase tracking-widest px-3 mb-2 cursor-pointer hover:text-gray-300">
             <span>Deploy & Validate</span>
-            <span>{deployOpen ? '▼' : '▶'}</span>
+            <span className={cn('transition-transform', deployOpen ? 'rotate-90' : '')}>{deployOpen ? '▼' : '▶'}</span>
           </button>
-          {deployOpen && DEPLOY_STEPS.map(s => (
-            <button key={s.step} onClick={() => closeAndNav(s.step)} className={itemCls(s.step)}>
-              <span className="text-base">{s.icon}</span>
-              <span>{s.label}</span>
-              {s.step < step && <span className="ml-auto text-xs text-green-500">✓</span>}
-            </button>
-          ))}
+          {deployOpen && (
+            <>
+              {/* Top-level step 6 header */}
+              {DEPLOY_STEPS.map(s => (
+                <button key={s.step} onClick={() => { setStep(6); setActiveDeployTab('deploy'); onClose?.() }}
+                  className={itemCls(s.step)}>
+                  <span className="text-base">{s.icon}</span>
+                  <span>{s.label}</span>
+                  {s.step < step && <span className="ml-auto text-xs text-green-500">✓</span>}
+                </button>
+              ))}
+              {/* Sub-items */}
+              <div className="mt-1 space-y-0.5">
+                {DEPLOY_SUB_ITEMS.map(sub => (
+                  <button
+                    key={sub.tab}
+                    onClick={() => { setStep(6); setActiveDeployTab(sub.tab); onClose?.() }}
+                    className={cn(
+                      'flex items-center gap-2 w-full pl-8 pr-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer',
+                      step === 6 && activeDeployTab === sub.tab
+                        ? 'bg-blue-600/15 text-blue-300 font-semibold'
+                        : 'text-gray-500 hover:bg-white/5 hover:text-gray-300',
+                    )}
+                  >
+                    <span>{sub.icon}</span>
+                    <span>{sub.label}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         {/* TOOLS group */}
