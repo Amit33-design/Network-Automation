@@ -82,16 +82,6 @@ export function LandingPage({ onStart }: Props) {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleDemo}
-              className="px-4 py-1.5 rounded-lg text-sm font-semibold border
-                         bg-white/5 border-white/10 text-gray-300
-                         hover:bg-blue-500/20 hover:border-blue-500/40 hover:text-blue-300
-                         transition-colors cursor-pointer"
-            >
-              Try Demo
-            </button>
-            <button
-              type="button"
               onClick={onStart}
               className="px-4 py-1.5 rounded-lg text-sm font-semibold
                          bg-blue-600 text-white hover:bg-blue-500 transition-colors cursor-pointer"
@@ -103,20 +93,18 @@ export function LandingPage({ onStart }: Props) {
       </header>
 
       {/* ── Hero ───────────────────────────────────────────────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-12 sm:py-16">
-        <div className="flex flex-col lg:flex-row items-center gap-10 lg:gap-16">
+      <section className="max-w-3xl mx-auto px-6 py-12 sm:py-16">
+        <div className="flex flex-col items-center text-center gap-7">
 
-          {/* Brand logo image — left side */}
-          <div className="w-full lg:w-[52%] shrink-0 flex justify-center">
-            <img
-              src="/logo-brand.jpg"
-              alt="NetDesign AI — Intent-Driven Network Automation"
-              className="w-full max-w-[520px] rounded-2xl shadow-2xl shadow-blue-900/40 ring-1 ring-white/10"
-            />
-          </div>
+          {/* Brand logo image — on top */}
+          <img
+            src="/logo-brand.jpg"
+            alt="NetDesign AI — Intent-Driven Network Automation"
+            className="w-full max-w-[340px] rounded-2xl shadow-2xl shadow-blue-900/40 ring-1 ring-white/10"
+          />
 
-          {/* Text — right side */}
-          <div className="flex-1 text-center lg:text-left">
+          {/* Text — below logo */}
+          <div className="flex flex-col items-center">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs
                             bg-blue-600/15 border border-blue-500/30 text-blue-400 mb-5">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
@@ -131,13 +119,13 @@ export function LandingPage({ onStart }: Props) {
               in minutes
             </h1>
 
-            <p className="text-base text-gray-400 mb-6 max-w-lg mx-auto lg:mx-0">
+            <p className="text-base text-gray-400 mb-6 max-w-xl">
               Describe your network — use case, scale, vendor, compliance — and get a complete
               BOM, HLD topology, and device configs for NX-OS, IOS-XE, EOS, JunOS, and PAN-OS.
             </p>
 
             {/* Feature pills matching logo */}
-            <div className="flex flex-wrap gap-2 justify-center lg:justify-start mb-8">
+            <div className="flex flex-wrap gap-2 justify-center mb-8">
               {[
                 { icon: '🧩', label: 'Design' },
                 { icon: '⚙️', label: 'Automate' },
@@ -152,7 +140,7 @@ export function LandingPage({ onStart }: Props) {
               ))}
             </div>
 
-            <div className="flex flex-wrap gap-3 justify-center lg:justify-start">
+            <div className="flex flex-wrap gap-3 justify-center">
               <button
                 type="button"
                 onClick={onStart}
