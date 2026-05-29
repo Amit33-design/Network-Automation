@@ -376,7 +376,18 @@ def _check_bgp(state: dict, design: dict) -> list[Finding]:
     has_evpn  = "EVPN" in protocols or "VXLAN" in protocols
 
     # ── BGP-1: ASN valid range ───────────────────────────────────────────────
-    bgp_asn = state.get("bgp_asn") or asns.get("spine_asn") or asns.get("spine", 0)
+    # `asns` may be a dict keyed by role, or a list of {device, asn, role} dicts
+    # (DC/GPU designs from design_engine.generate_bgp_design). Handle both.
+    def _spine_asn_from(asns_obj):
+        if isinstance(asns_obj, dict):
+            return asns_obj.get("spine_asn") or asns_obj.get("spine", 0)
+        if isinstance(asns_obj, list):
+            for entry in asns_obj:
+                if isinstance(entry, dict) and entry.get("asn"):
+                    return entry["asn"]
+        return 0
+
+    bgp_asn = state.get("bgp_asn") or _spine_asn_from(asns)
     if isinstance(bgp_asn, dict):
         bgp_asn = list(bgp_asn.values())[0] if bgp_asn else 0
     if bgp_asn:

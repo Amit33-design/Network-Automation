@@ -52,13 +52,13 @@ jobs:
             "preferredVendors": [],
           }
           report = run_analysis(test_state)
-          if report.critical_count > 0:
-            print(f"FAIL: {report.critical_count} critical static analysis issues")
-            for issue in report.issues:
-              if issue.severity == "CRITICAL":
-                print(f"  ✗ [{issue.check}] {issue.message}")
+          criticals = [f for f in report.findings if str(f.severity).lower() == "critical"]
+          if criticals:
+            print(f"FAIL: {len(criticals)} critical static analysis issues")
+            for f in criticals:
+              print(f"  ✗ [{f.check_id}] {f.title}: {f.detail}")
             sys.exit(1)
-          print(f"PASS: Static analysis — {report.issue_count} issues, 0 critical")
+          print(f"PASS: Static analysis — {len(report.findings)} findings, 0 critical")
           EOF
 
   # ──────────────────────────────────────────────────────────────────
