@@ -67,15 +67,15 @@ export function LandingPage({ onStart }: Props) {
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="border-b border-white/10 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 py-2.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="/favicon.svg" alt="" className="w-8 h-8" />
+            <img src="/favicon.svg" alt="NetDesign AI" className="w-8 h-8" />
             <div className="flex flex-col leading-tight">
-              <span className="font-bold text-white text-[15px] tracking-wide">
+              <span className="font-extrabold text-white text-[15px] tracking-wide">
                 NetDesign <span className="text-blue-400">AI</span>
               </span>
-              <span className="text-[10px] text-gray-500 tracking-widest uppercase">
-                Intent‑Driven Automation
+              <span className="text-[9px] text-gray-500 tracking-widest uppercase">
+                Intent‑Driven Network Automation
               </span>
             </div>
           </div>
@@ -85,10 +85,10 @@ export function LandingPage({ onStart }: Props) {
               onClick={handleDemo}
               className="px-4 py-1.5 rounded-lg text-sm font-semibold border
                          bg-white/5 border-white/10 text-gray-300
-                         hover:bg-yellow-500/20 hover:border-yellow-500/40 hover:text-yellow-300
+                         hover:bg-blue-500/20 hover:border-blue-500/40 hover:text-blue-300
                          transition-colors cursor-pointer"
             >
-              ⚡ Demo
+              Try Demo
             </button>
             <button
               type="button"
@@ -103,43 +103,77 @@ export function LandingPage({ onStart }: Props) {
       </header>
 
       {/* ── Hero ───────────────────────────────────────────────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-20 text-center">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs
-                        bg-blue-600/15 border border-blue-500/30 text-blue-400 mb-6">
-          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-          Browser-native · No backend required · Open source
-        </div>
-        <h1 className="text-4xl sm:text-5xl font-extrabold text-white mb-5 leading-tight">
-          From network intent to{' '}
-          <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-            production-ready design
-          </span>{' '}
-          in minutes
-        </h1>
-        <p className="text-lg text-gray-400 max-w-2xl mx-auto mb-10">
-          NetDesign AI takes your network requirements — use case, scale, vendor, compliance —
-          and produces a complete bill of materials, HLD topology, and device configurations
-          for NX-OS, IOS-XE, Arista EOS, JunOS, and PAN-OS.
-        </p>
-        <div className="flex flex-wrap gap-3 justify-center">
-          <button
-            type="button"
-            onClick={onStart}
-            className="px-8 py-3 rounded-xl text-base font-bold
-                       bg-blue-600 text-white hover:bg-blue-500 transition-colors cursor-pointer shadow-lg shadow-blue-600/20"
-          >
-            Start Designing →
-          </button>
-          <button
-            type="button"
-            onClick={handleDemo}
-            className="px-8 py-3 rounded-xl text-base font-bold border
-                       bg-white/5 border-white/15 text-gray-200
-                       hover:bg-yellow-500/15 hover:border-yellow-500/40 hover:text-yellow-300
-                       transition-colors cursor-pointer"
-          >
-            ⚡ Try Demo
-          </button>
+      <section className="max-w-6xl mx-auto px-6 py-12 sm:py-16">
+        <div className="flex flex-col lg:flex-row items-center gap-10 lg:gap-16">
+
+          {/* Brand logo image — left side */}
+          <div className="w-full lg:w-[52%] shrink-0 flex justify-center">
+            <img
+              src="/logo-brand.jpg"
+              alt="NetDesign AI — Intent-Driven Network Automation"
+              className="w-full max-w-[520px] rounded-2xl shadow-2xl shadow-blue-900/40 ring-1 ring-white/10"
+            />
+          </div>
+
+          {/* Text — right side */}
+          <div className="flex-1 text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs
+                            bg-blue-600/15 border border-blue-500/30 text-blue-400 mb-5">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+              Browser-native · No backend required · Open source
+            </div>
+
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white mb-4 leading-tight">
+              From network intent to{' '}
+              <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+                production-ready design
+              </span>{' '}
+              in minutes
+            </h1>
+
+            <p className="text-base text-gray-400 mb-6 max-w-lg mx-auto lg:mx-0">
+              Describe your network — use case, scale, vendor, compliance — and get a complete
+              BOM, HLD topology, and device configs for NX-OS, IOS-XE, EOS, JunOS, and PAN-OS.
+            </p>
+
+            {/* Feature pills matching logo */}
+            <div className="flex flex-wrap gap-2 justify-center lg:justify-start mb-8">
+              {[
+                { icon: '🧩', label: 'Design' },
+                { icon: '⚙️', label: 'Automate' },
+                { icon: '🛡', label: 'Validate' },
+                { icon: '📊', label: 'Assure' },
+              ].map(p => (
+                <span key={p.label}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold
+                             bg-blue-600/10 border border-blue-500/25 text-blue-300">
+                  {p.icon} {p.label}
+                </span>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-3 justify-center lg:justify-start">
+              <button
+                type="button"
+                onClick={onStart}
+                className="px-7 py-3 rounded-xl text-base font-bold
+                           bg-blue-600 text-white hover:bg-blue-500 transition-colors cursor-pointer
+                           shadow-lg shadow-blue-600/25"
+              >
+                Start Designing →
+              </button>
+              <button
+                type="button"
+                onClick={handleDemo}
+                className="px-7 py-3 rounded-xl text-base font-bold border
+                           bg-white/5 border-white/15 text-gray-200
+                           hover:bg-blue-500/15 hover:border-blue-500/40 hover:text-blue-300
+                           transition-colors cursor-pointer"
+              >
+                Try Demo
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 
