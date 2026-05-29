@@ -21,6 +21,7 @@ export type UnderlayProtocol = 'ospf' | 'isis' | 'ebgp' | 'static'
 export type OrgSize = '' | 'startup' | 'smb' | 'midmarket' | 'enterprise' | 'hyperscale'
 export type BudgetTier = '' | 'smb' | 'mid' | 'enterprise' | 'hyperscale'
 export type FirewallModel = '' | 'perimeter' | 'distributed' | 'microseg' | 'none'
+export type DcTopology = 'hub-spoke' | 'full-mesh' | 'partial-mesh' | ''
 
 // ── Product catalog ───────────────────────────────────────────────────────────
 
@@ -142,6 +143,14 @@ export interface AppState {
   nacOptions: string[]
   additionalNotes: string
   policyBlocks: string[]
+  // M-11: Multi-cloud fields
+  cloudProviders: string[]
+  dcTopology: DcTopology
+  coloProvider: string
+  dcEdgeVendor: string
+  bgpAsn: string
+  orgCidr: string
+  aviatrixOptions: string[]
 }
 
 // ── Lab Demo API types ────────────────────────────────────────────────────────

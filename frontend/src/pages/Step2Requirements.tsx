@@ -3,7 +3,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { cn } from '@/lib/utils'
-import type { AppType, Compliance, BandwidthPerServer, UnderlayProtocol, TrafficPattern, RedundancyModel, VpnType } from '@/types'
+import type { AppType, Compliance, BandwidthPerServer, UnderlayProtocol, TrafficPattern, RedundancyModel, VpnType, DcTopology } from '@/types'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -77,6 +77,19 @@ const VPN_TYPES: Array<{ id: VpnType; label: string; desc: string }> = [
 // M-05: NAC options
 const NAC_OPTIONS = ['802.1X Wired', '802.1X Wireless', 'MAB', 'Guest VLAN', 'Posture Assessment']
 
+// M-11: Multi-cloud / Aviatrix constants
+const CLOUD_PROVIDERS = ['AWS', 'Azure', 'GCP', 'OCI', 'Alibaba']
+
+const DC_TOPOLOGY_OPTIONS: Array<{ id: DcTopology; label: string; desc: string }> = [
+  { id: 'hub-spoke',    label: 'Hub-Spoke',    desc: 'Central hub, branches spoke' },
+  { id: 'full-mesh',    label: 'Full-Mesh',    desc: 'All sites interconnected' },
+  { id: 'partial-mesh', label: 'Partial-Mesh', desc: 'Selected site pairs' },
+]
+
+const DC_EDGE_VENDORS = ['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Fortinet']
+
+const AVIATRIX_OPTIONS = ['Transit Gateway', 'FireNet', 'Edge Gateway', 'Controller HA']
+
 // M-13: constraint rules from CLAUDE.md
 interface Violation { id: string; severity: 'error' | 'warning'; msg: string; fix: string }
 
@@ -117,9 +130,11 @@ export function Step2Requirements() {
     redundancyModel, trafficPattern, totalEndpoints, bandwidthPerServer, oversubscription,
     underlayProtocol, overlayProtocols, protoFeatures, compliance, appTypes, numSites,
     vpnType, nacOptions, additionalNotes, vendorPrefs,
+    cloudProviders, dcTopology, coloProvider, dcEdgeVendor, bgpAsn, orgCidr, aviatrixOptions,
     setRedundancyModel, setTrafficPattern, setTotalEndpoints, setBandwidthPerServer,
     setOversubscription, setUnderlayProtocol, setOverlayProtocols, setProtoFeatures,
     setCompliance, setAppTypes, setNumSites, setVpnType, setNacOptions, setAdditionalNotes,
+    setCloudProviders, setDcTopology, setColoProvider, setDcEdgeVendor, setBgpAsn, setOrgCidr, setAviatrixOptions,
     nextStep, prevStep,
   } = useAppStore()
 
@@ -397,6 +412,84 @@ export function Step2Requirements() {
             ))}
           </div>
         </Card>
+
+        {/* M-11: Multi-cloud / Aviatrix fields */}
+        {(useCase === 'multicloud' || useCase === 'aviatrix') && (
+          <Card>
+            <h3 className="text-sm font-semibold text-gray-300 mb-4">Multi-Cloud Configuration</h3>
+
+            <div className="mb-4">
+              <label className="text-xs text-gray-500 uppercase tracking-widest block mb-2">Cloud Providers</label>
+              <div className="flex flex-wrap gap-2">
+                {CLOUD_PROVIDERS.map(p => (
+                  <button key={p} onClick={() => setCloudProviders(cloudProviders.includes(p) ? cloudProviders.filter(x => x !== p) : [...cloudProviders, p])}
+                    className={cn('px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer',
+                      cloudProviders.includes(p) ? 'bg-sky-600/30 border-sky-500 text-sky-300' : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30')}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="text-xs text-gray-500 uppercase tracking-widest block mb-2">DC Topology</label>
+              <div className="grid grid-cols-3 gap-2">
+                {DC_TOPOLOGY_OPTIONS.map(t => (
+                  <button key={t.id} onClick={() => setDcTopology(t.id)}
+                    className={cn('p-2.5 rounded-lg border text-left transition-all cursor-pointer',
+                      dcTopology === t.id ? 'border-blue-500 bg-blue-600/20' : 'border-white/10 bg-white/5 hover:border-white/30')}>
+                    <div className={cn('text-sm font-semibold', dcTopology === t.id ? 'text-blue-300' : 'text-gray-200')}>{t.label}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{t.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Colo Provider</label>
+                <input type="text" value={coloProvider} onChange={e => setColoProvider(e.target.value)}
+                  placeholder="Equinix, Digital Realty, CoreSite…"
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">DC Edge Vendor</label>
+                <select value={dcEdgeVendor} onChange={e => setDcEdgeVendor(e.target.value)}
+                  className="w-full bg-gray-800 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                  <option value="">Select vendor…</option>
+                  {DC_EDGE_VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">BGP ASN</label>
+                <input type="text" value={bgpAsn} onChange={e => setBgpAsn(e.target.value)}
+                  placeholder="65000"
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Org CIDR Block</label>
+                <input type="text" value={orgCidr} onChange={e => setOrgCidr(e.target.value)}
+                  placeholder="10.0.0.0/8"
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500" />
+              </div>
+            </div>
+
+            {useCase === 'aviatrix' && (
+              <div>
+                <label className="text-xs text-gray-500 uppercase tracking-widest block mb-2">Aviatrix Options</label>
+                <div className="flex flex-wrap gap-2">
+                  {AVIATRIX_OPTIONS.map(o => (
+                    <button key={o} onClick={() => setAviatrixOptions(aviatrixOptions.includes(o) ? aviatrixOptions.filter(x => x !== o) : [...aviatrixOptions, o])}
+                      className={cn('px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer',
+                        aviatrixOptions.includes(o) ? 'bg-purple-600/30 border-purple-500 text-purple-300' : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30')}>
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* M-06: Additional notes */}
         <Card>

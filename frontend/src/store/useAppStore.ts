@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import type {
   AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry,
   OrgSize, BudgetTier, TrafficPattern, BandwidthPerServer, UnderlayProtocol, FirewallModel, RedundancyModel,
-  VpnType,
+  VpnType, DcTopology,
 } from '@/types'
 
 interface AppStore extends AppState {
@@ -41,6 +41,14 @@ interface AppStore extends AppState {
   setVpnType: (v: VpnType) => void
   setNacOptions: (o: string[]) => void
   setAdditionalNotes: (n: string) => void
+  // M-11: Multi-cloud setters
+  setCloudProviders: (providers: string[]) => void
+  setDcTopology: (topology: DcTopology) => void
+  setColoProvider: (provider: string) => void
+  setDcEdgeVendor: (vendor: string) => void
+  setBgpAsn: (asn: string) => void
+  setOrgCidr: (cidr: string) => void
+  setAviatrixOptions: (options: string[]) => void
 
   // Design computed results
   setDevices: (devices: BOMDevice[]) => void
@@ -106,6 +114,14 @@ const DEFAULT_STATE: AppState = {
   nacOptions: [],
   additionalNotes: '',
   policyBlocks: [],
+  // M-11: Multi-cloud fields
+  cloudProviders: [],
+  dcTopology: '',
+  coloProvider: '',
+  dcEdgeVendor: '',
+  bgpAsn: '',
+  orgCidr: '',
+  aviatrixOptions: [],
 }
 
 export const useAppStore = create<AppStore>()(
@@ -145,6 +161,14 @@ export const useAppStore = create<AppStore>()(
       setVpnType: vpnType => set({ vpnType }),
       setNacOptions: nacOptions => set({ nacOptions }),
       setAdditionalNotes: additionalNotes => set({ additionalNotes }),
+      // M-11: Multi-cloud setters
+      setCloudProviders: cloudProviders => set({ cloudProviders }),
+      setDcTopology: dcTopology => set({ dcTopology }),
+      setColoProvider: coloProvider => set({ coloProvider }),
+      setDcEdgeVendor: dcEdgeVendor => set({ dcEdgeVendor }),
+      setBgpAsn: bgpAsn => set({ bgpAsn }),
+      setOrgCidr: orgCidr => set({ orgCidr }),
+      setAviatrixOptions: aviatrixOptions => set({ aviatrixOptions }),
 
       setDevices: devices => set({ devices }),
       setCabling: cabling => set({ cabling }),

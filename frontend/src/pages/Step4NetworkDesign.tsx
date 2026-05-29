@@ -8,18 +8,81 @@ import { formatUSD, cn } from '@/lib/utils'
 import type { BOMDevice } from '@/types'
 
 // ── Tab types ────────────────────────────────────────────────────
-type DesignTab = 'hld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'mermaid' | 'simulate' | 'summary'
+type DesignTab = 'hld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
 
 const TAB_LABELS: Array<{ id: DesignTab; label: string }> = [
-  { id: 'hld',      label: '📐 High Level Design' },
-  { id: 'ipplan',   label: '🌐 IP Plan' },
-  { id: 'vlan',     label: '🏷 VLAN Design' },
-  { id: 'routing',  label: '🔀 Routing & Protocols' },
-  { id: 'physical', label: '🔌 Physical Links' },
-  { id: 'mermaid',  label: '📊 Mermaid Diagram' },
-  { id: 'simulate', label: '⚡ Simulate' },
-  { id: 'summary',  label: '📋 Summary' },
+  { id: 'hld',        label: '📐 High Level Design' },
+  { id: 'ipplan',     label: '🌐 IP Plan' },
+  { id: 'vlan',       label: '🏷 VLAN Design' },
+  { id: 'routing',    label: '🔀 Routing & Protocols' },
+  { id: 'physical',   label: '🔌 Physical Links' },
+  { id: 'mermaid',    label: '📊 Mermaid Diagram' },
+  { id: 'simulate',   label: '⚡ Simulate' },
+  { id: 'summary',    label: '📋 Summary' },
+  { id: 'refdesigns', label: '📚 Reference Designs' },
 ]
+
+// ── Reference Designs data (M-24) ────────────────────────────────
+interface RefDesign {
+  title: string
+  vendor: string
+  description: string
+  keyDecisions: string[]
+  doc: string
+}
+
+const REF_DESIGNS: Record<string, RefDesign> = {
+  campus: {
+    title: 'Cisco CVD Campus LAN Design',
+    vendor: 'Cisco',
+    description: 'Hierarchical campus with access/distribution/core layers, 802.1X NAC, QoS marking at access',
+    keyDecisions: ['STP with RSTP/MSTP', 'OSPF underlay', 'VSS/StackWise for core redundancy', 'RADIUS AAA'],
+    doc: 'https://www.cisco.com/c/en/us/td/docs/solutions/CVD/Campus/cvd-campus-lan-design.html',
+  },
+  dc: {
+    title: 'Cisco NDFC Spine-Leaf DC Design',
+    vendor: 'Cisco',
+    description: 'BGP EVPN/VXLAN spine-leaf fabric with NX-OS, IS-IS underlay, ECMP, BFD',
+    keyDecisions: ['IS-IS underlay', 'iBGP EVPN overlay', 'Anycast Gateway', 'ECMP 16-path', 'BFD 300ms'],
+    doc: 'https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-ndfc-fabric-builder.html',
+  },
+  gpu: {
+    title: 'NVIDIA Air GPU Fabric Design',
+    vendor: 'NVIDIA',
+    description: 'RoCEv2 lossless Ethernet fabric for GPU clusters, PFC priority 3, ECN/DCQCN, 400G',
+    keyDecisions: ['PFC priority 3 no-drop', 'ECN DSCP marking', 'DCQCN congestion control', 'RDMA 60% BW'],
+    doc: 'https://air.nvidia.com/guides/networking',
+  },
+  wan: {
+    title: 'Juniper WAN SD-WAN/BGP Design',
+    vendor: 'Juniper',
+    description: 'Hub-spoke WAN with BGP route reflectors, MPLS/SR underlay, QoS per-application',
+    keyDecisions: ['BGP route reflectors', 'MPLS/SR underlay', 'DSCP QoS 6-class', 'BFD 1s timers'],
+    doc: 'https://www.juniper.net/documentation/us/en/software/junos/mpls/index.html',
+  },
+  multisite: {
+    title: 'Arista AVD Multi-Site Design',
+    vendor: 'Arista',
+    description: 'Multi-site EVPN/VXLAN with DCI, BGP between sites, anycast gateway per site',
+    keyDecisions: ['EVPN type-5 DCI routes', 'Per-site anycast GW', 'BGP between sites', 'PIM-SM multicast'],
+    doc: 'https://avd.arista.com/4.x/docs/getting-started/multi-site.html',
+  },
+  multicloud: {
+    title: 'Aviatrix Multi-Cloud Transit Design',
+    vendor: 'Aviatrix',
+    description: 'Multi-cloud transit hub with FQDN egress control, BGP to on-premises via AWS Transit GW',
+    keyDecisions: ['Transit GW peering', 'FQDN egress filter', 'BGP to on-prem', 'High-performance encryption'],
+    doc: 'https://docs.aviatrix.com/documentation/latest/network-design/multi-cloud-transit-design.html',
+  },
+}
+
+const VENDOR_BADGE_COLORS: Record<string, string> = {
+  Cisco:    'bg-blue-900/60 text-blue-300 border border-blue-700/30',
+  NVIDIA:   'bg-green-900/60 text-green-300 border border-green-700/30',
+  Juniper:  'bg-orange-900/60 text-orange-300 border border-orange-700/30',
+  Arista:   'bg-teal-900/60 text-teal-300 border border-teal-700/30',
+  Aviatrix: 'bg-purple-900/60 text-purple-300 border border-purple-700/30',
+}
 
 // ── IP Plan data generator ───────────────────────────────────────
 interface IPBlock { label: string; subnet: string; detail: string; range: string }
@@ -1357,6 +1420,40 @@ export function Step4NetworkDesign() {
             <h3 className="text-sm font-semibold text-gray-300 mb-3">Text Version (for copy / docs)</h3>
             <pre className="bg-black/40 border border-white/10 rounded-lg p-4 text-xs font-mono text-gray-300 overflow-x-auto whitespace-pre leading-relaxed">{summaryText}</pre>
           </Card>
+        </div>
+      )}
+
+      {/* M-24: Reference Designs tab */}
+      {activeTab === 'refdesigns' && (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-400">Reference architectures for the selected use case and adjacent designs.</p>
+          {Object.entries(REF_DESIGNS)
+            .filter(([key]) => !useCase || key === useCase)
+            .concat(Object.entries(REF_DESIGNS).filter(([key]) => !useCase || key !== useCase))
+            .slice(0, 4)
+            .map(([key, rd]) => (
+              <Card key={key}>
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-xs px-2 py-0.5 rounded font-semibold ${VENDOR_BADGE_COLORS[rd.vendor] ?? 'bg-white/10 text-gray-300 border border-white/10'}`}>{rd.vendor}</span>
+                      {key === useCase && <span className="text-xs px-2 py-0.5 rounded bg-blue-600/30 text-blue-300 border border-blue-500/40 font-semibold">Selected Use Case</span>}
+                    </div>
+                    <h3 className="text-sm font-semibold text-gray-200">{rd.title}</h3>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 mb-3">{rd.description}</p>
+                <div className="mb-3">
+                  <div className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1.5">Key Design Decisions</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {rd.keyDecisions.map((d, i) => (
+                      <span key={i} className="text-xs px-2 py-0.5 rounded bg-white/5 border border-white/10 text-gray-300">{d}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-xs text-gray-600 font-mono break-all">{rd.doc}</div>
+              </Card>
+            ))}
         </div>
       )}
 

@@ -240,7 +240,7 @@ const CABLE_COLORS: Record<string, string> = {
   'LC-LC':'bg-green-900/50 text-green-300',
 }
 
-type Tab = 'devices' | 'cabling' | 'optics' | 'topology' | 'ipplan'
+type Tab = 'devices' | 'cabling' | 'optics' | 'topology' | 'ipplan' | 'rack' | 'capacity'
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -463,6 +463,8 @@ export function Step2Design() {
           { id: 'optics',   label: 'Optics' },
           { id: 'topology', label: 'HLD Topology' },
           { id: 'ipplan',   label: 'IP Plan' },
+          { id: 'rack',     label: 'Rack Plan' },
+          { id: 'capacity', label: 'Port Capacity' },
         ] as const).map(tab => (
           <button
             key={tab.id}
@@ -679,6 +681,114 @@ export function Step2Design() {
               <span className="font-semibold">VXLAN note:</span> VTEP loopbacks are separate from router-id loopbacks (NVE source-interface = Loopback1, BGP router-id = Loopback0). Ensure VTEP /32s are redistributed into the underlay IGP.
             </div>
           )}
+        </div>
+      )}
+
+      {/* M-17: Rack Plan tab */}
+      {activeTab === 'rack' && (
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-100">Rack Plan</h3>
+            <p className="text-xs text-gray-500 mt-0.5">42U rack layout — devices ordered by role (firewall → spine → leaf → access → servers)</p>
+          </div>
+          {(() => {
+            const RACK_U = 42
+            const roleOrder = ['firewall','wan-edge','border','spine','distribution','leaf','access','server','gpu']
+            const sorted = [...allRows].sort((a, b) => {
+              const ai = roleOrder.findIndex(r => a.subLayer?.includes(r))
+              const bi = roleOrder.findIndex(r => b.subLayer?.includes(r))
+              return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi)
+            })
+            const usedU = sorted.reduce((sum, r) => sum + r.qty, 0)
+            const freeU = Math.max(0, RACK_U - usedU)
+            return (
+              <div className="font-mono text-xs bg-black/60 border border-white/10 rounded-xl p-4 overflow-x-auto">
+                <div className="text-gray-500 mb-2">┌{'─'.repeat(54)}┐</div>
+                <div className="text-yellow-400 mb-1">│{'  '}42U Network Rack — {siteCode || 'SITE'}{' '.repeat(Math.max(0, 38 - (siteCode || 'SITE').length))}│</div>
+                <div className="text-gray-500 mb-2">├{'─'.repeat(54)}┤</div>
+                {sorted.map(r => {
+                  const bar = `[== ${r.model} (×${r.qty}) ==]`
+                  const pad = Math.max(0, 52 - bar.length)
+                  return (
+                    <div key={r.model} className="text-green-400">
+                      {'│ '}{bar}{' '.repeat(pad)}{' │'}
+                    </div>
+                  )
+                })}
+                {freeU > 0 && Array.from({ length: Math.min(freeU, 6) }).map((_, i) => (
+                  <div key={`empty-${i}`} className="text-gray-700">│ {'─'.repeat(52)} │</div>
+                ))}
+                {freeU > 6 && <div className="text-gray-700">│ {'·'.repeat(20)} {freeU - 6}U free {'·'.repeat(20)} │</div>}
+                <div className="text-gray-500 mt-2">└{'─'.repeat(54)}┘</div>
+                <div className="mt-3 flex gap-6 text-gray-400">
+                  <span>Used: <span className="text-yellow-400">{usedU}U</span></span>
+                  <span>Free: <span className="text-green-400">{freeU}U</span></span>
+                  <span>Capacity: <span className="text-gray-300">42U</span></span>
+                  {usedU > RACK_U && <span className="text-red-400">⚠ Overflow — needs {Math.ceil(usedU / RACK_U)} racks</span>}
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {/* M-18: Port Capacity tab */}
+      {activeTab === 'capacity' && (
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-100">Port Capacity</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Port utilisation per device type based on BOM sizing</p>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-white/10">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10 bg-white/5">
+                  {['Device Model','Layer','Qty','Total Ports','Uplink Ports','Downlink Ports','Used %','Headroom'].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {allRows.map((r, i) => {
+                  const uplinks  = r.subLayer === 'leaf' ? Math.max(2, Math.ceil(r.ports / (oversubscription || 3))) : 0
+                  const downlinks = r.subLayer === 'leaf' ? r.ports - uplinks : r.ports
+                  const usedPct  = r.subLayer === 'leaf'
+                    ? Math.min(100, Math.round((totalEndpoints / Math.max(1, allRows.filter(x => x.subLayer === 'leaf').reduce((s, x) => s + x.qty * downlinks, 0))) * 100))
+                    : r.subLayer === 'spine' ? Math.min(100, Math.round((allRows.filter(x => x.subLayer === 'leaf').length * uplinks / Math.max(1, r.qty * r.ports)) * 100))
+                    : 50
+                  const bar = '█'.repeat(Math.round(usedPct / 10)) + '░'.repeat(10 - Math.round(usedPct / 10))
+                  return (
+                    <tr key={r.model} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 ? 'bg-white/[0.02]' : ''}`}>
+                      <td className="px-3 py-2.5 font-medium text-gray-100">{r.model}</td>
+                      <td className="px-3 py-2.5"><code className="text-xs text-blue-400">{r.subLayer}</code></td>
+                      <td className="px-3 py-2.5 text-gray-300">{r.qty}</td>
+                      <td className="px-3 py-2.5 text-gray-300">{r.ports}</td>
+                      <td className="px-3 py-2.5 text-gray-400">{uplinks || '—'}</td>
+                      <td className="px-3 py-2.5 text-gray-300">{r.subLayer === 'leaf' ? downlinks : r.ports}</td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-mono text-xs ${usedPct >= 80 ? 'text-red-400' : usedPct >= 60 ? 'text-yellow-400' : 'text-green-400'}`}>{bar} {usedPct}%</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-500 text-xs">{100 - usedPct}% free</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              ['Total Downlink Ports', allRows.filter(r => r.subLayer === 'leaf').reduce((s, r) => s + r.qty * (r.ports - Math.max(2, Math.ceil(r.ports / (oversubscription || 3)))), 0).toString()],
+              ['Max Endpoint Capacity', allRows.filter(r => r.subLayer === 'leaf').reduce((s, r) => s + r.qty * (r.ports - Math.max(2, Math.ceil(r.ports / (oversubscription || 3)))), 0).toLocaleString()],
+              ['Current Load', `${totalEndpoints.toLocaleString()} endpoints`],
+            ].map(([label, val]) => (
+              <div key={label} className="bg-white/5 border border-white/10 rounded-lg p-3">
+                <div className="text-xs text-gray-500 mb-1">{label}</div>
+                <div className="text-sm font-semibold text-gray-200">{val}</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
