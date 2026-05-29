@@ -11,7 +11,7 @@ import type { BOMSummaryRow } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { cn, formatUSD, downloadCSV } from '@/lib/utils'
-import { TopologyDiagram } from '@/components/TopologyDiagram'
+import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import type { CableLink, OpticsEntry } from '@/types'
 
 // ── M-15: AI Product Scoring ─────────────────────────────────────────────────
@@ -624,7 +624,12 @@ export function Step2Design() {
       {/* HLD Topology */}
       {activeTab === 'topology' && (
         <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-          <TopologyDiagram devices={generatedDevices} />
+          <HLDTopologyDiagram
+            devices={generatedDevices}
+            useCase={useCase}
+            underlayProtocol={underlayProtocol}
+            siteCode={siteCode}
+          />
         </div>
       )}
 

@@ -3,7 +3,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { buildBOM } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { TopologyDiagram } from '@/components/TopologyDiagram'
+import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import { formatUSD, cn } from '@/lib/utils'
 import type { BOMDevice } from '@/types'
 
@@ -845,14 +845,31 @@ export function Step4NetworkDesign() {
       {activeTab === 'hld' && (
         <Card>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-gray-300">HLD Topology Diagram</h3>
-            <button onClick={() => setDevices(generatedDevices)}
-              className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
-              ↺ Regenerate
-            </button>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-300">High Level Design — Topology</h3>
+              <p className="text-xs text-gray-600 mt-0.5">
+                All layers interlinked · click a device for details · select a flow to animate packet path
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={handleExportSVG}
+                className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+                ⬇ SVG
+              </button>
+              <button onClick={() => setDevices(generatedDevices)}
+                className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+                ↺ Regenerate
+              </button>
+            </div>
           </div>
           <div ref={svgRef}>
-            <TopologyDiagram devices={generatedDevices} underlayProtocol={underlayProtocol} overlayProtocols={overlayProtocols} />
+            <HLDTopologyDiagram
+              devices={generatedDevices}
+              useCase={useCase}
+              underlayProtocol={underlayProtocol}
+              overlayProtocols={overlayProtocols}
+              siteCode={siteCode}
+            />
           </div>
         </Card>
       )}
