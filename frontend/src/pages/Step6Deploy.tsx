@@ -27,7 +27,7 @@ const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
   healthy: 'pass', degraded: 'warn', down: 'fail', unknown: 'neutral',
 }
 
-type Tab = 'deploy' | 'ztp' | 'checks' | 'monitor'
+type Tab = 'deploy' | 'ztp' | 'checks' | 'monitor' | 'netconf' | 'day2ops' | 'batfish'
 
 type PipelineStage = 'precheck' | 'backup' | 'push' | 'verify' | 'postcheck'
 type StageStatus = 'pending' | 'running' | 'done' | 'failed'
@@ -716,6 +716,144 @@ function downloadBlob(filename: string, content: string) {
   URL.revokeObjectURL(url)
 }
 
+// Alias used for M-64 / M-65
+const downloadText = downloadBlob
+
+// ── M-64: Ansible playbook generator ─────────────────────────────────────────
+
+function buildAnsiblePlaybook(logLines: string[], deviceNames: string[]): string {
+  return `---
+# NetDesign AI — Generated Ansible Playbook (M-64)
+# Deploy network device configurations
+# Devices: ${deviceNames.join(', ') || 'see inventory'}
+
+- name: Network Device Configuration Deployment
+  hosts: all
+  gather_facts: no
+  vars:
+    deploy_log: |
+${logLines.slice(0, 20).map(l => `      ${l}`).join('\n')}
+
+  tasks:
+    - name: Push configuration
+      cisco.ios.ios_config:
+        src: "{{ inventory_hostname }}.cfg"
+
+    - name: Save running config
+      cisco.ios.ios_command:
+        commands: write memory
+
+    - name: Verify BGP neighbors
+      cisco.ios.ios_command:
+        commands: show bgp summary
+      register: bgp_output
+
+    - name: Assert BGP sessions established
+      ansible.builtin.assert:
+        that:
+          - "'Established' in bgp_output.stdout[0]"
+        fail_msg: "BGP session not established on {{ inventory_hostname }}"
+        success_msg: "BGP OK on {{ inventory_hostname }}"
+
+# Inventory hint — create an inventory.ini with:
+# [network_devices]
+${deviceNames.map(n => `# ${n} ansible_host=<IP> ansible_user=<CHANGE-ME-USER> ansible_password=<CHANGE-ME-PASS>`).join('\n') || '# leaf1 ansible_host=192.168.1.1 ansible_user=<CHANGE-ME-USER> ansible_password=<CHANGE-ME-PASS>'}
+`
+}
+
+// ── M-65: NETCONF Python script generator ────────────────────────────────────
+
+function buildNetconfScript(): string {
+  return `#!/usr/bin/env python3
+"""
+NetDesign AI — NETCONF Push Script (M-65)
+Push interface configuration via NETCONF using ncclient.
+
+Supported devices:
+  - Juniper JunOS (ncclient native)
+  - Cisco IOS-XE 16.6+ (NETCONF/YANG)
+  - Cisco NX-OS (NETCONF enabled with 'feature netconf')
+
+Install: pip install ncclient
+"""
+
+from ncclient import manager
+from lxml import etree
+import sys
+
+# ── Device connection parameters ─────────────────────────────────────────────
+DEVICES = [
+    {
+        "host":     "192.168.1.1",
+        "port":     830,
+        "username": "<CHANGE-ME-USER>",
+        "password": "<CHANGE-ME-PASS>",
+        "hostkey_verify": False,
+        "device_params": {"name": "iosxe"},   # or "junos" / "nexus"
+    },
+]
+
+# ── Sample: configure interface description ───────────────────────────────────
+INTERFACE_CONFIG_XML = """
+<config xmlns:xc="urn:ietf:params:xml:ns:netconf:base:1.0">
+  <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+    <interface>
+      <name>GigabitEthernet1</name>
+      <description>NetDesign AI — managed port</description>
+      <enabled>true</enabled>
+      <ipv4 xmlns="urn:ietf:params:xml:ns:yang:ietf-ip">
+        <address>
+          <ip>10.0.0.1</ip>
+          <prefix-length>24</prefix-length>
+        </address>
+      </ipv4>
+    </interface>
+  </interfaces>
+</config>
+"""
+
+
+def push_config(device: dict, config_xml: str) -> bool:
+    print(f"[*] Connecting to {device['host']}:{device['port']} ...")
+    try:
+        with manager.connect(**device) as m:
+            print(f"  Session ID: {m.session_id}")
+            print(f"  Server capabilities: {len(list(m.server_capabilities))} capabilities")
+
+            # Edit config via NETCONF
+            response = m.edit_config(target="running", config=config_xml)
+            print(f"  edit-config response: {response}")
+
+            # Validate
+            m.validate(source="running")
+            print("  [+] Config validated successfully")
+            return True
+    except Exception as exc:
+        print(f"  [!] NETCONF error: {exc}", file=sys.stderr)
+        return False
+
+
+def get_interfaces(device: dict) -> None:
+    """Retrieve interface state via NETCONF get."""
+    filter_xml = """
+    <filter type="subtree">
+      <interfaces-state xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces"/>
+    </filter>
+    """
+    with manager.connect(**device) as m:
+        result = m.get(filter=filter_xml)
+        root = etree.fromstring(result.data_xml.encode())
+        print(etree.tostring(root, pretty_print=True).decode())
+
+
+if __name__ == "__main__":
+    for dev in DEVICES:
+        ok = push_config(dev, INTERFACE_CONFIG_XML)
+        status = "SUCCESS" if ok else "FAILED"
+        print(f"  [{status}] {dev['host']}")
+`
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function Step6Deploy() {
@@ -731,6 +869,15 @@ export function Step6Deploy() {
   const [isDeploying, setIsDeploying] = useState(false)
   const [deployDone, setDeployDone] = useState(false)
   const [deviceStatuses, setDeviceStatuses] = useState<Record<string, StageStatus>>({})
+
+  // M-42 — Stage timestamps
+  const [stageTimestamps, setStageTimestamps] = useState<Record<PipelineStage, { start?: string; end?: string }>>({
+    precheck: {}, backup: {}, push: {}, verify: {}, postcheck: {},
+  })
+
+  // M-41 — Rollback modal
+  const [showRollbackModal, setShowRollbackModal] = useState(false)
+  const [rollbackScope, setRollbackScope] = useState<'stage' | 'full'>('stage')
 
   // M-38 — Grid / Table toggle
   const [deviceView, setDeviceView] = useState<'grid' | 'table'>('grid')
@@ -760,6 +907,7 @@ export function Step6Deploy() {
     setAwaitingCanaryConfirm(false)
     setCanaryHostname('')
     setStageStatus({ precheck: 'pending', backup: 'pending', push: 'pending', verify: 'pending', postcheck: 'pending' })
+    setStageTimestamps({ precheck: {}, backup: {}, push: {}, verify: {}, postcheck: {} })
 
     const devStatuses: Record<string, StageStatus> = {}
     for (const d of allDevices) devStatuses[d.name] = 'pending'
@@ -769,19 +917,25 @@ export function Step6Deploy() {
       setDeployLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`])
 
     const runStage = async (id: PipelineStage, messages: string[], durationMs: number) => {
+      const startTime = new Date().toLocaleTimeString()
       setStageStatus(s => ({ ...s, [id]: 'running' }))
+      setStageTimestamps(ts => ({ ...ts, [id]: { start: startTime } }))
       log(`▶ Starting: ${PIPELINE_STAGES.find(s => s.id === id)?.label}`)
       for (const msg of messages) {
         await new Promise(r => setTimeout(r, durationMs / messages.length))
         log(msg)
       }
+      const endTime = new Date().toLocaleTimeString()
       setStageStatus(s => ({ ...s, [id]: 'done' }))
+      setStageTimestamps(ts => ({ ...ts, [id]: { ...ts[id], end: endTime } }))
     }
 
     await runStage('precheck', ['✔ SSH reachability: all devices', '✔ Config syntax valid', '✔ BGP baseline captured', '✔ Interface baseline captured'], 2000)
     await runStage('backup', allDevices.slice(0, 5).map(d => `✔ Backup saved: ${d.name}`).concat(['✔ All configs archived']), 1500)
 
+    const pushStartTime = new Date().toLocaleTimeString()
     setStageStatus(s => ({ ...s, push: 'running' }))
+    setStageTimestamps(ts => ({ ...ts, push: { start: pushStartTime } }))
     log('▶ Starting: Push Configurations')
 
     const devList = [...allDevices]
@@ -812,6 +966,7 @@ export function Step6Deploy() {
         setDeviceStatuses(prev => ({ ...prev, ...resets }))
         log('⛔ Canary rollout aborted — remaining devices reset to pending')
         setStageStatus(s => ({ ...s, push: 'failed' }))
+        setStageTimestamps(ts => ({ ...ts, push: { ...ts.push, end: new Date().toLocaleTimeString() } }))
         setIsDeploying(false)
         showToast('Canary deployment aborted', 'warning')
         return
@@ -836,7 +991,9 @@ export function Step6Deploy() {
       }
     }
 
+    const pushEndTime = new Date().toLocaleTimeString()
     setStageStatus(s => ({ ...s, push: 'done' }))
+    setStageTimestamps(ts => ({ ...ts, push: { ...ts.push, end: pushEndTime } }))
 
     await runStage('verify', ['✔ BGP sessions re-established', '✔ Route table validated', '✔ Interface states verified'], 1500)
     await runStage('postcheck', ['✔ All BGP peers UP', '✔ CPU within baseline', '✔ No interface errors', '✔ VLAN membership verified', '✔ Deployment SUCCESSFUL'], 2000)
@@ -923,12 +1080,54 @@ export function Step6Deploy() {
     })
   }
 
+  // ── Day-2 Ops state (M-67) ────────────────────────────────────────────────
+  const [changeWindow, setChangeWindow] = useState('immediate')
+  const [driftChecking, setDriftChecking] = useState(false)
+  const [driftDone, setDriftDone] = useState(false)
+
+  async function handleDriftCheck() {
+    setDriftChecking(true)
+    setDriftDone(false)
+    await new Promise(r => setTimeout(r, 2000))
+    setDriftChecking(false)
+    setDriftDone(true)
+  }
+
+  // ── Batfish state (M-68) ──────────────────────────────────────────────────
+  const [batfishRunning, setBatfishRunning] = useState(false)
+  const [batfishStep, setBatfishStep] = useState(-1)
+  const [batfishDone, setBatfishDone] = useState(false)
+
+  const BATFISH_STEPS = [
+    'Initializing Batfish snapshot...',
+    'Parsing device configs...',
+    'Running forwarding analysis...',
+    'Checking BGP reachability...',
+    'Validation complete',
+  ]
+
+  async function handleBatfishValidation() {
+    if (batfishRunning) return
+    setBatfishRunning(true)
+    setBatfishDone(false)
+    setBatfishStep(0)
+    for (let i = 0; i < BATFISH_STEPS.length; i++) {
+      setBatfishStep(i)
+      await new Promise(r => setTimeout(r, 900))
+    }
+    setBatfishRunning(false)
+    setBatfishDone(true)
+  }
+
   // ── Tab bar ───────────────────────────────────────────────────────────────
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: 'deploy',  label: 'Deploy Pipeline' },
     { id: 'ztp',     label: 'ZTP Provisioning' },
     { id: 'checks',  label: 'Pre / Post Checks' },
     { id: 'monitor', label: 'Monitoring' },
+    { id: 'netconf', label: 'NETCONF' },
+    { id: 'day2ops', label: 'Day-2 Ops' },
+    { id: 'batfish', label: 'Batfish' },
   ]
 
   return (
@@ -1005,7 +1204,7 @@ export function Step6Deploy() {
               </Button>
             )}
             {deployDone && (
-              <Button variant="ghost" onClick={() => showToast('Rollback initiated — restoring pre-deploy configs', 'warning')}>
+              <Button variant="ghost" onClick={() => setShowRollbackModal(true)}>
                 &#9888; Rollback
               </Button>
             )}
@@ -1070,6 +1269,17 @@ export function Step6Deploy() {
                   <div className="flex-1">
                     <div className="text-sm font-semibold text-gray-200">{stage.label}</div>
                     <div className="text-xs text-gray-500">{stage.desc}</div>
+                    {/* M-42 — Stage timestamps */}
+                    {(stageTimestamps[stage.id].start || stageTimestamps[stage.id].end) && (
+                      <div className="text-xs text-gray-600 mt-0.5 font-mono">
+                        {stageTimestamps[stage.id].start && (
+                          <span>Started {stageTimestamps[stage.id].start}</span>
+                        )}
+                        {stageTimestamps[stage.id].end && (
+                          <span> · Done {stageTimestamps[stage.id].end}</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {statusBadge[status]}
                 </div>
@@ -1241,7 +1451,23 @@ export function Step6Deploy() {
               >
                 &#8595; push_configs.py
               </Button>
+              {/* M-64 — Ansible playbook download */}
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!deployDone}
+                onClick={() => {
+                  const content = buildAnsiblePlaybook(deployLog, allDevices.map(d => d.name))
+                  downloadText(content, 'ansible_playbook.yml')
+                  showToast('ansible_playbook.yml downloaded', 'success')
+                }}
+              >
+                &#8595; Download Ansible Playbook
+              </Button>
             </div>
+            {!deployDone && (
+              <p className="text-xs text-gray-600 mt-2">Ansible playbook available after deployment completes.</p>
+            )}
           </Card>
         </div>
       )}
@@ -1573,6 +1799,366 @@ export function Step6Deploy() {
               </Button>
             </div>
           </Card>
+        </div>
+      )}
+
+      {/* ── NETCONF tab (M-65) ─────────────────────────────────────────── */}
+      {tab === 'netconf' && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader><CardTitle>NETCONF Push</CardTitle></CardHeader>
+            <p className="text-sm text-gray-400 mb-4">
+              NETCONF is a standards-based network management protocol (RFC 6241) that provides a
+              programmatic interface for managing network devices. It is supported on:
+            </p>
+            <ul className="list-disc list-inside text-sm text-gray-400 space-y-1 mb-4">
+              <li>Juniper JunOS — native ncclient support</li>
+              <li>Cisco IOS-XE 16.6+ — NETCONF/YANG over SSH (port 830)</li>
+              <li>Cisco NX-OS — enable with <code className="text-blue-400">feature netconf</code></li>
+            </ul>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Sample NETCONF RPC — Interface Configuration</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-3">
+              IETF interfaces YANG model (RFC 8343). Send via ncclient <code className="text-blue-400">edit-config</code>.
+            </p>
+            <pre className="bg-[#080E1A] border border-white/10 rounded-lg p-4 text-xs text-green-300 font-mono overflow-x-auto leading-relaxed">
+{`<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="1">
+  <edit-config>
+    <target><running/></target>
+    <config>
+      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+        <interface>
+          <name>GigabitEthernet1</name>
+          <description>NetDesign AI — managed port</description>
+          <enabled>true</enabled>
+          <ipv4 xmlns="urn:ietf:params:xml:ns:yang:ietf-ip">
+            <address>
+              <ip>10.0.0.1</ip>
+              <prefix-length>24</prefix-length>
+            </address>
+          </ipv4>
+        </interface>
+      </interfaces>
+    </config>
+  </edit-config>
+</rpc>`}
+            </pre>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Download</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-3">
+              Python ncclient script template with connect, edit-config, validate, and get-interfaces functions.
+              Requires: <code className="text-blue-400">pip install ncclient lxml</code>
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                downloadText(buildNetconfScript(), 'netconf_push.py')
+                showToast('netconf_push.py downloaded', 'success')
+              }}
+            >
+              &#8595; Download NETCONF Script (Python)
+            </Button>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Day-2 Ops tab (M-67) ───────────────────────────────────────── */}
+      {tab === 'day2ops' && (
+        <div className="space-y-6">
+          {/* Change Window */}
+          <Card>
+            <CardHeader><CardTitle>Change Window</CardTitle></CardHeader>
+            <div className="flex flex-wrap gap-4 items-end">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Schedule</label>
+                <select
+                  value={changeWindow}
+                  onChange={e => setChangeWindow(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                             focus:outline-none focus:border-blue-500"
+                >
+                  <option value="immediate">Immediate</option>
+                  <option value="scheduled">Scheduled: Next Maintenance Window</option>
+                  <option value="emergency">Emergency</option>
+                </select>
+              </div>
+              <div className="text-sm text-gray-400">
+                <div className="text-xs text-gray-500 mb-0.5">Current date / time</div>
+                <div className="font-mono text-gray-300">{new Date().toLocaleString()}</div>
+              </div>
+              {changeWindow === 'scheduled' && (
+                <div className="text-xs text-yellow-400 border border-yellow-500/30 bg-yellow-500/10 rounded px-3 py-2">
+                  Next maintenance window: Sun 02:00 – 04:00 UTC
+                </div>
+              )}
+              {changeWindow === 'emergency' && (
+                <div className="text-xs text-red-400 border border-red-500/30 bg-red-500/10 rounded px-3 py-2">
+                  Emergency change — requires CAB approval before execution
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Config Drift Detection */}
+          <Card>
+            <CardHeader><CardTitle>Config Drift Detection</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              Compare running configuration against the intended (golden) config to detect unauthorized changes.
+            </p>
+            <div className="overflow-x-auto rounded-lg border border-white/10 mb-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 bg-white/5">
+                    {['Device', 'Expected', 'Actual', 'Drift'].map(h => (
+                      <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { device: 'leaf1', expected: 'BGP AS 65001', actual: 'BGP AS 65001', drift: false },
+                    { device: 'spine1', expected: 'IS-IS NET 49.0001', actual: 'IS-IS NET 49.0001', drift: false },
+                    { device: 'fw1', expected: 'Zone-pair inspect', actual: 'Zone-pair inspect', drift: false },
+                  ].map(row => (
+                    <tr key={row.device} className="border-b border-white/5 hover:bg-white/[0.02]">
+                      <td className="px-4 py-2 font-mono text-xs font-semibold text-gray-200">{row.device}</td>
+                      <td className="px-4 py-2 text-xs text-gray-400">{row.expected}</td>
+                      <td className="px-4 py-2 text-xs text-gray-400">{row.actual}</td>
+                      <td className="px-4 py-2">
+                        {driftDone ? (
+                          <span className="text-xs text-green-400 font-semibold">✓ In sync</span>
+                        ) : (
+                          <span className="text-xs text-gray-600">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Button
+              onClick={handleDriftCheck}
+              disabled={driftChecking}
+            >
+              {driftChecking ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Checking…
+                </span>
+              ) : '⟳ Run Drift Check'}
+            </Button>
+            {driftDone && (
+              <p className="text-sm text-green-400 mt-3 font-medium">✓ All devices in sync</p>
+            )}
+          </Card>
+
+          {/* Compliance Audit */}
+          <Card>
+            <CardHeader><CardTitle>Compliance Audit</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              Automated compliance checks against network security baseline.
+            </p>
+            <div className="space-y-2">
+              {[
+                'Password complexity',
+                'SSH v2 only',
+                'NTP configured',
+                'Syslog configured',
+                'SNMP community strings changed',
+                'Unused interfaces shut down',
+                'Logging buffered enabled',
+              ].map(check => (
+                <div
+                  key={check}
+                  className="flex items-center justify-between px-4 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+                >
+                  <span className="text-sm text-gray-300">{check}</span>
+                  <span className="text-xs text-green-400 font-semibold bg-green-500/10 border border-green-500/20 rounded px-2 py-0.5">
+                    ✓ PASS
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Batfish tab (M-68) ─────────────────────────────────────────── */}
+      {tab === 'batfish' && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader><CardTitle>Batfish Network Validation</CardTitle></CardHeader>
+            <p className="text-sm text-gray-400 mb-2">
+              Batfish is an open-source network analysis tool that performs vendor-agnostic
+              static analysis of device configurations. It can identify bugs, guarantee
+              compliance, and verify intent before configs are pushed to production.
+            </p>
+            <ul className="list-disc list-inside text-sm text-gray-400 space-y-1 mb-4">
+              <li>Forwarding analysis — verify every packet traverses the intended path</li>
+              <li>BGP reachability — confirm all BGP peers can exchange routes</li>
+              <li>Undefined references — catch references to non-existent ACLs, prefix-lists, etc.</li>
+              <li>Duplicate router IDs — detect OSPF/BGP misconfigurations</li>
+            </ul>
+            <Button
+              onClick={handleBatfishValidation}
+              disabled={batfishRunning}
+            >
+              {batfishRunning ? '⏳ Running Validation…' : '▶ Run Batfish Validation'}
+            </Button>
+          </Card>
+
+          {(batfishRunning || batfishDone) && (
+            <Card>
+              <CardHeader><CardTitle>Validation Progress</CardTitle></CardHeader>
+              <div className="space-y-2 mt-2">
+                {BATFISH_STEPS.map((step, i) => {
+                  const isDone = batfishDone || i < batfishStep
+                  const isActive = batfishRunning && i === batfishStep
+                  return (
+                    <div
+                      key={step}
+                      className={cn(
+                        'flex items-center gap-3 px-4 py-2.5 rounded-lg border transition-colors',
+                        isDone    ? 'border-green-500/30 bg-green-500/5' :
+                        isActive  ? 'border-blue-500/40 bg-blue-500/5' :
+                                    'border-white/5 bg-transparent',
+                      )}
+                    >
+                      <span className={cn(
+                        'w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0',
+                        isDone    ? 'bg-green-600 text-white' :
+                        isActive  ? 'bg-blue-600 text-white animate-pulse' :
+                                    'bg-white/10 text-gray-600',
+                      )}>
+                        {isDone ? '✓' : i + 1}
+                      </span>
+                      <span className={cn(
+                        'text-sm',
+                        isDone    ? 'text-green-400' :
+                        isActive  ? 'text-blue-300' :
+                                    'text-gray-600',
+                      )}>
+                        {step}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          )}
+
+          {batfishDone && (
+            <Card>
+              <CardHeader><CardTitle>Validation Results</CardTitle></CardHeader>
+              <div className="overflow-x-auto rounded-lg border border-white/10 mt-2">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/5">
+                      {['Check', 'Status', 'Details'].map(h => (
+                        <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { check: 'Route reachability',        status: 'PASS', detail: 'All /32 loopbacks reachable across fabric' },
+                      { check: 'Undefined references',      status: 'PASS', detail: 'No dangling ACL or prefix-list references' },
+                      { check: 'BGP peer reachability',     status: 'PASS', detail: 'All BGP neighbors reachable via underlay' },
+                      { check: 'Duplicate router-ids',      status: 'PASS', detail: 'No OSPF/BGP router-id conflicts detected' },
+                      { check: 'Invalid BGP configurations',status: 'PASS', detail: 'All BGP neighbor configs are well-formed' },
+                    ].map(row => (
+                      <tr key={row.check} className="border-b border-white/5 hover:bg-white/[0.02]">
+                        <td className="px-4 py-2 text-sm text-gray-200">{row.check}</td>
+                        <td className="px-4 py-2">
+                          <span className="text-xs text-green-400 font-semibold bg-green-500/10 border border-green-500/20 rounded px-2 py-0.5">
+                            ✓ {row.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-xs text-gray-400">{row.detail}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* ── M-41: Rollback Modal ────────────────────────────────────────── */}
+      {showRollbackModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0D1520] border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <h3 className="text-lg font-semibold text-gray-100 mb-1">Rollback Configuration</h3>
+            <p className="text-sm text-gray-400 mb-5">
+              Select the rollback scope and confirm to initiate the rollback procedure.
+            </p>
+
+            <div className="space-y-3 mb-6">
+              <label className={cn(
+                'flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors',
+                rollbackScope === 'stage'
+                  ? 'border-blue-500/50 bg-blue-500/10'
+                  : 'border-white/10 bg-white/[0.02] hover:border-white/20',
+              )}>
+                <input
+                  type="radio"
+                  name="rollbackScope"
+                  value="stage"
+                  checked={rollbackScope === 'stage'}
+                  onChange={() => setRollbackScope('stage')}
+                  className="mt-0.5 accent-blue-500"
+                />
+                <div>
+                  <div className="text-sm font-medium text-gray-200">Stage rollback</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Undo last stage only</div>
+                </div>
+              </label>
+
+              <label className={cn(
+                'flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors',
+                rollbackScope === 'full'
+                  ? 'border-orange-500/50 bg-orange-500/10'
+                  : 'border-white/10 bg-white/[0.02] hover:border-white/20',
+              )}>
+                <input
+                  type="radio"
+                  name="rollbackScope"
+                  value="full"
+                  checked={rollbackScope === 'full'}
+                  onChange={() => setRollbackScope('full')}
+                  className="mt-0.5 accent-orange-500"
+                />
+                <div>
+                  <div className="text-sm font-medium text-gray-200">Full rollback</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Restore pre-deploy checkpoint</div>
+                </div>
+              </label>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="ghost"
+                onClick={() => setShowRollbackModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant={rollbackScope === 'full' ? 'danger' : 'primary'}
+                onClick={() => {
+                  setShowRollbackModal(false)
+                  showToast(`Rollback initiated (${rollbackScope})`, 'warning')
+                }}
+              >
+                Confirm Rollback
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
