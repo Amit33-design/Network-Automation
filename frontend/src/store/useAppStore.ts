@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import type {
   AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry,
   OrgSize, BudgetTier, TrafficPattern, BandwidthPerServer, UnderlayProtocol, FirewallModel, RedundancyModel,
+  VpnType,
 } from '@/types'
 
 interface AppStore extends AppState {
@@ -37,6 +38,9 @@ interface AppStore extends AppState {
   setFirewallModel: (m: FirewallModel) => void
   setRedundancyModel: (m: RedundancyModel) => void
   setNumSites: (n: number) => void
+  setVpnType: (v: VpnType) => void
+  setNacOptions: (o: string[]) => void
+  setAdditionalNotes: (n: string) => void
 
   // Design computed results
   setDevices: (devices: BOMDevice[]) => void
@@ -95,6 +99,9 @@ const DEFAULT_STATE: AppState = {
   firewallModel: '',
   redundancyModel: 'ha',
   numSites: 1,
+  vpnType: '',
+  nacOptions: [],
+  additionalNotes: '',
 }
 
 export const useAppStore = create<AppStore>()(
@@ -131,6 +138,9 @@ export const useAppStore = create<AppStore>()(
       setFirewallModel: firewallModel => set({ firewallModel }),
       setRedundancyModel: redundancyModel => set({ redundancyModel }),
       setNumSites: numSites => set({ numSites }),
+      setVpnType: vpnType => set({ vpnType }),
+      setNacOptions: nacOptions => set({ nacOptions }),
+      setAdditionalNotes: additionalNotes => set({ additionalNotes }),
 
       setDevices: devices => set({ devices }),
       setCabling: cabling => set({ cabling }),

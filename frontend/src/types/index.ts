@@ -12,7 +12,8 @@ export type UseCase =
 export type AppType = 'voice' | 'video' | 'storage' | 'hpc' | 'internet'
 export type Scale = 'small' | 'medium' | 'large'
 export type Redundancy = 'single' | 'dual'
-export type Compliance = 'QoS' | 'PCI' | 'HIPAA' | 'SOC2'
+export type Compliance = 'QoS' | 'PCI' | 'HIPAA' | 'SOC2' | 'FedRAMP' | 'NIST_CSF' | 'ISO27001'
+export type VpnType = '' | 'ipsec' | 'ssl' | 'ztna' | 'none'
 export type RedundancyModel = 'none' | 'basic' | 'ha' | 'full'
 export type TrafficPattern = 'ns' | 'ew' | 'both'
 export type BandwidthPerServer = '1G' | '10G' | '25G' | '100G' | '400G'
@@ -137,6 +138,9 @@ export interface AppState {
   firewallModel: FirewallModel
   redundancyModel: RedundancyModel
   numSites: number
+  vpnType: VpnType
+  nacOptions: string[]
+  additionalNotes: string
 }
 
 // ── Lab Demo API types ────────────────────────────────────────────────────────

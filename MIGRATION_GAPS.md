@@ -1,3 +1,33 @@
+# React Migration Gap Analysis — Progress Tracker
+
+## Sprint Status (updated after each push)
+
+| ID | Feature | Status | Commit |
+|----|---------|--------|--------|
+| M-02 | numSites field | ✅ Done | 98c075c |
+| M-14 | Vendor filter tabs Step 3 | ✅ Done | 975e00a |
+| M-20 | IP Plan tab Step 4 | ✅ Done | c7d1efc |
+| M-21 | VLAN Design tab Step 4 | ✅ Done | c7d1efc |
+| M-22 | Routing & Protocols tab Step 4 | ✅ Done | c7d1efc |
+| M-28 | Export HLD SVG | ✅ Done | c7d1efc |
+| M-29 | Export LLD CSV | ✅ Done | c7d1efc |
+| M-37 | Deploy pipeline 5-stage UI | ✅ Done | a3bca3e |
+| M-43 | Troubleshooting Engine panel | ✅ Done | 0910dd1 |
+| M-53 | Collapsible sidebar navigation | ✅ Done | 0910dd1 |
+| M-04 | VPN type select Step 2 | 🔄 In progress | — |
+| M-05 | NAC chip group Step 2 | 🔄 In progress | — |
+| M-06 | Additional notes textarea Step 2 | 🔄 In progress | — |
+| M-07 | FedRAMP + NIST CSF compliance chips | 🔄 In progress | — |
+| M-08 | GENEVE overlay option | 🔄 In progress | — |
+| M-09 | Richer routing features list | 🔄 In progress | — |
+| M-10 | Live summary sidebar Step 2 | 🔄 In progress | — |
+| M-13 | Requirement validator | 🔄 In progress | — |
+
+> **Session resume**: check this table first — start from first row that is not ✅ Done.
+> Implement in order. After each item: run `cd frontend && npm test -- --run && npm run build`, commit, push to `main`.
+
+---
+
 # React Migration Gap Analysis
 *Audited: 2026-05-29 | Source: `src/js/*.js` + `index.html` (3708 lines) vs `frontend/src/`*
 
