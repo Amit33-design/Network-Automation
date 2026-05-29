@@ -353,7 +353,7 @@ Use gap IDs in commit messages and conversations.
 | ID | Gap | Priority |
 |----|-----|----------|
 | G-A1 | Intent NLP parser — free-text → Step 1 form fields (Claude API) | P1 |
-| G-A2 | Interactive topology viewer (pan/zoom/click) — currently no HLD diagram | P1 |
+| G-A2 | ✅ 2026-05-29 Professional HLD diagram — all layers interlinked, packet-flow scenarios, device-inspect panel | P1 |
 | G-A3 | Batfish/pyATS dry-run validation before config push | P1 |
 | G-A4 | Config drift detection (running vs intended diff) | P1 |
 | G-A5 | Canary deployment (1 device first, confirm gate) | P1 |
