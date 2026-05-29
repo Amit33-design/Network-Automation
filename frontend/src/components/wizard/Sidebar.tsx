@@ -5,6 +5,8 @@ import { MyDesigns } from '@/components/MyDesigns'
 import { ConfigPolicyModal } from '@/components/ConfigPolicyModal'
 import { ExportModal } from '@/components/ExportModal'
 import { PolicyRulesEditor } from '@/components/PolicyRulesEditor'
+import { EnterpriseApprovals } from '@/components/EnterpriseApprovals'
+import { IntegrationsPanel } from '@/components/IntegrationsPanel'
 
 interface SidebarProps {
   onGoHome: () => void
@@ -36,6 +38,8 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }
   const [showConfigPolicy, setShowConfigPolicy] = useState(false)
   const [showExport, setShowExport] = useState(false)
   const [showPolicyRules, setShowPolicyRules] = useState(false)
+  const [showApprovals, setShowApprovals] = useState(false)
+  const [showIntegrations, setShowIntegrations] = useState(false)
   const [shareCopied, setShareCopied] = useState(false)
 
   function nav(n: number) { setStep(n) }
@@ -173,6 +177,21 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }
         </button>
       </div>
 
+      {/* ENTERPRISE group */}
+      <div className="px-3 mt-3">
+        <div className="text-xs font-bold text-gray-500 uppercase tracking-widest px-3 mb-2">Enterprise</div>
+        <button onClick={() => setShowApprovals(true)}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+          <span className="text-base">✅</span>
+          <span>Approvals</span>
+        </button>
+        <button onClick={() => setShowIntegrations(true)}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+          <span className="text-base">🔌</span>
+          <span>Integrations</span>
+        </button>
+      </div>
+
       {/* Step indicator at bottom */}
       <div className="mt-auto px-4 pt-4 border-t border-white/10">
         <div className="text-xs text-gray-600">Step {step} of 6</div>
@@ -191,6 +210,8 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }
         configs={configs}
       />
       <PolicyRulesEditor open={showPolicyRules} onClose={() => setShowPolicyRules(false)} />
+      <EnterpriseApprovals open={showApprovals} onClose={() => setShowApprovals(false)} />
+      <IntegrationsPanel open={showIntegrations} onClose={() => setShowIntegrations(false)} />
     </aside>
   )
 }

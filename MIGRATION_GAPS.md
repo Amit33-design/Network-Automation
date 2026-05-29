@@ -44,18 +44,31 @@
 | M-56 | My Designs panel | ✅ Done | fdca43e |
 | M-58 | Backend toggle | ✅ Done | fdca43e |
 | M-59 | Export modal | ✅ Done | fdca43e |
-| M-11 | Multi-cloud specific fields Step 2 | 🔄 In progress | — |
-| M-17 | Rack plan section Step 3 | 🔄 In progress | — |
-| M-18 | Port capacity table Step 3 | 🔄 In progress | — |
-| M-24 | Reference Designs tab Step 4 | 🔄 In progress | — |
-| M-30 | Export All Configs .txt bundle | 🔄 In progress | — |
-| M-31 | Full HTML Design Report | 🔄 In progress | — |
-| M-34 | Config diff viewer | 🔄 In progress | — |
-| M-38 | Per-device deploy status table | 🔄 In progress | — |
-| M-39 | Canary deployment option | 🔄 In progress | — |
-| M-55 | Policy Rules Editor (YAML DSL) | 🔄 In progress | — |
-| M-57 | Share button / shareable URL | 🔄 In progress | — |
-| M-60 | Breadcrumb / progress bar | 🔄 In progress | — |
+| M-11 | Multi-cloud specific fields Step 2 | ✅ Done | 408d05f |
+| M-17 | Rack plan section Step 3 | ✅ Done | 408d05f |
+| M-18 | Port capacity table Step 3 | ✅ Done | 408d05f |
+| M-24 | Reference Designs tab Step 4 | ✅ Done | 408d05f |
+| M-01 | Primary contact field Step 1 | ✅ Done | 7ee48d6 |
+| M-30 | Export All Configs .txt bundle | ✅ Done | fdca43e |
+| M-31 | Full HTML Design Report | ✅ Done | fdca43e |
+| M-34 | Config diff viewer | ✅ Done | 7ee48d6 |
+| M-38 | Per-device deploy status table | ✅ Done | 7ee48d6 |
+| M-39 | Canary deployment option | ✅ Done | 7ee48d6 |
+| M-55 | Policy Rules Editor (YAML DSL) | ✅ Done | 7ee48d6 |
+| M-57 | Share button / shareable URL | ✅ Done | 7ee48d6 |
+| M-60 | Breadcrumb / progress bar | ✅ Done | 7ee48d6 |
+| M-36 | Toggle all sections collapse | ✅ Done | fda6298 |
+| M-40 | Live deploy feed (WebSocket API in client.ts, simulation complete) | ✅ Done | a3bca3e |
+| M-41 | Rollback modal | 🔄 In progress | — |
+| M-42 | Pipeline timestamp display | 🔄 In progress | — |
+| M-64 | Ansible playbook generation | 🔄 In progress | — |
+| M-65 | Netconf push UI | 🔄 In progress | — |
+| M-67 | Day-2 Ops panel | 🔄 In progress | — |
+| M-68 | Batfish dry-run validation | 🔄 In progress | — |
+| M-61 | Enterprise Approvals workflow | ⏳ P3 | — |
+| M-62 | Integrations panel | ⏳ P3 | — |
+| M-63 | Profile / Login (Clerk auth) | ⏳ P3 | — |
+| M-66 | AWX integration | ⏳ P3 | — |
 
 > **Session resume**: check this table first — start from first row that is not ✅ Done.
 > Implement in order. After each item: run `cd frontend && npm test -- --run && npm run build`, commit, push to `main`.
