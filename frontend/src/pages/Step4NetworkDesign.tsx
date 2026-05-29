@@ -711,7 +711,7 @@ export function Step4NetworkDesign() {
     useCase, scale, siteCode, numSites,
     underlayProtocol, overlayProtocols, protoFeatures, redundancyModel,
     totalEndpoints, bandwidthPerServer, oversubscription,
-    trafficPattern, compliance,
+    trafficPattern, compliance, vendorPrefs,
     devices, setDevices, nextStep, prevStep,
   } = useAppStore()
 
@@ -722,8 +722,8 @@ export function Step4NetworkDesign() {
   const svgRef = useRef<HTMLDivElement>(null)
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
-    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription }),
-    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription]
+    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs }),
+    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs]
   )
 
   useMemo(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])

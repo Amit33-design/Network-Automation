@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
-import type { MonitoringResult } from '@/types'
+import type { MonitoringResult, MetricsSummary } from '@/types'
+import { useBackendMode } from '@/components/BackendToggle'
 
 async function fetchJSON<T>(url: string): Promise<T> {
   const res = await fetch(url)
@@ -23,6 +24,16 @@ export function useMonitoringPoll(enabled = false) {
     queryFn: () => fetchJSON('/api/monitoring/poll'),
     enabled,
     refetchInterval: enabled ? 15_000 : false,
+  })
+}
+
+export function useMetricsSummary() {
+  const { isLive } = useBackendMode()
+  return useQuery<MetricsSummary>({
+    queryKey: ['metrics-summary'],
+    queryFn: () => fetchJSON('/api/metrics/summary'),
+    refetchInterval: 15_000,
+    enabled: isLive,
   })
 }
 

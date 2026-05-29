@@ -7,6 +7,7 @@ import { ExportModal } from '@/components/ExportModal'
 import { PolicyRulesEditor } from '@/components/PolicyRulesEditor'
 import { EnterpriseApprovals } from '@/components/EnterpriseApprovals'
 import { IntegrationsPanel } from '@/components/IntegrationsPanel'
+import { DemoLoader } from '@/components/DemoLoader'
 
 interface SidebarProps {
   onGoHome: () => void
@@ -116,6 +117,11 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
           ) : (
             <button onClick={() => setCollapsed(true)} className="text-gray-500 hover:text-gray-300 cursor-pointer text-sm" title="Collapse">◀</button>
           )}
+        </div>
+
+        {/* DEMO LOADER */}
+        <div className="px-3 mb-4">
+          <DemoLoader />
         </div>
 
         {/* DESIGN group */}

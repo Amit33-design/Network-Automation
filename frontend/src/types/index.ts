@@ -156,6 +156,8 @@ export interface AppState {
   bgpAsn: string
   orgCidr: string
   aviatrixOptions: string[]
+  // Demo topology tracking
+  demoTopologyId: string
 }
 
 // ── Lab Demo API types ────────────────────────────────────────────────────────
@@ -313,4 +315,42 @@ export interface Deployment {
   started_at: string
   finished_at?: string
   events: DeployEvent[]
+}
+
+// ── Demo topology catalog ─────────────────────────────────────────────────────
+
+export interface DemoTopology {
+  id: string
+  label: string
+  icon: string
+  useCase: UseCase
+  scale: Scale
+  description: string
+  siteCode: string
+  siteName: string
+  orgName: string
+  trafficPattern: TrafficPattern
+  underlayProtocol: UnderlayProtocol
+  totalEndpoints: number
+  devices: BOMDevice[]
+  cabling: CableLink[]
+  optics: OpticsEntry[]
+}
+
+// ── Metrics summary (gNMI simulator / Prometheus) ─────────────────────────────
+
+export interface DeviceMetrics {
+  cpu_util: number
+  mem_util: number
+  interface_errors_in: number
+  interface_errors_out: number
+  bgp_sessions_up: number
+  bgp_prefixes_received: number
+  pfc_drops: number
+  throughput_mbps: number
+}
+
+export interface MetricsSummary {
+  timestamp: string
+  devices: Record<string, DeviceMetrics>
 }

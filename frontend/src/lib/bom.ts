@@ -45,6 +45,67 @@ const PREFERRED_PRODUCTS: Record<UseCase, Record<string, string>> = {
   aviatrix:   { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
 }
 
+// Maps vendor → use-case → role → product ID
+// Used when vendorPrefs overrides the Cisco defaults above
+const VENDOR_PRODUCT_MAP: Record<string, Partial<Record<UseCase, Record<string, string>>>> = {
+  'Arista': {
+    dc:        { spine: 'arista-7800r3',    leaf: 'arista-7050cx3' },
+    gpu:       { spine: 'arista-7800r3',    leaf: 'arista-7050cx3' },
+    multisite: { spine: 'arista-7800r3',    leaf: 'arista-7050cx3' },
+  },
+  'Juniper': {
+    dc:        { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+    gpu:       { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+    multisite: { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+  },
+  'Palo Alto': {
+    dc:        { firewall: 'panos-pa5260' },
+    campus:    { firewall: 'panos-pa5260' },
+    multisite: { firewall: 'panos-pa5260' },
+    multicloud: { firewall: 'panos-pa5260' },
+  },
+  'Fortinet': {
+    dc:        { firewall: 'fortinet-fg2600f' },
+    campus:    { firewall: 'fortinet-fg2600f', distribution: 'fortinet-fst1024e', access: 'fortinet-fst148f' },
+    multisite: { firewall: 'fortinet-fg2600f' },
+    multicloud: { firewall: 'fortinet-fg2600f' },
+  },
+  'Dell EMC': {
+    dc:        { spine: 'dell-z9332f',  leaf: 'dell-s5248f' },
+    gpu:       { spine: 'dell-z9332f',  leaf: 'dell-s5248f' },
+    multisite: { spine: 'dell-z9332f',  leaf: 'dell-s5248f' },
+  },
+  'HPE Aruba': {
+    campus:    { distribution: 'aruba-cx6400', access: 'aruba-cx6300' },
+    dc:        { spine: 'aruba-cx10000', leaf: 'aruba-cx6400' },
+    multisite: { spine: 'aruba-cx10000', leaf: 'aruba-cx6400' },
+  },
+  'NVIDIA': {
+    gpu:       { spine: 'nvidia-sn5600', leaf: 'nvidia-sn4600c' },
+    dc:        { spine: 'nvidia-sn5600', leaf: 'nvidia-sn4600c' },
+  },
+  'Extreme Networks': {
+    dc:        { spine: 'extreme-8720',  leaf: 'extreme-8520' },
+    multisite: { spine: 'extreme-8720',  leaf: 'extreme-8520' },
+    campus:    { distribution: 'extreme-5720', access: 'extreme-5420' },
+  },
+}
+
+/** Build role→productId prefs by layering vendorPrefs on top of Cisco defaults. */
+function resolvePrefs(useCase: UseCase, vendorPrefs: string[]): Record<string, string> {
+  const base = { ...(PREFERRED_PRODUCTS[useCase] ?? PREFERRED_PRODUCTS.dc) }
+  for (const vendor of vendorPrefs) {
+    const vendorMap = VENDOR_PRODUCT_MAP[vendor]
+    if (!vendorMap) continue
+    const ucMap = vendorMap[useCase]
+    if (!ucMap) continue
+    for (const [role, prodId] of Object.entries(ucMap)) {
+      base[role] = prodId
+    }
+  }
+  return base
+}
+
 // ── Role codes for hostnames ─────────────────────────────────────────────────
 
 const ROLE_CODE: Record<string, string> = {
@@ -83,11 +144,14 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
   totalEndpoints?: number
   bandwidthPerServer?: string
   oversubscription?: number
+  vendorPrefs?: string[]
 }): BOMDevice[] {
   const useCase = (state.useCase || 'dc') as UseCase
   const scale = (state.scale || 'small') as Scale
 
-  const prefs = PREFERRED_PRODUCTS[useCase] ?? PREFERRED_PRODUCTS.dc
+  const prefs = state.vendorPrefs?.length
+    ? resolvePrefs(useCase, state.vendorPrefs)
+    : (PREFERRED_PRODUCTS[useCase] ?? PREFERRED_PRODUCTS.dc)
 
   // Port-math: derive device counts from topology inputs when totalEndpoints > 0
   let scaleDef: RoleCounts
@@ -196,6 +260,7 @@ export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>
   totalEndpoints?: number
   bandwidthPerServer?: string
   oversubscription?: number
+  vendorPrefs?: string[]
 }): {
   devices: BOMDevice[]
   summary: Record<string, BOMSummaryRow>

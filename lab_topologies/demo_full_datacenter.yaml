@@ -1,0 +1,523 @@
+# Demo Full Datacenter Lab Topology
+# Covers all device types for E2E testing: ZTP, monitoring, pre/post checks
+#
+# Topology layers (top → bottom):
+#   WAN edge routers → firewalls (HA pair) → core switches →
+#   load balancers → GPU fabric (spines → leaves → GPU servers)
+#   GPU firewall provides microsegmentation for the GPU cluster.
+#
+# Usage:
+#   python demo_scenarios/run_demo.py
+#   python demo_scenarios/run_demo.py --scenario ztp
+#   python demo_scenarios/run_demo.py --scenario monitor
+#   python demo_scenarios/run_demo.py --scenario checks
+
+lab:
+  name: "demo-datacenter-lab"
+  description: "Full datacenter with routers, switches, firewalls, LBs, GPU FW, GPU servers"
+  version: "1.0"
+
+# ── WAN / Edge Routers ────────────────────────────────────────────────────────
+routers:
+  - name: edge-rtr1
+    platform: cisco_iosxe
+    management_ip: 192.168.1.1
+    model: "CSR1000v"
+    asn: 64512
+    loopback0: "10.255.0.1/32"
+    routing_protocols: ["ospf", "bgp"]
+    bgp_neighbors: ["10.255.0.2"]
+    interfaces:
+      - name: GigabitEthernet1
+        ip_address: 203.0.113.1/30
+        peer_device: internet
+        speed: "1G"
+      - name: GigabitEthernet2
+        ip_address: 10.0.1.0/31
+        peer_device: fw1
+        peer_interface: ethernet1/1
+        speed: "1G"
+    tags:
+      role: edge
+      site: dc1
+
+  - name: edge-rtr2
+    platform: cisco_iosxe
+    management_ip: 192.168.1.2
+    model: "CSR1000v"
+    asn: 64512
+    loopback0: "10.255.0.2/32"
+    routing_protocols: ["ospf", "bgp"]
+    bgp_neighbors: ["10.255.0.1"]
+    interfaces:
+      - name: GigabitEthernet1
+        ip_address: 203.0.113.5/30
+        peer_device: internet
+        speed: "1G"
+      - name: GigabitEthernet2
+        ip_address: 10.0.1.2/31
+        peer_device: fw2
+        peer_interface: ethernet1/1
+        speed: "1G"
+    tags:
+      role: edge
+      site: dc1
+
+# ── Firewall Layer (Active/Passive HA) ───────────────────────────────────────
+firewalls:
+  - name: fw1
+    platform: paloalto_panos
+    management_ip: 192.168.1.11
+    model: "PA-VM-300"
+    ha_peer: fw2
+    zones: ["untrust", "trust", "dmz", "gpu-cluster"]
+    interfaces:
+      - name: ethernet1/1
+        ip_address: 10.0.1.1/31
+        peer_device: edge-rtr1
+        peer_interface: GigabitEthernet2
+        speed: "1G"
+      - name: ethernet1/2
+        ip_address: 10.0.2.0/31
+        peer_device: core-sw1
+        peer_interface: TenGigabitEthernet1/0/1
+        speed: "10G"
+    tags:
+      ha_group: fw-ha
+      site: dc1
+
+  - name: fw2
+    platform: paloalto_panos
+    management_ip: 192.168.1.12
+    model: "PA-VM-300"
+    ha_peer: fw1
+    zones: ["untrust", "trust", "dmz", "gpu-cluster"]
+    interfaces:
+      - name: ethernet1/1
+        ip_address: 10.0.1.3/31
+        peer_device: edge-rtr2
+        peer_interface: GigabitEthernet2
+        speed: "1G"
+      - name: ethernet1/2
+        ip_address: 10.0.2.2/31
+        peer_device: core-sw2
+        peer_interface: TenGigabitEthernet1/0/1
+        speed: "10G"
+    tags:
+      ha_group: fw-ha
+      site: dc1
+
+# ── Core + Access Switching ───────────────────────────────────────────────────
+switches:
+  - name: core-sw1
+    platform: cisco_nxos
+    management_ip: 192.168.1.21
+    model: "N9K-C9332C"
+    layer: 3
+    vlans: [10, 20, 30, 100, 200]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: TenGigabitEthernet1/0/1
+        ip_address: 10.0.2.1/31
+        peer_device: fw1
+        peer_interface: ethernet1/2
+        speed: "10G"
+      - name: TenGigabitEthernet1/0/2
+        peer_device: lb1
+        peer_interface: "1.1"
+        speed: "10G"
+      - name: TenGigabitEthernet1/0/3
+        peer_device: access-sw1
+        peer_interface: GigabitEthernet0/1
+        speed: "10G"
+    tags:
+      tier: core
+      site: dc1
+
+  - name: core-sw2
+    platform: cisco_nxos
+    management_ip: 192.168.1.22
+    model: "N9K-C9332C"
+    layer: 3
+    vlans: [10, 20, 30, 100, 200]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: TenGigabitEthernet1/0/1
+        ip_address: 10.0.2.3/31
+        peer_device: fw2
+        peer_interface: ethernet1/2
+        speed: "10G"
+      - name: TenGigabitEthernet1/0/2
+        peer_device: lb2
+        peer_interface: "1.1"
+        speed: "10G"
+      - name: TenGigabitEthernet1/0/3
+        peer_device: access-sw2
+        peer_interface: GigabitEthernet0/1
+        speed: "10G"
+    tags:
+      tier: core
+      site: dc1
+
+  - name: access-sw1
+    platform: cisco_iosxe
+    management_ip: 192.168.1.31
+    model: "C9300-48T"
+    layer: 2
+    vlans: [10, 20, 30]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: GigabitEthernet0/1
+        peer_device: core-sw1
+        peer_interface: TenGigabitEthernet1/0/3
+        speed: "1G"
+    tags:
+      tier: access
+      site: dc1
+
+  - name: access-sw2
+    platform: cisco_iosxe
+    management_ip: 192.168.1.32
+    model: "C9300-48T"
+    layer: 2
+    vlans: [10, 20, 30]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: GigabitEthernet0/1
+        peer_device: core-sw2
+        peer_interface: TenGigabitEthernet1/0/3
+        speed: "1G"
+    tags:
+      tier: access
+      site: dc1
+
+  # GPU fabric spines (NX-OS, role=spine in the GPU CLOS fabric)
+  - name: gpu-spine1
+    platform: cisco_nxos
+    management_ip: 192.168.2.1
+    model: "N9K-C9364C"
+    layer: 3
+    vlans: [100]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: Ethernet1/1
+        peer_device: gpu-leaf1
+        peer_interface: Ethernet1/49
+        speed: "100G"
+      - name: Ethernet1/2
+        peer_device: gpu-leaf2
+        peer_interface: Ethernet1/49
+        speed: "100G"
+      - name: Ethernet1/3
+        peer_device: gpu-leaf3
+        peer_interface: Ethernet1/49
+        speed: "100G"
+      - name: Ethernet1/4
+        peer_device: gpu-leaf4
+        peer_interface: Ethernet1/49
+        speed: "100G"
+    tags:
+      tier: gpu-spine
+      cluster: gpu-fabric
+
+  - name: gpu-spine2
+    platform: cisco_nxos
+    management_ip: 192.168.2.2
+    model: "N9K-C9364C"
+    layer: 3
+    vlans: [100]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: Ethernet1/1
+        peer_device: gpu-leaf1
+        peer_interface: Ethernet1/50
+        speed: "100G"
+      - name: Ethernet1/2
+        peer_device: gpu-leaf2
+        peer_interface: Ethernet1/50
+        speed: "100G"
+      - name: Ethernet1/3
+        peer_device: gpu-leaf3
+        peer_interface: Ethernet1/50
+        speed: "100G"
+      - name: Ethernet1/4
+        peer_device: gpu-leaf4
+        peer_interface: Ethernet1/50
+        speed: "100G"
+    tags:
+      tier: gpu-spine
+      cluster: gpu-fabric
+
+  # GPU fabric leaves (VTEP endpoints)
+  - name: gpu-leaf1
+    platform: cisco_nxos
+    management_ip: 192.168.2.11
+    model: "N9K-C93180YC-FX"
+    layer: 3
+    vlans: [100]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: Ethernet1/49
+        peer_device: gpu-spine1
+        peer_interface: Ethernet1/1
+        speed: "100G"
+      - name: Ethernet1/50
+        peer_device: gpu-spine2
+        peer_interface: Ethernet1/1
+        speed: "100G"
+      - name: Ethernet1/1
+        peer_device: gpu-srv-01
+        peer_interface: ens1f0
+        speed: "100G"
+        is_gpu_port: true
+      - name: Ethernet1/2
+        peer_device: gpu-srv-02
+        peer_interface: ens1f0
+        speed: "100G"
+        is_gpu_port: true
+    tags:
+      tier: gpu-leaf
+      cluster: gpu-fabric
+
+  - name: gpu-leaf2
+    platform: cisco_nxos
+    management_ip: 192.168.2.12
+    model: "N9K-C93180YC-FX"
+    layer: 3
+    vlans: [100]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: Ethernet1/49
+        peer_device: gpu-spine1
+        peer_interface: Ethernet1/2
+        speed: "100G"
+      - name: Ethernet1/50
+        peer_device: gpu-spine2
+        peer_interface: Ethernet1/2
+        speed: "100G"
+      - name: Ethernet1/1
+        peer_device: gpu-srv-03
+        peer_interface: ens1f0
+        speed: "100G"
+        is_gpu_port: true
+      - name: Ethernet1/2
+        peer_device: gpu-srv-04
+        peer_interface: ens1f0
+        speed: "100G"
+        is_gpu_port: true
+    tags:
+      tier: gpu-leaf
+      cluster: gpu-fabric
+
+  - name: gpu-leaf3
+    platform: cisco_nxos
+    management_ip: 192.168.2.13
+    model: "N9K-C93180YC-FX"
+    layer: 3
+    vlans: [100]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: Ethernet1/49
+        peer_device: gpu-spine1
+        peer_interface: Ethernet1/3
+        speed: "100G"
+      - name: Ethernet1/50
+        peer_device: gpu-spine2
+        peer_interface: Ethernet1/3
+        speed: "100G"
+      - name: Ethernet1/1
+        peer_device: gpu-srv-05
+        peer_interface: ens1f0
+        speed: "100G"
+        is_gpu_port: true
+      - name: Ethernet1/2
+        peer_device: gpu-srv-06
+        peer_interface: ens1f0
+        speed: "100G"
+        is_gpu_port: true
+    tags:
+      tier: gpu-leaf
+      cluster: gpu-fabric
+
+  - name: gpu-leaf4
+    platform: cisco_nxos
+    management_ip: 192.168.2.14
+    model: "N9K-C93180YC-FX"
+    layer: 3
+    vlans: [100]
+    spanning_tree_mode: "rapid-pvst"
+    interfaces:
+      - name: Ethernet1/49
+        peer_device: gpu-spine1
+        peer_interface: Ethernet1/4
+        speed: "100G"
+      - name: Ethernet1/50
+        peer_device: gpu-spine2
+        peer_interface: Ethernet1/4
+        speed: "100G"
+      - name: Ethernet1/1
+        peer_device: gpu-srv-07
+        peer_interface: ens1f0
+        speed: "100G"
+        is_gpu_port: true
+      - name: Ethernet1/2
+        peer_device: gpu-srv-08
+        peer_interface: ens1f0
+        speed: "100G"
+        is_gpu_port: true
+    tags:
+      tier: gpu-leaf
+      cluster: gpu-fabric
+
+# ── Load Balancers ────────────────────────────────────────────────────────────
+load_balancers:
+  - name: lb1
+    platform: f5_tmsh
+    management_ip: 192.168.1.41
+    model: "BIG-IP VE"
+    virtual_servers:
+      - "10.0.100.100:443"
+      - "10.0.100.101:80"
+    pool_members:
+      - "10.0.10.10:8080"
+      - "10.0.10.11:8080"
+    health_monitor: "https"
+    interfaces:
+      - name: "1.1"
+        ip_address: "10.0.3.1/31"
+        peer_device: core-sw1
+        peer_interface: TenGigabitEthernet1/0/2
+        speed: "10G"
+    tags:
+      site: dc1
+
+  - name: lb2
+    platform: f5_tmsh
+    management_ip: 192.168.1.42
+    model: "BIG-IP VE"
+    virtual_servers:
+      - "10.0.100.102:443"
+      - "10.0.100.103:80"
+    pool_members:
+      - "10.0.10.12:8080"
+      - "10.0.10.13:8080"
+    health_monitor: "https"
+    interfaces:
+      - name: "1.1"
+        ip_address: "10.0.3.3/31"
+        peer_device: core-sw2
+        peer_interface: TenGigabitEthernet1/0/2
+        speed: "10G"
+    tags:
+      site: dc1
+
+# ── GPU Firewall (microsegmentation for the GPU cluster) ─────────────────────
+gpu_firewalls:
+  - name: gpu-fw1
+    platform: paloalto_panos
+    management_ip: 192.168.2.20
+    model: "PA-VM-GPU"
+    ha_peer: null
+    zones: ["gpu-cluster", "management"]
+    protected_segments:
+      - "GPU-VRF"
+      - "10.100.0.0/24"
+    rdma_policy: "allow_rocev2"
+    interfaces:
+      - name: ethernet1/1
+        ip_address: "10.0.200.1/30"
+        peer_device: gpu-spine1
+        speed: "100G"
+    tags:
+      cluster: gpu-fabric
+      type: microsegmentation
+
+# ── GPU Servers (DGX H100 nodes) ─────────────────────────────────────────────
+gpu_servers:
+  - name: gpu-srv-01
+    platform: linux
+    management_ip: 192.168.3.1
+    model: "DGX H100"
+    gpu_count: 8
+    connected_leaf: gpu-leaf1
+    rdma_interfaces: ["ens1f0", "ens1f1"]
+    tags:
+      cluster: gpu-fabric
+      rack: R01
+
+  - name: gpu-srv-02
+    platform: linux
+    management_ip: 192.168.3.2
+    model: "DGX H100"
+    gpu_count: 8
+    connected_leaf: gpu-leaf1
+    rdma_interfaces: ["ens1f0", "ens1f1"]
+    tags:
+      cluster: gpu-fabric
+      rack: R01
+
+  - name: gpu-srv-03
+    platform: linux
+    management_ip: 192.168.3.3
+    model: "DGX H100"
+    gpu_count: 8
+    connected_leaf: gpu-leaf2
+    rdma_interfaces: ["ens1f0", "ens1f1"]
+    tags:
+      cluster: gpu-fabric
+      rack: R02
+
+  - name: gpu-srv-04
+    platform: linux
+    management_ip: 192.168.3.4
+    model: "DGX H100"
+    gpu_count: 8
+    connected_leaf: gpu-leaf2
+    rdma_interfaces: ["ens1f0", "ens1f1"]
+    tags:
+      cluster: gpu-fabric
+      rack: R02
+
+  - name: gpu-srv-05
+    platform: linux
+    management_ip: 192.168.3.5
+    model: "DGX H100"
+    gpu_count: 8
+    connected_leaf: gpu-leaf3
+    rdma_interfaces: ["ens1f0", "ens1f1"]
+    tags:
+      cluster: gpu-fabric
+      rack: R03
+
+  - name: gpu-srv-06
+    platform: linux
+    management_ip: 192.168.3.6
+    model: "DGX H100"
+    gpu_count: 8
+    connected_leaf: gpu-leaf3
+    rdma_interfaces: ["ens1f0", "ens1f1"]
+    tags:
+      cluster: gpu-fabric
+      rack: R03
+
+  - name: gpu-srv-07
+    platform: linux
+    management_ip: 192.168.3.7
+    model: "DGX H100"
+    gpu_count: 8
+    connected_leaf: gpu-leaf4
+    rdma_interfaces: ["ens1f0", "ens1f1"]
+    tags:
+      cluster: gpu-fabric
+      rack: R04
+
+  - name: gpu-srv-08
+    platform: linux
+    management_ip: 192.168.3.8
+    model: "DGX H100"
+    gpu_count: 8
+    connected_leaf: gpu-leaf4
+    rdma_interfaces: ["ens1f0", "ens1f1"]
+    tags:
+      cluster: gpu-fabric
+      rack: R04

@@ -14,7 +14,7 @@ const USE_CASES: Array<{ id: UseCase; label: string; icon: string; desc: string 
   { id: 'aviatrix',   icon: '🚀', label: 'Aviatrix',      desc: 'Cloud-native Aviatrix overlay mesh' },
 ]
 
-const VENDORS = ['Cisco', 'Fortinet', 'HPE Aruba', 'Arista', 'Juniper', 'Extreme Networks', 'Dell EMC', 'NVIDIA']
+const VENDORS = ['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Dell EMC', 'HPE Aruba', 'Fortinet', 'Palo Alto', 'Extreme Networks']
 
 const INDUSTRIES: Array<{ icon: string; label: string }> = [
   { icon: '💰', label: 'Financial' },

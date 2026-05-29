@@ -1,0 +1,13 @@
+apiVersion: 1
+
+datasources:
+  - name: NetDesign Prometheus
+    type: prometheus
+    uid: netdesign-prometheus
+    url: http://prometheus:9090
+    isDefault: true
+    access: proxy
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST

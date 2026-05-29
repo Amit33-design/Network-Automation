@@ -1,8 +1,8 @@
-import React, { useState, useRef, useMemo } from 'react'
+import React, { useState, useRef, useMemo, useEffect } from 'react'
 import { useTopologySummary, useTopologyDevices } from '@/hooks/useTopology'
 import { useRunZTP } from '@/hooks/useZTP'
 import { useRunChecks } from '@/hooks/useChecks'
-import { usePollMonitoring } from '@/hooks/useMonitoring'
+import { usePollMonitoring, useMetricsSummary } from '@/hooks/useMonitoring'
 import { useToast } from '@/components/ui/Toast'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -12,7 +12,7 @@ import { useBackendMode } from '@/components/BackendToggle'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult } from '@/types'
+import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
   healthy: 'pass', degraded: 'warn', down: 'fail', unknown: 'neutral',
@@ -869,6 +869,102 @@ const ZTP_STAGE_MSGS: Record<string, string> = {
   ONLINE:            'Device fully provisioned and in production state',
 }
 
+// ── Simulated gNMI metrics (demo mode) ───────────────────────────────────────
+
+function _seed(name: string): number {
+  return name.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+}
+
+function _pseudoRandom(seed: number, offset = 0): number {
+  const x = Math.sin(seed + offset) * 10000
+  return x - Math.floor(x)
+}
+
+function simulateMonitoringMetrics(
+  devList: Array<{name: string; role: string}>,
+  tick: number,
+): MetricsSummary {
+  const devices: Record<string, DeviceMetrics> = {}
+  for (const { name } of devList) {
+    const s = _seed(name)
+    const isSpine    = name.includes('spine')
+    const isGpu      = name.includes('gpu')
+    const isFw       = name.includes('fw')
+    const isAccess   = name.includes('access') || name.includes('vedge')
+    const baseC = isGpu ? 62 : isSpine ? 42 : isFw ? 28 : 22
+    const r0 = _pseudoRandom(s, tick)
+    const r1 = _pseudoRandom(s + 1, tick)
+    const r2 = _pseudoRandom(s + 2, tick)
+    const cpu = Math.min(99, Math.max(1, baseC + (r0 - 0.5) * baseC * 0.15))
+    const mem = Math.min(99, Math.max(5, 50 + (r1 - 0.5) * 30))
+    const bgp = isAccess ? 0 : Math.floor(2 + r2 * 4)
+    devices[name] = {
+      cpu_util:             Math.round(cpu * 10) / 10,
+      mem_util:             Math.round(mem * 10) / 10,
+      interface_errors_in:  Math.floor(_pseudoRandom(s + 3, tick) * 8),
+      interface_errors_out: Math.floor(_pseudoRandom(s + 4, tick) * 4),
+      bgp_sessions_up:      bgp,
+      bgp_prefixes_received: bgp * Math.floor(100 + _pseudoRandom(s + 5, tick) * 500),
+      pfc_drops:            isGpu ? Math.floor(_pseudoRandom(s + 6, tick) * 300) : 0,
+      throughput_mbps:      Math.round((isSpine ? 8000 : 2000) * (0.4 + _pseudoRandom(s + 7, tick) * 0.6)),
+    }
+  }
+  return { timestamp: new Date().toISOString(), devices }
+}
+
+// ── SVG Arc Gauge helper ──────────────────────────────────────────────────────
+
+function ArcGauge({ value, max = 100, color, label, size = 80 }: {
+  value: number; max?: number; color: string; label: string; size?: number
+}) {
+  const pct    = Math.min(1, Math.max(0, value / max))
+  const radius = (size / 2) - 8
+  const circ   = 2 * Math.PI * radius
+  const arc    = circ * 0.75
+  const rot    = -225
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size/2} cy={size/2} r={radius}
+          fill="none" stroke="#1f2937" strokeWidth={6}
+          strokeDasharray={`${arc} ${circ - arc}`}
+          strokeDashoffset={0} strokeLinecap="round"
+          transform={`rotate(${rot} ${size/2} ${size/2})`} />
+        <circle cx={size/2} cy={size/2} r={radius}
+          fill="none" stroke={color} strokeWidth={6}
+          strokeDasharray={`${pct * arc} ${circ - pct * arc}`}
+          strokeDashoffset={0} strokeLinecap="round"
+          transform={`rotate(${rot} ${size/2} ${size/2})`}
+          style={{ transition: 'stroke-dasharray 0.6s ease' }} />
+        <text x={size/2} y={size/2 + 4} textAnchor="middle"
+          fontSize={size * 0.18} fontWeight="bold" fill={color}>
+          {Math.round(value)}{max === 100 ? '%' : ''}
+        </text>
+      </svg>
+      <span className="text-[10px] text-gray-500">{label}</span>
+    </div>
+  )
+}
+
+// ── Mini sparkline (8 points) ─────────────────────────────────────────────────
+
+function Sparkline({ values, color = '#60A5FA' }: { values: number[]; color?: string }) {
+  if (values.length < 2) return null
+  const w = 80; const h = 28
+  const mn = Math.min(...values); const mx = Math.max(...values) || 1
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w
+    const y = h - ((v - mn) / (mx - mn || 1)) * (h - 4) - 2
+    return `${x},${y}`
+  }).join(' ')
+  return (
+    <svg width={w} height={h} className="overflow-visible">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth={1.5}
+        strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function simulateZTPResult(
   devList: Array<{name: string; role: string}>,
   failDevice: string,
@@ -1387,6 +1483,11 @@ export function Step6Deploy() {
   // ── Monitor state ─────────────────────────────────────────────────────────
   const [monitorData, setMonitorData] = useState<MonitoringResult | null>(null)
   const { mutate: poll, isPending: pollPending } = usePollMonitoring()
+  const { data: liveMetrics } = useMetricsSummary()
+  const [monitorTick, setMonitorTick] = useState(1)
+  const [demoMetrics, setDemoMetrics] = useState<MetricsSummary | null>(null)
+  // Sparkline history: last 8 ticks of throughput per device
+  const sparkRef = useRef<Record<string, number[]>>({})
 
   function handlePoll(failDevices?: Record<string, string[]>) {
     poll(failDevices ? { fail_devices: failDevices } : {}, {
@@ -1526,6 +1627,27 @@ export function Step6Deploy() {
     }
     return allDevices.map(d => ({ name: d.name, role: d.role }))
   }, [storeDevices, allDevices])
+
+  // Auto-tick demo metrics every 15 s when on monitor tab and backend offline
+  useEffect(() => {
+    if (tab !== 'monitor' || isLive) return
+    const initial = simulateMonitoringMetrics(simDevices, monitorTick)
+    setDemoMetrics(initial)
+    const id = setInterval(() => {
+      setMonitorTick(t => {
+        const next = t + 1
+        const m = simulateMonitoringMetrics(simDevices, next)
+        setDemoMetrics(m)
+        Object.entries(m.devices).forEach(([name, dm]) => {
+          if (!sparkRef.current[name]) sparkRef.current[name] = []
+          sparkRef.current[name] = [...sparkRef.current[name].slice(-7), dm.throughput_mbps]
+        })
+        return next
+      })
+    }, 15_000)
+    return () => clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, isLive, simDevices.length])
 
   // ── Expanded state for grouped checks display ──────────────────────────────
   const [expandedCheckDevices, setExpandedCheckDevices] = useState<Set<string>>(new Set())
@@ -2425,59 +2547,70 @@ export function Step6Deploy() {
       {/* ── Monitor tab ─────────────────────────────────────────────────── */}
       {tab === 'monitor' && (
         <div className="space-y-6">
-          <div className="flex gap-3">
-            <Button onClick={() => handlePoll()} disabled={pollPending}>
-              {pollPending ? 'Polling…' : '⟳ Poll Now'}
-            </Button>
-            <Button variant="secondary" onClick={() => handlePoll({ 'edge-rtr1': ['interfaces_up'], 'lb1': ['virtual_servers'], 'gpu-fw1': ['rdma_policy'] })} disabled={pollPending}>
-              Simulate Degraded
-            </Button>
-            <Button variant="ghost" onClick={() => setMonitorData(null)}>Clear</Button>
+
+          {/* ── Header: live vs demo badge + grafana link ──────────────────── */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className={`inline-block w-2 h-2 rounded-full ${isLive ? 'bg-green-400 animate-pulse' : 'bg-blue-400 animate-pulse'}`} />
+              <span className="text-xs font-semibold text-gray-400">
+                {isLive ? 'Live gNMI Telemetry' : 'Demo Simulation (15 s refresh)'}
+              </span>
+              <span className="text-xs text-gray-600">· tick #{monitorTick}</span>
+            </div>
+            {isLive && (
+              <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer"
+                className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium border
+                  bg-orange-500/10 border-orange-500/30 text-orange-300 hover:bg-orange-500/20 transition-colors">
+                📊 Open Grafana →
+              </a>
+            )}
+            {isLive && (
+              <div className="flex gap-2">
+                <Button onClick={() => handlePoll()} disabled={pollPending} size="sm">
+                  {pollPending ? 'Polling…' : '⟳ Poll'}
+                </Button>
+                <Button variant="secondary" size="sm"
+                  onClick={() => handlePoll({ 'edge-rtr1': ['interfaces_up'], 'lb1': ['virtual_servers'] })}>
+                  Simulate Degraded
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setMonitorData(null)}>Clear</Button>
+              </div>
+            )}
           </div>
 
-          {monitorData && (
-            <div className="grid grid-cols-5 gap-3">
-              {[
-                { label: 'Total',    val: monitorData.summary.total,   cls: 'text-gray-300' },
-                { label: 'Healthy',  val: monitorData.summary.healthy,  cls: 'text-green-400' },
-                { label: 'Degraded', val: monitorData.summary.degraded, cls: 'text-yellow-400' },
-                { label: 'Down',     val: monitorData.summary.down,     cls: 'text-red-400' },
-                { label: 'Alerts',   val: monitorData.summary.alerts.length, cls: 'text-orange-400' },
-              ].map(({ label, val, cls }) => (
-                <Card key={label} className="text-center">
-                  <div className={`text-2xl font-bold ${cls}`}>{val}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{label}</div>
-                </Card>
-              ))}
-            </div>
-          )}
-
-          {monitorData && (
-            <div className="overflow-x-auto rounded-xl border border-white/10">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 bg-white/5">
-                    {['Device', 'Role', 'Status', 'CPU', 'Uptime', 'Alerts'].map(h => (
-                      <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.values(monitorData.health)
-                    .sort((a, b) => a.device_name.localeCompare(b.device_name))
-                    .map(h => (
-                      <tr
-                        key={h.device_name}
-                        className={`border-b border-white/5 ${
-                          h.status === 'degraded' ? 'bg-yellow-500/5' :
-                          h.status === 'down'     ? 'bg-red-500/5' : ''
-                        }`}
-                      >
+          {/* ── Live backend monitoring table ──────────────────────────────── */}
+          {isLive && monitorData && (
+            <>
+              <div className="grid grid-cols-5 gap-3">
+                {([
+                  { label: 'Total',    val: monitorData.summary.total,              cls: 'text-gray-300' },
+                  { label: 'Healthy',  val: monitorData.summary.healthy,             cls: 'text-green-400' },
+                  { label: 'Degraded', val: monitorData.summary.degraded,            cls: 'text-yellow-400' },
+                  { label: 'Down',     val: monitorData.summary.down,                cls: 'text-red-400' },
+                  { label: 'Alerts',   val: monitorData.summary.alerts.length,       cls: 'text-orange-400' },
+                ] as const).map(({ label, val, cls }) => (
+                  <Card key={label} className="text-center">
+                    <div className={`text-2xl font-bold ${cls}`}>{val}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+                  </Card>
+                ))}
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-white/10">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/5">
+                      {['Device', 'Role', 'Status', 'CPU', 'Uptime', 'Alerts'].map(h => (
+                        <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.values(monitorData.health).sort((a, b) => a.device_name.localeCompare(b.device_name)).map(h => (
+                      <tr key={h.device_name}
+                        className={`border-b border-white/5 ${h.status === 'degraded' ? 'bg-yellow-500/5' : h.status === 'down' ? 'bg-red-500/5' : ''}`}>
                         <td className="px-4 py-2 font-semibold text-gray-200">{h.device_name}</td>
                         <td className="px-4 py-2 text-xs text-gray-500">{h.role}</td>
-                        <td className="px-4 py-2">
-                          <Badge variant={STATUS_BADGE[h.status] ?? 'neutral'}>{h.status}</Badge>
-                        </td>
+                        <td className="px-4 py-2"><Badge variant={STATUS_BADGE[h.status] ?? 'neutral'}>{h.status}</Badge></td>
                         <td className="px-4 py-2 text-gray-300">{h.metrics.cpu}%</td>
                         <td className="px-4 py-2 text-xs text-gray-500">{formatUptime(h.metrics.uptime_seconds)}</td>
                         <td className="px-4 py-2 text-xs text-yellow-400">
@@ -2485,23 +2618,174 @@ export function Step6Deploy() {
                         </td>
                       </tr>
                     ))}
-                </tbody>
-              </table>
-            </div>
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
-          {monitorData && monitorData.summary.alerts.length > 0 && (
-            <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4 space-y-2">
-              <h3 className="text-sm font-semibold text-orange-400 mb-2">
-                Active Alerts ({monitorData.summary.alerts.length})
-              </h3>
-              {monitorData.summary.alerts.map((a, i) => (
-                <div key={i} className="flex items-start gap-2 text-sm">
-                  <span className="font-semibold text-orange-300 shrink-0">{a.device}</span>
-                  <span className="text-gray-400">{a.alert}</span>
+          {/* ── Demo-mode metrics dashboard ────────────────────────────────── */}
+          {(() => {
+            const metrics = isLive ? liveMetrics : demoMetrics
+            if (!metrics) return null
+            const devEntries = simDevices.length > 0
+              ? simDevices.map(d => ({ name: d.name, metrics: metrics.devices[d.name] })).filter(e => e.metrics)
+              : Object.entries(metrics.devices).slice(0, 12).map(([name, m]) => ({ name, metrics: m }))
+            if (devEntries.length === 0) return null
+
+            const totalDevices = devEntries.length
+            const avgCpu = devEntries.reduce((s, e) => s + e.metrics.cpu_util, 0) / totalDevices
+            const avgMem = devEntries.reduce((s, e) => s + e.metrics.mem_util, 0) / totalDevices
+            const totalBgp = devEntries.reduce((s, e) => s + e.metrics.bgp_sessions_up, 0)
+            const totalErrors = devEntries.reduce((s, e) => s + e.metrics.interface_errors_in + e.metrics.interface_errors_out, 0)
+
+            return (
+              <>
+                {/* ── Summary row ──────────────────────────────────────────── */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Card className="flex items-center gap-4 p-4">
+                    <ArcGauge value={avgCpu} color={avgCpu > 80 ? '#EF4444' : avgCpu > 60 ? '#F59E0B' : '#22C55E'} label="Avg CPU" size={72} />
+                    <div>
+                      <div className="text-xs text-gray-500">Fleet CPU</div>
+                      <div className="text-lg font-bold text-white">{avgCpu.toFixed(1)}%</div>
+                    </div>
+                  </Card>
+                  <Card className="flex items-center gap-4 p-4">
+                    <ArcGauge value={avgMem} color={avgMem > 85 ? '#EF4444' : avgMem > 70 ? '#F59E0B' : '#60A5FA'} label="Avg Mem" size={72} />
+                    <div>
+                      <div className="text-xs text-gray-500">Fleet Memory</div>
+                      <div className="text-lg font-bold text-white">{avgMem.toFixed(1)}%</div>
+                    </div>
+                  </Card>
+                  <Card className="text-center p-4">
+                    <div className="text-3xl font-bold text-green-400">{totalBgp}</div>
+                    <div className="text-xs text-gray-500 mt-1">BGP Sessions Up</div>
+                  </Card>
+                  <Card className="text-center p-4">
+                    <div className={`text-3xl font-bold ${totalErrors > 20 ? 'text-red-400' : totalErrors > 5 ? 'text-yellow-400' : 'text-green-400'}`}>
+                      {totalErrors}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">Interface Errors</div>
+                  </Card>
                 </div>
-              ))}
-            </div>
+
+                {/* ── Per-device metric cards ───────────────────────────────── */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-400 mb-3">Device Metrics</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {devEntries.map(({ name, metrics: dm }) => {
+                      const spark = sparkRef.current[name] ?? [dm.throughput_mbps]
+                      const cpuColor = dm.cpu_util > 80 ? '#EF4444' : dm.cpu_util > 60 ? '#F59E0B' : '#22C55E'
+                      const memColor = dm.mem_util > 85 ? '#EF4444' : dm.mem_util > 70 ? '#F59E0B' : '#60A5FA'
+                      const hasErrors = (dm.interface_errors_in + dm.interface_errors_out) > 10
+                      const hasPfc = dm.pfc_drops > 100
+                      return (
+                        <div key={name}
+                          className={`rounded-xl border p-4 transition-colors ${
+                            dm.cpu_util > 80 ? 'border-red-500/30 bg-red-500/5' :
+                            hasPfc ? 'border-purple-500/30 bg-purple-500/5' :
+                            'border-white/10 bg-white/[0.02]'
+                          }`}>
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <div className="text-xs font-bold text-white truncate">{name}</div>
+                              <div className="text-[10px] text-gray-500 mt-0.5">
+                                {dm.bgp_sessions_up > 0 ? `${dm.bgp_sessions_up} BGP peers · ${dm.bgp_prefixes_received.toLocaleString()} pfx` : 'L2 device'}
+                              </div>
+                            </div>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                              dm.cpu_util > 80 ? 'text-red-300 bg-red-500/15' : 'text-green-400 bg-green-500/10'}`}>
+                              {dm.cpu_util > 80 ? '⚠ HIGH' : '✓ OK'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4 mb-3">
+                            <ArcGauge value={dm.cpu_util} color={cpuColor} label="CPU" size={60} />
+                            <ArcGauge value={dm.mem_util} color={memColor} label="Mem" size={60} />
+                            <div className="flex-1">
+                              <div className="text-[10px] text-gray-500 mb-1">Throughput</div>
+                              <Sparkline values={spark} color="#60A5FA" />
+                              <div className="text-[10px] text-blue-400 mt-0.5">{dm.throughput_mbps.toLocaleString()} Mbps</div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-[10px]">
+                            {dm.interface_errors_in + dm.interface_errors_out > 0 && (
+                              <span className={`px-1.5 py-0.5 rounded ${hasErrors ? 'text-yellow-300 bg-yellow-500/10' : 'text-gray-500 bg-white/5'}`}>
+                                errs: {dm.interface_errors_in + dm.interface_errors_out}
+                              </span>
+                            )}
+                            {dm.pfc_drops > 0 && (
+                              <span className={`px-1.5 py-0.5 rounded ${hasPfc ? 'text-purple-300 bg-purple-500/10' : 'text-gray-500 bg-white/5'}`}>
+                                PFC: {dm.pfc_drops}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* ── BGP session table ─────────────────────────────────────── */}
+                {devEntries.some(e => e.metrics.bgp_sessions_up > 0) && (
+                  <Card>
+                    <CardHeader><CardTitle>BGP Session Summary</CardTitle></CardHeader>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10">
+                            {['Device', 'Sessions Up', 'Prefixes Recv', 'State'].map(h => (
+                              <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {devEntries.filter(e => e.metrics.bgp_sessions_up > 0).map(({ name, metrics: dm }) => (
+                            <tr key={name} className="border-b border-white/5">
+                              <td className="px-4 py-2 font-mono text-xs text-gray-200">{name}</td>
+                              <td className="px-4 py-2 text-green-400 font-semibold">{dm.bgp_sessions_up}</td>
+                              <td className="px-4 py-2 text-gray-300">{dm.bgp_prefixes_received.toLocaleString()}</td>
+                              <td className="px-4 py-2"><Badge variant="pass">Established</Badge></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
+              </>
+            )
+          })()}
+
+          {/* ── Alert ticker ───────────────────────────────────────────────── */}
+          {!isLive && demoMetrics && simDevices.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Alert Ticker</CardTitle></CardHeader>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {simDevices
+                  .map(d => ({ d, m: demoMetrics.devices[d.name] }))
+                  .filter(({ m }) => m && (m.cpu_util > 75 || m.pfc_drops > 150 || m.interface_errors_in > 5))
+                  .map(({ d, m }) => (
+                    <div key={d.name} className="flex items-center gap-3 text-xs py-1.5 px-2 rounded bg-white/[0.03]">
+                      <span className={`shrink-0 ${m.cpu_util > 85 ? 'text-red-400' : 'text-yellow-400'}`}>
+                        {m.cpu_util > 85 ? '🔴' : '🟡'}
+                      </span>
+                      <span className="text-gray-300 font-mono">{d.name}</span>
+                      <span className="text-gray-500">
+                        {m.cpu_util > 85 ? `CPU spike ${m.cpu_util.toFixed(0)}%` :
+                         m.pfc_drops > 150 ? `PFC drops: ${m.pfc_drops}` :
+                         `If errors: ${m.interface_errors_in + m.interface_errors_out}`}
+                      </span>
+                      <span className="ml-auto text-gray-600 font-mono">{new Date().toLocaleTimeString()}</span>
+                    </div>
+                  ))}
+                {simDevices.every(d => {
+                  const m = demoMetrics.devices[d.name]
+                  return !m || (m.cpu_util <= 75 && m.pfc_drops <= 150 && m.interface_errors_in <= 5)
+                }) && (
+                  <div className="text-xs text-gray-600 text-center py-3">✓ No active alerts</div>
+                )}
+              </div>
+            </Card>
           )}
 
           {/* ── Observability Downloads (M-51 M-52) ───────────────────────── */}
@@ -2509,27 +2793,16 @@ export function Step6Deploy() {
             <CardHeader><CardTitle>Observability Downloads</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
               Logstash Grok patterns for syslog parsing and NetFlow/sFlow exporter config snippets.
+              Grafana dashboards are auto-provisioned when running with docker-compose.
             </p>
             <div className="flex flex-wrap gap-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  downloadBlob('network-grok.conf', buildGrokPatternsConfig())
-                  showToast('network-grok.conf downloaded', 'success')
-                }}
-              >
-                &#8595; Grok Patterns
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadBlob('network-grok.conf', buildGrokPatternsConfig()); showToast('network-grok.conf downloaded', 'success') }}>
+                ↓ Grok Patterns
               </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  downloadBlob('netflow-config.txt', buildNetflowConfig())
-                  showToast('netflow-config.txt downloaded', 'success')
-                }}
-              >
-                &#8595; NetFlow Config
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadBlob('netflow-config.txt', buildNetflowConfig()); showToast('netflow-config.txt downloaded', 'success') }}>
+                ↓ NetFlow Config
               </Button>
             </div>
           </Card>
