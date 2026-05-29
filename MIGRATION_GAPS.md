@@ -59,16 +59,16 @@
 | M-60 | Breadcrumb / progress bar | ✅ Done | 7ee48d6 |
 | M-36 | Toggle all sections collapse | ✅ Done | fda6298 |
 | M-40 | Live deploy feed (WebSocket API in client.ts, simulation complete) | ✅ Done | a3bca3e |
-| M-41 | Rollback modal | 🔄 In progress | — |
-| M-42 | Pipeline timestamp display | 🔄 In progress | — |
-| M-64 | Ansible playbook generation | 🔄 In progress | — |
-| M-65 | Netconf push UI | 🔄 In progress | — |
-| M-67 | Day-2 Ops panel | 🔄 In progress | — |
-| M-68 | Batfish dry-run validation | 🔄 In progress | — |
-| M-61 | Enterprise Approvals workflow | ⏳ P3 | — |
-| M-62 | Integrations panel | ⏳ P3 | — |
-| M-63 | Profile / Login (Clerk auth) | ⏳ P3 | — |
-| M-66 | AWX integration | ⏳ P3 | — |
+| M-41 | Rollback modal | ✅ Done | 76d5125 |
+| M-42 | Pipeline timestamp display | ✅ Done | 76d5125 |
+| M-64 | Ansible playbook generation | ✅ Done | 76d5125 |
+| M-65 | Netconf push UI | ✅ Done | 76d5125 |
+| M-67 | Day-2 Ops panel | ✅ Done | 76d5125 |
+| M-68 | Batfish dry-run validation | ✅ Done | 76d5125 |
+| M-61 | Enterprise Approvals workflow | ✅ Done | 511a64b |
+| M-62 | Integrations panel (Slack/Teams/ServiceNow/Jira/NetBox/AWX/GitOps) | ✅ Done | 511a64b |
+| M-66 | AWX integration | ✅ Done | 511a64b |
+| M-63 | Profile / Login (Clerk auth) | ⏳ P3 — requires Clerk.dev account | — |
 
 > **Session resume**: check this table first — start from first row that is not ✅ Done.
 > Implement in order. After each item: run `cd frontend && npm test -- --run && npm run build`, commit, push to `main`.
