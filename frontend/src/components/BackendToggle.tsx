@@ -92,10 +92,10 @@ export function BackendToggle({ isLive, baseUrl, onToggle, onUrlChange }: Backen
         />
       </button>
 
-      {/* URL input — only shown in Live mode */}
+      {/* URL input — only shown in Live mode, hidden on small screens */}
       {isLive && (
         editing ? (
-          <div className="flex items-center gap-1">
+          <div className="hidden sm:flex items-center gap-1">
             <input
               className="h-6 px-2 text-xs bg-gray-800 border border-gray-600 rounded text-gray-200 focus:outline-none focus:border-green-500 w-44"
               value={urlDraft}
@@ -117,7 +117,7 @@ export function BackendToggle({ isLive, baseUrl, onToggle, onUrlChange }: Backen
           <button
             onClick={() => { setUrlDraft(baseUrl); setEditing(true) }}
             title="Click to edit backend URL"
-            className="text-xs text-gray-400 hover:text-green-300 font-mono truncate max-w-[160px] cursor-pointer transition-colors"
+            className="hidden sm:block text-xs text-gray-400 hover:text-green-300 font-mono truncate max-w-[160px] cursor-pointer transition-colors"
           >
             {baseUrl}
           </button>

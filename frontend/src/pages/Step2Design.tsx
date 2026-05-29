@@ -383,17 +383,17 @@ export function Step2Design() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <Card className="text-center">
-          <div className="text-2xl font-bold text-blue-400">{devices.length}</div>
+          <div className="text-xl sm:text-2xl font-bold text-blue-400">{devices.length}</div>
           <div className="text-xs text-gray-400 mt-1">Total Devices</div>
         </Card>
         <Card className="text-center">
-          <div className="text-2xl font-bold text-purple-400">{rows.length}</div>
+          <div className="text-xl sm:text-2xl font-bold text-purple-400">{rows.length}</div>
           <div className="text-xs text-gray-400 mt-1">Unique Models</div>
         </Card>
-        <Card className="text-center">
-          <div className="text-2xl font-bold text-green-400">{formatUSD(grandTotal)}</div>
+        <Card className="col-span-2 sm:col-span-1 text-center">
+          <div className="text-xl sm:text-2xl font-bold text-green-400 truncate">{formatUSD(grandTotal)}</div>
           <div className="text-xs text-gray-400 mt-1">Grand Total</div>
         </Card>
       </div>
@@ -782,7 +782,7 @@ export function Step2Design() {
               </tbody>
             </table>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               ['Total Downlink Ports', allRows.filter(r => r.subLayer === 'leaf').reduce((s, r) => s + r.qty * (r.ports - Math.max(2, Math.ceil(r.ports / (oversubscription || 3)))), 0).toString()],
               ['Max Endpoint Capacity', allRows.filter(r => r.subLayer === 'leaf').reduce((s, r) => s + r.qty * (r.ports - Math.max(2, Math.ceil(r.ports / (oversubscription || 3)))), 0).toLocaleString()],

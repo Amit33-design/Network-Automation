@@ -70,6 +70,7 @@ function WizardContent({ onBackToLanding }: { onBackToLanding: () => void }) {
 export default function App() {
   const [showLanding, setShowLanding] = useState(true)
   const [showTroubleshooting, setShowTroubleshooting] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [isLive, setIsLive] = useState(false)
   const [backendUrl, setBackendUrl] = useState('http://localhost:8000')
   const setStep = useAppStore(s => s.setStep)
@@ -117,26 +118,54 @@ export default function App() {
                 onGoHome={goHome}
                 onShowTroubleshooting={() => setShowTroubleshooting(t => !t)}
                 showTroubleshooting={showTroubleshooting}
+                mobileOpen={mobileNavOpen}
+                onMobileClose={() => setMobileNavOpen(false)}
               />
-              <main className="flex-1 px-6 py-8 overflow-y-auto">
-                {/* Backend toggle — floating top-right */}
-                <div className="absolute top-4 right-6 z-40">
-                  <BackendToggle
-                    isLive={isLive}
-                    baseUrl={backendUrl}
-                    onToggle={setIsLive}
-                    onUrlChange={setBackendUrl}
-                  />
+              <main className="flex-1 min-w-0 flex flex-col overflow-y-auto">
+                {/* Mobile top bar — visible only on small screens */}
+                <div className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 py-3 bg-gray-950/95 backdrop-blur border-b border-white/10">
+                  <button
+                    onClick={() => setMobileNavOpen(true)}
+                    className="text-gray-400 hover:text-gray-200 text-xl leading-none cursor-pointer"
+                    aria-label="Open navigation"
+                  >
+                    ☰
+                  </button>
+                  <button onClick={goHome} className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
+                    <img src="/favicon.svg" alt="" className="w-5 h-5" />
+                    <span className="font-bold text-white text-sm">NetDesign <span className="text-blue-400">AI</span></span>
+                  </button>
+                  <div className="ml-auto">
+                    <BackendToggle
+                      isLive={isLive}
+                      baseUrl={backendUrl}
+                      onToggle={setIsLive}
+                      onUrlChange={setBackendUrl}
+                    />
+                  </div>
                 </div>
-                {showTroubleshooting
-                  ? <TroubleshootingEngine />
-                  : (
-                    <>
-                      <BreadcrumbBar step={step} />
-                      <WizardContent onBackToLanding={() => setShowLanding(true)} />
-                    </>
-                  )
-                }
+
+                {/* Page content */}
+                <div className="flex-1 px-4 sm:px-6 py-4 sm:py-8">
+                  {/* Desktop backend toggle — floating top-right, hidden on mobile */}
+                  <div className="hidden lg:block absolute top-4 right-6 z-40">
+                    <BackendToggle
+                      isLive={isLive}
+                      baseUrl={backendUrl}
+                      onToggle={setIsLive}
+                      onUrlChange={setBackendUrl}
+                    />
+                  </div>
+                  {showTroubleshooting
+                    ? <TroubleshootingEngine />
+                    : (
+                      <>
+                        <BreadcrumbBar step={step} />
+                        <WizardContent onBackToLanding={() => setShowLanding(true)} />
+                      </>
+                    )
+                  }
+                </div>
               </main>
             </div>
           </BackendToggleProvider>
