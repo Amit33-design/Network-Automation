@@ -1,0 +1,276 @@
+# NetDesign AI — Policy Rules (single source of truth)
+# Loaded by gate_engine.py and served by GET /api/policy-rules.
+# Condition DSL:
+#   all: [...]   — every child must match
+#   any: [...]   — at least one child must match
+#   not: {...}   — negate child
+#   leaf: {field, op, value}
+#     ops: eq | neq | contains | not_contains | in | not_in | gt | lt | is_empty | is_not_empty
+#     field path: "protocols" → state["protocols"], "selectedProducts.dc-spine" → nested key
+
+rules:
+
+  # ── BLOCK rules ─────────────────────────────────────────────────────────────
+
+  - id: no-products-selected
+    name: "No Products Selected"
+    description: "At least one network device must be selected before generating configs or deploying."
+    severity: BLOCK
+    action_type: BLOCK
+    priority: 1
+    condition:
+      not:
+        field: selectedProducts
+        op: is_not_empty
+
+  - id: vlan-range
+    name: "VLAN ID Out of Range"
+    description: "VLAN IDs must be between 1 and 4094."
+    severity: BLOCK
+    action_type: BLOCK
+    priority: 2
+    condition:
+      field: vlanId
+      op: gt
+      value: 4094
+
+  # ── AUTO_FIX rules ───────────────────────────────────────────────────────────
+
+  - id: evpn-requires-bgp
+    name: "EVPN Requires BGP"
+    description: "EVPN overlay is selected but BGP is not in the protocol list. BGP has been added automatically."
+    severity: INFO
+    action_type: AUTO_FIX
+    priority: 5
+    condition:
+      all:
+        - any:
+            - field: protocols
+              op: contains
+              value: EVPN
+            - field: protocols
+              op: contains
+              value: VXLAN
+        - field: protocols
+          op: not_contains
+          value: BGP
+    auto_fix:
+      field: protocols
+      op: append
+      value: BGP
+
+  - id: gpu-requires-pfc
+    name: "GPU Fabric: PFC Required"
+    description: "GPU/RDMA fabric detected without PFC. PFC added to GPU specifics automatically."
+    severity: INFO
+    action_type: AUTO_FIX
+    priority: 10
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: PFC
+    auto_fix:
+      field: gpuSpecifics
+      op: append
+      value: PFC
+
+  - id: campus-enable-dot1x
+    name: "Campus: Enable 802.1X Policy"
+    description: "802.1X detected in security list — dot1x policy generation enabled automatically."
+    severity: INFO
+    action_type: AUTO_FIX
+    priority: 51
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: campus
+        - field: security
+          op: contains
+          value: "802.1x"
+        - field: include_dot1x
+          op: neq
+          value: true
+    auto_fix:
+      field: include_dot1x
+      op: set
+      value: true
+
+  # ── SUGGEST / WARN rules ─────────────────────────────────────────────────────
+
+  - id: gpu-requires-roce
+    name: "GPU Fabric: RoCEv2 Recommended"
+    description: "GPU cluster detected without RoCEv2. Enable RoCEv2 for lossless RDMA performance."
+    severity: WARN
+    action_type: SUGGEST
+    priority: 11
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: RoCEv2
+
+  - id: gpu-requires-ecn
+    name: "GPU Fabric: ECN Recommended"
+    description: "GPU cluster without ECN/DCQCN. Enable ECN for RDMA congestion control."
+    severity: WARN
+    action_type: SUGGEST
+    priority: 12
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: ECN
+
+  - id: vxlan-requires-evpn-or-flood
+    name: "VXLAN Control Plane"
+    description: "VXLAN is selected without EVPN. Consider EVPN for scalable control plane."
+    severity: WARN
+    action_type: SUGGEST
+    priority: 20
+    condition:
+      all:
+        - field: protocols
+          op: contains
+          value: VXLAN
+        - field: protocols
+          op: not_contains
+          value: EVPN
+
+  - id: single-spine-spof
+    name: "Single Spine = Single Point of Failure"
+    description: "Only one spine detected. Redundant spine pair is strongly recommended for production."
+    severity: WARN
+    action_type: SUGGEST
+    priority: 40
+    condition:
+      all:
+        - field: uc
+          op: in
+          value: [dc, hybrid]
+        - field: redundancy
+          op: eq
+          value: single
+
+  - id: large-no-redundancy
+    name: "Large Design Without Redundancy"
+    description: "Large-scale design with single redundancy. Production risk."
+    severity: WARN
+    action_type: SUGGEST
+    priority: 41
+    condition:
+      all:
+        - field: orgSize
+          op: in
+          value: [large, hyperscale]
+        - field: redundancy
+          op: eq
+          value: single
+
+  - id: campus-no-nac
+    name: "Campus: No NAC/802.1X"
+    description: "Campus design without 802.1X NAC. Unauthenticated devices can access the network."
+    severity: WARN
+    action_type: SUGGEST
+    priority: 50
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: campus
+        - field: security
+          op: not_contains
+          value: "802.1x"
+
+  - id: wan-no-encryption
+    name: "WAN Without Encryption"
+    description: "WAN design without IPsec/MACsec. Traffic in transit is unencrypted."
+    severity: WARN
+    action_type: SUGGEST
+    priority: 55
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: wan
+        - field: security
+          op: not_contains
+          value: ipsec
+        - field: security
+          op: not_contains
+          value: macsec
+
+  # ── INFO rules ───────────────────────────────────────────────────────────────
+
+  - id: no-compliance-framework
+    name: "No Compliance Framework Selected"
+    description: "No compliance framework (PCI-DSS, HIPAA, SOC2, …) selected. Review if required."
+    severity: INFO
+    action_type: SUGGEST
+    priority: 60
+    condition:
+      field: compliance
+      op: is_empty
+
+  - id: dc-no-evpn
+    name: "DC Fabric Without EVPN"
+    description: "Data center design without EVPN. EVPN/VXLAN provides scalable L2 overlay."
+    severity: INFO
+    action_type: SUGGEST
+    priority: 75
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: dc
+        - field: protocols
+          op: not_contains
+          value: EVPN
+        - field: protocols
+          op: not_contains
+          value: VXLAN
+
+  # ── FAIL rules ───────────────────────────────────────────────────────────────
+
+  - id: gpu-lossless-required
+    name: "GPU Fabric: Lossless QoS Required"
+    description: "GPU/RDMA fabric requires lossless QoS (PFC + ECN). Missing both — RDMA performance will be severely degraded."
+    severity: FAIL
+    action_type: FAIL
+    priority: 15
+    condition:
+      all:
+        - field: uc
+          op: eq
+          value: gpu
+        - field: gpuSpecifics
+          op: not_contains
+          value: PFC
+        - field: gpuSpecifics
+          op: not_contains
+          value: ECN
+
+  - id: evpn-no-bgp-at-deploy
+    name: "EVPN Without BGP at Evaluation"
+    description: "EVPN overlay is configured but BGP is absent after AUTO_FIX phase — manual review required."
+    severity: FAIL
+    action_type: FAIL
+    priority: 16
+    condition:
+      all:
+        - field: protocols
+          op: contains
+          value: EVPN
+        - field: protocols
+          op: not_contains
+          value: BGP

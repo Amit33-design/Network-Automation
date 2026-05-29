@@ -1,0 +1,42 @@
+SHORT DESCRIPTION (80 chars max):
+AI-powered network design, config generation & deployment in seconds.
+
+FULL DESCRIPTION (4000 chars max):
+NetDesign AI turns plain English into complete network designs — instantly.
+
+Describe your network in plain language and get:
+✅ Professional network topology diagrams
+✅ Complete device configurations (Cisco, Aruba, Juniper, Arista)
+✅ IP addressing plans
+✅ VLAN designs
+✅ Bill of materials with cost estimates
+✅ BGP and routing policies
+
+DESIGNED FOR NETWORK ENGINEERS
+Whether you're designing a campus network for 500 users, a data center with leaf-spine CLOS, or a GPU cluster for AI workloads — NetDesign AI handles the complexity so you can focus on the architecture.
+
+HOW IT WORKS
+1. Describe your network: "Design a campus network for 300 users with HA and wireless"
+2. Review the topology diagram and device count
+3. Generate configs for all devices in one click
+4. Export or deploy directly to your devices
+
+SUPPORTED USE CASES
+• Campus networks (access/distribution/core 3-tier)
+• Data center leaf-spine CLOS fabrics
+• GPU / AI cluster networking (RoCEv2, non-blocking fat-tree)
+• WAN / SD-WAN hub-and-spoke
+• Multi-site enterprise networks
+
+SUPPORTED VENDORS
+Cisco IOS, Cisco NX-OS, Aruba AOS-CX, Juniper Junos, Arista EOS
+
+COMMUNITY EDITION — FREE
+The community edition is free to use with all core design features.
+
+REQUIREMENTS
+This app connects to a NetDesign AI server (self-hosted or cloud).
+Download from: github.com/Amit33-design/Network-Automation
+
+CATEGORY: Productivity / Tools
+CONTENT RATING: Everyone

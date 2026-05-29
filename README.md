@@ -1,398 +1,454 @@
-# Network-Automation
+<div align="center">
 
-A collection of Python network automation tools for hyperscale data center and cloud infrastructure.
+<img src="frontend/public/logo-brand.jpg" alt="NetDesign AI" width="700"/>
 
-| Project | Description |
-|---|---|
-| [`gpu_cluster_net/`](#gpu-cluster-network-automation) | RoCEv2/VXLAN/EVPN config build + DC operational readiness checks |
-| [`network_scanner/`](#network-port-scanner) | Internal network port scanner — TCP, UDP, HTTP, HTTPS |
+# NetDesign AI
+
+**Intent-Driven Network Automation**
+
+[![Live App](https://img.shields.io/badge/Live-netdesignai.com-00b4d8?style=for-the-badge&logo=vercel)](https://netdesignai.com)
+[![Tests](https://img.shields.io/badge/Tests-127%20passing-22c55e?style=for-the-badge&logo=vitest)](frontend/src/test)
+[![Stack](https://img.shields.io/badge/React_19_+_TypeScript-3B82F6?style=for-the-badge&logo=react)](frontend)
+[![License](https://img.shields.io/badge/License-NDAL_v1.0-f59e0b?style=for-the-badge)](LICENSE)
+
+*From network intent to production-ready design in minutes — browser-native, AI-powered, no backend required*
+
+[**→ Launch App**](https://netdesignai.com) · [**→ Try Demo**](https://amit33-design.github.io/Network-Automation/) · [**→ Docs**](#documentation)
+
+</div>
 
 ---
 
-## GPU Cluster Network Automation
+## What is NetDesign AI?
 
-End-to-end automation for GPU networking clusters on Cisco NX-OS spine-leaf fabric.
-Covers config generation, pre-deployment validation, post-deployment verification,
-and a full DC operational readiness report — all driven from a single topology YAML.
+NetDesign AI (NDAL) is a browser-native, intent-driven network design and automation tool. You describe what you need — use case, scale, vendor preferences, compliance requirements — and the tool produces a complete bill of materials, professional HLD topology diagram, device configurations for 5 OS platforms, and a gate-enforced deployment pipeline.
 
-### Architecture
+No backend, no signup, no cloud dependencies. Everything runs in the browser.
 
-```
-topology.example.yaml          ← single source of truth (spines, leaves, VNIs, RoCEv2 params)
-       │
-       ├─ gpu-net build        → NX-OS device configs (Jinja2 templates)
-       ├─ gpu-net check pre    → pre-deployment checks (physical + baseline)
-       ├─ gpu-net check post   → post-deployment checks (control + data plane + RoCEv2)
-       └─ gpu-net readiness    → full DC readiness report (text / JSON / HTML)
-```
+---
 
-### Install
-
-```bash
-pip install pyyaml jinja2
-# optional: pip install netmiko   (only needed for live SSH against real devices)
-```
-
-### Topology YAML
-
-Define your fabric once in `topology.yaml`. Everything else is driven from it:
-
-```yaml
-fabric:
-  name: gpu-cluster-dc1
-  underlay_asn_spine: 65000
-  underlay_asn_leaf_start: 65001
-  ntp_servers:
-    - 169.254.169.254
-
-  rocev2:
-    pfc_priority: 3                   # IEEE 802.1p priority for RoCEv2
-    ecn_min_threshold_bytes: 150000
-    ecn_max_threshold_bytes: 1500000
-    mtu: 9216
-    pfc_watchdog_enabled: true
-    dcqcn_enabled: true
-
-  vxlan:
-    l2_vni: 10100
-    l3_vni: 10200
-    vlan_id: 100
-    vrf_name: GPU-VRF
-    anycast_gw_mac: "0000.1111.2222"
-    anycast_gw_ip: "10.100.0.1/24"
-
-  spines:
-    - name: spine1
-      host: 10.0.0.1          # management IP
-      loopback0: 10.0.0.1/32
-      asn: 65000
-      username: admin
-      password: "changeme"
-      uplink_interfaces:
-        - name: Ethernet1/1
-          peer_device: leaf1
-          peer_interface: Ethernet1/1
-
-  leaves:
-    - name: leaf1
-      host: 10.0.0.11
-      loopback0: 10.0.0.11/32
-      vtep_loopback: 10.1.0.11/32
-      asn: 65001
-      username: admin
-      password: "changeme"
-      uplink_interfaces:
-        - name: Ethernet1/1
-          peer_device: spine1
-          peer_interface: Ethernet1/1
-      gpu_interfaces:
-        - name: Ethernet1/10
-          description: GPU-SERVER-01-Port0
-        - name: Ethernet1/11
-          description: GPU-SERVER-01-Port1
-```
-
-See [`topology.example.yaml`](topology.example.yaml) for a full 2-spine / 4-leaf example.
-
-### CLI Usage
-
-#### 1. Generate NX-OS Device Configs
-
-```bash
-# Generate configs for all devices → configs/ directory
-PYTHONPATH=. python -m gpu_cluster_net.cli build \
-  --topology topology.example.yaml \
-  --output-dir configs/
-
-# Generate config for a single device (printed to stdout)
-PYTHONPATH=. python -m gpu_cluster_net.cli build \
-  --topology topology.example.yaml \
-  --device leaf1
-```
-
-Each leaf config includes:
-- BGP EVPN (eBGP to spines, route-target auto)
-- VXLAN NVE interface with L2/L3 VNI + BGP ingress replication
-- Distributed anycast gateway SVI
-- RoCEv2 lossless QoS: PFC pause-no-drop, ECN/DCQCN thresholds, PFC watchdog
-
-Each spine config includes:
-- BGP EVPN route-reflector (eBGP to all leaves)
-- OSPF underlay with BFD
-- `NEXT-HOP-UNCHANGED` route-map to preserve VTEP next-hops
-
-#### 2. Pre-Deployment Checks
-
-Run **before** pushing config. Validates the physical layer and baseline state.
-
-```bash
-# Dry-run with mock data (no SSH needed)
-PYTHONPATH=. python -m gpu_cluster_net.cli check pre \
-  --topology topology.example.yaml \
-  --mock
-
-# Live check against real devices (requires netmiko)
-PYTHONPATH=. python -m gpu_cluster_net.cli check pre \
-  --topology topology.example.yaml
-
-# Check specific devices only
-PYTHONPATH=. python -m gpu_cluster_net.cli check pre \
-  --topology topology.example.yaml \
-  --mock \
-  --devices spine1,leaf1
-
-# Save report as JSON
-PYTHONPATH=. python -m gpu_cluster_net.cli check pre \
-  --topology topology.example.yaml \
-  --mock \
-  -o pre-report.json -f json
-```
-
-**Checks performed (per device):**
-
-| Check | What it validates |
-|---|---|
-| `interfaces_up` | All fabric + GPU ports are admin-up / oper-up |
-| `mtu_check` | MTU ≥ 9216 on all interfaces (required for RDMA) |
-| `stp_gpu_ports` | GPU ports are STP edge + BPDU guard (no blocking) |
-| `lldp_neighbors` | LLDP peers match expected topology YAML |
-| `ntp_sync` | NTP synchronized, stratum < 16 |
-| `no_existing_bgp` | No unexpected BGP sessions before deployment |
-| `hardware_buffers` | Sufficient lossless buffer allocated (≥ 8192 KB) |
-| `interface_errors` | No CRC / input / output errors on fabric interfaces |
-
-#### 3. Post-Deployment Checks
-
-Run **after** pushing config. Validates control plane, data plane, and RoCEv2 lossless fabric.
-
-```bash
-# Dry-run (mock)
-PYTHONPATH=. python -m gpu_cluster_net.cli check post \
-  --topology topology.example.yaml \
-  --mock
-
-# Live
-PYTHONPATH=. python -m gpu_cluster_net.cli check post \
-  --topology topology.example.yaml
-
-# Save HTML report
-PYTHONPATH=. python -m gpu_cluster_net.cli check post \
-  --topology topology.example.yaml \
-  --mock \
-  -o post-report.html -f html
-```
-
-**Checks performed (per device):**
-
-| Check | What it validates |
-|---|---|
-| `bgp_evpn_sessions` | All BGP EVPN peers are Established |
-| `evpn_type2_routes` | EVPN Type-2 (MAC/IP) routes present — proves MAC learning |
-| `evpn_type5_routes` | EVPN Type-5 (IP prefix) routes present — proves L3 reachability |
-| `vxlan_vni_state` | L2 VNI and L3 VNI are Up in NVE table |
-| `vtep_peers` | All leaf VTEPs appear in NVE peer table |
-| `anycast_gateway` | Distributed anycast gateway SVI is up and forwarding |
-| `pfc_operational` | PFC enabled on RoCEv2 priority queue (default: priority 3) |
-| `ecn_thresholds` | ECN min/max thresholds match topology config (DCQCN) |
-| `pfc_watchdog` | PFC watchdog enabled — prevents lossless deadlocks |
-| `rdma_mtu_path` | End-to-end jumbo MTU path (9000B with DF bit) verified |
-| `pfc_storms` | PFC pause frame counts within normal range |
-
-#### 4. Full DC Operational Readiness
-
-Runs pre + post checks together and produces a consolidated verdict.
-
-```bash
-# Full readiness — both phases, mock mode
-PYTHONPATH=. python -m gpu_cluster_net.cli readiness \
-  --topology topology.example.yaml \
-  --phase both \
-  --mock
-
-# Full readiness, save HTML report
-PYTHONPATH=. python -m gpu_cluster_net.cli readiness \
-  --topology topology.example.yaml \
-  --phase both \
-  --mock \
-  -o dc-readiness -f html
-# Produces: dc-readiness.pre.html  dc-readiness.post.html
-
-# Simulate specific failures (for testing runbooks)
-PYTHONPATH=. python -m gpu_cluster_net.cli readiness \
-  --topology topology.example.yaml \
-  --phase post \
-  --mock \
-  --simulate-failures pfc_operational,ecn_thresholds,bgp_evpn_sessions
-```
-
-**Verdicts:**
-
-| Verdict | Meaning |
-|---|---|
-| `READY` | All checks passed, no warnings |
-| `READY_WITH_WARNINGS` | No failures but some warnings (e.g. high PFC counters) |
-| `NOT_READY` | One or more checks failed — DC is not ready |
-
-The CLI exits with code `0` (ready) or `1` (not ready), making it CI/CD pipeline friendly.
-
-### Python API
-
-```python
-from gpu_cluster_net.models import Fabric
-from gpu_cluster_net.readiness import DCReadiness
-from gpu_cluster_net import reporter
-
-# Load topology
-fabric = Fabric.from_yaml("topology.yaml")
-
-dr = DCReadiness(fabric)
-
-# Dry-run (no SSH)
-pre_report  = dr.run_pre(mock=True)
-post_report = dr.run_post(mock=True)
-
-# Live SSH (requires netmiko + correct credentials in topology YAML)
-pre_report  = dr.run_pre()
-post_report = dr.run_post()
-
-# Check specific devices only
-report = dr.run_pre(mock=True, devices=["spine1", "leaf1"])
-
-# Simulate failures for runbook testing
-report = dr.run_post(mock=True, fail_checks=["pfc_operational", "ecn_thresholds"])
-
-# Print text report
-print(reporter.to_text(pre_report))
-
-# Save HTML report (dark-theme, per-check remediation hints)
-reporter.save(post_report, "report.html", fmt="html")
-
-# Save JSON (machine-readable, CI/CD friendly)
-reporter.save(pre_report, "pre.json", fmt="json")
-
-# Check overall verdict
-if not post_report.is_ready:
-    for suite in post_report.suites:
-        for result in suite.results:
-            if result.failed:
-                print(f"[{result.device}] {result.name}: {result.message}")
-                print(f"  Fix: {result.remediation}")
-```
-
-### Project Structure
+## System Architecture
 
 ```
-gpu_cluster_net/
-├── __init__.py
-├── models.py                     # Fabric, Spine, Leaf, RoCEv2Config, VXLANConfig
-├── readiness.py                  # DCReadiness orchestrator
-├── reporter.py                   # text / JSON / HTML output
-├── cli.py                        # gpu-net CLI (build / check / readiness)
-├── config/
-│   ├── builder.py                # Jinja2 config generation engine
-│   └── templates/
-│       ├── nxos_spine.j2         # Spine: BGP EVPN route-reflector + OSPF
-│       ├── nxos_leaf.j2          # Leaf: VXLAN VTEP + anycast GW + BGP EVPN
-│       └── nxos_rocev2_qos.j2    # RoCEv2 lossless QoS (PFC/ECN/DCQCN)
-├── checks/
-│   ├── base.py                   # CheckResult, CheckStatus, CheckSuite, BaseChecker
-│   ├── pre_deploy.py             # Pre-deployment checks (physical + baseline)
-│   └── post_deploy.py            # Post-deployment checks (EVPN + VXLAN + RoCEv2)
-└── collector/
-    ├── ssh_collector.py          # Live SSH collection via Netmiko (NX-OS parsers)
-    └── mock_collector.py         # Mock collector for dry-runs and CI testing
-topology.example.yaml             # Full 2-spine / 4-leaf example topology
-tests_gpu/                        # 55 unit tests
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    NETDESIGN AI — SYSTEM OVERVIEW                           │
+│                                                                             │
+│  ┌─── INTENT INPUT ──────────────────────────────────────────────────────┐  │
+│  │  Use Case · Scale · Vendor · Compliance · Topology · Protocols        │  │
+│  └───────────────────────────────────────┬───────────────────────────────┘  │
+│                                          │                                  │
+│                                    Intent Object (JSON)                     │
+│                                    Zustand persist store                    │
+│                                          │                                  │
+│  ┌─── 6-STEP WIZARD ─────────────────────▼───────────────────────────────┐  │
+│  │                                                                        │  │
+│  │  Step 1          Step 2          Step 3          Step 4               │  │
+│  │  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────────────┐  │  │
+│  │  │ Use Case │──▶│  Reqmts  │──▶│  BOM     │──▶│ Network Design   │  │  │
+│  │  │ 7 types  │   │ topology │   │ 40+ SKUs │   │ HLD·IP·VLAN·BGP  │  │  │
+│  │  └──────────┘   └──────────┘   └──────────┘   └──────────────────┘  │  │
+│  │                                                         │             │  │
+│  │  Step 6                    Step 5                       │             │  │
+│  │  ┌─────────────────────┐  ┌────────────────┐           │             │  │
+│  │  │  Deploy & Validate  │◀─│  Config Gen    │◀──────────┘             │  │
+│  │  │ ZTP·Checks·NETCONF  │  │ 5 OS platforms │                         │  │
+│  │  └─────────────────────┘  └────────────────┘                         │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  ┌─── BROWSER-NATIVE ENGINES ────────────────────────────────────────────┐  │
+│  │  BOM Engine      │  Config Engine   │  HLD Diagram     │  Policy Gate │  │
+│  │  Port-math sizing│  NX-OS/IOS/EOS/  │  Pure SVG · all  │  Change win/ │  │
+│  │  40+ SKU library │  JunOS/PAN-OS    │  layers animated │  Blast radius│  │
+│  └──────────────────┴──────────────────┴──────────────────┴──────────────┘  │
+│                                                                             │
+│  ┌─── OPTIONAL BACKEND (FastAPI) ────────────────────────────────────────┐  │
+│  │  /api/lab/topology  /api/lab/ztp  /api/checks  /api/deploy           │  │
+│  │  /api/alerts        /api/rca      /ws/deploy/{id}  (WebSocket)       │  │
+│  │                                                                        │  │
+│  │  Nornir + Netmiko → Real Device Push (NX-OS · IOS-XE · EOS · JunOS) │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Running Tests
+### Data Flow Diagram
 
-```bash
-pip install pytest pyyaml jinja2
-PYTHONPATH=. pytest tests_gpu/ -v
+```mermaid
+flowchart TD
+    User([Network Engineer]) -->|Describes intent| S1
+
+    subgraph Wizard["6-Step Design Wizard (Browser-Native)"]
+        S1["Step 1\n🎯 Use Case\ncampus · dc · gpu · wan\nmultisite · multicloud · aviatrix"]
+        S2["Step 2\n📋 Requirements\nTopology · Protocols · Scale\nRedundancy · Compliance"]
+        S3["Step 3\n🛒 Products & BOM\n40+ SKUs · Port-math sizing\nAuto hardware selection"]
+        S4["Step 4\n📐 Network Design\nHLD Topology · IP Plan\nVLAN/VNI · BGP · Physical Links"]
+        S5["Step 5\n⚙️ Config Generation\nNX-OS · IOS-XE · Arista EOS\nJunOS · PAN-OS"]
+        S6["Step 6\n🚀 Deploy & Validate\nZTP · Pre/Post Checks · NETCONF\nAnsible Tower · Terraform · Batfish"]
+
+        S1 -->|Intent object| S2 -->|Requirements| S3 -->|BOM devices| S4 -->|Design| S5 -->|Configs| S6
+    end
+
+    subgraph Store["📦 Zustand State Store\n(localStorage persist)"]
+        Intent[("Intent Object\nJSON")]
+    end
+
+    subgraph Engines["Browser-Native Engines"]
+        BOM["BOM Engine\nbom.ts"]
+        CFG["Config Engine\nconfiggen.ts"]
+        HLD["HLD Diagram\nPure SVG renderer"]
+        POL["Policy Engine\nConstraint rules"]
+    end
+
+    subgraph Backend["⚡ Optional FastAPI Backend"]
+        API["REST API"]
+        WS["WebSocket\n/ws/deploy/{id}"]
+        NRN["Nornir + Netmiko\nReal device push"]
+    end
+
+    subgraph Devices["🖥 Network Devices"]
+        D1["Cisco NX-OS"]
+        D2["Cisco IOS-XE"]
+        D3["Arista EOS"]
+        D4["Juniper JunOS"]
+        D5["Palo Alto PAN-OS"]
+    end
+
+    Wizard <-->|Read/Write| Store
+    Wizard --> Engines
+    S6 -->|Live mode| Backend
+    Backend --> NRN
+    NRN --> Devices
+```
+
+### Component Architecture
+
+```
+frontend/src/
+├── pages/                      # 6-step wizard pages
+│   ├── Step1UseCase.tsx         # Use case + org details
+│   ├── Step2Requirements.tsx    # Network requirements form
+│   ├── Step2Design.tsx          # BOM output + topology summary
+│   ├── Step4NetworkDesign.tsx   # 9-tab design workbench (1500 lines)
+│   ├── Step3Config.tsx          # Config generation + CodeMirror viewer
+│   └── Step6Deploy.tsx          # Deploy pipeline + ZTP + checks (2900 lines)
+│
+├── components/
+│   ├── HLDTopologyDiagram.tsx   # Professional SVG topology renderer
+│   ├── LandingPage.tsx          # Marketing landing page
+│   ├── TroubleshootingEngine.tsx # Network troubleshooting AI
+│   ├── BackendToggle.tsx        # Live/Sim mode toggle + context
+│   ├── wizard/Sidebar.tsx       # Navigation sidebar with deep-links
+│   └── ui/                     # Badge · Button · Card · Toast
+│
+├── lib/
+│   ├── bom.ts                   # BOM engine + port-math formulas
+│   ├── configgen.ts             # Config generation (5 platforms, 36 tests)
+│   ├── products.ts              # 40+ SKU database
+│   └── utils.ts                 # Shared utilities
+│
+├── hooks/
+│   ├── useZTP.ts                # ZTP API + demo simulation
+│   ├── useChecks.ts             # Pre/post check API
+│   ├── useMonitoring.ts         # Health polling
+│   ├── useTopology.ts           # Lab topology API
+│   ├── useAlerts.ts             # Alert polling (30s)
+│   └── useRca.ts                # RCA mutation
+│
+├── store/
+│   └── useAppStore.ts           # Zustand 5 + localStorage persist
+│
+└── test/                        # 127 Vitest tests across 9 suites
 ```
 
 ---
 
-## Network Port Scanner
+## 6-Step Wizard
 
-Scans your internal network and discovers open TCP, UDP, HTTP, and HTTPS services
-across every host in every detected subnet.
+| Step | Name | Key Features |
+|------|------|-------------|
+| **1** | Use Case | 7 use cases · Org details · Vendor preferences · Compliance (PCI, SOC2, HIPAA) |
+| **2** | Requirements | Traffic pattern · Endpoints · Bandwidth · Underlay/overlay protocols · Redundancy model |
+| **3** | Products & BOM | Port-math auto-sizing · 40+ SKUs · Per-layer hardware selection · Cabling + optics BOM |
+| **4** | Network Design | HLD topology · IP plan · VLAN/VNI design · BGP routing · Physical cabling · Simulation |
+| **5** | Config Gen | NX-OS · IOS-XE · Arista EOS · JunOS · PAN-OS · Per-device download · ZBF firewall configs |
+| **6** | Deploy & Validate | Deploy pipeline · ZTP state machine · Pre/post checks · NETCONF · Ansible Tower · Terraform |
 
-### Install
+---
 
+## Key Features
+
+### HLD Topology Diagram
+- Pure SVG renderer — no react-flow/d3/cytoscape dependencies
+- All network layers: Internet → WAN Edge → Corp FW → Edge FW → Spine/Core → Leaf/Dist → Access → Hosts/GPU
+- Per-device boxes with hostname, model, loopback IP, HA role, ASN badge
+- Animated packet flows along active path (3-packet staggered trail)
+- Ambient always-on background packets on all links
+- Clickable device detail panel (click any node)
+- 6 packet flow scenarios per use case
+- **Primary Path Only** toggle — hide non-flow devices
+- Security zone shading (Internet / DMZ / Core / Access)
+- SVG export + CSV LLD export
+
+### Config Generation Engine (5 Platforms)
+```
+NX-OS     — VXLAN/EVPN leaf-spine, IS-IS underlay, BGP EVPN overlay
+IOS-XE    — ZBF firewall (zone security / zone-pair / policy-map inspect)
+Arista EOS — VXLAN/EVPN, MLAG, CVX integration
+JunOS     — BGP RR, MPLS/SR, commit confirmed auto-rollback
+PAN-OS    — Security policy set commands, zone-based rules
+```
+**5 rules enforced by 36 Vitest tests:**
+1. No duplicate config blocks
+2. Real firewall configs (ZBF for IOS-XE, set commands for PAN-OS)
+3. No hardcoded secrets — `<CHANGE-ME-*>` placeholders only
+4. Single underlay: IS-IS for DC/GPU, OSPF for WAN/campus
+5. GPU QoS: PFC priority 3 no-drop, ECN/WRED, RDMA 60% BW, DCQCN
+
+### Deploy & Validate Pipeline
+```
+Policy Gate → Canary Deploy → Pre-checks → Backup → Config Push → Verify → Post-checks
+```
+- **Policy & Approval Gate** — change window, peer review, blast-radius check
+- **Canary mode** — deploy one device first, confirm before full rollout
+- **ZTP simulation** — 8-stage state machine with fault injection + visual progress strips
+- **Pre/Post Checks** — 13 checks/device across Connectivity · Protocols · Config · Hardware
+- **NETCONF interactive** — build + execute NETCONF RPCs with live XML editor
+- **Config Automation** — Ansible Tower/AWX · Terraform (NSO/Netbox) · Script download
+- **Batfish validation** — offline config analysis framework integration
+- **Platform-native rollback** — NX-OS checkpoint · IOS-XE configure replace · JunOS commit confirmed
+
+### Network Design Workbench (9 Tabs)
+| Tab | Content |
+|-----|---------|
+| HLD Diagram | Animated topology with packet flows |
+| IP Plan | Subnet allocation per layer + per-device IP table |
+| VLAN Design | VLAN + VNI mapping table |
+| Routing & Protocols | BGP peer table · OSPF areas · Protocol summary |
+| Physical Links | Cabling schedule with port assignments |
+| Mermaid Diagram | Exportable Mermaid topology code |
+| Simulate | Failure blast-radius · Reachability matrix · Route propagation |
+| Summary | Design text + BOM table + compliance badges |
+| Reference Designs | Cisco CVD · NDFC · NVIDIA Air · Juniper WAN · Arista AVD · Aviatrix |
+
+---
+
+## Supported Use Cases
+
+| Use Case | Protocols | Typical Scale |
+|----------|-----------|---------------|
+| **Campus/Enterprise** | OSPF · STP · MSTP · RSTP · VSS/StackWise | 100–5000 endpoints |
+| **Data Center Leaf-Spine** | IS-IS + VXLAN/EVPN · BGP RR · BFD | 500–50000 endpoints |
+| **AI/GPU Cluster** | RoCEv2 · PFC priority 3 · ECN/DCQCN · RDMA | 8–1024 GPUs |
+| **WAN/SD-WAN** | BGP · OSPF · MPLS · SR-TE · BFD | Multi-site |
+| **Multi-Site DCI** | EVPN type-5 · vPC/MLAG · DCI fabric | 2–10 sites |
+| **Multi-Cloud** | BGP · Aviatrix Transit · FQDN filtering | AWS/Azure/GCP |
+
+---
+
+## Supported Platforms
+
+| Platform | Config Style | Key Features |
+|----------|-------------|-------------|
+| **Cisco NX-OS** | CLI / NXAPI | VXLAN/EVPN · VPC · IS-IS · OSPF · Checkpoint rollback |
+| **Cisco IOS-XE** | CLI / NETCONF/YANG | ZBF · OSPF · BGP · Configure-replace rollback |
+| **Arista EOS** | CLI / eAPI | VXLAN/EVPN · MLAG · OpenConfig · Checkpoint rollback |
+| **Juniper JunOS** | CLI / NETCONF | BGP RR · MPLS · Commit-confirmed auto-rollback |
+| **Palo Alto PAN-OS** | Set commands | Zone-based firewall · Security policies |
+
+---
+
+## Quick Start
+
+### Option 1 — Browser (no install)
+```
+https://netdesignai.com  ←  production
+https://amit33-design.github.io/Network-Automation/  ←  GitHub Pages demo
+```
+
+### Option 2 — Local Development
 ```bash
-pip install -r requirements.txt
-pip install -e .
+git clone https://github.com/Amit33-design/Network-Automation.git
+cd Network-Automation/frontend
+npm ci
+npm test          # 127 tests
+npm run build     # Vite production build
+npm run dev       # Dev server → http://localhost:5173
 ```
 
-### CLI Usage
-
+### Option 3 — Docker (full stack)
 ```bash
-# Discover local network segments
-netscan discover
-
-# Scan all auto-detected local networks
-netscan scan
-
-# Scan a specific subnet
-netscan scan 192.168.1.0/24
-
-# TCP-only, full port range, save JSON
-netscan scan 192.168.0.0/24 --no-udp --tcp-ports 1-1024 -o results.json -f json
-
-# Scan a single host
-netscan host 192.168.1.1
-
-# Fast scan: no UDP, no banners
-netscan scan --no-udp --no-banners --host-workers 50 --port-workers 100
+cp .env.example .env    # Set JWT_SECRET, POSTGRES_PASSWORD, REDIS_PASSWORD
+docker compose up --build
 ```
+| Service | URL |
+|---------|-----|
+| Web UI | http://localhost:5173 |
+| API + Swagger | http://localhost:8000/docs |
+| Backend | http://localhost:8000 |
 
-### Python API
+### Option 4 — Live Backend Toggle
+The app includes a **SIM / LIVE** toggle in the top-right corner:
+- **SIM** — fully client-side simulation, no backend needed (default)
+- **LIVE** — connects to a FastAPI backend at the configured URL
 
-```python
-from network_scanner import NetworkScanner
-from network_scanner.scanner import ScanConfig
-from network_scanner import reporter
+---
 
-scanner = NetworkScanner()
-results = scanner.scan_networks()           # auto-detect all local subnets
-print(reporter.to_text(results))
-reporter.save(results, "scan.json", fmt="json")
-```
-
-### Project Structure
+## Backend API Endpoints
 
 ```
-network_scanner/
-├── models.py            # PortResult, HostResult, ScanResult
-├── network_discovery.py # Interface detection, host ping/probe
-├── tcp_scanner.py       # TCP connect scan + banner grabbing
-├── udp_scanner.py       # UDP probe scanner (DNS, NTP, SNMP, mDNS, SSDP …)
-├── http_scanner.py      # HTTP/HTTPS title + Server header detection
-├── scanner.py           # NetworkScanner + ScanConfig
-├── reporter.py          # text / JSON / CSV output
-└── cli.py               # netscan CLI (discover / scan / host)
-tests/                   # 23 unit tests
-```
-
-### Running Tests
-
-```bash
-pip install pytest
-PYTHONPATH=. pytest tests/ -v
+GET  /api/alerts              ← Alert polling (30s interval)
+POST /api/rca/analyze         ← Root cause analysis
+POST /api/generate-configs    ← Config generation
+POST /api/pre-checks          ← Pre-deployment checks
+POST /api/post-checks         ← Post-deployment checks
+POST /api/deploy              ← Trigger deployment
+WS   /ws/deploy/{id}         ← Live deploy progress stream
+GET  /api/lab/topology        ← Demo device topology
+POST /api/lab/ztp             ← ZTP simulation
+POST /api/lab/checks          ← Check simulation
+POST /api/lab/monitoring      ← Health monitoring simulation
 ```
 
 ---
 
-## CI / CD
+## Tech Stack
 
-GitHub Actions runs on every push and PR:
+### Frontend
+| Technology | Version | Purpose |
+|-----------|---------|---------|
+| React | 19 | UI framework |
+| TypeScript | 6 | Type safety |
+| Vite | 8 | Build + dev server |
+| Tailwind CSS | v4 | Styling |
+| Zustand | 5 | State management + localStorage persist |
+| TanStack Query | v5 | Server state (useQuery / useMutation) |
+| Vitest | 4 | Testing (127 tests, 9 suites) |
 
-| Job | What it does |
-|---|---|
-| **Run Tests** | All 78 unit tests (port scanner + GPU cluster) with coverage |
-| **DC Readiness Dry-Run** | Full pre + post mock readiness check against example topology |
-| **Generate Device Configs** | Builds NX-OS configs from `topology.example.yaml` |
+### Backend (optional)
+| Technology | Purpose |
+|-----------|---------|
+| FastAPI | REST API + WebSocket |
+| Nornir | Network automation framework |
+| Netmiko | SSH device connection |
+| Python 3.11 | Runtime |
 
-Reports and configs are uploaded as downloadable artifacts on every run.
+### Deployment
+| Platform | Use |
+|---------|-----|
+| Vercel | Frontend (netdesignai.com) |
+| Railway | Backend API |
+| GitHub Pages | Demo site |
+| Docker Compose | Self-hosted full stack |
+
+---
+
+## Project Structure
+
+```
+Network-Automation/
+├── frontend/                   # React 19 + TypeScript app
+│   ├── src/
+│   │   ├── pages/              # 6 wizard steps
+│   │   ├── components/         # UI components
+│   │   ├── lib/                # BOM + config engines
+│   │   ├── hooks/              # API hooks (TanStack Query)
+│   │   ├── store/              # Zustand state
+│   │   └── test/               # 127 Vitest tests
+│   ├── public/
+│   │   ├── favicon.svg         # Circuit-N brand icon
+│   │   └── logo-brand.jpg      # Full brand image
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.ts
+│
+├── backend/                    # FastAPI + Nornir (optional)
+│   ├── main.py
+│   ├── routers/
+│   └── requirements.txt
+│
+├── docker-compose.yml
+├── CLAUDE.md                   # AI assistant instructions
+├── README.md                   # This file
+└── LICENSE                     # NDAL v1.0
+```
+
+---
+
+## Development Guide
+
+### Adding a New Use Case
+1. Add to `UseCase` union in `frontend/src/types/index.ts`
+2. Add topology builder in `HLDTopologyDiagram.tsx` (`build<Name>Topology`)
+3. Add BOM rules in `lib/bom.ts` (`buildDeviceList`)
+4. Add config generation in `lib/configgen.ts`
+5. Add reference design in `Step4NetworkDesign.tsx` (`REF_DESIGNS`)
+6. Run `npm test` — 127 tests must pass
+
+### Adding a New Platform
+1. Add to `PLATFORM_CONFIGS` in `lib/configgen.ts`
+2. Add vendor detection in `configgen.ts` platform switch
+3. Write Vitest tests in `test/configgen.test.ts`
+4. Run `npm test` — all 36 config tests must pass
+
+### Commit Convention
+```
+feat:    New feature
+fix:     Bug fix
+chore:   Build/tooling/deps
+docs:    Documentation
+test:    Tests only
+refactor: Code restructure (no behavior change)
+```
+
+---
+
+## Config Generation Rules
+
+These rules are enforced by **36 Vitest tests** and must never be broken:
+
+| Rule | Description |
+|------|-------------|
+| **R-1** | No duplicate blocks — `mgmtBlock()` called exactly once per device |
+| **R-2** | Real firewall configs — Cisco = IOS-XE ZBF, Palo Alto = PAN-OS set commands |
+| **R-3** | No hardcoded secrets — all credentials use `<CHANGE-ME-*>` placeholders |
+| **R-4** | Single underlay — IS-IS for DC/GPU, OSPF for WAN/campus, never both |
+| **R-5** | GPU QoS — PFC priority 3 no-drop, ECN/WRED, RDMA 60% BW, pfc-watchdog |
+
+---
+
+## Known Gaps (Open Items)
+
+| ID | Gap | Priority | Status |
+|----|-----|----------|--------|
+| G-A1 | Intent NLP parser — free-text → Step 1 form fields | P1 | Open |
+| G-A2 | Professional HLD diagram | P1 | ✅ 2026-05-29 |
+| G-A3 | Batfish/pyATS dry-run validation | P1 | Open |
+| G-A4 | Config drift detection | P1 | Open |
+| G-A5 | Canary deployment gate | P1 | ✅ 2026-05-26 |
+| G-A6 | ZTP file server (nginx + TFTP) | P1 | Open |
+| G-A7 | Embedded monitoring stack (VictoriaMetrics + Grafana) | P1 | Open |
+| G-A8 | gNMI / streaming telemetry | P2 | Open |
+| G-A9 | IOS-XR support (SR-MPLS, L3VPN) | P2 | Open |
+| G-A10 | Private 5G / O-RAN use case | P2 | Open |
+
+---
+
+## License
+
+**NetDesign AI License (NDAL) v1.0** © 2026 Amit Tiwari
+
+- ✅ Free for personal use, learning, evaluation
+- ✅ Fork and modify for personal/educational purposes
+- ❌ Commercial use requires a paid license
+- ❌ No redistribution or SaaS resale without written permission
+
+Contact: **atiwari824@gmail.com** · [netdesignai.com](https://netdesignai.com)
+
+---
+
+<div align="center">
+
+Built by **Amit Tiwari** · Powered by Claude AI
+
+[netdesignai.com](https://netdesignai.com) · [GitHub](https://github.com/Amit33-design/Network-Automation)
+
+</div>

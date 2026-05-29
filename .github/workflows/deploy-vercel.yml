@@ -1,0 +1,82 @@
+name: Deploy — Vercel Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Build (smoke test)
+        working-directory: frontend
+        run: npm run build
+
+  deploy:
+    name: Deploy to Vercel
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Configure Vercel project settings via API
+        run: |
+          # Resolve org/user ID
+          if [ -n "${{ secrets.VERCEL_ORG_ID }}" ]; then
+            ORG_ID="${{ secrets.VERCEL_ORG_ID }}"
+          else
+            ORG_ID=$(curl -sf https://api.vercel.com/v2/user \
+              -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['user']['id'])")
+          fi
+
+          # Push correct build settings to the Vercel project
+          curl -sf -X PATCH \
+            "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_PROJECT_ID }}" \
+            -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "rootDirectory": "frontend",
+              "buildCommand": "npm run build",
+              "outputDirectory": "dist",
+              "installCommand": "npm ci",
+              "framework": "vite"
+            }' | python3 -c "import sys,json; d=json.load(sys.stdin); print('Project updated:', d.get('name','?'), '| rootDir:', d.get('rootDirectory','?'))"
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Deploy to Vercel (production)
+        run: vercel deploy --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

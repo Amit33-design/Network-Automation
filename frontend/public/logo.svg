@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" fill="none">
+  <defs>
+    <!-- Dark navy background matching the brand -->
+    <linearGradient id="bg" x1="0" y1="0" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0b1120"/>
+      <stop offset="100%" stop-color="#0d1a38"/>
+    </linearGradient>
+    <!-- Blue→cyan accent gradient -->
+    <linearGradient id="accent" x1="0" y1="0" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#1a7fff"/>
+      <stop offset="100%" stop-color="#00d4ff"/>
+    </linearGradient>
+    <!-- Subtle glow for nodes -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="56" height="56" rx="14" fill="url(#bg)"/>
+  <!-- Inner glow overlay -->
+  <rect width="56" height="56" rx="14" fill="url(#accent)" fill-opacity="0.06"/>
+
+  <!-- Network edge lines (connecting the nodes) -->
+  <!-- Vertical left spine -->
+  <line x1="13" y1="10" x2="13" y2="46" stroke="#1a7fff" stroke-opacity="0.25" stroke-width="1"/>
+  <!-- Vertical right spine -->
+  <line x1="43" y1="10" x2="43" y2="46" stroke="#1a7fff" stroke-opacity="0.25" stroke-width="1"/>
+  <!-- Diagonal cross (the N stroke) -->
+  <line x1="13" y1="10" x2="43" y2="46" stroke="url(#accent)" stroke-opacity="0.3" stroke-width="1"/>
+  <!-- Horizontal top connector -->
+  <line x1="13" y1="10" x2="43" y2="10" stroke="#00d4ff" stroke-opacity="0.18" stroke-width="0.8"/>
+  <!-- Horizontal bottom connector -->
+  <line x1="13" y1="46" x2="43" y2="46" stroke="#00d4ff" stroke-opacity="0.18" stroke-width="0.8"/>
+  <!-- Mid spurs -->
+  <line x1="13" y1="28" x2="28" y2="20" stroke="#1a7fff" stroke-opacity="0.15" stroke-width="0.7"/>
+  <line x1="43" y1="28" x2="28" y2="36" stroke="#1a7fff" stroke-opacity="0.15" stroke-width="0.7"/>
+
+  <!-- Bold N letterform -->
+  <path
+    d="M13 46 L13 10 L43 46 L43 10"
+    stroke="url(#accent)"
+    stroke-width="4.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    fill="none"
+    filter="url(#glow)"
+  />
+
+  <!-- Network nodes at key junctions -->
+  <!-- Top-left -->
+  <circle cx="13" cy="10" r="3.5" fill="url(#accent)" filter="url(#glow)"/>
+  <!-- Top-right -->
+  <circle cx="43" cy="10" r="3.5" fill="#00d4ff" fill-opacity="0.9" filter="url(#glow)"/>
+  <!-- Bottom-left -->
+  <circle cx="13" cy="46" r="3.5" fill="#1a7fff" fill-opacity="0.85"/>
+  <!-- Bottom-right -->
+  <circle cx="43" cy="46" r="3.5" fill="#00d4ff" fill-opacity="0.85"/>
+  <!-- Mid-cross node (where the diagonal meets) -->
+  <circle cx="28" cy="28" r="2.5" fill="white" fill-opacity="0.6"/>
+
+  <!-- Small accent dots — satellite nodes -->
+  <circle cx="28" cy="10" r="1.8" fill="#00d4ff" fill-opacity="0.5"/>
+  <circle cx="43" cy="28" r="1.8" fill="#1a7fff" fill-opacity="0.5"/>
+</svg>

@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry } from '@/types'
+import type {
+  AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry,
+  OrgSize, BudgetTier, TrafficPattern, BandwidthPerServer, UnderlayProtocol, FirewallModel, RedundancyModel,
+  VpnType, DcTopology,
+} from '@/types'
 
 interface AppStore extends AppState {
   // Navigation
@@ -8,7 +12,7 @@ interface AppStore extends AppState {
   nextStep: () => void
   prevStep: () => void
 
-  // Step 1 setters
+  // Step 1 setters — site / org
   setUseCase: (useCase: UseCase | '') => void
   setAppTypes: (types: AppType[]) => void
   setSiteName: (name: string) => void
@@ -17,6 +21,38 @@ interface AppStore extends AppState {
   setRedundancy: (r: Redundancy) => void
   setCompliance: (c: Compliance[]) => void
   setLinkDistance: (key: string, metres: number) => void
+  setOrgName: (name: string) => void
+  setOrgSize: (size: OrgSize) => void
+  setBudgetTier: (tier: BudgetTier) => void
+  setVendorPrefs: (prefs: string[]) => void
+  setIndustry: (industry: string) => void
+  setPrimaryContact: (contact: string) => void
+  // M-55
+  setCustomPolicyRules: (rules: string) => void
+  setActiveDeployTab: (tab: string) => void
+
+  // Step 2 setters — requirements
+  setTrafficPattern: (p: TrafficPattern) => void
+  setTotalEndpoints: (n: number) => void
+  setBandwidthPerServer: (b: BandwidthPerServer) => void
+  setOversubscription: (r: number) => void
+  setUnderlayProtocol: (p: UnderlayProtocol) => void
+  setOverlayProtocols: (o: string[]) => void
+  setProtoFeatures: (f: string[]) => void
+  setFirewallModel: (m: FirewallModel) => void
+  setRedundancyModel: (m: RedundancyModel) => void
+  setNumSites: (n: number) => void
+  setVpnType: (v: VpnType) => void
+  setNacOptions: (o: string[]) => void
+  setAdditionalNotes: (n: string) => void
+  // M-11: Multi-cloud setters
+  setCloudProviders: (providers: string[]) => void
+  setDcTopology: (topology: DcTopology) => void
+  setColoProvider: (provider: string) => void
+  setDcEdgeVendor: (vendor: string) => void
+  setBgpAsn: (asn: string) => void
+  setOrgCidr: (cidr: string) => void
+  setAviatrixOptions: (options: string[]) => void
 
   // Design computed results
   setDevices: (devices: BOMDevice[]) => void
@@ -28,6 +64,9 @@ interface AppStore extends AppState {
   setPreCheckScript: (s: string) => void
   setPostCheckScript: (s: string) => void
   setPrometheusAlerts: (s: string) => void
+
+  // Config policy blocks
+  setPolicyBlocks: (blocks: string[]) => void
 
   reset: () => void
 }
@@ -58,6 +97,38 @@ const DEFAULT_STATE: AppState = {
   ansiblePlaybook: {},
   compliance: [],
   step: 1,
+  // Step 1 — Organisation Details
+  orgName: '',
+  orgSize: '',
+  budgetTier: '',
+  vendorPrefs: [],
+  industry: '',
+  primaryContact: '',
+  customPolicyRules: '',
+  activeDeployTab: 'deploy',
+  // Step 2 — Network Requirements
+  trafficPattern: 'ew',
+  totalEndpoints: 500,
+  bandwidthPerServer: '25G',
+  oversubscription: 3,
+  underlayProtocol: 'ospf',
+  overlayProtocols: [],
+  protoFeatures: [],
+  firewallModel: '',
+  redundancyModel: 'ha',
+  numSites: 1,
+  vpnType: '',
+  nacOptions: [],
+  additionalNotes: '',
+  policyBlocks: [],
+  // M-11: Multi-cloud fields
+  cloudProviders: [],
+  dcTopology: '',
+  coloProvider: '',
+  dcEdgeVendor: '',
+  bgpAsn: '',
+  orgCidr: '',
+  aviatrixOptions: [],
 }
 
 export const useAppStore = create<AppStore>()(
@@ -78,6 +149,36 @@ export const useAppStore = create<AppStore>()(
       setCompliance: compliance => set({ compliance }),
       setLinkDistance: (key, metres) =>
         set(s => ({ linkDistances: { ...s.linkDistances, [key]: metres } })),
+      setOrgName: orgName => set({ orgName }),
+      setOrgSize: orgSize => set({ orgSize }),
+      setBudgetTier: budgetTier => set({ budgetTier }),
+      setVendorPrefs: vendorPrefs => set({ vendorPrefs }),
+      setIndustry: industry => set({ industry }),
+      setPrimaryContact: primaryContact => set({ primaryContact }),
+      setCustomPolicyRules: customPolicyRules => set({ customPolicyRules }),
+      setActiveDeployTab: activeDeployTab => set({ activeDeployTab }),
+
+      setTrafficPattern: trafficPattern => set({ trafficPattern }),
+      setTotalEndpoints: totalEndpoints => set({ totalEndpoints }),
+      setBandwidthPerServer: bandwidthPerServer => set({ bandwidthPerServer }),
+      setOversubscription: oversubscription => set({ oversubscription }),
+      setUnderlayProtocol: underlayProtocol => set({ underlayProtocol }),
+      setOverlayProtocols: overlayProtocols => set({ overlayProtocols }),
+      setProtoFeatures: protoFeatures => set({ protoFeatures }),
+      setFirewallModel: firewallModel => set({ firewallModel }),
+      setRedundancyModel: redundancyModel => set({ redundancyModel }),
+      setNumSites: numSites => set({ numSites }),
+      setVpnType: vpnType => set({ vpnType }),
+      setNacOptions: nacOptions => set({ nacOptions }),
+      setAdditionalNotes: additionalNotes => set({ additionalNotes }),
+      // M-11: Multi-cloud setters
+      setCloudProviders: cloudProviders => set({ cloudProviders }),
+      setDcTopology: dcTopology => set({ dcTopology }),
+      setColoProvider: coloProvider => set({ coloProvider }),
+      setDcEdgeVendor: dcEdgeVendor => set({ dcEdgeVendor }),
+      setBgpAsn: bgpAsn => set({ bgpAsn }),
+      setOrgCidr: orgCidr => set({ orgCidr }),
+      setAviatrixOptions: aviatrixOptions => set({ aviatrixOptions }),
 
       setDevices: devices => set({ devices }),
       setCabling: cabling => set({ cabling }),
@@ -87,6 +188,8 @@ export const useAppStore = create<AppStore>()(
       setPreCheckScript: preCheckScript => set({ preCheckScript }),
       setPostCheckScript: postCheckScript => set({ postCheckScript }),
       setPrometheusAlerts: prometheusAlerts => set({ prometheusAlerts }),
+
+      setPolicyBlocks: policyBlocks => set({ policyBlocks }),
 
       reset: () => set(DEFAULT_STATE),
     }),

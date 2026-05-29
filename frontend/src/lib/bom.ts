@@ -1,4 +1,4 @@
-import type { AppState, BOMDevice, Scale, UseCase, CableLink, OpticsEntry } from '@/types'
+import type { AppState, BOMDevice, Scale, UseCase } from '@/types'
 import { PRODUCTS } from './products'
 
 // ── Scale definitions ────────────────────────────────────────────────────────
@@ -79,12 +79,71 @@ export function generateHostnames(devices: BOMDevice[], siteCode: string): BOMDe
 
 // ── Device list builder ───────────────────────────────────────────────────────
 
-export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>): BOMDevice[] {
+export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'> & {
+  totalEndpoints?: number
+  bandwidthPerServer?: string
+  oversubscription?: number
+}): BOMDevice[] {
   const useCase = (state.useCase || 'dc') as UseCase
   const scale = (state.scale || 'small') as Scale
 
-  const scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
   const prefs = PREFERRED_PRODUCTS[useCase] ?? PREFERRED_PRODUCTS.dc
+
+  // Port-math: derive device counts from topology inputs when totalEndpoints > 0
+  let scaleDef: RoleCounts
+  const endpointCount = state.totalEndpoints ?? 0
+  if (endpointCount > 0 && (useCase === 'dc' || useCase === 'gpu' || useCase === 'campus' || useCase === 'multisite')) {
+    const bwGbps = parseInt(state.bandwidthPerServer ?? '25') || 25
+    const oversub = state.oversubscription ?? 3
+
+    if (useCase === 'dc' || useCase === 'gpu') {
+      const leafProdId = prefs['leaf']
+      const spineProdId = prefs['spine']
+      const leafSku = leafProdId ? PRODUCTS.find(p => p.id === leafProdId) : undefined
+      const spineSku = spineProdId ? PRODUCTS.find(p => p.id === spineProdId) : undefined
+
+      if (leafSku && spineSku) {
+        const rawLeaves = Math.ceil(endpointCount / leafSku.ports)
+        const leafCount = rawLeaves % 2 === 0 ? rawLeaves : rawLeaves + 1
+
+        const serverCapacityPerLeaf = leafSku.ports * bwGbps
+        const uplinksNeeded = Math.ceil(serverCapacityPerLeaf / oversub / parseInt(spineSku.speed))
+
+        const totalLeafUplinks = leafCount * uplinksNeeded
+        const spineCount = Math.max(Math.ceil(totalLeafUplinks / spineSku.ports), 2)
+
+        scaleDef = { spine: spineCount, leaf: leafCount }
+        // Add firewalls for non-small scale equivalents (when enough endpoints)
+        const hasFirewall = prefs['firewall'] && scale !== 'small'
+        if (hasFirewall) {
+          const fwCount = spineCount <= 4 ? 2 : 4
+          scaleDef['firewall'] = fwCount
+        }
+      } else {
+        scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
+      }
+    } else if (useCase === 'campus') {
+      const accessProdId = prefs['access']
+      const accessSku = accessProdId ? PRODUCTS.find(p => p.id === accessProdId) : undefined
+      const accessPorts = accessSku?.ports ?? 48
+
+      const rawAccess = Math.ceil(endpointCount / accessPorts)
+      const accessCount = rawAccess % 2 === 0 ? rawAccess : rawAccess + 1
+      const rawDist = Math.max(2, Math.ceil(accessCount / 8))
+      const distCount = rawDist % 2 === 0 ? rawDist : rawDist + 1
+
+      scaleDef = { distribution: distCount, access: accessCount }
+      const hasFirewall = prefs['firewall'] && scale !== 'small'
+      if (hasFirewall) {
+        scaleDef['firewall'] = distCount <= 4 ? 2 : 4
+      }
+    } else {
+      // multisite with port-math (spine-leaf portion)
+      scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
+    }
+  } else {
+    scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
+  }
 
   const devices: BOMDevice[] = []
   let globalIdx = 0
@@ -133,7 +192,11 @@ export interface BOMSummaryRow {
   detail: string
 }
 
-export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>): {
+export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'> & {
+  totalEndpoints?: number
+  bandwidthPerServer?: string
+  oversubscription?: number
+}): {
   devices: BOMDevice[]
   summary: Record<string, BOMSummaryRow>
   grandTotal: number
@@ -171,7 +234,6 @@ export { SCALE_DEFS }
 
 interface CableSpec {
   type: 'DAC' | 'AOC' | 'LC-LC' | 'MPO'
-  desc: string
   maxDist: number
   speeds: string[]
   unitCost: number
@@ -179,14 +241,14 @@ interface CableSpec {
 }
 
 const CABLE_SPECS: CableSpec[] = [
-  { type: 'DAC',   desc: 'Direct Attach Copper 1m',     maxDist: 1,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 25,  costPerM: 0   },
-  { type: 'DAC',   desc: 'Direct Attach Copper 3m',     maxDist: 3,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 35,  costPerM: 0   },
-  { type: 'DAC',   desc: 'Direct Attach Copper 5m',     maxDist: 5,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 45,  costPerM: 0   },
-  { type: 'DAC',   desc: 'QSFP DAC 3m',                 maxDist: 3,     speeds: ['40G','100G','400G'],           unitCost: 65,  costPerM: 0   },
-  { type: 'AOC',   desc: 'Active Optical Cable 10m',    maxDist: 10,    speeds: ['10G','25G','40G','100G'],      unitCost: 80,  costPerM: 8   },
-  { type: 'AOC',   desc: 'Active Optical Cable 30m',    maxDist: 30,    speeds: ['10G','25G','40G','100G'],      unitCost: 240, costPerM: 8   },
-  { type: 'MPO',   desc: 'MPO-12 OM4 100m',             maxDist: 100,   speeds: ['40G','100G','400G'],           unitCost: 20,  costPerM: 1.2 },
-  { type: 'LC-LC', desc: 'LC-LC Single-mode Fiber',     maxDist: 10000, speeds: ['1G','10G','25G','100G'],       unitCost: 15,  costPerM: 0.5 },
+  { type: 'DAC',   maxDist: 1,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 25,  costPerM: 0   },
+  { type: 'DAC',   maxDist: 3,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 35,  costPerM: 0   },
+  { type: 'DAC',   maxDist: 5,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 45,  costPerM: 0   },
+  { type: 'DAC',   maxDist: 3,     speeds: ['40G','100G','400G'],           unitCost: 65,  costPerM: 0   },
+  { type: 'AOC',   maxDist: 10,    speeds: ['10G','25G','40G','100G'],      unitCost: 80,  costPerM: 8   },
+  { type: 'AOC',   maxDist: 30,    speeds: ['10G','25G','40G','100G'],      unitCost: 240, costPerM: 8   },
+  { type: 'MPO',   maxDist: 100,   speeds: ['40G','100G','400G'],           unitCost: 20,  costPerM: 1.2 },
+  { type: 'LC-LC', maxDist: 10000, speeds: ['1G','10G','25G','100G'],       unitCost: 15,  costPerM: 0.5 },
 ]
 
 const CABLE_PRIORITY: Record<string, number> = { DAC: 0, AOC: 1, MPO: 2, 'LC-LC': 3 }
@@ -198,25 +260,25 @@ function selectCable(distM: number, speed: string): CableSpec {
 }
 
 const LAYER_CONNECTS: Array<{ from: string; to: string; key: string }> = [
-  { from: 'spine',         to: 'leaf',         key: 'spine-leaf'  },
-  { from: 'core',          to: 'distribution', key: 'core-dist'   },
-  { from: 'distribution',  to: 'access',       key: 'dist-access' },
-  { from: 'wan-edge',      to: 'distribution', key: 'wan-edge'    },
-  { from: 'wan-edge',      to: 'spine',        key: 'wan-edge'    },
-  { from: 'firewall',      to: 'distribution', key: 'wan-edge'    },
-  { from: 'firewall',      to: 'spine',        key: 'spine-leaf'  },
+  { from: 'spine',        to: 'leaf',         key: 'spine-leaf'  },
+  { from: 'core',         to: 'distribution', key: 'core-dist'   },
+  { from: 'distribution', to: 'access',       key: 'dist-access' },
+  { from: 'wan-edge',     to: 'distribution', key: 'wan-edge'    },
+  { from: 'wan-edge',     to: 'spine',        key: 'wan-edge'    },
+  { from: 'firewall',     to: 'distribution', key: 'wan-edge'    },
+  { from: 'firewall',     to: 'spine',        key: 'spine-leaf'  },
 ]
 
 export function buildCabling(
   devices: BOMDevice[],
   linkDistances: AppState['linkDistances'],
-): CableLink[] {
+): import('@/types').CableLink[] {
   const byLayer = devices.reduce<Record<string, BOMDevice[]>>((acc, d) => {
     acc[d.subLayer] = [...(acc[d.subLayer] ?? []), d]
     return acc
   }, {})
 
-  const links: CableLink[] = []
+  const links: import('@/types').CableLink[] = []
   let id = 1
 
   for (const conn of LAYER_CONNECTS) {
@@ -258,39 +320,34 @@ interface OpticSpec {
   priceUSD:   number
   vendor:     string
   partNumber: string
-  subLayers:  string[]
 }
 
 const OPTIC_CATALOG: OpticSpec[] = [
-  { formFactor: 'SFP+',   speed: '10G',  reach: '300m',  reachM: 300,   priceUSD: 25,  vendor: 'Generic', partNumber: 'SFP-10G-SR',      subLayers: ['leaf','access','distribution'] },
-  { formFactor: 'SFP+',   speed: '10G',  reach: '10km',  reachM: 10000, priceUSD: 55,  vendor: 'Generic', partNumber: 'SFP-10G-LR',      subLayers: ['leaf','distribution','wan-edge','firewall'] },
-  { formFactor: 'SFP28',  speed: '25G',  reach: '100m',  reachM: 100,   priceUSD: 45,  vendor: 'Generic', partNumber: 'SFP28-25G-SR',    subLayers: ['leaf','distribution'] },
-  { formFactor: 'SFP28',  speed: '25G',  reach: '10km',  reachM: 10000, priceUSD: 120, vendor: 'Generic', partNumber: 'SFP28-25G-LR',    subLayers: ['leaf','distribution','wan-edge'] },
-  { formFactor: 'QSFP28', speed: '100G', reach: '100m',  reachM: 100,   priceUSD: 180, vendor: 'Generic', partNumber: 'QSFP-100G-SR4',   subLayers: ['spine','leaf','distribution'] },
-  { formFactor: 'QSFP28', speed: '100G', reach: '10km',  reachM: 10000, priceUSD: 420, vendor: 'Generic', partNumber: 'QSFP-100G-LR4',   subLayers: ['spine','wan-edge'] },
-  { formFactor: 'QSFP28', speed: '100G', reach: '500m',  reachM: 500,   priceUSD: 95,  vendor: 'Generic', partNumber: 'QSFP-100G-PSM4',  subLayers: ['spine','leaf'] },
-  { formFactor: 'QSFP-DD', speed: '400G', reach: '100m', reachM: 100,   priceUSD: 950, vendor: 'Generic', partNumber: 'QSFP-DD-400G-SR4',subLayers: ['spine'] },
-  { formFactor: 'QSFP-DD', speed: '400G', reach: '2km',  reachM: 2000,  priceUSD: 1800,vendor: 'Generic', partNumber: 'QSFP-DD-400G-FR4',subLayers: ['spine','wan-edge'] },
+  { formFactor: 'SFP+',    speed: '10G',  reach: '300m',  reachM: 300,   priceUSD: 25,   vendor: 'Generic', partNumber: 'SFP-10G-SR'       },
+  { formFactor: 'SFP+',    speed: '10G',  reach: '10km',  reachM: 10000, priceUSD: 55,   vendor: 'Generic', partNumber: 'SFP-10G-LR'       },
+  { formFactor: 'SFP28',   speed: '25G',  reach: '100m',  reachM: 100,   priceUSD: 45,   vendor: 'Generic', partNumber: 'SFP28-25G-SR'     },
+  { formFactor: 'SFP28',   speed: '25G',  reach: '10km',  reachM: 10000, priceUSD: 120,  vendor: 'Generic', partNumber: 'SFP28-25G-LR'     },
+  { formFactor: 'QSFP28',  speed: '100G', reach: '100m',  reachM: 100,   priceUSD: 180,  vendor: 'Generic', partNumber: 'QSFP-100G-SR4'    },
+  { formFactor: 'QSFP28',  speed: '100G', reach: '10km',  reachM: 10000, priceUSD: 420,  vendor: 'Generic', partNumber: 'QSFP-100G-LR4'    },
+  { formFactor: 'QSFP28',  speed: '100G', reach: '500m',  reachM: 500,   priceUSD: 95,   vendor: 'Generic', partNumber: 'QSFP-100G-PSM4'   },
+  { formFactor: 'QSFP-DD', speed: '400G', reach: '100m',  reachM: 100,   priceUSD: 950,  vendor: 'Generic', partNumber: 'QSFP-DD-400G-SR4' },
+  { formFactor: 'QSFP-DD', speed: '400G', reach: '2km',   reachM: 2000,  priceUSD: 1800, vendor: 'Generic', partNumber: 'QSFP-DD-400G-FR4' },
 ]
 
 export function buildOptics(
   devices: BOMDevice[],
   linkDistances: AppState['linkDistances'],
-): OpticsEntry[] {
+): import('@/types').OpticsEntry[] {
   const cabling = buildCabling(devices, linkDistances)
-  const entries: OpticsEntry[] = []
+  const entries: import('@/types').OpticsEntry[] = []
 
   for (const link of cabling) {
-    const speed   = link.speed
-    const distM   = link.lengthM
-
     const optic = OPTIC_CATALOG
-      .filter(o => o.speed === speed && o.reachM >= distM)
+      .filter(o => o.speed === link.speed && o.reachM >= link.lengthM)
       .sort((a, b) => a.priceUSD - b.priceUSD)[0]
-
     if (!optic) continue
 
-    const qty        = link.quantity * 2  // both ends
+    const qty        = link.quantity * 2
     const totalPrice = optic.priceUSD * qty
 
     entries.push({

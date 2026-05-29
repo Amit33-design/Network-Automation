@@ -1,54 +1,83 @@
 'use strict';
 
-var STATE = {
-  useCase: '',          // campus | dc | gpu | wan | multisite | multicloud | aviatrix
-  appTypes: [],         // voice | video | storage | hpc | internet
-  siteName: '',
-  siteCode: '',         // e.g. IAD, SJC
-  scale: 'small',       // small | medium | large
-  redundancy: 'dual',   // single | dual
-  linkDistances: {      // layer pair -> distance in metres
-    'spine-leaf': 100,
-    'dist-access': 50,
-    'core-dist': 200,
-    'wan-edge': 5000
-  },
-  devices: [],          // populated by buildDeviceList()
-  cabling: [],          // populated by generateCablingMatrix()
-  optics: [],           // populated by recommendOptics()
-  configs: {},          // keyed by device id
-  ztpConfig: {},
-  policies: [],
-  preCheckScript: '',
-  postCheckScript: '',
-  prometheusAlerts: '',
-  grafanaDashboard: {},
-  ansiblePlaybook: {},
-  compliance: [],       // QoS | PCI | HIPAA | SOC2
-  step: 1
+/* ── App State ───────────────────────────────────────────────────── */
+const STATE = {
+  step: 1,
+  totalSteps: 6,
+  uc: null,
+  industry: null,
+  orgName: '',
+  orgSize: '',
+  numSites: '',
+  redundancy: '',
+  traffic: 'ns',
+  totalHosts: '',
+  bwPerServer: '',
+  oversub: 3,
+  underlayProto: [],
+  overlayProto: [],
+  protoFeatures: [],
+  fwModel: '',
+  vpnType: '',
+  compliance: [],
+  nac: [],
+  appTypes: [],
+  latencySla: '',
+  automation: '',
+  gpuSpecifics: [],
+  extraNotes: '',
+  selectedProducts: {},   // layerKey → prodId
+  // Phase 2 additions
+  budget: '',             // smb | mid | enterprise | hyperscale
+  preferredVendors: [],   // ['Cisco','Fortinet', ...]  — empty = any
+  numSitesTopology: 3,    // for multi-site diagram (3-6)
+  // ── Multicloud ────────────────────────────────────────────────
+  mcClouds:        ['aws', 'azure', 'gcp'], // selected cloud providers
+  mcDualDC:        true,                    // true = DC-EAST + DC-WEST
+  mcColoProvider:  'equinix',               // equinix | megaport
+  mcDCEdgeVendor:  'iosxr',                // iosxr | eos | junos
+  mcEnterpriseAsn: 65000,
+  mcOrgCidr:       '10.0.0.0/9',
+  mcAWSRegions:      ['us-east-1'],
+  mcAzureRegions:    ['eastus'],
+  mcGCPRegions:      ['us-east4'],
+  // Aviatrix orchestration
+  mcOrchestration:   'native',   // 'native' | 'aviatrix'
+  mcAvxHPE:          true,       // High Performance Encryption (Insane Mode)
+  mcAvxFireNet:      false,      // Enable FireNet (inline FW insertion)
+  mcAvxFireNetFW:    'paloalto', // paloalto | fortinet | checkpoint
+  mcAvxSegments:     true,       // Network Domain segmentation
 };
 
-window.STATE = STATE;
+/* ── Step metadata ───────────────────────────────────────────────── */
+const STEPS = [
+  { n: 1, label: 'Use Case',         id: 'step-1' },
+  { n: 2, label: 'Requirements',     id: 'step-2' },
+  { n: 3, label: 'Products',         id: 'step-3' },
+  { n: 4, label: 'Design',           id: 'step-4' },
+  { n: 5, label: 'Configuration',    id: 'step-5' },
+  { n: 6, label: 'Deploy & Validate',id: 'step-6' },
+];
 
-window.resetState = function() {
-  STATE.useCase = '';
-  STATE.appTypes = [];
-  STATE.siteName = '';
-  STATE.siteCode = '';
-  STATE.scale = 'small';
-  STATE.redundancy = 'dual';
-  STATE.linkDistances = { 'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 };
-  STATE.devices = [];
-  STATE.cabling = [];
-  STATE.optics = [];
-  STATE.configs = {};
-  STATE.ztpConfig = {};
-  STATE.policies = [];
-  STATE.preCheckScript = '';
-  STATE.postCheckScript = '';
-  STATE.prometheusAlerts = '';
-  STATE.grafanaDashboard = {};
-  STATE.ansiblePlaybook = {};
-  STATE.compliance = [];
-  STATE.step = 1;
+const UC_LABELS = {
+  campus:     'Campus / Enterprise LAN',
+  dc:         'Data Center Fabric',
+  gpu:        'AI / GPU Cluster',
+  hybrid:     'Hybrid (Campus + DC)',
+  wan:        'WAN / SD-WAN',
+  multisite:  'Multi-Site DC / DCI',
+  multicloud: 'Enterprise / GPU → Multicloud',
 };
+
+/* ── Budget labels ───────────────────────────────────────────────── */
+const BUDGET_LABELS = {
+  smb:        'SMB  (< $50K)',
+  mid:        'Mid-Market  ($50K – $500K)',
+  enterprise: 'Enterprise  ($500K – $5M)',
+  hyperscale: 'Hyperscale  ($5M+)',
+};
+
+/* ── Config history for diff engine ─────────────────────────── */
+// Populated by diffengine.js — keyed by deviceId
+// (declaration here so storage.js can persist/restore it)
+// CONFIG_HISTORY is declared in diffengine.js at runtime

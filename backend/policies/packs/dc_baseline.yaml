@@ -1,0 +1,108 @@
+name: Data Center Baseline
+description: >
+  Baseline policy checks for data-centre fabrics. Covers EVPN/VXLAN control
+  plane, BGP underlay, redundancy tiers, and leaf-spine best practices.
+  Suitable as a starting point for any DC design review.
+tags: [dc, evpn, bgp, baseline]
+
+rules:
+
+  - id: dc-evpn-required
+    name: "DC: EVPN Required for Scalable L2 Overlay"
+    severity: Warn
+    priority: 10
+    condition:
+      all:
+        - field: uc
+          op: in
+          value: [dc, hybrid]
+        - field: protocols
+          op: not_contains
+          value: EVPN
+    message: >
+      Data-centre designs without EVPN rely on flood-and-learn VXLAN or static
+      MAC tables. EVPN provides scalable control-plane MAC/IP distribution and
+      is required for production scale.
+
+  - id: dc-bgp-required
+    name: "DC: BGP Required as Underlay"
+    severity: Fail
+    priority: 11
+    condition:
+      all:
+        - field: uc
+          op: in
+          value: [dc, hybrid]
+        - field: protocols
+          op: not_contains
+          value: BGP
+    message: >
+      BGP is the standard underlay for leaf-spine fabrics. Without BGP,
+      ECMP load-sharing and fast-reroute are unavailable.
+
+  - id: dc-single-spine-warn
+    name: "DC: Single Spine Is a Single Point of Failure"
+    severity: Warn
+    priority: 20
+    condition:
+      all:
+        - field: uc
+          op: in
+          value: [dc, hybrid]
+        - field: redundancy
+          op: eq
+          value: single
+    message: >
+      A single spine switch means any spine failure causes a full fabric
+      partition. Deploy a minimum of two spines in an ECMP pair.
+
+  - id: dc-large-needs-full-redundancy
+    name: "DC: Large Fabric Must Use Full Redundancy"
+    severity: Fail
+    priority: 21
+    condition:
+      all:
+        - field: uc
+          op: in
+          value: [dc, hybrid]
+        - field: orgSize
+          op: in
+          value: [large, hyperscale]
+        - field: redundancy
+          op: neq
+          value: full
+    message: >
+      Large and hyperscale data centres require full redundancy (dual-homed
+      servers, MLAG or ESI-LAG ToR pairs, redundant spines). Single or partial
+      redundancy at this scale is a production risk.
+
+  - id: dc-vxlan-without-evpn
+    name: "DC: VXLAN Without EVPN Control Plane"
+    severity: Warn
+    priority: 30
+    condition:
+      all:
+        - field: protocols
+          op: contains
+          value: VXLAN
+        - field: protocols
+          op: not_contains
+          value: EVPN
+    message: >
+      VXLAN is enabled without EVPN. Flood-and-learn VXLAN does not scale
+      beyond small environments and lacks ARP suppression.
+
+  - id: dc-no-compliance
+    name: "DC: No Compliance Framework Selected"
+    severity: Info
+    priority: 50
+    condition:
+      all:
+        - field: uc
+          op: in
+          value: [dc, hybrid]
+        - field: compliance
+          op: is_empty
+    message: >
+      No compliance framework (PCI-DSS, SOC 2, HIPAA) is selected. Review
+      whether your DC environment has regulatory obligations.

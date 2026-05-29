@@ -1,0 +1,30 @@
+# ── Stage 1: build React app ──────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install deps first (layer-cached)
+COPY frontend/package*.json ./
+RUN npm ci
+
+# Build the Vite app
+COPY frontend/ ./
+RUN npm run build
+# Output: /app/dist/
+
+# ── Stage 2: serve with Nginx ─────────────────────────────────────────────────
+FROM nginx:1.27-alpine
+
+LABEL org.opencontainers.image.title="NetDesign AI Frontend"
+LABEL org.opencontainers.image.vendor="NetDesign AI"
+
+# Nginx config — proxy /api and /ws to backend, serve SPA
+COPY ops/nginx/nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy built React app from stage 1
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=3s \
+    CMD wget -qO- http://localhost/ || exit 1

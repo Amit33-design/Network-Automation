@@ -1,0 +1,157 @@
+## ============================================================
+## NetDesign AI — Juniper Junos  GENERIC CONFIG
+## Device  : {{ hostname }}
+## Layer   : {{ layer }}
+## ============================================================
+
+system {
+    host-name {{ hostname }};
+    domain-name {{ org | lower | replace(' ', '.') }}.local;
+    time-zone UTC;
+    root-authentication {
+        encrypted-password "$6$ChangeMe"; ## SECRET
+    }
+    login {
+        user admin {
+            class super-user;
+            authentication {
+                encrypted-password "$6$ChangeMe";
+            }
+        }
+    }
+    services {
+        ssh {
+            root-login deny;
+            protocol-version v2;
+        }
+        netconf {
+            ssh;
+        }
+    }
+    syslog {
+        host 10.100.0.100 {
+            any notice;
+            authorization info;
+        }
+        file messages {
+            any notice;
+            authorization info;
+        }
+    }
+    ntp {
+        server 10.0.0.1;
+    }
+}
+
+chassis {
+    aggregated-devices {
+        ethernet {
+            device-count 16;
+        }
+    }
+}
+
+interfaces {
+    lo0 {
+        unit 0 {
+            description "Router-ID / Loopback";
+            family inet {
+                address {{ loopback_ip }}/32;
+            }
+        }
+    }
+
+    ge-0/0/0 {
+        unit 0 {
+            description "UPLINK-TO-CORE";
+            family inet {
+                address 10.10.{{ index }}.2/30;
+            }
+        }
+    }
+
+    {% for vlan in vlans %}
+    irb {
+        unit {{ vlan.id }} {
+            description "{{ vlan.name }}";
+            family inet {
+                address {{ vlan.get('gw', '192.168.' + loop.index|string + '.1') }}/24;
+            }
+        }
+    }
+    {% endfor %}
+}
+
+routing-options {
+    router-id {{ loopback_ip }};
+    autonomous-system {{ bgp_asn }};
+    forwarding-table {
+        export ECMP-POLICY;
+    }
+}
+
+policy-options {
+    policy-statement ECMP-POLICY {
+        then {
+            load-balance per-packet;
+        }
+    }
+    policy-statement CONNECTED-EXPORT {
+        term LOOPBACKS {
+            from {
+                protocol direct;
+                route-filter 10.0.0.0/8 orlonger;
+            }
+            then accept;
+        }
+        term REJECT {
+            then reject;
+        }
+    }
+}
+
+{% if 'ospf' in protocols %}
+protocols {
+    ospf {
+        area 0.0.0.0 {
+            interface lo0.0 {
+                passive;
+            }
+            interface ge-0/0/0.0 {
+                interface-type p2p;
+                bfd-liveness-detection {
+                    minimum-interval 300;
+                    multiplier 3;
+                }
+            }
+        }
+    }
+}
+{% endif %}
+
+{% if 'bgp' in protocols %}
+protocols {
+    bgp {
+        group UNDERLAY {
+            type external;
+            import CONNECTED-EXPORT;
+            export CONNECTED-EXPORT;
+            {% for sp in spine_ips | default([]) %}
+            neighbor {{ sp }} {
+                peer-as 65000;
+                description "SPINE-{{ loop.index }}";
+            }
+            {% endfor %}
+        }
+    }
+}
+{% endif %}
+
+vlans {
+    {% for vlan in vlans %}
+    {{ vlan.name | replace(' ', '_') }} {
+        vlan-id {{ vlan.id }};
+        l3-interface irb.{{ vlan.id }};
+    }
+    {% endfor %}
+}

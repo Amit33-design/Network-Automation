@@ -1,0 +1,1069 @@
+'use strict';
+
+/* ════════════════════════════════════════════════════════════════
+   ZTP — Zero Touch Provisioning Manager
+   Manages device onboarding via the NetDesign AI ZTP server.
+
+   Workflow:
+     1. User enters device serials + metadata in the ZTP panel
+     2. Pre-register sends POST /ztp/register for each device
+     3. Status board polls GET /ztp/status every 10s while panel open
+     4. Devices boot → fetch /ztp/bootstrap/{serial} from DHCP redirect
+     5. Devices check in → status updates to PROVISIONED
+
+   Integration:
+     - ZTP panel appears in Step 6 sidebar (deployment tab)
+     - Uses BackendClient.getBackendUrl() for server URL
+     - Works without backend (simulation mode shows mock states)
+════════════════════════════════════════════════════════════════ */
+
+const ZTP = (() => {
+
+  /* ── State ──────────────────────────────────────────────────── */
+  let _devices = [];      // local registry mirror
+  let _pollTimer = null;
+  let _pollingActive = false;
+
+  const STATE_ICONS = {
+    waiting:      '⏳',
+    contacted:    '📡',
+    provisioning: '⚙️',
+    provisioned:  '✅',
+    failed:       '❌',
+    unknown:      '❓',
+  };
+
+  const STATE_LABELS = {
+    waiting:      'Waiting',
+    contacted:    'Contacted',
+    provisioning: 'Applying Config',
+    provisioned:  'Provisioned',
+    failed:       'Failed',
+    unknown:      'Unknown',
+  };
+
+  /* ── Helpers ────────────────────────────────────────────────── */
+  function _apiBase() {
+    if (typeof BackendClient !== 'undefined' && BackendClient.getBackendUrl()) {
+      return BackendClient.getBackendUrl().replace(/\/$/, '');
+    }
+    return '';
+  }
+
+  function _liveMode() {
+    return typeof BackendClient !== 'undefined' && BackendClient.isLiveMode();
+  }
+
+  async function _apiFetch(method, path, body) {
+    const base = _apiBase();
+    if (!base) throw new Error('No backend URL configured');
+    const opts = {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': typeof BackendClient !== 'undefined' ? BackendClient.getApiKey() : '',
+      },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(base + path, opts);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /* ── Device rows builder ─────────────────────────────────────── */
+  function _buildDeviceRow(dev, index) {
+    const icon  = STATE_ICONS[dev.state] || '⏳';
+    const label = STATE_LABELS[dev.state] || dev.state;
+    const cls   = `ztp-state-${dev.state}`;
+    const ptime = dev.provisioned_at
+      ? new Date(dev.provisioned_at * 1000).toLocaleTimeString()
+      : '—';
+    const bakeBadge = dev.bake_policies
+      ? '<span class="ztp-bake-badge" title="Full production config on first boot">⚙️ Full</span>'
+      : '<span class="ztp-bake-badge ztp-bake-day0" title="Minimal Day 0 only">🌱 Day0</span>';
+    return `
+      <tr class="ztp-device-row ${cls}" data-serial="${dev.serial}">
+        <td class="ztp-icon">${icon}</td>
+        <td><code>${dev.serial}</code></td>
+        <td>${dev.hostname}</td>
+        <td><span class="ztp-platform-badge ${dev.platform}">${dev.platform}</span></td>
+        <td>${dev.role}</td>
+        <td>${dev.mgmt_ip}</td>
+        <td>${bakeBadge}</td>
+        <td><span class="ztp-state-pill ${cls}">${label}</span></td>
+        <td>${ptime}</td>
+        <td>
+          <button class="ztp-btn-sm" onclick="ZTP.resetDevice('${dev.serial}')">↺</button>
+          <button class="ztp-btn-sm ztp-btn-danger" onclick="ZTP.deleteDevice('${dev.serial}')">✕</button>
+        </td>
+      </tr>`;
+  }
+
+  /* ── Stats bar ───────────────────────────────────────────────── */
+  function _renderStats(stats) {
+    const total = Object.values(stats).reduce((a, b) => a + b, 0);
+    const provisioned = stats.provisioned || 0;
+    const failed = stats.failed || 0;
+    const pending = total - provisioned - failed;
+    const pct = total ? Math.round(provisioned / total * 100) : 0;
+
+    const el = document.getElementById('ztp-stats');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="ztp-stat">
+        <span class="ztp-stat-num">${total}</span>
+        <span class="ztp-stat-label">Total</span>
+      </div>
+      <div class="ztp-stat ztp-ok">
+        <span class="ztp-stat-num">${provisioned}</span>
+        <span class="ztp-stat-label">Provisioned</span>
+      </div>
+      <div class="ztp-stat ztp-warn">
+        <span class="ztp-stat-num">${pending}</span>
+        <span class="ztp-stat-label">Pending</span>
+      </div>
+      <div class="ztp-stat ztp-err">
+        <span class="ztp-stat-num">${failed}</span>
+        <span class="ztp-stat-label">Failed</span>
+      </div>
+      <div class="ztp-progress-wrap">
+        <div class="ztp-progress-bar" style="width:${pct}%"></div>
+        <span class="ztp-progress-label">${pct}% provisioned</span>
+      </div>`;
+  }
+
+  /* ── Render full board ───────────────────────────────────────── */
+  function renderBoard(data) {
+    _devices = data.devices || [];
+    _renderStats(data.stats || {});
+
+    const tbody = document.getElementById('ztp-device-tbody');
+    if (!tbody) return;
+
+    if (_devices.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="ztp-empty">
+        No devices registered yet. Add devices below or import from CSV.
+      </td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = _devices
+      .sort((a, b) => {
+        const order = { failed:0, provisioning:1, contacted:2, waiting:3, provisioned:4 };
+        return (order[a.state] || 5) - (order[b.state] || 5);
+      })
+      .map((d, i) => _buildDeviceRow(d, i))
+      .join('');
+  }
+
+  /* ── Simulation fallback ─────────────────────────────────────── */
+  function _simulatePoll() {
+    // Advance some devices through ZTP stages for demo
+    _devices = _devices.map(d => {
+      const transitions = {
+        waiting: 'contacted',
+        contacted: 'provisioning',
+        provisioning: 'provisioned',
+      };
+      if (Math.random() < 0.3 && transitions[d.state]) {
+        return { ...d, state: transitions[d.state] };
+      }
+      return d;
+    });
+    const stats = { waiting:0, contacted:0, provisioning:0, provisioned:0, failed:0 };
+    _devices.forEach(d => { stats[d.state] = (stats[d.state] || 0) + 1; });
+    renderBoard({ devices: _devices, stats });
+  }
+
+  /* ── Polling ─────────────────────────────────────────────────── */
+  async function _poll() {
+    if (!_pollingActive) return;
+    try {
+      if (_liveMode()) {
+        const data = await _apiFetch('GET', '/ztp/status');
+        renderBoard(data);
+      } else {
+        _simulatePoll();
+      }
+    } catch (e) {
+      console.warn('ZTP poll error:', e.message);
+    }
+    _pollTimer = setTimeout(_poll, 10000);
+  }
+
+  function startPolling() {
+    _pollingActive = true;
+    clearTimeout(_pollTimer);
+    _poll();
+  }
+
+  function stopPolling() {
+    _pollingActive = false;
+    clearTimeout(_pollTimer);
+  }
+
+  /* ── Register single device ──────────────────────────────────── */
+  async function registerDevice(deviceData) {
+    if (_liveMode()) {
+      return _apiFetch('POST', '/ztp/register', deviceData);
+    }
+    // Simulation: add locally
+    const dev = {
+      ...deviceData,
+      state: 'waiting',
+      registered_at: Date.now() / 1000,
+      contacted_at: null,
+      provisioned_at: null,
+      error: null,
+    };
+    _devices.push(dev);
+    const stats = {};
+    _devices.forEach(d => { stats[d.state] = (stats[d.state] || 0) + 1; });
+    renderBoard({ devices: _devices, stats });
+    return dev;
+  }
+
+  /* ── Bulk register from form ─────────────────────────────────── */
+  async function registerFromForm() {
+    const rows = document.querySelectorAll('#ztp-register-rows .ztp-reg-row');
+    if (!rows.length) {
+      showZTPStatus('Add at least one device below', 'warn');
+      return;
+    }
+
+    const devices = [];
+    let valid = true;
+    rows.forEach(row => {
+      const serial   = row.querySelector('.zrr-serial')?.value.trim();
+      const hostname = row.querySelector('.zrr-hostname')?.value.trim();
+      const platform = row.querySelector('.zrr-platform')?.value;
+      const role     = row.querySelector('.zrr-role')?.value;
+      const mgmt_ip  = row.querySelector('.zrr-mgmt')?.value.trim();
+      const mgmt_gw  = row.querySelector('.zrr-gw')?.value.trim();
+      const loopback = row.querySelector('.zrr-loopback')?.value.trim();
+      const bgp_asn      = parseInt(row.querySelector('.zrr-asn')?.value || '65000');
+      const bake_policies= row.querySelector('.zrr-bake')?.checked ?? false;
+
+      if (!serial || !hostname || !mgmt_ip) {
+        row.classList.add('ztp-row-error');
+        valid = false;
+        return;
+      }
+      row.classList.remove('ztp-row-error');
+      devices.push({ serial, hostname, platform, role, mgmt_ip, mgmt_gw,
+                     loopback_ip: loopback, bgp_asn, bake_policies });
+    });
+
+    if (!valid) {
+      showZTPStatus('Fill required fields: Serial, Hostname, Mgmt IP', 'error');
+      return;
+    }
+
+    showZTPStatus(`Registering ${devices.length} device(s)…`, 'info');
+
+    try {
+      if (_liveMode()) {
+        const res = await _apiFetch('POST', '/ztp/register/bulk', { devices });
+        showZTPStatus(`✅ Registered ${res.registered} devices`, 'ok');
+      } else {
+        for (const d of devices) await registerDevice(d);
+        showZTPStatus(`✅ Registered ${devices.length} devices (simulation)`, 'ok');
+      }
+      // Clear form rows
+      document.getElementById('ztp-register-rows').innerHTML = '';
+      addDeviceRow();
+      startPolling();
+    } catch (e) {
+      showZTPStatus(`❌ ${e.message}`, 'error');
+    }
+  }
+
+  /* ── Import CSV ──────────────────────────────────────────────── */
+  function importCSV(file) {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const lines = e.target.result.split('\n').filter(l => l.trim() && !l.startsWith('#'));
+      const header = lines.shift().toLowerCase().split(',').map(h => h.trim());
+      const devices = lines.map(line => {
+        const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+        const obj = {};
+        header.forEach((h, i) => { obj[h] = vals[i] || ''; });
+        return {
+          serial:      obj.serial || obj['serial number'] || '',
+          hostname:    obj.hostname || '',
+          platform:    obj.platform || 'ios-xe',
+          role:        obj.role || 'campus-access',
+          mgmt_ip:     obj.mgmt_ip || obj['management ip'] || '',
+          mgmt_gw:     obj.mgmt_gw || obj.gateway || '',
+          loopback_ip: obj.loopback_ip || '',
+          bgp_asn:     parseInt(obj.bgp_asn || obj.asn || '65000'),
+        };
+      }).filter(d => d.serial && d.mgmt_ip);
+
+      if (!devices.length) {
+        showZTPStatus('CSV has no valid rows (need serial, mgmt_ip)', 'error');
+        return;
+      }
+
+      try {
+        if (_liveMode()) {
+          const res = await _apiFetch('POST', '/ztp/register/bulk', { devices });
+          showZTPStatus(`✅ Imported ${res.registered} devices from CSV`, 'ok');
+        } else {
+          for (const d of devices) await registerDevice(d);
+          showZTPStatus(`✅ Imported ${devices.length} devices (simulation)`, 'ok');
+        }
+        startPolling();
+      } catch (err) {
+        showZTPStatus(`❌ Import failed: ${err.message}`, 'error');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  /* ── Reset / Delete ──────────────────────────────────────────── */
+  async function resetDevice(serial) {
+    try {
+      if (_liveMode()) {
+        await _apiFetch('POST', `/ztp/device/${serial}/reset`);
+      } else {
+        const dev = _devices.find(d => d.serial === serial);
+        if (dev) { dev.state = 'waiting'; dev.contacted_at = null; dev.provisioned_at = null; }
+      }
+      await _poll();
+    } catch (e) {
+      showZTPStatus(`Reset failed: ${e.message}`, 'error');
+    }
+  }
+
+  async function deleteDevice(serial) {
+    try {
+      if (_liveMode()) {
+        await _apiFetch('DELETE', `/ztp/device/${serial}`);
+      } else {
+        _devices = _devices.filter(d => d.serial !== serial);
+      }
+      await _poll();
+    } catch (e) {
+      showZTPStatus(`Delete failed: ${e.message}`, 'error');
+    }
+  }
+
+  /* ── DHCP Options dialog ─────────────────────────────────────── */
+  async function showDHCPOptions() {
+    const modal = document.getElementById('ztp-dhcp-modal');
+    if (!modal) return;
+
+    let content = '';
+    if (_liveMode()) {
+      try {
+        const data = await _apiFetch('GET', '/ztp/dhcp-options');
+        const iscDhcp = data.isc_dhcp;
+        content = `
+          <h4>ISC-DHCP / Kea Configuration</h4>
+          <p>Add these options to your DHCP server to enable ZTP auto-provisioning:</p>
+          <div class="ztp-dhcp-block">
+            <label>NX-OS POAP (option 67)</label>
+            <pre>${iscDhcp?.option_43_nxos_poap || ''}</pre>
+          </div>
+          <div class="ztp-dhcp-block">
+            <label>Arista EOS ZTP (option 67)</label>
+            <pre>${iscDhcp?.option_67_eos_ztp || ''}</pre>
+          </div>
+          <div class="ztp-dhcp-block">
+            <label>IOS-XE PnP (option 43)</label>
+            <pre>${iscDhcp?.option_43_iosxe_pnp || ''}</pre>
+          </div>
+          <div class="ztp-dhcp-block">
+            <label>Junos ZTP (option 67)</label>
+            <pre>${iscDhcp?.option_67_junos_ztp || ''}</pre>
+          </div>`;
+      } catch (e) {
+        content = `<p class="error">Could not fetch DHCP options: ${e.message}</p>`;
+      }
+    } else {
+      const base = _apiBase() || 'http://your-ztp-server:8000';
+      content = `
+        <h4>DHCP Server Configuration</h4>
+        <p>Add these options to your ISC-DHCP or Kea server:</p>
+        <div class="ztp-dhcp-block">
+          <label>NX-OS POAP (option 67)</label>
+          <pre>option bootfile-name "http://${base.split('//')[1] || base}/ztp/script/nxos";</pre>
+        </div>
+        <div class="ztp-dhcp-block">
+          <label>Arista EOS ZTP (option 67)</label>
+          <pre>option bootfile-name "http://${base.split('//')[1] || base}/ztp/script/eos";</pre>
+        </div>
+        <div class="ztp-dhcp-block">
+          <label>IOS-XE PnP (option 43)</label>
+          <pre>option 43 ascii "5A;K4;B2;I${base.split('//')[1] || base};J80";</pre>
+        </div>
+        <div class="ztp-dhcp-block">
+          <label>Junos ZTP (option 67)</label>
+          <pre>option bootfile-name "http://${base.split('//')[1] || base}/ztp/script/junos";</pre>
+        </div>`;
+    }
+
+    document.getElementById('ztp-dhcp-content').innerHTML = content;
+    modal.style.display = 'flex';
+  }
+
+  function closeDHCPModal() {
+    const modal = document.getElementById('ztp-dhcp-modal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  /* ── Status bar ──────────────────────────────────────────────── */
+  function showZTPStatus(msg, type = 'info') {
+    const el = document.getElementById('ztp-status-msg');
+    if (!el) return;
+    const icons = { info: 'ℹ️', ok: '✅', warn: '⚠️', error: '❌' };
+    el.className = `ztp-status-msg ztp-status-${type}`;
+    el.innerHTML = `${icons[type] || ''} ${msg}`;
+    el.style.display = 'block';
+    if (type !== 'error') setTimeout(() => { el.style.display = 'none'; }, 4000);
+  }
+
+  /* ── Add device row to registration form ─────────────────────── */
+  function addDeviceRow(prefill = {}) {
+    const container = document.getElementById('ztp-register-rows');
+    if (!container) return;
+
+    const row = document.createElement('div');
+    row.className = 'ztp-reg-row';
+    row.innerHTML = `
+      <input class="zrr-serial"   type="text"   placeholder="Serial / S/N *" value="${prefill.serial || ''}" />
+      <input class="zrr-hostname" type="text"   placeholder="Hostname *"     value="${prefill.hostname || ''}" />
+      <select class="zrr-platform">
+        <option value="ios-xe" ${prefill.platform==='ios-xe'?'selected':''}>IOS-XE</option>
+        <option value="nxos"   ${prefill.platform==='nxos'?'selected':''}>NX-OS</option>
+        <option value="eos"    ${prefill.platform==='eos'?'selected':''}>EOS</option>
+        <option value="junos"  ${prefill.platform==='junos'?'selected':''}>Junos</option>
+        <option value="sonic"  ${prefill.platform==='sonic'?'selected':''}>SONiC</option>
+      </select>
+      <select class="zrr-role">
+        <option value="campus-access"  >Campus Access</option>
+        <option value="campus-dist"    >Campus Dist</option>
+        <option value="campus-core"    >Campus Core</option>
+        <option value="dc-leaf"        >DC Leaf</option>
+        <option value="dc-spine"       >DC Spine</option>
+        <option value="gpu-spine"      >GPU Spine</option>
+        <option value="gpu-tor"        >GPU ToR</option>
+        <option value="fw"             >Firewall</option>
+      </select>
+      <input class="zrr-mgmt"     type="text"   placeholder="Mgmt IP *"      value="${prefill.mgmt_ip || ''}" />
+      <input class="zrr-gw"       type="text"   placeholder="Gateway"         value="${prefill.mgmt_gw || ''}" />
+      <input class="zrr-loopback" type="text"   placeholder="Loopback IP"     value="${prefill.loopback_ip || ''}" />
+      <input class="zrr-asn"      type="number" placeholder="BGP ASN"         value="${prefill.bgp_asn || 65000}" min="1" max="4294967295" />
+      <label class="zrr-bake-label" title="Bake all policies into ZTP bootstrap (full production config on first boot)">
+        <input class="zrr-bake" type="checkbox" ${prefill.bake_policies ? 'checked' : ''} />
+        <span class="zrr-bake-txt">Bake</span>
+      </label>
+      <button class="ztp-btn-sm ztp-btn-danger" onclick="this.closest('.ztp-reg-row').remove()">✕</button>`;
+    container.appendChild(row);
+  }
+
+  /* ── Auto-populate from topology ────────────────────────────── */
+  function populateFromTopology() {
+    if (typeof buildDeviceList !== 'function') return;
+    const devs = buildDeviceList();
+    const container = document.getElementById('ztp-register-rows');
+    if (!container) return;
+    container.innerHTML = '';
+    devs.forEach((d, i) => {
+      addDeviceRow({
+        serial:      `SN-${d.id.toUpperCase()}-001`,
+        hostname:    d.name || d.id.toUpperCase(),
+        platform:    _guessPlatform(d.layer),
+        role:        d.layer,
+        mgmt_ip:     `10.100.${i + 1}.1`,
+        mgmt_gw:     '10.100.0.1',
+        loopback_ip: `10.0.${i}.${i}`,
+        bgp_asn:     65000 + i,
+      });
+    });
+    showZTPStatus(`Populated ${devs.length} devices from topology`, 'ok');
+  }
+
+  function _guessPlatform(layer) {
+    if (!layer) return 'ios-xe';
+    if (layer.includes('gpu-spine')) return 'eos';
+    if (layer.includes('gpu-tor'))   return 'sonic';
+    if (layer.includes('dc'))        return 'nxos';
+    if (layer.includes('juniper'))   return 'junos';
+    return 'ios-xe';
+  }
+
+  /* ── Panel init ──────────────────────────────────────────────── */
+  function initZTPPanel() {
+    addDeviceRow();
+    // If backend is live, fetch existing devices immediately
+    if (_liveMode()) {
+      _apiFetch('GET', '/ztp/status')
+        .then(data => renderBoard(data))
+        .catch(() => {});
+    }
+  }
+
+  /* ── ISC DHCP config generator ──────────────────────────────── */
+  function genDHCPConfig(state) {
+    const s      = state || (typeof STATE !== 'undefined' ? STATE : {});
+    const server = (typeof BackendClient !== 'undefined' && BackendClient.getBackendUrl())
+      ? BackendClient.getBackendUrl().replace(/\/$/, '')
+      : 'http://10.0.0.100:8000';
+    const host   = server.replace(/^https?:\/\//, '');
+    const subnet = '10.0.0.0';
+    const mask   = '255.255.255.0';
+    const gw     = '10.0.0.1';
+    const dns     = '8.8.8.8';
+    const orgName = (s.orgName || 'netdesign').toLowerCase().replace(/\s+/g, '-');
+
+    return `# ═══════════════════════════════════════════════════════════
+# ISC DHCP Server — ZTP / PnP Configuration
+# Generated by NetDesign AI — ${new Date().toISOString().slice(0,10)}
+# Org: ${s.orgName || 'N/A'}
+#
+# Apply to /etc/dhcp/dhcpd.conf on your ZTP DHCP server.
+# Change subnet, gateway, and DNS to match your environment.
+# ═══════════════════════════════════════════════════════════
+
+authoritative;
+default-lease-time 86400;
+max-lease-time 604800;
+
+# DNS + domain
+option domain-name "${orgName}.local";
+option domain-name-servers ${dns};
+
+# ── Management subnet ──────────────────────────────────────────
+subnet ${subnet} netmask ${mask} {
+  range 10.0.0.50 10.0.0.199;
+  option routers ${gw};
+  option subnet-mask ${mask};
+  option domain-name-servers ${dns};
+  default-lease-time 86400;
+
+  # ── Cisco IOS-XE / Catalyst Center PnP (option 43) ──────────
+  # Option 43: PnP server redirect
+  # Format: 5A;<K>;B<tls>;I<host>;J<port>
+  #   K=4 = PnP, B2 = TLS enabled, B0 = plain HTTP
+  class "cisco-iosxe" {
+    match if substring(option vendor-class-identifier, 0, 8) = "Cisco PnP";
+    option vendor-encapsulated-options
+      05:04:00:01:00:00            # type=PnP, sub-option=server
+      3c:09:${host.replace(/[^.]/g, function(c){ return c.charCodeAt(0).toString(16).padStart(2,'0') + ':'; }).slice(0,-1)};
+    # Simpler ASCII form (alternative — pick one):
+    # option 43 ascii "5A;K4;B2;I${host};J443";
+  }
+
+  # ── Cisco NX-OS POAP (option 67) ────────────────────────────
+  class "cisco-nxos" {
+    match if substring(option vendor-class-identifier, 0, 16) = "Cisco NXOS POAP ";
+    option bootfile-name "http://${host}/ztp/script/nxos";
+    # The POAP script is served by the NetDesign AI ZTP server.
+    # It reads the device serial → maps to hostname → pushes config.
+  }
+
+  # ── Arista EOS ZTP (option 67) ──────────────────────────────
+  class "arista-eos" {
+    match if substring(option vendor-class-identifier, 0, 6) = "Arista";
+    option bootfile-name "http://${host}/ztp/script/eos";
+  }
+
+  # ── Juniper ZTP (option 43 + 67) ────────────────────────────
+  class "juniper-ztp" {
+    match if substring(option vendor-class-identifier, 0, 8) = "Juniper-";
+    option bootfile-name "http://${host}/ztp/script/junos";
+    # Junos also uses option 43 for Junos Space / JSVision redirect
+  }
+
+  # ── Generic fallback (option 67) ────────────────────────────
+  # Uncomment if all devices in this scope are the same vendor:
+  # option bootfile-name "http://${host}/ztp/script/eos";
+}
+
+# ── Static host entries (serial → IP → hostname) ──────────────
+# Uncomment and add one entry per device:
+#
+# host NYC-LEAF-A01-01 {
+#   hardware ethernet aa:bb:cc:dd:ee:ff;
+#   fixed-address 10.0.0.51;
+#   option host-name "NYC-LEAF-A01-01";
+# }
+`;
+  }
+
+  /* ── Netmiko onboarding script generator ────────────────────── */
+  function genNetmikoOnboard(state) {
+    const s = state || (typeof STATE !== 'undefined' ? STATE : {});
+    const today = new Date().toISOString().slice(0,10);
+    const configDir = './generated_configs';
+    return `#!/usr/bin/env python3
+"""
+NetDesign AI — Netmiko Day-0 Config Pusher
+Generated: ${today}  |  Org: ${s.orgName || 'N/A'}
+
+Requirements:
+  pip install netmiko paramiko
+
+Usage:
+  1. Edit INVENTORY_CSV path to point at your device inventory file.
+  2. The CSV must have columns:  hostname,ip,platform,username,password,config_file
+     Example:
+       NYC-LEAF-A01-01,10.0.0.51,cisco_nxos,admin,NetDesign@2024,configs/NYC-LEAF-A01-01.txt
+  3. Run:  python3 push_configs.py
+  4. Logs written to push_configs.log
+
+Supported platforms (netmiko driver names):
+  cisco_ios        — IOS-XE
+  cisco_nxos       — NX-OS
+  arista_eos       — Arista EOS
+  juniper_junos    — JunOS (uses NETCONF by default, falls back to SSH)
+  linux            — SONiC (SSH + bash frr-reload)
+"""
+
+import csv
+import logging
+import sys
+import os
+from datetime import datetime
+from pathlib import Path
+
+try:
+    from netmiko import ConnectHandler, NetMikoTimeoutException, NetMikoAuthenticationException
+except ImportError:
+    print("ERROR: netmiko not installed.  Run:  pip install netmiko")
+    sys.exit(1)
+
+# ── Config ──────────────────────────────────────────────────────
+INVENTORY_CSV = "inventory.csv"       # path to device inventory
+CONFIG_DIR    = "${configDir}"        # folder containing .txt config files
+LOG_FILE      = "push_configs.log"
+TIMEOUT       = 30                    # SSH connect timeout (seconds)
+# ────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger(__name__)
+
+
+def push_config(row: dict) -> bool:
+    """Push config file to a single device. Returns True on success."""
+    hostname    = row["hostname"].strip()
+    ip          = row["ip"].strip()
+    platform    = row["platform"].strip()
+    username    = row["username"].strip()
+    password    = row["password"].strip()
+    config_file = row.get("config_file", "").strip()
+
+    if not config_file:
+        config_file = os.path.join(CONFIG_DIR, f"{hostname}.txt")
+
+    config_path = Path(config_file)
+    if not config_path.exists():
+        log.error(f"[{hostname}] Config file not found: {config_file}")
+        return False
+
+    commands = config_path.read_text().splitlines()
+    # Strip blank lines and comment lines for cleaner push
+    commands = [c for c in commands if c.strip() and not c.strip().startswith("!")]
+
+    device = {
+        "device_type": platform,
+        "host":        ip,
+        "username":    username,
+        "password":    password,
+        "timeout":     TIMEOUT,
+    }
+
+    try:
+        log.info(f"[{hostname}] Connecting to {ip} ({platform}) ...")
+        with ConnectHandler(**device) as conn:
+            log.info(f"[{hostname}] Connected. Sending {len(commands)} config lines ...")
+
+            if platform == "juniper_junos":
+                # Junos: load + commit
+                output = conn.send_config_set(
+                    commands,
+                    enter_config_mode=True,
+                    config_mode_command="configure exclusive",
+                    exit_config_mode=False,
+                )
+                commit_out = conn.commit()
+                log.info(f"[{hostname}] Commit: {commit_out[:200]}")
+            elif platform in ("arista_eos",):
+                output = conn.send_config_set(commands)
+                save = conn.send_command("write memory")
+                log.info(f"[{hostname}] Saved: {save[:100]}")
+            elif platform == "linux":
+                # SONiC: write to /etc/frr/frr.conf and reload
+                frr_conf = "\\n".join(commands)
+                output = conn.send_command(
+                    f'echo "{frr_conf}" | sudo tee /etc/frr/frr.conf',
+                    expect_string=r"\\$"
+                )
+                reload_out = conn.send_command("sudo systemctl reload frr", expect_string=r"\\$")
+                log.info(f"[{hostname}] FRR reload: {reload_out[:100]}")
+            else:
+                # IOS-XE, NX-OS, etc.
+                output = conn.send_config_set(commands)
+                save = conn.send_command("write memory")
+                log.info(f"[{hostname}] Saved: {save[:100]}")
+
+            log.info(f"[{hostname}] ✅ Done. Output sample: {str(output)[:200]}")
+            return True
+
+    except NetMikoTimeoutException:
+        log.error(f"[{hostname}] ❌ Timeout connecting to {ip}")
+    except NetMikoAuthenticationException:
+        log.error(f"[{hostname}] ❌ Authentication failed for {username}@{ip}")
+    except Exception as exc:
+        log.error(f"[{hostname}] ❌ Unexpected error: {exc}")
+
+    return False
+
+
+def main():
+    log.info(f"=== NetDesign AI Config Push — {datetime.now().isoformat()} ===")
+
+    if not Path(INVENTORY_CSV).exists():
+        log.error(f"Inventory file not found: {INVENTORY_CSV}")
+        log.error("Create a CSV with columns: hostname,ip,platform,username,password,config_file")
+        sys.exit(1)
+
+    with open(INVENTORY_CSV, newline="") as f:
+        reader = csv.DictReader(f)
+        devices = list(reader)
+
+    log.info(f"Loaded {len(devices)} devices from {INVENTORY_CSV}")
+
+    success, failed = [], []
+    for row in devices:
+        ok = push_config(row)
+        (success if ok else failed).append(row["hostname"])
+
+    log.info(f"=== Results: {len(success)} succeeded, {len(failed)} failed ===")
+    if success:
+        log.info(f"  ✅ Success: {', '.join(success)}")
+    if failed:
+        log.error(f"  ❌ Failed:  {', '.join(failed)}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+`;
+  }
+
+  /* ── Download helpers ────────────────────────────────────────── */
+  function downloadDHCPConfig() {
+    const content = genDHCPConfig(typeof STATE !== 'undefined' ? STATE : {});
+    const blob = new Blob([content], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dhcpd-ztp.conf';
+    a.click();
+    if (typeof toast === 'function') toast('ISC DHCP config downloaded', 'success');
+  }
+
+  function downloadNetmikoScript() {
+    const content = genNetmikoOnboard(typeof STATE !== 'undefined' ? STATE : {});
+    const blob = new Blob([content], { type: 'text/x-python' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'push_configs.py';
+    a.click();
+    if (typeof toast === 'function') toast('Netmiko onboarding script downloaded', 'success');
+  }
+
+  /* ── Public API ──────────────────────────────────────────────── */
+  return {
+    initPanel:           initZTPPanel,
+    startPolling,
+    stopPolling,
+    renderBoard,
+    registerDevice,
+    registerFromForm,
+    importCSV,
+    resetDevice,
+    deleteDevice,
+    showDHCPOptions,
+    closeDHCPModal,
+    addDeviceRow,
+    populateFromTopology,
+    showZTPStatus,
+    genDHCPConfig,
+    genNetmikoOnboard,
+    downloadDHCPConfig,
+    downloadNetmikoScript,
+  };
+
+})();
+
+/* ════════════════════════════════════════════════════════════════
+   ZTP EXTRAS: Serial → Hostname CSV, POAP, EOS ZTP
+════════════════════════════════════════════════════════════════ */
+
+/* ── Serial number → hostname CSV ────────────────────────────── */
+function genSerialMappingCSV(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var devices = [];
+  try {
+    if (typeof buildDeviceList === 'function') devices = buildDeviceList();
+  } catch(e) {}
+
+  var lines = [
+    '# NetDesign AI — ZTP Serial → Hostname Mapping',
+    '# Generated: ' + new Date().toISOString().slice(0,10),
+    '# Replace PLACEHOLDER_SN_xxx with actual serial numbers before use.',
+    '#',
+    'serial,hostname,platform,ip,layer',
+  ];
+  devices.forEach(function(dev, i) {
+    var plat = dev.platform || 'ios-xe';
+    var ip = '10.0.0.' + (50 + i);
+    lines.push('PLACEHOLDER_SN_' + String(i+1).padStart(3,'0') + ',' + dev.name + ',' + plat + ',' + ip + ',' + dev.layer);
+  });
+  return lines.join('\n');
+}
+
+/* ── Cisco POAP script ───────────────────────────────────────── */
+function genPOAPScript(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var server = (typeof BackendClient !== 'undefined' && BackendClient.getBackendUrl())
+    ? BackendClient.getBackendUrl().replace(/\/$/, '')
+    : 'http://10.0.0.100:8000';
+
+  return '#!/usr/bin/env python\n' +
+'"""' + '\n' +
+'Cisco NX-OS POAP Script — NetDesign AI' + '\n' +
+'Generated: ' + new Date().toISOString().slice(0,10) + '\n' +
+'\n' +
+'Deployment:' + '\n' +
+'  1. Host this file at: ' + server + '/ztp/script/nxos' + '\n' +
+'  2. Configure DHCP option 67 to point to the URL above.' + '\n' +
+'  3. On first boot the switch fetches this script and executes it.' + '\n' +
+'  4. The script reads its serial number, looks up the hostname CSV,' + '\n' +
+'     downloads the matching config, and applies it.' + '\n' +
+'"""' + '\n' +
+'\n' +
+'import os\n' +
+'import sys\n' +
+'import urllib\n' +
+'import hashlib\n' +
+'\n' +
+'ZTP_SERVER = "' + server + '"\n' +
+'SERIAL_MAP_URL = ZTP_SERVER + "/ztp/serials.csv"\n' +
+'\n' +
+'def log(msg):\n' +
+'    poap_log(msg)\n' +
+'\n' +
+'def get_serial():\n' +
+'    """Read device serial number from NX-OS."""\n' +
+'    try:\n' +
+'        res = cli("show version | grep -i serial")\n' +
+'        for line in res.splitlines():\n' +
+'            if "Processor Board ID" in line:\n' +
+'                return line.split()[-1].strip()\n' +
+'    except Exception as e:\n' +
+'        log("Error reading serial: " + str(e))\n' +
+'    return None\n' +
+'\n' +
+'def lookup_hostname(serial):\n' +
+'    """Fetch serial→hostname CSV from ZTP server."""\n' +
+'    try:\n' +
+'        resp = urllib.urlopen(SERIAL_MAP_URL)\n' +
+'        for line in resp.read().splitlines():\n' +
+'            if line.startswith("#") or not line.strip():\n' +
+'                continue\n' +
+'            parts = line.split(",")\n' +
+'            if len(parts) >= 2 and parts[0].strip() == serial:\n' +
+'                return parts[1].strip(), parts[3].strip() if len(parts) > 3 else None\n' +
+'    except Exception as e:\n' +
+'        log("Error fetching serial map: " + str(e))\n' +
+'    return None, None\n' +
+'\n' +
+'def fetch_config(hostname):\n' +
+'    """Download the device config file from ZTP server."""\n' +
+'    url = ZTP_SERVER + "/ztp/configs/" + hostname + ".txt"\n' +
+'    try:\n' +
+'        resp = urllib.urlopen(url)\n' +
+'        return resp.read()\n' +
+'    except Exception as e:\n' +
+'        log("Error fetching config for " + hostname + ": " + str(e))\n' +
+'    return None\n' +
+'\n' +
+'def apply_config(config_data, hostname):\n' +
+'    """Write config to bootflash and apply it."""\n' +
+'    cfg_file = "bootflash:/poap-" + hostname + ".cfg"\n' +
+'    with open(cfg_file, "w") as f:\n' +
+'        f.write(config_data)\n' +
+'    cli("copy " + cfg_file + " running-config")\n' +
+'    cli("copy running-config startup-config")\n' +
+'    log("Config applied successfully for " + hostname)\n' +
+'\n' +
+'def main():\n' +
+'    log("=== NetDesign AI POAP script starting ===")\n' +
+'    serial = get_serial()\n' +
+'    if not serial:\n' +
+'        log("ERROR: Could not read serial number. Aborting.")\n' +
+'        sys.exit(1)\n' +
+'    log("Serial: " + serial)\n' +
+'\n' +
+'    hostname, mgmt_ip = lookup_hostname(serial)\n' +
+'    if not hostname:\n' +
+'        log("ERROR: Serial " + serial + " not found in mapping CSV. Aborting.")\n' +
+'        sys.exit(1)\n' +
+'    log("Hostname: " + hostname)\n' +
+'\n' +
+'    config = fetch_config(hostname)\n' +
+'    if not config:\n' +
+'        log("ERROR: Could not fetch config for " + hostname + ". Aborting.")\n' +
+'        sys.exit(1)\n' +
+'\n' +
+'    apply_config(config, hostname)\n' +
+'    log("=== POAP complete for " + hostname + " ===")\n' +
+'\n' +
+'main()\n';
+}
+
+/* ── Arista EOS ZTP script ───────────────────────────────────── */
+function genEOSZTPScript(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var server = (typeof BackendClient !== 'undefined' && BackendClient.getBackendUrl())
+    ? BackendClient.getBackendUrl().replace(/\/$/, '')
+    : 'http://10.0.0.100:8000';
+
+  return '#!/usr/bin/env python3\n' +
+'"""' + '\n' +
+'Arista EOS ZTP Script — NetDesign AI' + '\n' +
+'Generated: ' + new Date().toISOString().slice(0,10) + '\n' +
+'\n' +
+'Deployment:' + '\n' +
+'  1. Host this file at: ' + server + '/ztp/script/eos' + '\n' +
+'  2. Configure DHCP option 67 to point to the URL above.' + '\n' +
+'  3. On first boot EOS fetches and runs this script.' + '\n' +
+'"""' + '\n' +
+'\n' +
+'import re\n' +
+'import sys\n' +
+'import json\n' +
+'import urllib.request\n' +
+'import subprocess\n' +
+'\n' +
+'ZTP_SERVER = "' + server + '"\n' +
+'\n' +
+'def eos_cli(cmd):\n' +
+'    """Run an EOS CLI command and return stdout."""\n' +
+'    proc = subprocess.run(\n' +
+'        ["FastCli", "-p", "15", "-c", cmd],\n' +
+'        capture_output=True, text=True\n' +
+'    )\n' +
+'    return proc.stdout\n' +
+'\n' +
+'def get_serial():\n' +
+'    out = eos_cli("show version | json")\n' +
+'    try:\n' +
+'        data = json.loads(out)\n' +
+'        return data.get("serialNumber", "").strip()\n' +
+'    except Exception:\n' +
+'        # Fallback: grep text output\n' +
+'        out2 = eos_cli("show version")\n' +
+'        m = re.search(r"Serial number\\s*:\\s*(\\S+)", out2)\n' +
+'        return m.group(1) if m else ""\n' +
+'\n' +
+'def lookup_hostname(serial):\n' +
+'    url = ZTP_SERVER + "/ztp/serials.csv"\n' +
+'    try:\n' +
+'        with urllib.request.urlopen(url, timeout=10) as r:\n' +
+'            for line in r.read().decode().splitlines():\n' +
+'                if line.startswith("#") or not line.strip():\n' +
+'                    continue\n' +
+'                parts = line.split(",")\n' +
+'                if parts[0].strip() == serial:\n' +
+'                    return parts[1].strip()\n' +
+'    except Exception as e:\n' +
+'        print(f"Error fetching serial map: {e}")\n' +
+'    return None\n' +
+'\n' +
+'def fetch_and_apply(hostname):\n' +
+'    url = ZTP_SERVER + "/ztp/configs/" + hostname + ".eos"\n' +
+'    print(f"Fetching config from {url}")\n' +
+'    with urllib.request.urlopen(url, timeout=30) as r:\n' +
+'        config = r.read().decode()\n' +
+'    # Write to flash and apply\n' +
+'    cfg_path = f"/mnt/flash/startup-config"\n' +
+'    with open(cfg_path, "w") as f:\n' +
+'        f.write(config)\n' +
+'    print(f"Config written to {cfg_path}")\n' +
+'    print("Rebooting to apply startup-config...")\n' +
+'    eos_cli("reload now")\n' +
+'\n' +
+'def main():\n' +
+'    print("=== NetDesign AI EOS ZTP script ===")\n' +
+'    serial = get_serial()\n' +
+'    print(f"Serial: {serial}")\n' +
+'    if not serial:\n' +
+'        print("ERROR: Cannot read serial number")\n' +
+'        sys.exit(1)\n' +
+'\n' +
+'    hostname = lookup_hostname(serial)\n' +
+'    if not hostname:\n' +
+'        print(f"ERROR: Serial {serial} not in mapping — check serials.csv")\n' +
+'        sys.exit(1)\n' +
+'    print(f"Hostname: {hostname}")\n' +
+'\n' +
+'    fetch_and_apply(hostname)\n' +
+'\n' +
+'main()\n';
+}
+
+/* ── Download helpers ─────────────────────────────────────────── */
+function downloadSerialCSV() {
+  var content = genSerialMappingCSV(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ztp-serial-mapping.csv';
+  a.click();
+  if (typeof toast === 'function') toast('Serial → hostname mapping CSV downloaded', 'success');
+}
+
+function downloadPOAPScript() {
+  var content = genPOAPScript(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'text/x-python' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'poap_script.py';
+  a.click();
+  if (typeof toast === 'function') toast('Cisco POAP script downloaded', 'success');
+}
+
+function downloadEOSZTPScript() {
+  var content = genEOSZTPScript(typeof STATE !== 'undefined' ? STATE : {});
+  var blob = new Blob([content], { type: 'text/x-python' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'eos_ztp.py';
+  a.click();
+  if (typeof toast === 'function') toast('Arista EOS ZTP script downloaded', 'success');
+}
+
+/* Expose to ZTP public API by augmenting the returned object */
+if (typeof ZTP !== 'undefined') {
+  ZTP.genSerialMappingCSV   = genSerialMappingCSV;
+  ZTP.genPOAPScript         = genPOAPScript;
+  ZTP.genEOSZTPScript       = genEOSZTPScript;
+  ZTP.downloadSerialCSV     = downloadSerialCSV;
+  ZTP.downloadPOAPScript    = downloadPOAPScript;
+  ZTP.downloadEOSZTPScript  = downloadEOSZTPScript;
+}

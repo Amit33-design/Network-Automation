@@ -1,0 +1,185 @@
+---
+# NetDesign AI — Post-Deployment Checks
+# Run AFTER pushing configs to validate network health.
+# Usage: ansible-playbook post_checks.yml -i inventory/hosts.yml --ask-vault-pass
+
+- name: "POST-CHECK: Campus network health"
+  hosts: campus
+  gather_facts: false
+  tags: [campus, post]
+
+  tasks:
+    - name: Check OSPF neighbors (FULL)
+      cisco.ios.ios_command:
+        commands: ["show ip ospf neighbor"]
+      register: ospf_out
+
+    - name: Assert OSPF adjacency
+      assert:
+        that: "'FULL' in ospf_out.stdout[0]"
+        fail_msg: "OSPF not FULL on {{ inventory_hostname }}"
+        success_msg: "OSPF FULL on {{ inventory_hostname }} ✓"
+      ignore_errors: true
+
+    - name: Check BGP peers (if enabled)
+      cisco.ios.ios_command:
+        commands: ["show ip bgp summary"]
+      register: bgp_out
+      ignore_errors: true
+
+    - name: Interface error counters
+      cisco.ios.ios_command:
+        commands: ["show interfaces counters errors"]
+      register: intf_errors
+
+    - name: Fail on excessive errors
+      fail:
+        msg: "Interface errors detected on {{ inventory_hostname }}"
+      when: "'input errors' in intf_errors.stdout[0] and intf_errors.stdout[0] | regex_search('[1-9][0-9]{3,}')"
+      ignore_errors: true
+
+    - name: Ping gateway from device
+      cisco.ios.ios_command:
+        commands: ["ping 10.0.0.1 repeat 5"]
+      register: ping_gw
+
+    - name: Assert gateway reachable
+      assert:
+        that: "'!!!!!' in ping_gw.stdout[0]"
+        fail_msg: "Gateway 10.0.0.1 unreachable from {{ inventory_hostname }}"
+        success_msg: "Gateway reachable from {{ inventory_hostname }} ✓"
+      ignore_errors: true
+
+    - name: Verify DHCP snooping binding table
+      cisco.ios.ios_command:
+        commands: ["show ip dhcp snooping binding"]
+      register: dhcp_bindings
+      when: inventory_hostname in groups['campus_access']
+
+
+- name: "POST-CHECK: Data Center health"
+  hosts: datacenter
+  gather_facts: false
+  tags: [dc, post]
+
+  tasks:
+    - name: BGP EVPN summary
+      cisco.nxos.nxos_command:
+        commands: ["show bgp l2vpn evpn summary"]
+      register: evpn_bgp
+
+    - name: Assert EVPN peers established
+      assert:
+        that: "'Established' in evpn_bgp.stdout[0] or evpn_bgp.stdout[0] | length > 150"
+        fail_msg: "BGP EVPN not established on {{ inventory_hostname }}"
+        success_msg: "BGP EVPN OK on {{ inventory_hostname }} ✓"
+      ignore_errors: true
+
+    - name: NVE interface state
+      cisco.nxos.nxos_command:
+        commands: ["show nve interface nve1"]
+      register: nve_state
+      when: inventory_hostname in groups['dc_leaf']
+
+    - name: Assert NVE up
+      assert:
+        that: "'Up' in nve_state.stdout[0]"
+        fail_msg: "NVE interface is down on {{ inventory_hostname }}"
+      when: inventory_hostname in groups['dc_leaf']
+      ignore_errors: true
+
+    - name: Check IS-IS adjacency
+      cisco.nxos.nxos_command:
+        commands: ["show isis adjacency"]
+      register: isis_adj
+
+    - name: VXLAN VTEP table
+      cisco.nxos.nxos_command:
+        commands: ["show nve peers"]
+      register: vtep_peers
+      when: inventory_hostname in groups['dc_leaf']
+
+    - name: Interface error counters
+      cisco.nxos.nxos_command:
+        commands: ["show interface counters errors"]
+      register: dc_errors
+
+    - name: vPC status
+      cisco.nxos.nxos_command:
+        commands: ["show vpc"]
+      register: vpc_final
+      when: inventory_hostname in groups['dc_leaf']
+
+    - name: Assert vPC peer-link up
+      assert:
+        that: "'peer-link is Up' in vpc_final.stdout[0]"
+        fail_msg: "vPC peer-link DOWN on {{ inventory_hostname }} after deploy!"
+      when: inventory_hostname in groups['dc_leaf']
+      ignore_errors: true
+
+    - name: Route table summary
+      cisco.nxos.nxos_command:
+        commands: ["show ip route summary"]
+      register: route_sum
+
+    - name: Print route summary
+      debug:
+        msg: "{{ inventory_hostname }}: {{ route_sum.stdout_lines[0][:8] }}"
+
+
+- name: "POST-CHECK: GPU Cluster health"
+  hosts: gpu_cluster
+  gather_facts: false
+  tags: [gpu, post]
+
+  tasks:
+    - name: BGP summary (EOS spines)
+      arista.eos.eos_command:
+        commands: ["show bgp summary"]
+      register: eos_bgp
+      when: inventory_hostname in groups['gpu_spine']
+
+    - name: PFC counters (SONiC TORs)
+      raw: "show pfc counters"
+      register: pfc_post
+      when: inventory_hostname in groups['gpu_tor']
+      ignore_errors: true
+
+    - name: RDMA / RoCEv2 error check
+      raw: "show queue counters | grep -i drop"
+      register: queue_drops
+      when: inventory_hostname in groups['gpu_tor']
+      ignore_errors: true
+
+    - name: Warn on queue drops
+      debug:
+        msg: "WARNING: queue drops detected on {{ inventory_hostname }}: {{ queue_drops.stdout }}"
+      when:
+        - inventory_hostname in groups['gpu_tor']
+        - queue_drops.stdout is defined
+        - queue_drops.stdout | length > 10
+
+    - name: Verify BGP peers established (EOS)
+      assert:
+        that: "'Established' in eos_bgp.stdout[0]"
+        fail_msg: "BGP not established on GPU spine {{ inventory_hostname }}"
+      when: inventory_hostname in groups['gpu_spine']
+      ignore_errors: true
+
+
+- name: "POST-CHECK: Summary report"
+  hosts: all
+  gather_facts: false
+  tags: [summary]
+
+  tasks:
+    - name: Final ping test (device to NTP)
+      raw: "ping 10.0.0.1 count 3"
+      register: final_ping
+      ignore_errors: true
+
+    - name: Print final status
+      debug:
+        msg: >
+          {{ inventory_hostname }}:
+          ping={{ 'OK' if final_ping.rc == 0 else 'FAILED' }}

@@ -1,0 +1,22 @@
+---
+# NetDesign AI — Nornir Configuration
+# Used by nornir_tasks.py when running with file-based inventory.
+# When inventory is provided dynamically via the API, this file is ignored.
+
+runner:
+  plugin: threaded
+  options:
+    num_workers: 10
+
+inventory:
+  plugin: SimpleInventory
+  options:
+    host_file:     "../playbooks/inventory/hosts.yml"
+    group_file:    null
+    defaults_file: null
+
+logging:
+  enabled: true
+  level: INFO
+  log_file: /tmp/netdesign_nornir.log
+  format: "%(asctime)s %(name)s %(levelname)s %(message)s"

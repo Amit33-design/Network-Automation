@@ -1,0 +1,2337 @@
+'use strict';
+
+/* ════════════════════════════════════════════════════════════════
+   TROUBLESHOOTING ENGINE
+   Standalone network analysis tool — works against existing infra,
+   no NetDesign design required.
+════════════════════════════════════════════════════════════════ */
+
+const TsEngine = (() => {
+
+  /* ── State ───────────────────────────────────────────────────── */
+  let _devices  = [];   // [{ hostname, ip, platform, status }]
+  let _links    = [];   // [{ localDev, localPort, remoteDev, remotePort, status }]
+  let _snmpTimer = null;
+  let _eventCount = 0;
+
+  /* ── Helpers ─────────────────────────────────────────────────── */
+  function _log(msg, type = '') {
+    const log = document.getElementById('ts-snmp-log');
+    if (!log) return;
+    _eventCount++;
+    _updateStat('ts-stat-events', _eventCount);
+    const ts  = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = 'ts-event-line' + (type ? ' ' + type : '');
+    div.textContent = `[${ts}] ${msg}`;
+    // Remove placeholder
+    log.querySelector('[style*="text-align"]')?.remove();
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function _updateStat(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  function _backendUrl() {
+    if (typeof BackendClient !== 'undefined' && BackendClient.getBackendUrl) {
+      return (BackendClient.getBackendUrl() || '').replace(/\/$/, '');
+    }
+    return '';
+  }
+
+  function _authHeader() {
+    if (typeof BackendClient !== 'undefined' && BackendClient._authHeader) {
+      return BackendClient._authHeader();
+    }
+    return {};
+  }
+
+  async function _post(path, body) {
+    const url = _backendUrl() + path;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeader() },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  /* ── Discovery ───────────────────────────────────────────────── */
+  async function discover() {
+    const seeds   = (document.getElementById('ts-seed-hosts')?.value     || '').trim();
+    const comm    = (document.getElementById('ts-snmp-community')?.value  || 'public').trim();
+    const ver     = document.getElementById('ts-snmp-ver')?.value         || 'v2c';
+    const v3user  = (document.getElementById('ts-snmp-v3-user')?.value   || '').trim();
+
+    if (!seeds) { _showStatus('Enter at least one seed host or IP range', 'warn'); return; }
+
+    _showStatus('⏳ Discovering…', '');
+    const base = _backendUrl();
+    if (!base) {
+      _simulateDiscovery(seeds.split('\n').map(s => s.trim()).filter(Boolean));
+      return;
+    }
+    try {
+      const result = await _post('/api/troubleshoot/discover', { seeds: seeds.split('\n').map(s=>s.trim()).filter(Boolean), community: comm, version: ver, v3_user: v3user });
+      _devices = result.devices || [];
+      _links   = result.links   || [];
+      _renderTopology();
+      _showStatus(`✅ Found ${_devices.length} devices, ${_links.length} links`, 'ok');
+    } catch (e) {
+      _showStatus(`Backend unavailable — simulating discovery`, 'warn');
+      _simulateDiscovery(seeds.split('\n').map(s => s.trim()).filter(Boolean));
+    }
+  }
+
+  function _simulateDiscovery(seeds) {
+    _devices = seeds.slice(0, 12).map((ip, i) => ({
+      hostname: `device-${String(i+1).padStart(2,'0')}`,
+      ip,
+      platform: ['Cisco NX-OS', 'Arista EOS', 'Juniper Junos', 'SONiC'][i % 4],
+      status: i % 7 === 0 ? 'down' : i % 5 === 0 ? 'degraded' : 'up',
+    }));
+    // Simulate chain links
+    _links = _devices.slice(0, -1).map((d, i) => ({
+      localDev: d.hostname, localPort: `Ethernet1/${i+1}`,
+      remoteDev: _devices[i+1].hostname, remotePort: `Ethernet1/${i+1}`,
+      status: i % 4 === 0 ? 'down' : 'up',
+    }));
+    _renderTopology();
+    _showStatus(`✅ Simulated ${_devices.length} devices, ${_links.length} links (no backend)`, 'ok');
+  }
+
+  /* ── CDP / LLDP Parser ───────────────────────────────────────── */
+  function parseNeighbors() {
+    const raw = (document.getElementById('ts-neighbor-input')?.value || '').trim();
+    if (!raw) { _showPreview('Paste neighbor output first'); return; }
+
+    const newDevices = new Map();
+    const newLinks   = [];
+
+    // ── Extract local hostname from CLI prompt (user@hostname> or hostname#) ──
+    const promptMatch = raw.match(/^(\S+?)[@>](\S+?)(?:[>#])/m) ||
+                        raw.match(/^(\S+)[>#]/m);
+    const localHost = promptMatch ? (promptMatch[2] || promptMatch[1]) : '(local)';
+
+    // ── Detect Juniper / tabular LLDP format ──────────────────────────
+    // Header: "Local Interface  Parent Interface  Chassis Id  Port info  System Name"
+    const juniperHdr = /Local Interface\s+Parent Interface\s+Chassis Id\s+Port info\s+System Name/i;
+    if (juniperHdr.test(raw)) {
+      const lines = raw.split('\n');
+      // Find the header line to establish column offsets
+      const hdrLineIdx = lines.findIndex(l => juniperHdr.test(l));
+      const hdrLine    = lines[hdrLineIdx] || '';
+      const colLocal   = hdrLine.search(/Local Interface/i);
+      const colChassis = hdrLine.search(/Chassis Id/i);
+      const colPort    = hdrLine.search(/Port info/i);
+      const colSysName = hdrLine.search(/System Name/i);
+
+      lines.slice(hdrLineIdx + 1).forEach(line => {
+        if (!line.trim() || /^[-=\s]*$/.test(line)) return;
+        // Tabular: extract by character position (columns are fixed-width padded)
+        const localIface = line.substring(colLocal,   colChassis).trim();
+        const chassis    = line.substring(colChassis, colPort).trim();
+        const portInfo   = line.substring(colPort,    colSysName).trim();
+        const sysName    = line.substring(colSysName).trim();
+
+        if (!sysName || !localIface) return;
+
+        if (!newDevices.has(sysName)) {
+          newDevices.set(sysName, { hostname: sysName, ip: '', platform: chassis || 'Unknown', status: 'up' });
+        }
+        newLinks.push({ localDev: localHost, localPort: localIface, remoteDev: sysName, remotePort: portInfo, status: 'up' });
+      });
+
+    } else {
+      // ── Cisco CDP detail / LLDP detail block format ──────────────────
+      const patterns = {
+        deviceId:    /Device ID[:\s]+([^\n,]+)/i,
+        ip:          /IP address[:\s]+(\d+\.\d+\.\d+\.\d+)/i,
+        platform:    /Platform[:\s]+([^,\n]+)/i,
+        localIface:  /Interface[:\s]+([^,\n]+),?\s*Port ID/i,
+        remoteIface: /Port ID[^:]*[:\s]+([^\n]+)/i,
+        sysName:     /System Name[:\s]+([^\n]+)/i,
+        portDescr:   /Port Description[:\s]+([^\n]+)/i,
+        mgmtAddr:    /Management Address[^:]*:\s*\n\s*IP[:\s]+(\d+\.\d+\.\d+\.\d+)/i,
+      };
+
+      const blocks = raw.split(/\n(?=Device ID|System Name|\-{3,})/gi).filter(b => b.trim());
+      blocks.forEach(block => {
+        const devId  = (block.match(patterns.deviceId) || block.match(patterns.sysName))?.[1]?.trim();
+        const ip     = (block.match(patterns.ip) || block.match(patterns.mgmtAddr))?.[1]?.trim() || '';
+        const plat   = block.match(patterns.platform)?.[1]?.trim() || 'Unknown';
+        const lIface = block.match(patterns.localIface)?.[1]?.trim() || '';
+        const rIface = (block.match(patterns.remoteIface)?.[1] || block.match(patterns.portDescr)?.[1] || '').trim();
+
+        if (!devId) return;
+        if (!newDevices.has(devId)) {
+          newDevices.set(devId, { hostname: devId, ip, platform: plat.replace(/\s+/g,' '), status: 'up' });
+        }
+        if (lIface && rIface) {
+          newLinks.push({ localDev: localHost, localPort: lIface, remoteDev: devId, remotePort: rIface, status: 'up' });
+        }
+      });
+    }
+
+    // ── Merge into _devices / _links ──────────────────────────────────
+    newDevices.forEach(d => { if (!_devices.find(x => x.hostname === d.hostname)) _devices.push(d); });
+    // Add local device itself if it has links
+    if (newLinks.length && !_devices.find(x => x.hostname === localHost)) {
+      _devices.push({ hostname: localHost, ip: '', platform: 'local', status: 'up' });
+    }
+    newLinks.forEach(l => _links.push(l));
+
+    const preview = [...newDevices.values()].map(d =>
+      `${d.hostname.padEnd(30)} ${d.ip.padEnd(16)} ${d.platform}`
+    ).join('\n');
+
+    document.getElementById('ts-topo-preview').textContent = preview || 'No devices parsed — check input format';
+    _renderTopology();
+    _showStatus(`✅ Parsed ${newDevices.size} neighbors, ${newLinks.length} links (local: ${localHost})`, 'ok');
+  }
+
+  /* ── Topology Render ─────────────────────────────────────────── */
+  function _renderTopology() {
+    _updateStat('ts-stat-devices', _devices.length);
+    _updateStat('ts-stat-links',   _links.length);
+
+    const issueCount = _devices.filter(d => d.status !== 'up').length +
+                       _links.filter(l => l.status !== 'up').length;
+    _updateStat('ts-stat-issues', issueCount);
+
+    const empty   = document.getElementById('ts-topo-empty');
+    const content = document.getElementById('ts-topo-content');
+    if (!_devices.length) { if(empty) empty.style.display=''; if(content) content.style.display='none'; return; }
+    if (empty)   empty.style.display   = 'none';
+    if (content) content.style.display = '';
+
+    // Devices table
+    const dtbody = document.getElementById('ts-device-tbody');
+    if (dtbody) {
+      dtbody.innerHTML = _devices.map(d => {
+        const badge = d.status === 'up' ? '<span class="ts-status-badge ts-badge-ok">UP</span>'
+          : d.status === 'down'         ? '<span class="ts-status-badge ts-badge-down">DOWN</span>'
+          :                              '<span class="ts-status-badge ts-badge-warn">DEGRADED</span>';
+        return `<tr><td>${d.hostname}</td><td>${d.ip||'—'}</td><td>${d.platform||'—'}</td><td>${badge}</td></tr>`;
+      }).join('');
+    }
+
+    // Links table
+    const ltbody = document.getElementById('ts-link-tbody');
+    if (ltbody) {
+      ltbody.innerHTML = _links.map(l => {
+        const badge = l.status === 'up' ? '<span class="ts-status-badge ts-badge-ok">UP</span>'
+          :                               '<span class="ts-status-badge ts-badge-down">DOWN</span>';
+        return `<tr><td>${l.localDev}</td><td>${l.localPort}</td><td>${l.remoteDev}</td><td>${l.remotePort}</td><td>${badge}</td></tr>`;
+      }).join('');
+    }
+  }
+
+  /* ── SNMP Polling ────────────────────────────────────────────── */
+  function startSnmpPoll() {
+    const targets  = (document.getElementById('ts-snmp-targets')?.value || '').split('\n').map(s=>s.trim()).filter(Boolean);
+    const interval = +(document.getElementById('ts-snmp-interval')?.value || 30) * 1000;
+    const oids     = (document.getElementById('ts-snmp-oids')?.value     || 'ifOperStatus').split(',').map(s=>s.trim()).filter(Boolean);
+    const community= (document.getElementById('ts-snmp-community')?.value || 'public').trim();
+
+    if (!targets.length) { _log('No SNMP targets configured', 'warn'); return; }
+    if (_snmpTimer) clearInterval(_snmpTimer);
+
+    document.getElementById('ts-snmp-status').textContent = '● Polling';
+    document.getElementById('ts-snmp-status').style.color = 'var(--green)';
+
+    const _poll = async () => {
+      const base = _backendUrl();
+      if (base) {
+        try {
+          const res = await _post('/api/troubleshoot/snmp-poll', { targets, community, oids });
+          (res.events || []).forEach(ev => _log(`[${ev.host}] ${ev.oid}: ${ev.value}`, ev.severity === 'error' ? 'err' : ev.severity === 'warning' ? 'warn' : 'ok'));
+        } catch {
+          _log('Backend unreachable — simulating SNMP', 'warn');
+          _simulateSnmpEvent(targets, oids);
+        }
+      } else {
+        _simulateSnmpEvent(targets, oids);
+      }
+    };
+
+    _poll();
+    _snmpTimer = setInterval(_poll, interval);
+  }
+
+  function stopSnmpPoll() {
+    if (_snmpTimer) { clearInterval(_snmpTimer); _snmpTimer = null; }
+    const s = document.getElementById('ts-snmp-status');
+    if (s) { s.textContent = 'Stopped'; s.style.color = 'var(--txt3)'; }
+  }
+
+  function clearSnmpLog() {
+    const log = document.getElementById('ts-snmp-log');
+    if (log) log.innerHTML = '<div style="color:var(--txt3);text-align:center;padding-top:2rem">SNMP event log cleared</div>';
+  }
+
+  const _SNMP_SIMS = [
+    ['ifOperStatus', 'ifOperStatus.Ethernet1/1 = 1 (up)',         'ok'],
+    ['bgpPeerState', 'bgpPeerState.10.0.0.2 = 6 (established)',   'ok'],
+    ['sysUpTime',    'sysUpTime = 8d 14h 22m 11s',                'ok'],
+    ['ifOperStatus', 'ifOperStatus.Ethernet1/3 = 2 (down)',        'err'],
+    ['bgpPeerState', 'bgpPeerState.10.0.0.5 = 2 (active)',        'warn'],
+    ['ifHCInOctets', 'ifHCInOctets.Ethernet1/1 = 98712345678',    'ok'],
+    ['ifInErrors',   'ifInErrors.Ethernet1/2 = 142 (CRC errors)', 'warn'],
+  ];
+  let _simIdx = 0;
+  function _simulateSnmpEvent(targets, oids) {
+    const sim = _SNMP_SIMS[_simIdx++ % _SNMP_SIMS.length];
+    const host = targets[Math.floor(Math.random() * targets.length)];
+    if (oids.some(o => sim[0].toLowerCase().includes(o.toLowerCase()) || o === sim[0])) {
+      _log(`[${host}] ${sim[1]}`, sim[2]);
+    } else {
+      _log(`[${host}] ${oids[0]}: OK`, 'ok');
+    }
+  }
+
+  /* ── Diagnostic Playbooks ────────────────────────────────────── */
+  const _PLAYBOOKS = {
+    'bgp-down': {
+      title: '🔴 BGP Neighbor Down — Diagnostic Steps',
+      steps: [
+        { cmd: 'show bgp summary',          desc: 'Check peer state (Idle/Active/Established)' },
+        { cmd: 'show bgp neighbors <peer>', desc: 'Check hold-time, keepalive, error notifications' },
+        { cmd: 'show ip route bgp',         desc: 'Verify BGP prefixes in routing table' },
+        { cmd: 'show interface <iface>',    desc: 'Verify underlay interface is up/up' },
+        { cmd: 'ping <peer-ip> source <lo>',desc: 'Test reachability to BGP peer loopback' },
+        { cmd: 'show bgp neighbors <peer> policy', desc: 'Verify no policy is filtering all prefixes' },
+      ],
+      checks: [
+        'Is the AS number correct on both sides?',
+        'Are authentication passwords matching?',
+        'Is the update-source interface up?',
+        'Are ACLs blocking TCP 179?',
+        'Is the peer IP reachable via IGP?',
+        'Did a config change happen recently? (check "show logging")',
+      ],
+    },
+    'interface-flap': {
+      title: '🟡 Interface Flapping — Diagnostic Steps',
+      steps: [
+        { cmd: 'show interface <iface>',       desc: 'Check flap counter, CRC, input errors' },
+        { cmd: 'show logging | grep <iface>',  desc: 'Find up/down events and timestamps' },
+        { cmd: 'show interface <iface> transceiver', desc: 'Check Rx/Tx power, SFP health' },
+        { cmd: 'show cdp/lldp neighbors <iface>', desc: 'Verify peer is still detected' },
+        { cmd: 'show interface counters errors',  desc: 'CRC, runts, giants, input errors' },
+      ],
+      checks: [
+        'Check physical cable — reseat SFP on both ends',
+        'Verify duplex/speed match (no auto-neg mismatch)',
+        'Check DOM Rx power — below −10 dBm = bad cable/SFP',
+        'Look for ESD events or power issues on the line card',
+        'Is storm-control threshold too low? (causing port shutdown)',
+        'Check if spanning-tree portfast is configured correctly',
+      ],
+    },
+    'high-cpu': {
+      title: '🔴 High CPU / Memory — Diagnostic Steps',
+      steps: [
+        { cmd: 'show processes cpu sorted',    desc: 'Find top CPU consumers' },
+        { cmd: 'show processes memory sorted', desc: 'Find memory hogs' },
+        { cmd: 'show logging | grep CPUHOG',   desc: 'Check for CPU hog messages' },
+        { cmd: 'show ip traffic',              desc: 'Check for broadcast/multicast storm' },
+        { cmd: 'show interface counters',      desc: 'Look for high input/output rates' },
+        { cmd: 'show storm-control',           desc: 'Verify storm-control is active' },
+      ],
+      checks: [
+        'Is BGP or OSPF reconverging? (large routing table churn)',
+        'Is there a broadcast/multicast storm on any VLAN?',
+        'Are there too many ARP requests? (check CAM table size)',
+        'Is software forwarding (process switching) being used instead of hardware?',
+        'Is a management process (SNMP, syslog) consuming CPU?',
+        'Consider rate-limiting control plane traffic with CoPP',
+      ],
+    },
+    'packet-loss': {
+      title: '🟡 Packet Loss / Latency — Diagnostic Steps',
+      steps: [
+        { cmd: 'ping <dest> count 1000',        desc: 'Baseline loss measurement' },
+        { cmd: 'traceroute <dest>',             desc: 'Find where loss occurs in path' },
+        { cmd: 'show queue statistics',         desc: 'Check QoS queue drops' },
+        { cmd: 'show interface counters drops', desc: 'Input/output drops per interface' },
+        { cmd: 'show ip cef <dest>',            desc: 'Verify CEF/ECMP forwarding path' },
+        { cmd: 'show policy-map interface',     desc: 'Check QoS policy drops per class' },
+      ],
+      checks: [
+        'Is there a QoS mismatch? (DSCP remarking at boundary)',
+        'Is the interface running at 100% utilization? (check bps)',
+        'Are ECMP paths balanced? (check hash polarization)',
+        'Is there a buffer overflow on a specific queue?',
+        'Are MTU mismatches causing fragmentation/drops?',
+        'Is ICMP rate-limited on intermediate hops? (use UDP traceroute)',
+      ],
+    },
+    'stp-issue': {
+      title: '🟡 Spanning Tree Issue — Diagnostic Steps',
+      steps: [
+        { cmd: 'show spanning-tree detail',          desc: 'Check root bridge, port roles/states' },
+        { cmd: 'show spanning-tree summary',         desc: 'Quick overview of all VLANs' },
+        { cmd: 'show logging | grep TOPOLOGY',       desc: 'Find TCN events and frequency' },
+        { cmd: 'show mac address-table count',       desc: 'Rapid MAC churn = possible loop' },
+        { cmd: 'show spanning-tree inconsistentports', desc: 'Find BPDU guard/loop guard blocked ports' },
+      ],
+      checks: [
+        'Is the root bridge the intended device? (check priority)',
+        'Are any edge ports receiving BPDUs? (BPDU Guard will disable them)',
+        'Is topology change notification (TCN) firing rapidly?',
+        'Are trunk ports in forwarding state on all intended VLANs?',
+        'Is PortFast enabled on access ports only (not trunk)?',
+        'Consider enabling RSTP (802.1w) if running classic STP',
+      ],
+    },
+    'vlan-missing': {
+      title: '⚪ VLAN / L2 Reachability — Diagnostic Steps',
+      steps: [
+        { cmd: 'show vlan brief',                  desc: 'Verify VLAN exists and is active' },
+        { cmd: 'show interface trunk',             desc: 'Check VLAN is in allowed list' },
+        { cmd: 'show mac address-table vlan <id>', desc: 'Verify MAC is learned on correct port' },
+        { cmd: 'show arp',                         desc: 'Check ARP resolution for gateway' },
+        { cmd: 'show interface <svi> status',      desc: 'Verify SVI is up/up' },
+        { cmd: 'show ip interface brief',          desc: 'Check L3 interfaces are up' },
+      ],
+      checks: [
+        'Is the VLAN created on every switch in the path?',
+        'Is the VLAN in the allowed list on all trunk ports?',
+        'Is the native VLAN consistent on both ends of each trunk?',
+        'Is the SVI / L3 gateway up?',
+        'Are there any VTP conflicts or VTP mode mismatches?',
+        'Check private VLAN or VLAN ACL (VACL) config',
+      ],
+    },
+    'evpn-vxlan': {
+      title: '🔵 EVPN / VXLAN Issue — Diagnostic Steps',
+      steps: [
+        { cmd: 'show bgp l2vpn evpn summary',        desc: 'Check EVPN peer state' },
+        { cmd: 'show nve peers',                      desc: 'Verify VXLAN tunnel state' },
+        { cmd: 'show bgp l2vpn evpn vni <id>',       desc: 'Check type-2/type-3 routes for VNI' },
+        { cmd: 'show vxlan vni',                      desc: 'Verify VNI → VLAN mapping' },
+        { cmd: 'show mac address-table vni <id>',    desc: 'Verify remote MACs learned over VXLAN' },
+        { cmd: 'show nve interface nve1',             desc: 'NVE source IP, state, VNIs' },
+      ],
+      checks: [
+        'Is the underlay (OSPF/IS-IS) fully converged?',
+        'Is the VTEP loopback advertised in the underlay?',
+        'Is the VNI correctly mapped to the VLAN on both ends?',
+        'Are the EVPN route-targets matching (import/export)?',
+        'Is the NVE interface up and using the correct source loopback?',
+        'Is L3 EVPN (IRB/distributed anycast gateway) configured if needed?',
+      ],
+    },
+    'rdma-pfc': {
+      title: '🧠 RoCEv2 / PFC Issue — Diagnostic Steps',
+      steps: [
+        { cmd: 'show interface counters qos',        desc: 'Check PFC pause frames sent/received' },
+        { cmd: 'show queuing interface <iface>',     desc: 'Check queue depth and drops' },
+        { cmd: 'show interface <iface> priority-flow-control', desc: 'Verify PFC mode on/off per priority' },
+        { cmd: 'show system qos',                    desc: 'Verify system QoS policy is applied' },
+        { cmd: 'show interface counters errors',     desc: 'Check for CRC/FCS errors causing retransmits' },
+        { cmd: 'show roce detail',                   desc: 'RoCEv2 stats (on supported platforms)' },
+      ],
+      checks: [
+        'Is PFC enabled on the same priorities on both ends?',
+        'Is ECN correctly configured (min/max thresholds match buffer size)?',
+        'Is there a PFC storm? (pause frames with no traffic = misconfiguration)',
+        'Are DSCP markings preserved end-to-end? (check remarking at boundaries)',
+        'Is the buffer pool sized correctly for lossless queues?',
+        'Is jumbo MTU (9216) configured consistently across the AI fabric?',
+        'Are any access-list or policy-map rules dropping RoCEv2 traffic (DSCP 26)?',
+      ],
+    },
+  };
+
+  function runPlaybook(name) {
+    const pb  = _PLAYBOOKS[name];
+    const out = document.getElementById('ts-playbook-output');
+    if (!pb || !out) return;
+    out.style.display = '';
+
+    const stepsHtml = pb.steps.map(s => `
+      <div style="display:flex;gap:.75rem;align-items:flex-start;margin:.4rem 0">
+        <code style="background:var(--bg4);padding:.15rem .45rem;border-radius:4px;white-space:nowrap;font-size:.76rem;flex-shrink:0">${s.cmd}</code>
+        <span style="color:var(--txt2);font-size:.8rem">${s.desc}</span>
+      </div>`).join('');
+
+    const checksHtml = pb.checks.map(c => `
+      <div style="display:flex;gap:.5rem;margin:.25rem 0">
+        <span style="color:var(--cyan);flex-shrink:0">→</span>
+        <span style="font-size:.8rem;color:var(--txt)">${c}</span>
+      </div>`).join('');
+
+    out.innerHTML = `
+      <div style="font-weight:700;font-size:.92rem;margin-bottom:.75rem;color:var(--txt0)">${pb.title}</div>
+      <div style="font-size:.72rem;font-weight:700;letter-spacing:.08em;color:var(--txt3);text-transform:uppercase;margin-bottom:.4rem">Diagnostic Commands</div>
+      ${stepsHtml}
+      <div style="font-size:.72rem;font-weight:700;letter-spacing:.08em;color:var(--txt3);text-transform:uppercase;margin:.85rem 0 .4rem">Checklist</div>
+      ${checksHtml}
+    `;
+    out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  /* ── RCA (uses backend if available, else guidance) ──────────── */
+  async function runRca() {
+    const symptom = (document.getElementById('ts-rca-symptom')?.value || '').trim();
+    const devices = (document.getElementById('ts-rca-devices')?.value || '').split(',').map(s=>s.trim()).filter(Boolean);
+    const out     = document.getElementById('ts-rca-output');
+    if (!symptom || !out) return;
+
+    out.style.display = '';
+    out.innerHTML = '<div style="color:var(--txt3)">⏳ Analyzing…</div>';
+
+    const base = _backendUrl();
+    if (base) {
+      try {
+        const res = await _post('/api/rca/analyze', { symptom, affectedDevices: devices, designId: null });
+        _renderRcaResult(out, res);
+        return;
+      } catch { /* fall through to client-side */ }
+    }
+    _renderRcaClientSide(out, symptom, devices);
+  }
+
+  function _renderRcaResult(out, res) {
+    const hyps = res.hypotheses || [];
+    if (!hyps.length) { out.innerHTML = '<div style="color:var(--txt3)">No hypotheses generated</div>'; return; }
+    out.innerHTML = hyps.map(h => `
+      <div style="display:flex;gap:.75rem;align-items:flex-start;padding:.6rem;background:var(--bg4);border-radius:6px;margin:.4rem 0">
+        <div style="width:38px;height:38px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--cyan);flex-shrink:0">${Math.round((h.confidence||0)*100)}%</div>
+        <div>
+          <div style="font-weight:700;font-size:.85rem">${h.hypothesis}</div>
+          <div style="font-size:.76rem;color:var(--txt2);margin-top:.2rem">${h.evidence||''}</div>
+          <div style="font-size:.72rem;color:var(--cyan);margin-top:.3rem">${(h.remediation||[]).join(' · ')}</div>
+        </div>
+      </div>`).join('');
+  }
+
+  function _renderRcaClientSide(out, symptom, devices) {
+    const sl = symptom.toLowerCase();
+
+    // ── RCA knowledge base ────────────────────────────────────────────
+    // Each entry: kw[] = keywords to match (any), hypothesis, confidence,
+    // layer, evidence description, step-by-step investigation, remediation cmds
+    const KB = [
+
+      /* ── Layer 1: Physical ──────────────────────────────────────── */
+      {
+        kw: ['sfp','optic','dom','transceiver','laser','rx power','tx power','light'],
+        layer:'L1 Physical', hypothesis:'Faulty / degraded SFP or optic',
+        confidence:.88,
+        evidence:'Optical symptoms (power alarms, CRC errors, intermittent link) point to SFP DOM threshold violation or dirty/damaged connector.',
+        steps:['Check SFP DOM: show interfaces <iface> transceiver detail','Look for Rx/Tx power outside -3 dBm operating range','Inspect fiber end-face for contamination or bend radius violation','Swap SFP with known-good spare','Test fiber with OTDR or optical power meter'],
+        remediation:['show interfaces transceiver','Clean fiber connector (IEC 61300-3-35)','Replace SFP / fiber patch'],
+      },
+      {
+        kw: ['interface','flap','down','link','carrier','err-disabled','shutdown'],
+        layer:'L1 Physical', hypothesis:'Physical link instability or err-disable',
+        confidence:.83,
+        evidence:'Repeated link up/down events indicate physical layer issue: bad cable, SFP, duplex mismatch, or err-disable triggered by BPDU/port-security.',
+        steps:['show interface <iface> — look for input/output errors, CRC, flaps','show log | include <iface> — check timing of events','Check auto-negotiation: force speed/duplex if peer does not support autoneg','Verify err-disable cause: show interfaces status err-disabled','Check cable length/type (Cat6A for 10G, single-mode for LR)'],
+        remediation:['show interfaces status err-disabled','errdisable recovery cause all','Force speed duplex: speed 1000; duplex full'],
+      },
+      {
+        kw: ['duplex','half duplex','auto-neg','autoneg','negotiation'],
+        layer:'L1 Physical', hypothesis:'Duplex or speed mismatch',
+        confidence:.84,
+        evidence:'Duplex mismatch causes late collisions on the half-duplex side and CRC/FCS errors on the full-duplex side with very high utilization discrepancy.',
+        steps:['show interfaces — compare input/output utilization on both ends','Look for late collisions (indicates duplex mismatch)','Verify both sides force same speed and duplex','Check NIC teaming or bonding overrides'],
+        remediation:['interface EthX; speed 10000; duplex full; no shutdown','Disable auto-neg on NIC: ethtool -s eth0 speed 10000 duplex full autoneg off'],
+      },
+
+      /* ── Layer 2: Switching ──────────────────────────────────────── */
+      {
+        kw: ['stp','spanning tree','topology change','bpdu','reconverg','loop','broadcast storm'],
+        layer:'L2 STP', hypothesis:'STP topology change or broadcast storm',
+        confidence:.87,
+        evidence:'Rapid topology changes cause MAC table flushes and flooding. Sustained broadcast storms peg CPU and collapse forwarding.',
+        steps:['show spanning-tree — identify root bridge and port roles','show spanning-tree detail | include topology','Check for TCN storms: show spanning-tree summary totals','Identify rogue device sending superior BPDUs','Enable BPDU Guard on access ports (portfast + bpduguard)'],
+        remediation:['spanning-tree portfast bpduguard default','show spanning-tree topology-change','debug spanning-tree events (brief)','Enable RSTP/MST if still running legacy STP'],
+      },
+      {
+        kw: ['mac','mac table','mac flood','cam','overflow','unknown unicast'],
+        layer:'L2 Switching', hypothesis:'MAC table overflow / flooding attack',
+        confidence:.80,
+        evidence:'MAC table saturation causes unknown unicast flooding, raising CPU and creating a broadcast-like traffic pattern across all ports.',
+        steps:['show mac address-table count — compare used vs capacity','Check for port with thousands of source MACs (MAC flood tool)','Enable port-security or 802.1X to limit MACs per port','Review syslog for %SW_MATM-4-MACFLAP_NOTIF entries'],
+        remediation:['switchport port-security maximum 5','switchport port-security violation restrict','ip dhcp snooping (prevents IP spoofing along with MAC flood)'],
+      },
+      {
+        kw: ['vlan','trunk','native vlan','allowed vlan','access vlan','dot1q','tagging'],
+        layer:'L2 VLAN', hypothesis:'VLAN misconfiguration or trunk mismatch',
+        confidence:.84,
+        evidence:'Missing VLAN in allowed list or native VLAN mismatch causes traffic blackholing or unintended inter-VLAN flooding.',
+        steps:['show interfaces trunk — check allowed VLANs and native VLAN','show vlan brief — verify VLAN exists in database','Compare trunk allowed list on both ends of the link','Check SVI is up/up: show ip interface brief | include Vlan'],
+        remediation:['switchport trunk allowed vlan add <id>','switchport trunk native vlan <id>','vlan <id> ; name <name>','interface VlanX ; no shutdown'],
+      },
+      {
+        kw: ['lacp','port-channel','bond','lag','aggregation','member port','etherchannel'],
+        layer:'L2 LACP', hypothesis:'LACP / Port-Channel misconfiguration or flap',
+        confidence:.85,
+        evidence:'Port-channel instability causes traffic interruption. Common causes: LACP key/mode mismatch, speed mismatch between members, hash imbalance.',
+        steps:['show etherchannel summary — verify all members are in P (bundled) state','show lacp neighbor — compare system-id and port-key','Verify all members same speed, duplex, VLAN config','Check LACP timers: fast vs slow (must match peer)','Review LACP PDU counters for drops'],
+        remediation:['channel-group X mode active (both ends active for LACP)','Ensure all member ports identical config','lacp rate fast','show lacp counters'],
+      },
+
+      /* ── Layer 3: Routing ───────────────────────────────────────── */
+      {
+        kw: ['bgp','neighbor','peer','session','established','open','notification','hold timer'],
+        layer:'L3 BGP', hypothesis:'BGP session failure',
+        confidence:.89,
+        evidence:'BGP peering failure is typically caused by: AS mismatch, MD5 auth failure, unreachable next-hop, hold-timer expiry, or policy blocking updates.',
+        steps:['show bgp neighbors <ip> — check state and last error','Ping BGP peer src loopback — verify underlay reachability','Check TTL: eBGP needs TTL≥1, use ebgp-multihop if multi-hop','Verify MD5 password matches on both sides','Check local-as, remote-as match peer config','Review inbound/outbound policy: show route-policy','Check max-prefix limit not reached'],
+        remediation:['show bgp neighbors <ip> | include state|error|prefix','clear bgp <ip> soft (soft reset without dropping session)','debug bgp neighbor <ip> events','show bgp summary'],
+      },
+      {
+        kw: ['ospf','adjacency','neighbor','exstart','exchange','dead interval','hello','lsa','database'],
+        layer:'L3 OSPF', hypothesis:'OSPF adjacency failure',
+        confidence:.87,
+        evidence:'OSPF neighbors stuck in EXSTART/EXCHANGE usually indicate MTU mismatch. Stuck in INIT means hellos are one-way. Area/auth mismatch keeps state at DOWN.',
+        steps:['show ip ospf neighbor — check state and dead time','Verify hello/dead intervals match on both ends (default 10/40s)','Check MTU: ip ospf mtu-ignore if MTU mismatch between peers','Verify area IDs and area types match (stub/NSSA)','Check authentication type/password','Verify network statement covers the interface subnet'],
+        remediation:['ip ospf mtu-ignore (if MTU mismatch)','show ip ospf interface <iface>','debug ip ospf adj','show ip ospf database'],
+      },
+      {
+        kw: ['isis','is-is','adjacency','clns','tlv','metric','level','circuit'],
+        layer:'L3 IS-IS', hypothesis:'IS-IS adjacency or route failure',
+        confidence:.83,
+        evidence:'IS-IS adjacency failures are caused by: area address mismatch, system-id collision, metric-style mismatch (narrow vs wide), or authentication failure.',
+        steps:['show isis neighbors — verify state is UP','Check area address: must match for L1, does not matter for L2','Verify metric-style: isis metric-style wide (both ends)','Check IS-IS authentication key/type','show isis database — look for missing prefixes','Verify interface in IS-IS process: show isis interface'],
+        remediation:['isis metric-style wide','show clns neighbors detail','show isis adjacency','clear isis * (use with caution)'],
+      },
+      {
+        kw: ['route','routing table','prefix','missing route','blackhole','null','unreachable'],
+        layer:'L3 Routing', hypothesis:'Missing or incorrect route',
+        confidence:.81,
+        evidence:'Traffic blackholing or unreachability without a protocol event suggests a static route is missing, redistributed incorrectly, or filtered by route-policy.',
+        steps:['show ip route <dest> — trace exact match and recursive resolution','show ip route longer-prefixes <prefix/len>','Check route redistribution: show ip protocols','Verify route-map/prefix-list not filtering the prefix','Check administrative distance: preferred protocol winning?','Test: traceroute from both ends to pinpoint where path breaks'],
+        remediation:['ip route <dest> <mask> <nexthop> (add static)','show route-policy (Cisco IOS-XR)','show ip route summary','traceroute <dest> source <loopback>'],
+      },
+      {
+        kw: ['mtu','fragmentation','pmtud','jumbo','1500','9000','df bit','icmp unreachable'],
+        layer:'L3 MTU', hypothesis:'MTU / PMTUD blackhole',
+        confidence:.86,
+        evidence:'Connections that work for small packets but fail for large ones are a classic PMTUD blackhole — an intermediate device drops oversized frames without sending ICMP Fragmentation Needed.',
+        steps:['ping <dest> size 1472 df-bit (test 1500B path)','ping <dest> size 8972 df-bit (test 9000B jumbo path)','show interfaces — compare MTU values hop-by-hop','Check if ICMP type 3 code 4 is filtered by firewall/ACL','Enable ip tcp adjust-mss 1452 on WAN-facing interfaces'],
+        remediation:['ip tcp adjust-mss 1452 (ingress WAN interface)','set interfaces xe-0/0/0 mtu 9000 (Juniper)','Permit ICMP unreachable through all ACLs/firewalls'],
+      },
+      {
+        kw: ['arp','gratuitous','garp','arp table','duplicate ip','mac conflict'],
+        layer:'L3 ARP', hypothesis:'ARP failure or IP/MAC conflict',
+        confidence:.80,
+        evidence:'ARP failures prevent L3 forwarding even when routing is correct. Duplicate IPs cause gratuitous ARP conflicts and intermittent drops.',
+        steps:['show arp <ip> — verify correct MAC mapping','ping <gateway> — check ARP resolution','show log | include ARP — look for duplicate IP warnings','Check for IP overlap between static and DHCP pool','Verify proxy-ARP setting if hosts across routed segments'],
+        remediation:['clear arp <ip>','no ip proxy-arp (if unintended proxy)','ip dhcp excluded-address <static-range>'],
+      },
+      {
+        kw: ['asymmetric','rpf','reverse path','uRPF','spoofing','strict mode'],
+        layer:'L3 Routing', hypothesis:'Asymmetric routing / uRPF failure',
+        confidence:.79,
+        evidence:'uRPF strict mode drops legitimate traffic when the return path differs from the forward path — common in ECMP or multi-homed scenarios.',
+        steps:['show ip interface <iface> | include Verify','Check uRPF mode: strict (drops asymmetric) vs loose (only checks route exists)','Verify ECMP paths are symmetric across both directions','traceroute in both directions — compare hop sequence'],
+        remediation:['ip verify unicast source reachable-via any (loose mode)','Disable uRPF on internal interfaces: no ip verify unicast source'],
+      },
+
+      /* ── Layer 3: MPLS ──────────────────────────────────────────── */
+      {
+        kw: ['mpls','ldp','lsp','label','rsvp','te tunnel','fec','lfib'],
+        layer:'L3 MPLS', hypothesis:'MPLS LSP or LDP failure',
+        confidence:.82,
+        evidence:'MPLS forwarding failures occur when LDP sessions drop, FEC mapping is missing, or RSVP TE tunnels lose their signaled path.',
+        steps:['show mpls ldp neighbor — verify all sessions up','show mpls forwarding-table — check label entries exist','Verify LDP discovery: show mpls ldp discovery','For TE: show mpls traffic-eng tunnels — check admin/oper state','Check RSVP bandwidth constraints if using TE'],
+        remediation:['show mpls ldp bindings','show mpls ldp neighbor detail','mpls ldp router-id Loopback0 force','clear mpls ldp neighbor <ip> (use with caution)'],
+      },
+
+      /* ── Overlay / Tunnels ──────────────────────────────────────── */
+      {
+        kw: ['evpn','vxlan','vtep','vni','nve','overlay','mac mobility','type-2','type-5'],
+        layer:'Overlay EVPN', hypothesis:'EVPN/VXLAN MAC or IP route failure',
+        confidence:.85,
+        evidence:'EVPN overlay reachability breaks when BGP EVPN sessions drop, VNI binding is wrong, type-2/type-5 routes are not imported, or VTEP encapsulation is mismatched.',
+        steps:['show bgp l2vpn evpn — check for type-2 and type-5 routes','show nve peers — verify VTEP reachability and state','Verify VNI-to-VLAN mapping: show vxlan address-table','Check route-targets: import/export must match between VTEPs','Verify underlay: ping VTEP loopback src loopback','Check MAC mobility sequence numbers for duplicate MAC'],
+        remediation:['show bgp l2vpn evpn route-type 2','show nve vni','Verify: vni <id> l2 vlan <vlan> (NX-OS)','clear bgp l2vpn evpn * soft (use with caution)'],
+      },
+      {
+        kw: ['ipsec','vpn','tunnel','ike','isakmp','phase1','phase2','transform','proposal'],
+        layer:'VPN IPSec', hypothesis:'IPSec VPN tunnel failure (IKE/Phase negotiation)',
+        confidence:.86,
+        evidence:'IPSec tunnel failures occur in IKE Phase 1 (mismatched encryption/hash/DH group or auth) or Phase 2 (mismatched transform-set or proxy ID/traffic selectors).',
+        steps:['show crypto isakmp sa — check state (should be QM_IDLE)','show crypto ipsec sa — verify packet encrypt/decrypt counts incrementing','Verify Phase 1 match: encryption, hash, DH group, lifetime','Verify Phase 2 match: transform-set, PFS group, proxy-IDs','Check NAT traversal: is NAT between peers? Enable NAT-T (UDP 4500)','Verify pre-shared key or certificate matches on both ends'],
+        remediation:['show crypto isakmp sa detail','debug crypto isakmp (brief use)','show crypto ipsec sa peer <ip>','clear crypto isakmp (use cautiously)'],
+      },
+      {
+        kw: ['gre','tunnel','encapsulation','keepalive','mtu','tunnel down'],
+        layer:'VPN GRE', hypothesis:'GRE tunnel failure or MTU issue',
+        confidence:.78,
+        evidence:'GRE tunnels fail due to underlay reachability loss, ACL blocking proto 47, or inner MTU causing fragmentation of GRE+outer headers.',
+        steps:['Ping tunnel destination from tunnel source interface','Check ACL: GRE = IP protocol 47 (must be permitted)','Verify tunnel MTU = underlay MTU - 24 bytes (GRE overhead)','show interface Tunnel0 — check line protocol and keepalive','Verify no NAT translating tunnel source/dest'],
+        remediation:['ip tcp adjust-mss 1436 (GRE overhead 24B + TCP 20B + IP 20B)','ip access-list extended — permit gre any any','tunnel keepalive 10 3'],
+      },
+
+      /* ── QoS & Performance ──────────────────────────────────────── */
+      {
+        kw: ['packet loss','drop','latency','jitter','queue','congestion','buffer'],
+        layer:'QoS', hypothesis:'Egress queue congestion / QoS misconfiguration',
+        confidence:.82,
+        evidence:'Traffic loss without physical errors indicates egress queue drops. Latency spikes with no drops may indicate tail-drop before RED kicks in.',
+        steps:['show queue statistics interface <iface> — look for tail-drops in specific queues','show policy-map interface <iface> — check class drop counts','Verify DSCP markings are preserved end-to-end (no remarking)','Check interface utilization: sustained >80% causes queuing','Review WRED min/max thresholds — too aggressive = pre-mature drops'],
+        remediation:['show policy-map interface (Cisco)','show qos interface (Arista)','Adjust WRED thresholds','Move latency-sensitive traffic to priority queue (LLQ/EF DSCP 46)'],
+      },
+      {
+        kw: ['rdma','roce','pfc','pause','lossless','priority flow control','ecn','congestion notification'],
+        layer:'AI Fabric / RoCEv2', hypothesis:'PFC storm or ECN misconfiguration degrading RoCEv2',
+        confidence:.88,
+        evidence:'PFC pause frames should be confined to lossless priorities (typically P3/P4). A PFC storm or misconfigured ECN threshold causes global head-of-line blocking.',
+        steps:['show interface counters qos | include pfc_pause — check pause frame counts','Verify PFC enabled only on lossless priority (e.g. priority 3)','Check ECN thresholds: min-threshold should be ~20% of buffer, max 80%','Verify DSCP→TC mapping is consistent switch-to-NIC','Check NIC RoCE config: roce pfc-priority 3; roce cnp-priority 6','Monitor CNP (Congestion Notification Packet) generation rate'],
+        remediation:['show interface counters detailed (PFC counters)','Verify: dcbx mode ieee (both ends)','Set ECN: random-detect ecn minimum-threshold 150KB maximum-threshold 1500KB','Verify NIC: show roce counters'],
+      },
+      {
+        kw: ['rail imbalance','rail','gpu rail','bandwidth imbalance','asymmetric','uneven traffic','stripe','all-reduce imbalance'],
+        layer:'AI Fabric / Rail Balance', hypothesis:'GPU rail bandwidth imbalance causing all-reduce degradation',
+        confidence:.85,
+        evidence:'AI training fabrics split GPU NICs across multiple "rails" (independent leaf switches) for parallel all-reduce. If one rail has higher utilization or drops, the slowest rail bottlenecks the entire collective operation — training throughput collapses even if aggregate bandwidth appears OK.',
+        steps:[
+          'show interface counters rates — compare tx/rx pps and Mbps across all rail-connected interfaces on each TOR',
+          'Check ECMP hash distribution: show ip ecmp hash / show hardware profile multipath — unequal hashing skews rails',
+          'Verify NIC rail assignment: each GPU should have its NIC pinned to a specific TOR (not dual-homed)',
+          'Monitor NCCL_DEBUG=INFO output — look for "Timeout waiting for" messages on one specific rank',
+          'Check switch buffer utilization per port-group: show hardware internal buffer info port-group — imbalanced rails show asymmetric occupancy',
+          'Verify no STP or LACP port-channel is merging rail uplinks (rails must be independent L3 paths)',
+        ],
+        remediation:[
+          'Rebalance ECMP: ip load-sharing per-packet (Arista) or ip load-sharing address-only (NX-OS)',
+          'Pin GPU NIC routes: set static host routes per GPU subnet to dedicated rail TOR',
+          'Separate rail VLANs/VRFs to prevent cross-rail leakage',
+          'Check NIC affinity: sudo ethtool -S eth0 | grep rail; reassign NIC if misbound',
+          'Enable SHARP in-network reduction to eliminate rail bottleneck for small tensors',
+        ],
+      },
+      {
+        kw: ['buffer','buffer occupancy','buffer bloat','egress buffer','mmio','shared buffer','queue depth','tail drop','wred','congestion window'],
+        layer:'AI Fabric / Buffer Profiling', hypothesis:'Buffer occupancy spike causing tail-drop on lossless queues',
+        confidence:.83,
+        evidence:'RoCEv2 requires lossless delivery; if ingress admission control (PFC headroom) is miscalculated, buffers fill beyond the XON/XOFF threshold before a pause frame reaches the sender, resulting in tail-drop on a supposedly lossless priority. Large all-reduce payloads (>16 MB tensors) are especially prone to incast buffer collapse.',
+        steps:[
+          'show hardware internal buffer info detail — capture snapshot during training iteration',
+          'Check ingress shared buffer headroom: SONiC: show buffer configuration | grep xoff; NX-OS: show hardware internal carmel asic buffer',
+          'Calculate PFC headroom: max_frame_size × (2 × propagation_delay_ns × port_speed_Gbps) + 1500B slack',
+          'Verify WRED is disabled on lossless priority queues (WRED+PFC interaction causes unpredictable drops)',
+          'Monitor ECN marking rate: show interface counters qos | grep ecn_marked — sustained >5% = buffer pressure',
+          'Check MMU (Memory Management Unit) sharing: all ports sharing one MMU pool can steal headroom',
+          'Run: netstat -s | grep retransmit on GPU hosts — even one retransmit means a lossless queue dropped',
+        ],
+        remediation:[
+          'Increase PFC headroom: buffer profile xoff-threshold += 2× cable delay for longer links',
+          'Separate lossless priority into a dedicated ingress buffer pool (no sharing with lossy)',
+          'Reduce incast: stagger GPU collective launch times (NCCL_ALGO=RING reduces simultaneous receivers)',
+          'Tune ECN: min-threshold 200KB max-threshold 2000KB (scale with GPU count)',
+          'Enable Dynamic Buffer Tuning (Arista: platform trident buffer-management dynamic)',
+        ],
+      },
+      {
+        kw: ['nccl','collective','all-reduce','all-gather','reduce-scatter','mpi','latency','collective timeout','nccl timeout','training stall'],
+        layer:'AI Fabric / NCCL Collective Latency', hypothesis:'NCCL collective operation latency caused by network or rank synchronization issue',
+        confidence:.87,
+        evidence:'NCCL collective latency manifests as training iteration time variance ("jitter") or hard timeout (usually NCCL_TIMEOUT=1800s). Root causes: single slow rank (straggler), asymmetric fabric latency between GPU nodes, NVLINK vs RoCE handoff misconfiguration, or NIC interrupt coalescing delaying ACKs.',
+        steps:[
+          'Enable NCCL_DEBUG=TRACE NCCL_DEBUG_FILE=/tmp/nccl_%h.log on all nodes — find "rank X waiting for rank Y"',
+          'Check all-reduce algorithm: NCCL_ALGO=RING vs TREE — RING is latency-sensitive, TREE tolerates slow links better',
+          'Measure per-rank latency: nccl-tests bandwidth test (github.com/NVIDIA/nccl-tests) — isolate straggler node',
+          'Check interrupt coalescing: ethtool -c eth0 | grep coalesce — high rx-usecs adds per-packet latency',
+          'Verify RoCE QP (Queue Pair) creation: ibv_devinfo -v | grep state — all QPs should be RTR/RTS',
+          'Check NUMA affinity: numactl --hardware; verify NIC and GPU share same NUMA node (cross-NUMA adds ~1μs)',
+          'Monitor fabric latency: ping -Q 0x48 <peer> -s 1400 — check consistent RTT across all GPU pairs',
+        ],
+        remediation:[
+          'NCCL tuning: NCCL_SOCKET_NTHREADS=4 NCCL_NSOCKS_PERTHREAD=4 NCCL_MIN_NCHANNELS=4',
+          'Reduce interrupt coalescing: ethtool -C eth0 rx-usecs 10 (lower = lower latency, higher CPU)',
+          'Force TREE algorithm for large clusters (>64 GPUs): NCCL_ALGO=TREE',
+          'Enable SHARP in-network reduction: NCCL_SHARP_ENABLE=1 (requires switch support)',
+          'Fix NUMA: bind process to correct NUMA node — numactl --cpunodebind=0 --membind=0 ./train.py',
+          'Straggler: isolate slow node, check thermals (GPU throttle), ECC errors, or failed link',
+        ],
+      },
+      {
+        kw: ['nic firmware','gpu nic','firmware','cx6','cx7','connectx','driver','roce firmware','mlx5','nic mismatch','firmware version'],
+        layer:'AI Fabric / GPU NIC Firmware', hypothesis:'GPU NIC firmware version mismatch causing RoCE capability or performance regression',
+        confidence:.81,
+        evidence:'Mixed NIC firmware versions across GPU nodes cause asymmetric RoCE behavior: one side may use DCT (Dynamic Connected Transport) while the other uses RC (Reliable Connected), or ECN/CNP handling may differ. This produces one-sided drops that are invisible to standard interface counters but visible in RDMA-layer statistics.',
+        steps:[
+          'Check firmware version on all GPU NICs: sudo mlxconfig -d /dev/mst/mt4125_pciconf0 query | grep FW_VER',
+          'Compare across nodes: pdsh -w gpu[01-32] "mlxconfig -d /dev/mst/mt* query | grep FW" 2>/dev/null | sort | uniq -c',
+          'Check driver version match: modinfo mlx5_core | grep version — all nodes must match',
+          'Verify RoCE mode consistency: sudo mlxconfig -d /dev/mst/mt* query | grep ROCE_CC_PRIO_MASK — must match',
+          'Check RDMA counters for asymmetric errors: ibstat; rdma stat show dev mlx5_0 — compare sender vs receiver',
+          'Verify CX-7 SR-IOV config if VMs: sudo mlxconfig -d /dev/mst/mt* query | grep NUM_OF_VFS',
+          'Test pairwise RDMA bandwidth: ib_write_bw -R -F --report_gbits <peer> — should be symmetric',
+        ],
+        remediation:[
+          'Standardise firmware: MFT tool — sudo mlxfwmanager --online -u (updates all NICs to latest)',
+          'Downgrade outlier nodes: sudo mlxfwreset.py -d /dev/mst/mt* -y r (requires cold reboot)',
+          'Match RoCE CC mode: mlxconfig SET ROCE_CC_PRIO_MASK=0x08 (priority 3 only)',
+          'Verify after update: ibv_devinfo -v | grep fw_ver — confirm homogeneous across cluster',
+          'Set NIC params via Ansible role: community.general.mlnx_nic (idempotent NIC config)',
+        ],
+      },
+      {
+        kw: ['cpu','high cpu','control plane','policing','copp','punt','management'],
+        layer:'Control Plane', hypothesis:'Control-plane CPU overload',
+        confidence:.83,
+        evidence:'High CPU is commonly caused by: excessive BGP updates, OSPF LSA storms, STP TCNs, SNMP polling overload, or ARP/ICMP flood punted to CPU.',
+        steps:['show processes cpu sorted — identify top consumer','show platform rate-limiter — check punted packet rates','show copp statistics (Cisco) or show system-internal control-plane rates','Check SNMP walk frequency and OID count','Look for excessive log generation draining CPU'],
+        remediation:['Tune CoPP policy to rate-limit ARP/ICMP','Reduce SNMP polling interval or use streaming telemetry','show ip traffic | include fragment (high frag = re-assembly load)','Tune BGP: adjust advertisement-interval 30'],
+      },
+
+      /* ── Security / ACL / Firewall ──────────────────────────────── */
+      {
+        kw: ['acl','access list','permit','deny','firewall','blocked','policy','rule','drop','filter'],
+        layer:'Security ACL', hypothesis:'ACL or firewall policy blocking traffic',
+        confidence:.84,
+        evidence:'Traffic blocked by ACL/firewall typically shows no ICMP unreachable (implicit deny) or a specific reject. Hit counters help identify the offending rule.',
+        steps:['show ip access-lists — look for unexpected hit counts on deny lines','Check firewall logs for drop reason and source/dest','Test with packet capture: tcpdump / ERSPAN to verify traffic is reaching firewall','Verify NAT is not interfering with policy match','Check stateful inspection: is return traffic being allowed?'],
+        remediation:['show access-list <name> (check hit counts)','packet-tracer input <zone> tcp <src> <dst> 80 (Cisco ASA/FTD)','show conn (ASA) or show session (FortiGate)','Temporarily add log keyword to deny rules'],
+      },
+      {
+        kw: ['nat','translation','snat','dnat','overload','pat','masquerade','port exhaustion'],
+        layer:'Security NAT', hypothesis:'NAT translation table full or misconfigured',
+        confidence:.81,
+        evidence:'NAT port exhaustion causes new sessions to be silently dropped. Misconfigured NAT translates the wrong traffic or fails to create translations.',
+        steps:['show ip nat translations total — check table size vs limit','show ip nat statistics — look for failed translations','Verify NAT rule order: more specific rules before general ones','Check NAT pool exhaustion: are all IPs/ports in use?','Verify access-list used for NAT correctly identifies traffic'],
+        remediation:['ip nat translation max-entries 100000','show ip nat translations | count','Clear stale: clear ip nat translation *','Extend NAT pool or add PAT overload'],
+      },
+      {
+        kw: ['ddos','flood','attack','syn flood','amplification','rate limit','scrubbing'],
+        layer:'Security DDoS', hypothesis:'DDoS or traffic flood attack',
+        confidence:.77,
+        evidence:'Sudden traffic spike with uniform packet size/rate, spoofed sources, or known amplification vectors (DNS/NTP/SSDP) indicates volumetric or protocol DDoS.',
+        steps:['show interface counters — look for pps spike on ingress','Capture sample: show ip traffic for protocol breakdown','Identify top talkers: show ip cache flow (NetFlow)','Check if BGP communities trigger RTBH (blackhole) upstream','Enable rate-limiting on amplification protocols (DNS UDP 53, NTP UDP 123)'],
+        remediation:['ip access-list — rate-limit attack source','BGP RTBH: community no-export to upstream','Enable uRPF strict to drop spoofed sources','Activate upstream scrubbing center if available'],
+      },
+
+      /* ── DNS / DHCP / NTP ───────────────────────────────────────── */
+      {
+        kw: ['dns','resolution','nslookup','resolve','hostname','name server','dnssec','timeout'],
+        layer:'Services DNS', hypothesis:'DNS resolution failure',
+        confidence:.85,
+        evidence:'DNS failure causes application-level outages even when IP routing works. Causes: unreachable resolver, wrong search domain, DNSSEC validation failure, split-DNS misconfiguration.',
+        steps:['nslookup <hostname> <dns-server> — test direct to resolver','dig @<dns-ip> <hostname> +short — verify response','Check DNS server reachability: ping <dns-ip>','Verify firewall permits UDP/TCP 53 to resolver','Check /etc/resolv.conf or DHCP-provided DNS option 6','Test DNSSEC: dig @resolver <domain> +dnssec — look for AD flag'],
+        remediation:['nslookup <hostname>','dig +trace <hostname> (full recursion trace)','Verify: ip name-server <ip> (Cisco) or set system name-server <ip> (Juniper)','Check split-DNS: internal vs external zones'],
+      },
+      {
+        kw: ['dhcp','ip address','lease','pool','exhausted','scope','option','discover','offer'],
+        layer:'Services DHCP', hypothesis:'DHCP pool exhaustion or relay misconfiguration',
+        confidence:.83,
+        evidence:'Clients failing to get an IP address are caused by DHCP pool full, incorrect relay-agent configuration, or a rogue DHCP server answering first.',
+        steps:['show ip dhcp binding — count active leases vs pool size','show ip dhcp pool — check available addresses','show ip dhcp conflict — duplicate IPs causing blacklist','Verify ip helper-address on SVI/interface points to correct DHCP server','Check for rogue DHCP: DHCP snooping authoritative server vs untrusted ports'],
+        remediation:['ip dhcp pool CORP; network 10.0.0.0 /22; lease 8','ip dhcp excluded-address 10.0.0.1 10.0.0.20','ip dhcp snooping (enable to block rogue DHCP)','Clear old bindings: clear ip dhcp binding *'],
+      },
+      {
+        kw: ['ntp','clock','time','sync','stratum','drift','offset','peer'],
+        layer:'Services NTP', hypothesis:'NTP synchronization failure',
+        confidence:.80,
+        evidence:'NTP failure causes certificate validation errors, log timestamp drift, and Kerberos/RADIUS authentication failures. Stratum 16 = unsynchronized.',
+        steps:['show ntp status — verify synchronized, stratum < 10','show ntp associations — check peer reachability and offset','Ping NTP server — verify UDP 123 is not blocked','Check NTP authentication key matches','Verify system timezone is correct (NTP provides UTC)'],
+        remediation:['ntp server <ip> prefer source Loopback0','ntp authenticate; ntp authentication-key 1 md5 <key>','show ntp associations detail','Permit UDP 123 inbound on perimeter firewall'],
+      },
+
+      /* ── Wireless / Campus ──────────────────────────────────────── */
+      {
+        kw: ['wireless','wifi','ssid','association','deauth','roaming','ap','wlan','eap','radius'],
+        layer:'Wireless', hypothesis:'Wi-Fi association or RADIUS authentication failure',
+        confidence:.79,
+        evidence:'Wireless clients failing to associate are caused by: RADIUS timeout, EAP certificate mismatch, channel interference causing high retries, or AP-controller connectivity loss.',
+        steps:['Check AP controller: are APs joined and client-serving?','Review RADIUS server logs for reject reason','Test RADIUS connectivity from WLC: radius-server test <ip>','Check channel utilization and SNR — interference causing high retry rate','Verify 802.1X supplicant certificate is valid and trusted','Check roaming: verify PMK caching or 802.11r FT enabled'],
+        remediation:['show wireless client detail <mac>','show ap summary (WLC)','debug dot1x events (client-level)','Verify RADIUS shared secret matches on AP/WLC and RADIUS'],
+      },
+
+      /* ── Data Center Fabric ─────────────────────────────────────── */
+      {
+        kw: ['ecmp','load balance','hash','unequal','imbalance','elephant flow','link utilization'],
+        layer:'DC Fabric ECMP', hypothesis:'ECMP hash imbalance or elephant flow',
+        confidence:.78,
+        evidence:'Uneven link utilization in a spine-leaf fabric indicates ECMP hash polarization or a persistent elephant flow overwhelming one path.',
+        steps:['show interface counters — compare utilization across parallel links','Check ECMP hash inputs: src/dst IP, src/dst port, protocol','Enable flowlet switching to break elephant flows','Verify equal-cost routes exist: show ip route <prefix>','Use ECMP with RTAG7 hashing (Arista) or consistent hashing'],
+        remediation:['ip load-sharing per-packet (last resort)','Flowlet: ip load-sharing address port universal-id <seed>','Check: show ip load-sharing (Cisco)','DCBX: verify traffic-class mapping for storage vs compute'],
+      },
+      {
+        kw: ['spine','leaf','underlay','anycast','vtep loopback','ibgp','route reflector'],
+        layer:'DC Fabric BGP', hypothesis:'Spine-leaf BGP underlay failure',
+        confidence:.82,
+        evidence:'BGP underlay failure in a spine-leaf fabric prevents VTEP loopbacks from being advertised, breaking all overlay (VXLAN/EVPN) connectivity.',
+        steps:['show bgp summary — verify all spine-leaf iBGP sessions are Established','Verify loopback0 advertised in BGP: show bgp <loopback-prefix>','Check route reflector config on spine nodes','Ping VTEP loopback from all leaves','Verify next-hop-self on route reflectors for iBGP'],
+        remediation:['neighbor <ip> next-hop-self','show bgp neighbors <spine-ip>','Verify: network <loopback>/32 (in BGP process)'],
+      },
+      {
+        kw: ['storage','iscsi','nfs','cifs','smb','fc','fce','zoning','multipath','mpio'],
+        layer:'Storage Network', hypothesis:'Storage network or multipath failure',
+        confidence:.77,
+        evidence:'Storage access failures in data center are caused by: iSCSI multipath imbalance, FC zoning gap, NFS stale file handle, or SMB signing mismatch.',
+        steps:['Check multipath: multipath -ll (Linux) or mpclaim (Windows)','Verify all paths active: no single-path dependency','iSCSI: show iscsi session (initiator) — check target discovery','FC: show topology (fabric) — verify zone has both initiator and target','NFS: showmount -e <server> — verify export exists'],
+        remediation:['multipathd reconfigure','iscsiadm -m session (rescan)','Verify Fibre Channel zone: zone name <z>; member pwwn <init>; member pwwn <target>'],
+      },
+
+      /* ── Monitoring & Management ────────────────────────────────── */
+      {
+        kw: ['snmp','community','oid','walk','timeout','mib','trap','version'],
+        layer:'Mgmt SNMP', hypothesis:'SNMP community/version mismatch or ACL blocking',
+        confidence:.76,
+        evidence:'SNMP polling failures are caused by: wrong community string, version mismatch (v2c vs v3), ACL blocking UDP 161, or device CPU rate-limiting SNMP punts.',
+        steps:['snmpwalk -v2c -c <community> <ip> sysDescr — test basic reachability','Check SNMP access-list: only NMS IPs should be permitted','Verify UDP 161 open: nc -uvz <ip> 161','Check SNMP group/user for v3: show snmp user','Review CPU rate-limiter for SNMP process'],
+        remediation:['snmp-server community <string> RO <acl>','snmp-server host <nms-ip> version 2c <community>','ip access-list standard SNMP-ACL ; permit <nms-ip>'],
+      },
+      {
+        kw: ['syslog','log','logging','messages','severity','facility','unreachable'],
+        layer:'Mgmt Syslog', hypothesis:'Syslog server unreachable or misconfigured',
+        confidence:.73,
+        evidence:'Missing logs from network devices indicate: wrong syslog server IP, UDP 514 blocked, wrong facility/severity filter, or VRF routing for management traffic.',
+        steps:['Ping syslog server from device management interface','Verify UDP 514 not blocked on mgmt firewall','Check VRF: logging source-interface Mgmt0 vrf management','Verify severity level: logging trap informational (or higher)','Test: logger -p local0.info "test" (Linux syslog test)'],
+        remediation:['logging host <syslog-ip> vrf management','logging trap debugging','logging source-interface Loopback0'],
+      },
+      {
+        kw: ['netflow','ipfix','flow','telemetry','collector','sampling','export'],
+        layer:'Mgmt Telemetry', hypothesis:'NetFlow/IPFIX export failure',
+        confidence:.72,
+        evidence:'NetFlow collection gaps cause visibility blind spots. Common causes: wrong collector IP, UDP 2055/4739 blocked, sampling rate too high, or interface not in monitor session.',
+        steps:['show flow exporter <name> statistics — check export packet count','Verify UDP 2055 (NetFlow) or 4739 (IPFIX) reachable','Check flow monitor applied to interfaces: show flow interface','Verify sampler rate — 1:1000 typical for high-speed links','Check flow record matches expected fields (src/dst ip/port, protocol)'],
+        remediation:['flow exporter NMS; destination <ip>; transport udp 2055','flow monitor MAIN; exporter NMS; cache timeout active 60','interface Eth1/1; ip flow monitor MAIN input'],
+      },
+    ];
+
+    // Score candidates: keyword match + boost for exact phrase match
+    const scored = KB
+      .map(c => {
+        const hits  = c.kw.filter(k => sl.includes(k)).length;
+        const boost = c.kw.some(k => k.split(' ').length > 1 && sl.includes(k)) ? 0.05 : 0;
+        return hits > 0 ? { ...c, score: (hits / c.kw.length) * 0.4 + c.confidence * 0.6 + boost } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    if (!scored.length) {
+      out.innerHTML = `<div style="padding:.75rem;background:var(--bg4);border-radius:6px;color:var(--txt3);font-size:.83rem">
+        No matching hypothesis found.<br>
+        <strong style="color:var(--txt2)">Try being more specific</strong> — example symptoms:<br>
+        <span style="font-size:.78rem">"BGP neighbor down", "STP topology change loop", "OSPF stuck in EXSTART", "DHCP pool exhausted", "PFC pause storm RoCEv2"</span>
+      </div>`;
+      return;
+    }
+
+    const affectedStr = devices.length ? `<span style="color:var(--orange)"> — Affected: ${devices.join(', ')}</span>` : '';
+    out.innerHTML = scored.map((m, idx) => {
+      const pct     = Math.round(m.score * 100);
+      const barClr  = pct >= 85 ? 'var(--red)' : pct >= 75 ? 'var(--orange)' : 'var(--cyan)';
+      const stepsHtml = (m.steps || []).map((s,i) => `<div style="font-size:.76rem;color:var(--txt2);padding:.15rem 0;display:flex;gap:.4rem"><span style="color:var(--cyan);flex-shrink:0">${i+1}.</span><span>${s}</span></div>`).join('');
+      const cmdHtml   = (m.remediation || []).map(r => `<code style="font-size:.73rem;background:var(--bg2);padding:.1rem .35rem;border-radius:3px;margin:.15rem .15rem 0 0;display:inline-block">${r}</code>`).join('');
+      return `
+      <div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:.7rem .9rem;margin:.5rem 0">
+        <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem">
+          <div style="width:40px;height:40px;border-radius:50%;background:var(--bg3);border:2px solid ${barClr};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.82rem;color:${barClr};flex-shrink:0">${pct}%</div>
+          <div style="flex:1">
+            <div style="font-weight:700;font-size:.88rem">${idx === 0 ? '🎯 ' : ''}${m.hypothesis}${idx === 0 ? affectedStr : ''}</div>
+            <div style="font-size:.72rem;color:var(--cyan);font-weight:600;letter-spacing:.03em">${m.layer}</div>
+          </div>
+        </div>
+        <div style="font-size:.78rem;color:var(--txt2);margin-bottom:.4rem">${m.evidence}</div>
+        ${stepsHtml ? `<details style="margin-top:.4rem"><summary style="font-size:.76rem;font-weight:600;color:var(--txt2);cursor:pointer">▶ Investigation steps</summary><div style="margin-top:.3rem">${stepsHtml}</div></details>` : ''}
+        ${cmdHtml ? `<div style="margin-top:.4rem;border-top:1px solid var(--border);padding-top:.35rem">${cmdHtml}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  /* ── Misc ────────────────────────────────────────────────────── */
+  function clearAll() {
+    _devices = []; _links = []; _eventCount = 0;
+    ['ts-stat-devices','ts-stat-links','ts-stat-issues','ts-stat-events'].forEach(id => _updateStat(id, 0));
+    const empty = document.getElementById('ts-topo-empty');
+    const cont  = document.getElementById('ts-topo-content');
+    if (empty) empty.style.display = '';
+    if (cont)  cont.style.display  = 'none';
+    _showStatus('Cleared', '');
+  }
+
+  function _showStatus(msg, type) {
+    const el = document.getElementById('ts-discover-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = type === 'ok' ? 'var(--green)' : type === 'warn' ? 'var(--orange)' : 'var(--txt3)';
+  }
+
+  /* ── Public API ──────────────────────────────────────────────── */
+  function rcaChip(btn, text) {
+    const inp = document.getElementById('ts-rca-symptom');
+    if (inp) inp.value = text;
+    document.querySelectorAll('#ts-rca-chips .layer-filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    runRca();
+  }
+
+  return { discover, parseNeighbors, startSnmpPoll, stopSnmpPoll, clearSnmpLog, runPlaybook, runRca, rcaChip, clearAll };
+
+})();
+
+/* ════════════════════════════════════════════════════════════════
+   RCA PLAYBOOK GENERATOR (#18)
+   Generates step-by-step RCA playbooks as downloadable Markdown.
+   BGP CONVERGENCE PREDICTOR (#19)
+   Estimates convergence time from topology complexity.
+════════════════════════════════════════════════════════════════ */
+
+var _RCA_PLAYBOOKS = {
+  'bgp-neighbor-down': {
+    title: 'RCA Playbook: BGP Neighbor Down',
+    symptom: 'BGP session to one or more neighbors is in Idle/Active/Connect state.',
+    likelyCauses: [
+      'Physical link failure or CRC errors on the peering interface',
+      'MTU mismatch between peers (BGP OPEN packet fragmentation)',
+      'ACL / firewall blocking TCP port 179',
+      'Incorrect or mismatched BGP timer configuration',
+      'Authentication password mismatch (MD5)',
+      'Route-map or policy rejecting all prefixes causing session reset',
+      'Peer AS number mismatch',
+      'Hold-timer expiry due to high CPU or packet drops',
+    ],
+    verifyCommands: {
+      'ios-xe': [
+        'show bgp summary',
+        'show bgp neighbors <peer-ip>',
+        'show interfaces <intf> | inc error|reset|CRC',
+        'show ip route <peer-ip>',
+        'debug ip bgp <peer-ip> events',
+        'ping <peer-ip> source <local-intf>',
+        'show access-lists | inc 179',
+      ],
+      'nxos': [
+        'show bgp summary',
+        'show bgp neighbors <peer-ip>',
+        'show interface <intf> | grep -i error',
+        'show ip route <peer-ip>',
+        'debug bgp <peer-ip> events',
+      ],
+      'eos': [
+        'show bgp summary',
+        'show bgp neighbors <peer-ip>',
+        'show interfaces <intf> | grep error',
+        'show ip route <peer-ip>',
+        'bash sudo tcpdump -i <intf> tcp port 179 -c 20',
+      ],
+      'junos': [
+        'show bgp summary',
+        'show bgp neighbor <peer-ip>',
+        'show interfaces <intf> detail | grep error',
+        'show route <peer-ip>',
+        'run traceroute <peer-ip>',
+      ],
+    },
+    steps: [
+      'Verify physical connectivity: check interface status and error counters.',
+      'Confirm the BGP peer IP is reachable (ping from peering interface).',
+      'Check MTU: ping with DF-bit set at full MTU size.',
+      'Verify no ACL/firewall is blocking TCP 179 in both directions.',
+      'Compare BGP configuration: AS number, timers, authentication.',
+      'Review BGP event log for specific error messages.',
+      'If authentication is used, verify MD5 password matches on both sides.',
+      'Check CPU utilization — high CPU can cause hold-timer expiry.',
+      'Restore the session: "clear ip bgp <peer-ip> soft" or reset the interface.',
+      'Monitor for session stability over 10 minutes after restoration.',
+    ],
+    escalation: 'If the session remains down after all checks, capture a packet trace on the peering interface and escalate to network engineering with the BGP debug log.',
+  },
+
+  'interface-down': {
+    title: 'RCA Playbook: Interface Down',
+    symptom: 'Interface is operationally down (line protocol down).',
+    likelyCauses: [
+      'Physical cable disconnected or damaged',
+      'SFP/QSFP optic failure or incompatibility',
+      'Far-end device port error-disabled or administratively down',
+      'Speed/duplex mismatch',
+      'Layer 2 loop causing BPDU guard err-disable',
+      'EtherChannel misconfig (LACP/PAgP mismatch)',
+    ],
+    verifyCommands: {
+      'ios-xe': [
+        'show interfaces <intf>',
+        'show interfaces <intf> transceiver',
+        'show errdisable recovery',
+        'show spanning-tree interface <intf>',
+        'show etherchannel summary',
+      ],
+      'nxos': [
+        'show interface <intf>',
+        'show interface <intf> transceiver',
+        'show interface <intf> error-disabled',
+        'show spanning-tree interface <intf>',
+        'show port-channel summary',
+      ],
+      'eos': [
+        'show interfaces <intf>',
+        'show interfaces <intf> transceiver',
+        'show errdisabled',
+        'show spanning-tree interface <intf>',
+        'show port-channel <N> summary',
+      ],
+      'junos': [
+        'show interfaces <intf>',
+        'show interfaces diagnostics optics <intf>',
+        'show spanning-tree interface',
+      ],
+    },
+    steps: [
+      'Check physical layer: inspect cable seating, SFP/QSFP seated properly.',
+      'Verify optic Tx/Rx power levels are within spec.',
+      'Check for err-disable state and identify the trigger.',
+      'If err-disable: resolve root cause then "shutdown / no shutdown" or use errdisable recovery.',
+      'Check far-end device port status.',
+      'Verify speed/duplex settings match on both sides.',
+      'If LAG member: verify LACP/PAgP mode matches.',
+      'Restore: "no shutdown" on both ends, monitor for 60 seconds.',
+    ],
+    escalation: 'If Tx/Rx power is out of spec, replace the SFP/QSFP transceiver. If cable replacement does not fix it, test with a known-good cable.',
+  },
+
+  'high-cpu': {
+    title: 'RCA Playbook: High CPU Utilization',
+    symptom: 'CPU utilization above 80% causing packet drops or control-plane instability.',
+    likelyCauses: [
+      'BGP/OSPF/IS-IS reconvergence flood',
+      'Excessive debug commands left enabled',
+      'Software forwarding (process switching) instead of hardware ASIC',
+      'Spanning-tree topology change storm',
+      'SNMP polling at too-high frequency',
+      'Multicast join storm or PIM issues',
+      'Hardware ASIC exception causing software fallback',
+    ],
+    verifyCommands: {
+      'ios-xe': [
+        'show processes cpu sorted',
+        'show processes cpu history',
+        'show platform resources',
+        'show debug',
+        'show logging | last 100',
+        'show spanning-tree summary',
+        'show ip pim interface',
+      ],
+      'nxos': [
+        'show processes cpu sort',
+        'show system resources',
+        'show debug',
+        'show logging last 100',
+        'show spanning-tree summary',
+      ],
+      'eos': [
+        'show processes top once',
+        'show system resources',
+        'show debug',
+        'show logging last 100',
+        'show spanning-tree summary',
+      ],
+      'junos': [
+        'show system processes summary',
+        'show chassis routing-engine',
+        'show log messages | last 100',
+      ],
+    },
+    steps: [
+      'Identify the top CPU-consuming process.',
+      'Immediately disable any debug commands: "undebug all".',
+      'Check for control-plane flapping (BGP/OSPF events in logs).',
+      'Check for STP topology changes — large numbers indicate a loop.',
+      'Rate-limit SNMP polling frequency to ≥30s intervals.',
+      'If a routing protocol is flapping, identify the unstable neighbor.',
+      'Engage hardware fast-path to offload forwarding from CPU.',
+      'If reconvergence is the cause, stabilize the flapping link first.',
+    ],
+    escalation: 'If CPU remains high after disabling debugs and stabilizing routing, open a TAC case with the output of "show tech-support" and process CPU history.',
+  },
+
+  'spanning-tree-loop': {
+    title: 'RCA Playbook: Spanning Tree Loop / Broadcast Storm',
+    symptom: 'Excessive broadcast traffic, network instability, devices unreachable.',
+    likelyCauses: [
+      'STP disabled on an interface that should be blocking',
+      'BPDU guard triggered but port not err-disabled (misconfigured)',
+      'Physical loop — cable connecting two ports on same switch',
+      'Rogue switch connected to access port without BPDU guard',
+      'STP topology change causing MAC table flush + broadcast flood',
+    ],
+    verifyCommands: {
+      'ios-xe': [
+        'show spanning-tree summary',
+        'show spanning-tree detail',
+        'show spanning-tree blockedports',
+        'show interfaces counters | inc broadcast',
+        'show errdisable recovery',
+        'show mac address-table count',
+      ],
+      'nxos': [
+        'show spanning-tree summary',
+        'show spanning-tree detail',
+        'show interface counters | grep broadcast',
+      ],
+      'eos': [
+        'show spanning-tree',
+        'show spanning-tree detail',
+        'show interfaces counters | grep broadcast',
+      ],
+      'junos': [
+        'show spanning-tree bridge',
+        'show spanning-tree interface',
+        'show interfaces statistics',
+      ],
+    },
+    steps: [
+      'Identify the source of the broadcast storm using interface counters.',
+      'Locate the physical loop — check all switch-to-switch connections.',
+      'Temporarily disable suspect ports to break the loop.',
+      'Verify BPDU guard is enabled on all access/edge ports.',
+      'Confirm STP root bridge placement is correct (lowest priority on core).',
+      'Check for rogue switches on access ports.',
+      'After loop removal, verify STP converges to expected topology.',
+      'Enable portfast + BPDU guard on all end-device ports permanently.',
+    ],
+    escalation: 'If broadcast storm persists after loop removal, check for a multicast/unknown-unicast flood and engage TAC with packet captures.',
+  },
+};
+
+function genRCAPlaybook(alertType, state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var key = (alertType || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+
+  /* Find best matching playbook */
+  var playbook = _RCA_PLAYBOOKS[key];
+  if (!playbook) {
+    /* Fuzzy match */
+    var keys = Object.keys(_RCA_PLAYBOOKS);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf(key.slice(0, 5)) !== -1 || key.indexOf(keys[i].slice(0, 5)) !== -1) {
+        playbook = _RCA_PLAYBOOKS[keys[i]];
+        break;
+      }
+    }
+  }
+  if (!playbook) return null;
+
+  var today = new Date().toISOString().slice(0, 10);
+  var vendor = (s.vendor || 'ios-xe').toLowerCase();
+  var cmds = playbook.verifyCommands[vendor] || playbook.verifyCommands['ios-xe'] || [];
+
+  var md = [
+    '# ' + playbook.title,
+    '',
+    '**Generated by NetDesign AI** — ' + today + '  |  Org: ' + (s.orgName || 'N/A'),
+    '',
+    '---',
+    '',
+    '## Symptom',
+    '',
+    playbook.symptom,
+    '',
+    '## Likely Root Causes',
+    '',
+  ].concat(playbook.likelyCauses.map(function(c, i) { return (i+1) + '. ' + c; }));
+
+  md = md.concat([
+    '',
+    '## Verification Commands (' + vendor + ')',
+    '',
+    '```',
+  ]).concat(cmds).concat([
+    '```',
+    '',
+    '## Step-by-Step RCA Procedure',
+    '',
+  ]).concat(playbook.steps.map(function(s, i) { return (i+1) + '. ' + s; }));
+
+  md = md.concat([
+    '',
+    '## Escalation Path',
+    '',
+    playbook.escalation,
+    '',
+    '---',
+    '*Generated by NetDesign AI — https://github.com/Amit33-design/Network-Automation*',
+  ]);
+
+  return md.join('\n');
+}
+
+function downloadRCAPlaybook(alertType) {
+  var s = typeof STATE !== 'undefined' ? STATE : {};
+  var type = alertType || document.getElementById('ts-rca-symptom')?.value || 'bgp-neighbor-down';
+  var content = genRCAPlaybook(type, s);
+  if (!content) {
+    if (typeof toast === 'function') toast('No playbook found for: ' + type, 'warn');
+    return;
+  }
+  var blob = new Blob([content], { type: 'text/markdown' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'rca-playbook-' + type.slice(0,30) + '.md';
+  a.click();
+  if (typeof toast === 'function') toast('RCA playbook downloaded', 'success');
+}
+
+/* List available playbooks */
+function listRCAPlaybooks() {
+  return Object.keys(_RCA_PLAYBOOKS).map(function(k) {
+    return { id: k, title: _RCA_PLAYBOOKS[k].title };
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════
+   BGP CONVERGENCE PREDICTOR (#19)
+════════════════════════════════════════════════════════════════ */
+
+function predictBGPConvergence(state) {
+  var s = state || (typeof STATE !== 'undefined' ? STATE : {});
+  var layers = typeof getLayersForUC === 'function' ? getLayersForUC() : [];
+
+  /* Count BGP speakers from device list */
+  var devices = [];
+  try { if (typeof buildDeviceList === 'function') devices = buildDeviceList(); } catch(e) {}
+
+  var speakers    = devices.length || 4;
+  var hasRedundancy = (s.redundancy === 'full' || s.redundancy === 'partial');
+  var hasOSPF     = (s.underlayProto || []).includes('OSPF');
+  var hasBFD      = (s.protocols || []).some(function(p) { return /bfd/i.test(p); }) ||
+                    (s.underlayProto || []).includes('BFD');
+  var ucType      = s.uc || 'campus';
+  var hasVxlan    = (s.overlayProto || []).some(function(o) { return /VXLAN/i.test(o); });
+
+  /* Base convergence estimate (seconds) */
+  var base = 0;
+
+  /* BGP default timers: keepalive=60s, hold=180s → detection = 180s */
+  /* With BFD: detection ~300ms */
+  var detectionTime = hasBFD ? 0.3 : 180;
+
+  /* RIB + FIB update: ~10ms per 1000 prefixes, but simplify */
+  var prefixCount = ucType === 'dc' ? 10000 : ucType === 'wan' ? 100000 : 5000;
+  var ribUpdateTime = Math.round(prefixCount / 50000 * 2); /* seconds */
+
+  /* Path selection + route propagation: O(log n) hops */
+  var hops = Math.ceil(Math.log2(speakers + 1));
+  var propagationTime = hasBFD ? hops * 0.05 : hops * 2;
+
+  base = detectionTime + ribUpdateTime + propagationTime;
+
+  /* Round to 1 decimal */
+  var totalSeconds = Math.round(base * 10) / 10;
+
+  /* Risk flags */
+  var risks = [];
+  if (!hasBFD) {
+    risks.push({
+      level: 'high',
+      msg: 'No BFD detected — hold-timer based failure detection takes up to 180s.',
+      fix: 'Enable BFD on all BGP peering interfaces (target: 300ms detection).',
+    });
+  }
+  if (!hasOSPF && ucType !== 'multicloud') {
+    risks.push({
+      level: 'medium',
+      msg: 'BGP-only underlay — no IGP fast-reroute available.',
+      fix: 'Consider adding OSPF as underlay IGP with BFD for sub-second failover.',
+    });
+  }
+  if (speakers > 20) {
+    risks.push({
+      level: 'medium',
+      msg: 'Large BGP speaker count (' + speakers + ') — route-reflector hierarchy recommended.',
+      fix: 'Implement BGP route-reflectors to reduce O(n²) iBGP mesh to O(n).',
+    });
+  }
+  if (prefixCount > 50000 && !hasVxlan) {
+    risks.push({
+      level: 'low',
+      msg: 'High prefix count — RIB/FIB update time may be significant.',
+      fix: 'Use prefix aggregation and outbound route filtering (ORF) to reduce table size.',
+    });
+  }
+  if (hasRedundancy && !hasBFD) {
+    risks.push({
+      level: 'medium',
+      msg: 'Redundant paths available but BFD not enabled — failover will use slow timer.',
+      fix: 'Enable BFD to take advantage of redundant paths for fast failover.',
+    });
+  }
+
+  return {
+    totalSeconds:    totalSeconds,
+    detectionTime:   detectionTime,
+    ribUpdateTime:   ribUpdateTime,
+    propagationTime: Math.round(propagationTime * 100) / 100,
+    speakers:        speakers,
+    prefixCount:     prefixCount,
+    hasBFD:          hasBFD,
+    risks:           risks,
+    summary: hasBFD
+      ? 'Estimated convergence: ~' + totalSeconds + 's (BFD enabled — fast detection)'
+      : 'Estimated convergence: ~' + totalSeconds + 's — SLOW (no BFD, using hold-timer)',
+  };
+}
+
+function renderBGPConvergence() {
+  var el = document.getElementById('bgp-convergence-panel');
+  if (!el) return;
+  var r = predictBGPConvergence(typeof STATE !== 'undefined' ? STATE : {});
+
+  var riskHtml = r.risks.map(function(risk) {
+    var color = risk.level === 'high' ? 'var(--red)' : risk.level === 'medium' ? 'var(--orange)' : 'var(--yellow)';
+    return '<div style="background:var(--bg3);border-left:3px solid ' + color + ';padding:.5rem .75rem;margin:.3rem 0;border-radius:0 6px 6px 0;font-size:.8rem">' +
+      '<strong>' + risk.msg + '</strong><br>' +
+      '<span style="color:var(--txt2)">Fix: ' + risk.fix + '</span>' +
+      '</div>';
+  }).join('');
+
+  el.innerHTML =
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.6rem;margin-bottom:.75rem">' +
+      _convStat('Total', r.totalSeconds + 's', r.hasBFD ? 'var(--green)' : 'var(--red)') +
+      _convStat('Detection', r.detectionTime + 's', r.hasBFD ? 'var(--green)' : 'var(--orange)') +
+      _convStat('RIB Update', r.ribUpdateTime + 's', 'var(--txt1)') +
+      _convStat('Propagation', r.propagationTime + 's', 'var(--txt1)') +
+      _convStat('BGP Speakers', r.speakers, 'var(--txt1)') +
+    '</div>' +
+    '<div style="font-size:.82rem;color:' + (r.hasBFD ? 'var(--green)' : 'var(--red)') + ';margin-bottom:.5rem;font-weight:600">' + r.summary + '</div>' +
+    (riskHtml ? '<div style="font-size:.78rem;font-weight:600;color:var(--txt2);margin:.5rem 0 .25rem">Risk Flags:</div>' + riskHtml : '');
+}
+
+function _convStat(label, val, color) {
+  return '<div style="background:var(--bg3);border-radius:8px;padding:.6rem .8rem;text-align:center">' +
+    '<div style="font-size:1.1rem;font-weight:700;color:' + color + '">' + val + '</div>' +
+    '<div style="font-size:.72rem;color:var(--txt2)">' + label + '</div>' +
+    '</div>';
+}
+
+window.genRCAPlaybook          = genRCAPlaybook;
+window.downloadRCAPlaybook     = downloadRCAPlaybook;
+window.listRCAPlaybooks        = listRCAPlaybooks;
+window.predictBGPConvergence   = predictBGPConvergence;
+window.renderBGPConvergence    = renderBGPConvergence;
+
+/* ════════════════════════════════════════════════════════════════
+   SYMPTOM CLASSIFIER
+   Nearest-neighbor cosine-similarity classifier over a curated
+   dataset of (symptom_text, root_cause) pairs. Fully client-side,
+   no backend required. Returns top-3 matches with confidence %.
+════════════════════════════════════════════════════════════════ */
+
+var _SC_DATASET = [
+  {
+    text: 'bgp session down neighbor not established hold timer expired keepalive notification tcp connection refused reset',
+    rootCause: 'BGP session failure — hold-timer expiry or TCP reset',
+    category: 'bgp',
+    verify: ['show bgp neighbors <ip>','show bgp summary','debug ip bgp <ip> events','show tcp brief | include <ip>'],
+    fix: ['Verify reachability: ping source Loopback0 <peer-ip>','Check BGP auth key mismatch on both sides','Confirm hold-timer values match (recommend 15 s or BFD instead)','Check ACL/firewall allowing TCP 179','Review CPU — CoPP may be dropping BGP keepalives'],
+  },
+  {
+    text: 'bgp prefix route withdrawn missing routing table advertisement filter blocked max-prefix soft-reconfiguration',
+    rootCause: 'BGP prefix withdrawal / route-map / max-prefix filter',
+    category: 'bgp',
+    verify: ['show bgp ipv4 unicast <prefix>','show bgp neighbors <ip> advertised-routes','show bgp neighbors <ip> received-routes','show route-map <name>'],
+    fix: ['Check outbound route-map on advertising peer (explicit permit)','Verify prefix-list or ACL not filtering the prefix','Check max-prefix threshold — soft-clear if hit: clear bgp <ip> soft','Confirm network statement or redistribution in BGP config'],
+  },
+  {
+    text: 'bgp route flap intermittent session reset interface bfd fast detection link',
+    rootCause: 'BGP route flapping — unstable interface or aggressive BFD timer',
+    category: 'bgp',
+    verify: ['show bgp neighbors <ip> | grep flaps','show interface <intf> counters error','show bfd neighbors','show log | grep BGP'],
+    fix: ['Check physical layer on uplink (errors, CRC, input drops)','If BFD enabled, increase BFD min-interval (recommend 300 ms × 3)','Add route-dampening or increase BGP timers','Verify ECMP/LAG hash is not concentrating traffic on unstable link'],
+  },
+  {
+    text: 'ospf adjacency down neighbor lost exstart exchange stuck mtu mismatch area type',
+    rootCause: 'OSPF adjacency failure — MTU mismatch or auth/area type mismatch',
+    category: 'routing',
+    verify: ['show ospf neighbor','show ospf interface <intf>','show interface <intf> | grep MTU','show ospf database'],
+    fix: ['Check MTU on both ends — add ip ospf mtu-ignore if mismatched','Verify OSPF area type matches (stub / NSSA / normal)','Confirm authentication key and type identical on both sides','Check DR/BDR election — use ip ospf network point-to-point on P2P links','Verify hello/dead timers match'],
+  },
+  {
+    text: 'ospf lsa flooding database overflow max-lsa route table full',
+    rootCause: 'OSPF LSA flooding / database overflow',
+    category: 'routing',
+    verify: ['show ospf database','show ospf database summary','show ospf statistics','show log | grep OSPF'],
+    fix: ['Check for max-lsa limit set too low — increase or remove for stub areas','Look for route redistribution loop injecting too many LSAs','Filter redistributed routes using route-map summary-only','Use summarization to reduce LSA count at ABRs'],
+  },
+  {
+    text: 'route loop traceroute cycle packets forwarding recursive static default',
+    rootCause: 'Routing loop — static route or redistribution misconfiguration',
+    category: 'routing',
+    verify: ['traceroute <dest>','show ip route <dest>','show running | include ip route','show ip bgp <prefix> longer-prefixes'],
+    fix: ['Check for recursive static route pointing to itself','Verify redistribution between protocols is filtered (avoid mutual redistribution)','Add a Null0 aggregate route to prevent recursion','Check summarization boundaries — missing more-specific may pull traffic to default'],
+  },
+  {
+    text: 'mtu fragmentation large packets dropped path discovery pmtud jumbo frames',
+    rootCause: 'MTU mismatch — PMTUD black hole or jumbo frame misconfiguration',
+    category: 'routing',
+    verify: ['ping <dest> size 1472 df-bit','show interface <intf> | grep MTU','show ip interface <intf>','traceroute <dest>'],
+    fix: ['Enable ip tcp adjust-mss 1452 on WAN interfaces (IOS-XE)','Verify jumbo frames enabled end-to-end (system mtu jumbo 9216 on Cisco)','Check ICMP unreachable not blocked — PMTUD relies on it','Verify MTU consistent across VXLAN path (+50 bytes overhead)'],
+  },
+  {
+    text: 'interface down link failure physical cable SFP optics transceiver disconnected',
+    rootCause: 'Physical interface failure — cable / optics / transceiver fault',
+    category: 'interface',
+    verify: ['show interface <intf>','show interface <intf> transceiver','show log | grep LINK','show interface <intf> counters error'],
+    fix: ['Check cable seating and swap to known-good cable','Check optical Tx/Rx power within vendor spec (typically -3 to -12 dBm)','Verify speed/duplex match — avoid auto on server ports','Check DOM: show interfaces <intf> transceiver detail','Replace SFP/QSFP if Rx power is too low (< -20 dBm)'],
+  },
+  {
+    text: 'interface flapping link going up down unstable intermittent errors loss',
+    rootCause: 'Interface flapping — bad cable, SFP, or auto-negotiation issue',
+    category: 'interface',
+    verify: ['show interface <intf>','show log | grep CHANGED','show interface <intf> counters','show interface <intf> transceiver'],
+    fix: ['Set hard speed/duplex (no auto-negotiate on server links)','Replace cable — check for bend radius violations or damaged connector','Check SFP power margin — dirty connector or dirty cleaning','Disable carrier-delay (or add carrier-delay secs 2 to debounce)','Check peer device for compatible port settings'],
+  },
+  {
+    text: 'crc errors input errors runts giants ethernet noise interference cable damaged',
+    rootCause: 'CRC / input errors — physical layer noise or damaged cable/SFP',
+    category: 'interface',
+    verify: ['show interface <intf> counters error','show interface <intf> transceiver','show interface <intf> | grep error'],
+    fix: ['Replace Ethernet cable (category 5e/6/6A as required)','Clean fiber connector with appropriate kit','Check for EMI sources near cable run','Verify cable length within spec for speed (100G DAC ≤3 m, SR4 ≤100 m)','Swap SFP/QSFP to isolate hardware fault'],
+  },
+  {
+    text: 'duplex mismatch half duplex speed negotiation auto collision late',
+    rootCause: 'Duplex mismatch — one end auto-negotiates, other is hard-set',
+    category: 'interface',
+    verify: ['show interface <intf>','show interface <intf> | grep duplex','show running-config interface <intf>','cdp neighbor detail | grep Duplex'],
+    fix: ['Hard-set speed and duplex on both ends to eliminate auto-negotiation ambiguity','Use speed 1000 / duplex full on GigabitEthernet links','Verify no spanning-tree PortFast misconfiguration masking the issue','Check for legacy 10/100 devices behind a switch port'],
+  },
+  {
+    text: 'port-channel LACP flapping member link bundle hash load balancing minimum',
+    rootCause: 'LACP port-channel instability — member link failure or hash misconfiguration',
+    category: 'interface',
+    verify: ['show lacp neighbor','show etherchannel summary','show etherchannel load-balance','show interface port-channel<N>'],
+    fix: ['Verify all member ports have identical speed/duplex/MTU/native-VLAN','Check LACP mode: active-active or active-passive (not passive-passive)','Increase minimum-links threshold to 2 for redundancy','Review hash algorithm — src-dst-ip recommended for server-leaf links','Check for STP interfering with new member ports (PortFast trunk)'],
+  },
+  {
+    text: 'spanning tree loop storm broadcast flood topology change reconvergence STP',
+    rootCause: 'Spanning tree loop / topology change — BPDU guard or root bridge instability',
+    category: 'stp',
+    verify: ['show spanning-tree','show spanning-tree detail | grep change','show spanning-tree active','show log | grep TOPOLOGY'],
+    fix: ['Enable PortFast + BPDU Guard on all access ports','Set explicit root bridge priority (priority 4096 on core, 8192 on dist)','Enable BPDU Filter on uplinks only (NOT on access ports — risk of loop)','Check for rogue switch or hub creating a bridging loop','Enable storm-control on access ports (action shutdown)'],
+  },
+  {
+    text: 'bpdu guard shutdown errdisable portfast edge port switch connected',
+    rootCause: 'BPDU Guard triggered — switch or unauthorized device on access port',
+    category: 'stp',
+    verify: ['show interface <intf> status','show errdisable recovery','show log | grep BPDU','show spanning-tree interface <intf> detail'],
+    fix: ['Identify and remove the unauthorized switch on the port','Re-enable with: errdisable recovery cause bpduguard + timer','If legitimate trunk, remove spanning-tree portfast edge from that port','Enable errdisable recovery with interval 300 for automation environments'],
+  },
+  {
+    text: 'cpu high control plane punt copp rate limit routing protocol drops',
+    rootCause: 'High CPU — control plane overload (CoPP, punt, or protocol storm)',
+    category: 'hardware',
+    verify: ['show processes cpu sorted','show processes cpu history','show policy-map control-plane','show platform punt statistics','show log | grep CPU'],
+    fix: ['Check CoPP drop counters for the offending class','Reduce SNMP polling rate (increase interval to ≥ 5 min)','Disable debug commands left on accidentally','Check for BGP/OSPF flap causing reconvergence CPU spike','Rate-limit ICMP on control-plane policy-map'],
+  },
+  {
+    text: 'memory high utilization exhausted BGP table route cache TCAM FIB overflow',
+    rootCause: 'High memory — large BGP table, route cache, or TCAM overflow',
+    category: 'hardware',
+    verify: ['show processes memory sorted','show platform resources','show bgp summary | grep paths','show platform tcam utilization','show log | grep MEM'],
+    fix: ['Filter inbound BGP prefixes — apply max-prefix limit and route-map','Enable BGP table summarization at aggregation points','Purge stale ARP/MAC cache: clear arp-cache / clear mac-address-table','Upgrade platform TCAM profile if route-scale profile is mis-configured','Consider upgrading to a device with larger TCAM (e.g. 9300X vs 9300)'],
+  },
+  {
+    text: 'temperature alarm high fan failure cooling airflow thermal shutdown',
+    rootCause: 'Overtemperature — fan failure or blocked airflow',
+    category: 'hardware',
+    verify: ['show environment temperature','show environment all','show environment fan','show log | grep TEMP'],
+    fix: ['Check all fan modules are seated and spinning','Verify front-to-back airflow is unobstructed (cable management)','Reduce ambient room temperature (target < 27°C inlet)','Replace failed fan module (usually hot-swappable)','Monitor with SNMP: ciscoEnvMonTemperatureState OID'],
+  },
+  {
+    text: 'power supply PSU failure redundancy power budget PoE over-allocated',
+    rootCause: 'Power supply failure or PoE budget exceeded',
+    category: 'hardware',
+    verify: ['show environment power','show power detail','show power inline','show log | grep POWER'],
+    fix: ['Check PSU LEDs and replace failed unit (hot-swap if supported)','Verify PoE budget not exceeded — reduce PD count or upgrade to higher-watt PSU','Enable power redundancy mode: power redundancy-mode combined','Check PoE per-port allocation: power inline static max <watts>'],
+  },
+  {
+    text: 'VXLAN EVPN MAC not learned overlay vtep reachability BGP EVPN type 2 3',
+    rootCause: 'VXLAN/EVPN overlay failure — VTEP unreachable or BGP EVPN not advertising',
+    category: 'overlay',
+    verify: ['show bgp l2vpn evpn summary','show vxlan vtep','show mac address-table','show bgp l2vpn evpn type 2','show vxlan address-table'],
+    fix: ['Verify VTEP loopback reachability: ping VTEP-loopback source NVE-loopback','Check BGP EVPN neighbors established and exchanging type-2/type-3 routes','Verify VNI configured on both VTEPs for the same VLAN','Check MTU on underlay — VXLAN adds 50 B overhead (set to 9216)','Verify send-community extended on BGP EVPN neighbors'],
+  },
+  {
+    text: 'PFC pause storm RoCEv2 RDMA lossless priority flow control GPU InfiniBand fabric',
+    rootCause: 'PFC pause storm — lossless fabric misconfiguration or congestion',
+    category: 'overlay',
+    verify: ['show queuing interface <intf>','show interface <intf> counters','show platform qos','show dcbx interface <intf>','ethtool -S <intf> | grep pause'],
+    fix: ['Verify PFC enabled only on priority 3 (RoCEv2) — not all priorities','Enable ECN marking: set ECN thresholds (e.g. 75%/100% for 100G)','Check for PFC watchdog — enable watchdog to break deadlocks','Verify DCBX TLV exchange with server NICs','Tune CNP injection rate on RDMA adapters'],
+  },
+  {
+    text: 'QoS queue drops high latency jitter voice video DSCP remarking policing',
+    rootCause: 'QoS queue drops — misconfigured policing or insufficient queue bandwidth',
+    category: 'qos',
+    verify: ['show policy-map interface <intf>','show queue interface <intf>','show interface <intf> counters','show qos interface <intf>'],
+    fix: ['Verify DSCP markings preserved end-to-end (no DSCP remarking at ingress)','Increase priority queue bandwidth (voice EF should be 15% min)','Check policing rate for video AF41 — set CIR to actual video bandwidth','Enable WRED on data queue to avoid tail-drop','Verify queue scheduling: PQ for EF, CBWFQ for AF classes'],
+  },
+  {
+    text: 'packet loss microbursts high utilization spine leaf congestion drop',
+    rootCause: 'Buffer exhaustion / microbursts — link utilization spikes',
+    category: 'qos',
+    verify: ['show interface <intf> counters','show queuing interface <intf>','show platform qos drops','show interface <intf> | grep rate'],
+    fix: ['Enable ECN on DC fabrics to signal congestion before drop','Check bandwidth utilization trends — upgrade from 25G to 100G if >60% sustained','Tune WRED thresholds to drop lower-priority traffic first','Check for many-to-one (incast) patterns — common in GPU/storage workloads','Consider packet spraying / ECMP hashing to distribute flows'],
+  },
+  {
+    text: 'DHCP failure client no IP address pool exhausted relay agent helper address',
+    rootCause: 'DHCP failure — pool exhausted, relay misconfiguration, or server unreachable',
+    category: 'management',
+    verify: ['show ip dhcp pool','show ip dhcp binding','show ip dhcp statistics','show interface <intf> | grep helper'],
+    fix: ['Extend DHCP pool or reduce lease time to reclaim addresses','Verify ip helper-address on SVI pointing to DHCP server','Check DHCP snooping not blocking OFFER/ACK packets','If Cisco IOS: debug ip dhcp server events to trace failure','Verify DHCP server reachability from relay interface'],
+  },
+  {
+    text: 'DNS resolution failing timeout server unreachable hostname lookup',
+    rootCause: 'DNS failure — server unreachable or ACL blocking UDP/TCP 53',
+    category: 'management',
+    verify: ['nslookup <hostname>','dig @<server> <hostname>','ping <dns-server>','show ip name-server','show access-lists | grep 53'],
+    fix: ['Verify DNS server reachability from device: ping <dns-server>','Check ACL does not block UDP/TCP 53 to DNS server','Set ip name-server on network devices (ip name-server 8.8.8.8 redundancy)','Check DNS server for zone delegation errors','Use ip domain lookup (not disabled) on IOS devices'],
+  },
+  {
+    text: 'IPSec VPN tunnel down IKE phase 1 2 negotiation failed transform set crypto map ISAKMP',
+    rootCause: 'IPSec VPN tunnel failure — IKE negotiation or transform set mismatch',
+    category: 'routing',
+    verify: ['show crypto isakmp sa','show crypto ipsec sa','show crypto session','debug crypto isakmp','show log | grep IKE'],
+    fix: ['Check IKE phase 1 mismatch: encryption (AES-256), hash (SHA-256), DH group (14)','Verify pre-shared key identical on both peers','Check lifetime mismatch — set explicit lifetime on both sides','Verify NAT-T enabled if device behind NAT (udp 4500)','Check ACL permit for interesting traffic (mirror-image ACLs on both ends)'],
+  },
+  {
+    text: 'NTP out of sync clock drift stratum unreachable authentication key failed',
+    rootCause: 'NTP synchronization failure — server unreachable or auth mismatch',
+    category: 'management',
+    verify: ['show ntp status','show ntp associations','show ntp associations detail','ping <ntp-server>'],
+    fix: ['Verify NTP server reachability from management interface','Check ntp authenticate / ntp authentication-key md5 keys match','Set ntp source Loopback0 for consistent source IP','Verify stratum: source should be stratum 1 or 2','Check firewall allows UDP 123 bidirectionally'],
+  },
+  {
+    text: 'port security violation MAC flooding 802.1X authentication failure NAC RADIUS',
+    rootCause: 'Port security / 802.1X violation — unauthorized MAC or RADIUS failure',
+    category: 'security',
+    verify: ['show port-security interface <intf>','show authentication sessions interface <intf>','show radius statistics','show log | grep SECURITY'],
+    fix: ['If errdisable: identify rogue device, remove it, re-enable port','Increase max-mac-count if legitimate multi-device port (IP phone + PC)','Check RADIUS server reachability and shared secret','Verify 802.1X supplicant configured on endpoint','Enable MAB as fallback for non-802.1X devices'],
+  },
+  {
+    text: 'SNMP unreachable community string v3 authentication privacy ACL',
+    rootCause: 'SNMP polling failure — wrong community/v3 credentials or ACL',
+    category: 'management',
+    verify: ['snmpwalk -v2c -c <community> <ip> sysDescr','show snmp','show snmp user','show access-lists | grep SNMP'],
+    fix: ['Verify snmp-server community / v3 user config matches NMS settings','Check snmp-server access-list or view restricting OIDs','Confirm UDP 161 not blocked by interface ACL','For v3: verify auth protocol (SHA) and priv protocol (AES-128) match','Check snmp-server source-interface for management VRF routing'],
+  },
+  {
+    text: 'ZTP boot failure PnP POAP DHCP option 43 67 TFTP server unreachable image download',
+    rootCause: 'ZTP boot failure — DHCP option 43/67 or TFTP/HTTP server unreachable',
+    category: 'management',
+    verify: ['show dhcp lease','debug ip dhcp server events','show boot','ping <tftp-server> source management'],
+    fix: ['Verify DHCP pool has option 43 (vendor-specific) and option 67 (bootfile-name)','Check TFTP/HTTP server reachability from management VLAN','Verify ZTP script/image file path matches exactly (case-sensitive)','Check management interface config in bootstrap — mgmt VRF routing needed','For Cisco PnP: verify pnp-startup-vlan DHCP scope and PnP server URL'],
+  },
+  {
+    text: 'ACL blocking traffic unexpected drop permit deny access-list hit counter',
+    rootCause: 'ACL misconfiguration — traffic inadvertently matched by a deny rule',
+    category: 'security',
+    verify: ['show access-lists <name>','show ip access-lists <name>','show interfaces <intf> | grep access-group','show log | grep denied'],
+    fix: ['Check ACL counters: show access-lists — find the deny rule with hits','Trace packet path: debug ip packet <acl-name>','Verify ACL direction (in/out) matches intended traffic flow','Add a more-specific permit rule above the broad deny','Use object-groups for readability and easier editing'],
+  },
+  {
+    text: 'asymmetric routing ECMP traffic path different return path policy routing',
+    rootCause: 'Asymmetric routing — ECMP hashing imbalance or policy-based routing',
+    category: 'routing',
+    verify: ['traceroute <dest> source <src>','show ip route <dest>','show cef <dest> detail','show policy-route'],
+    fix: ['Check ECMP hash algorithm — use src-dst-ip+port for stateful devices','Verify no PBR (ip policy route-map) overriding default forwarding','Check for default route pointing to different next-hop than learned routes','If stateful firewall: ensure symmetric routing via VRRP or active-standby','Review BGP weight / local-preference that may favor different paths'],
+  },
+  {
+    text: 'syslog flooding high rate log messages debug mode verbose level 7',
+    rootCause: 'Syslog flood — debug logging enabled or noisy facility at wrong severity',
+    category: 'management',
+    verify: ['show logging','show logging | grep level','terminal monitor','show processes cpu | grep sysmgr'],
+    fix: ['Set appropriate syslog level: logging trap informational (level 6)','Disable any active debug commands: undebug all','Reduce log rate for noisy facilities: logging rate-limit 100 except errors','Check NTP sync — timestamp issues can cause log storm on sync','Review logging buffered size — set to 1M for busy devices'],
+  },
+  {
+    text: 'BGP AS path loop community attribute COMMUNITIES extended community route target',
+    rootCause: 'BGP attribute misconfiguration — AS path loop or missing community',
+    category: 'bgp',
+    verify: ['show bgp <prefix>','show bgp regexp _<ASN>_','show bgp neighbors <ip> advertised-routes | include Community','show route-map <name>'],
+    fix: ['Check AS path for loops: router AS must not appear in received path','Add allow-as-in if eBGP peer legitimately uses same AS (MPLS VPN)','Verify send-community both|extended set on BGP neighbor','Check route-target import/export in VRF for L3VPN prefix leaking','Use bgp deterministic-med to resolve MED comparison issues'],
+  },
+  {
+    text: 'VLAN not propagating VTP trunk native VLAN mismatch pruning dot1q',
+    rootCause: 'VLAN propagation failure — VTP config or trunk native VLAN mismatch',
+    category: 'interface',
+    verify: ['show vlan brief','show interfaces trunk','show vtp status','show spanning-tree vlan <id>'],
+    fix: ['Verify trunk mode on both sides: switchport mode trunk','Check allowed VLAN list: switchport trunk allowed vlan add <id>','If VTP transparent, manually add VLAN to all switches','Check native VLAN mismatch (CDP will warn: Native VLAN mismatch)','For QinQ: verify outer VLAN encapsulation and tunnel mode'],
+  },
+];
+
+/* ── Stopwords to ignore during tokenization ─────────────────── */
+var _SC_STOPWORDS = {
+  'a':1,'an':1,'the':1,'in':1,'on':1,'at':1,'to':1,'for':1,'of':1,'with':1,
+  'and':1,'or':1,'is':1,'are':1,'was':1,'be':1,'been':1,'not':1,'no':1,
+  'if':1,'but':1,'it':1,'its':1,'this':1,'that':1,'from':1,'by':1,'as':1,
+  'can':1,'may':1,'will':1,'should':1,'would':1,'could':1,'more':1,'than':1,
+  'check':1,'verify':1,'use':1,'set':1,'add':1,'show':1,'see':1,
+};
+
+/* ── Tokenize text to lowercase words ────────────────────────── */
+function _scTokenize(text) {
+  return (text || '').toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(function(w) { return w.length > 1 && !_SC_STOPWORDS[w]; });
+}
+
+/* ── Build vocabulary from all dataset entries ───────────────── */
+var _scVocab = null;
+var _scTrainVecs = null;
+
+function _scBuildIndex() {
+  if (_scVocab) return;
+  var vocabMap = {};
+  _SC_DATASET.forEach(function(entry) {
+    _scTokenize(entry.text).forEach(function(w) { vocabMap[w] = 1; });
+  });
+  _scVocab = Object.keys(vocabMap);
+
+  /* Pre-compute unit TF vectors for every training entry */
+  _scTrainVecs = _SC_DATASET.map(function(entry) {
+    return _scUnitVec(_scTokenize(entry.text));
+  });
+}
+
+/* Build a TF vector then normalize to unit length */
+function _scUnitVec(tokens) {
+  var tf = {};
+  tokens.forEach(function(w) { tf[w] = (tf[w] || 0) + 1; });
+  var norm = 0;
+  Object.keys(tf).forEach(function(w) { norm += tf[w] * tf[w]; });
+  norm = Math.sqrt(norm) || 1;
+  Object.keys(tf).forEach(function(w) { tf[w] = tf[w] / norm; });
+  return tf;
+}
+
+/* Cosine similarity between two TF maps */
+function _scCosine(a, b) {
+  var dot = 0;
+  Object.keys(a).forEach(function(w) {
+    if (b[w]) dot += a[w] * b[w];
+  });
+  return dot;   // both are already unit vectors
+}
+
+/* ── Public API ──────────────────────────────────────────────── */
+
+function classifySymptom(queryText, topN) {
+  if (!queryText || !queryText.trim()) return [];
+  _scBuildIndex();
+  var k = topN || 3;
+
+  var qTokens = _scTokenize(queryText);
+  if (!qTokens.length) return [];
+  var qVec = _scUnitVec(qTokens);
+
+  var scored = _SC_DATASET.map(function(entry, i) {
+    return { score: _scCosine(qVec, _scTrainVecs[i]), entry: entry };
+  });
+
+  scored.sort(function(a, b) { return b.score - a.score; });
+
+  return scored.slice(0, k).map(function(s) {
+    /* ── Confidence scoring ───────────────────────────────────── */
+    var confidence = Math.min(100, Math.round(s.score * 100 * 2.5));
+
+    /* Build reasoning chain: top-5 token contributions */
+    var entryVec  = _scTrainVecs[_SC_DATASET.indexOf(s.entry)];
+    var reasoning = [];
+    Object.keys(qVec).forEach(function(w) {
+      if (entryVec[w]) {
+        reasoning.push({ token: w, contribution: +(qVec[w] * entryVec[w]).toFixed(4) });
+      }
+    });
+    reasoning.sort(function(a, b) { return b.contribution - a.contribution; });
+    reasoning = reasoning.slice(0, 5).map(function(r) {
+      return 'Keyword "' + r.token + '" matched (weight ' + r.contribution + ')';
+    });
+    if (!reasoning.length) reasoning = ['Partial semantic similarity detected'];
+
+    /* Derive evidence references from verify commands */
+    var evidence = (s.entry.verify || []).map(function(cmd) {
+      return 'Run: ' + cmd;
+    });
+    if (evidence.length) evidence.unshift('Category: ' + s.entry.category);
+
+    return {
+      rootCause:  s.entry.rootCause,
+      category:   s.entry.category,
+      confidence: confidence,
+      reasoning:  reasoning,
+      evidence:   evidence,
+      verify:     s.entry.verify,
+      fix:        s.entry.fix,
+    };
+  }).filter(function(r) { return r.confidence > 5; });  /* drop near-zero matches */
+}
+
+/* ── UI renderer ─────────────────────────────────────────────── */
+
+var _SC_CAT_COLORS = {
+  bgp:        'var(--blue)',
+  routing:    'var(--cyan)',
+  interface:  'var(--green)',
+  stp:        'var(--orange)',
+  hardware:   '#ff5555',
+  overlay:    'var(--purple, #9b59b6)',
+  qos:        'var(--yellow)',
+  management: 'var(--txt2)',
+  security:   '#e74c3c',
+};
+
+function renderSymptomClassifier() {
+  var input = document.getElementById('sc-symptom-input');
+  if (!input) return;
+  var query   = input.value.trim();
+  var results = document.getElementById('sc-results');
+  if (!results) return;
+
+  if (!query) {
+    results.innerHTML = '<div class="obs-placeholder">Enter a symptom description above and click Classify.</div>';
+    return;
+  }
+
+  var matches = classifySymptom(query, 5);
+
+  if (!matches.length) {
+    results.innerHTML = '<div class="obs-placeholder">No matching root causes found — try different keywords.</div>';
+    return;
+  }
+
+  var html = '';
+  matches.forEach(function(m, i) {
+    var catColor  = _SC_CAT_COLORS[m.category] || 'var(--txt2)';
+    var confColor = m.confidence >= 60 ? 'var(--green)' : m.confidence >= 30 ? 'var(--orange)' : 'var(--txt2)';
+    var border    = i === 0 ? 'border-color:' + catColor + ';' : '';
+    /* Confidence bar width */
+    var barW = m.confidence + '%';
+    var barColor = m.confidence >= 60 ? 'var(--green)' : m.confidence >= 30 ? 'var(--orange)' : 'var(--txt3)';
+
+    html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:.8rem 1rem;margin:.45rem 0;' + border + '">' +
+      '<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;flex-wrap:wrap">' +
+        (i === 0 ? '<span style="font-size:.68rem;font-weight:700;background:' + catColor + ';color:#000;padding:.1rem .4rem;border-radius:3px">BEST MATCH</span>' : '<span style="font-size:.68rem;color:var(--txt3);padding:.1rem .4rem">#' + (i+1) + '</span>') +
+        '<span style="font-weight:600;color:var(--txt1);font-size:.82rem">' + m.rootCause + '</span>' +
+        '<span style="margin-left:auto;font-size:.78rem;font-weight:700;color:' + confColor + '">' + m.confidence + '%</span>' +
+        '<span style="font-size:.7rem;background:var(--bg2);color:' + catColor + ';padding:.1rem .4rem;border-radius:3px;font-weight:600">' + m.category + '</span>' +
+      '</div>' +
+      /* Confidence bar */
+      '<div style="height:4px;background:var(--bg2);border-radius:2px;margin-bottom:.45rem;overflow:hidden">' +
+        '<div style="width:' + barW + ';height:100%;background:' + barColor + ';border-radius:2px;transition:width .3s"></div>' +
+      '</div>' +
+      /* Reasoning chain */
+      '<details style="margin-bottom:.3rem"><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Reasoning chain (' + (m.reasoning ? m.reasoning.length : 0) + ' signals)</summary>' +
+        '<ul style="margin:.3rem 0 0 1rem;font-size:.73rem;color:var(--txt3)">' + (m.reasoning || []).map(function(r) {
+          return '<li style="margin:.1rem 0">' + r + '</li>';
+        }).join('') + '</ul>' +
+      '</details>' +
+      /* Evidence */
+      (m.evidence && m.evidence.length ? '<details style="margin-bottom:.3rem"><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Evidence & references (' + m.evidence.length + ')</summary>' +
+        '<ul style="margin:.3rem 0 0 1rem;font-size:.73rem;color:var(--txt2)">' + m.evidence.map(function(e) {
+          return '<li style="margin:.1rem 0">' + e + '</li>';
+        }).join('') + '</ul>' +
+      '</details>' : '') +
+      '<details style="margin-bottom:.3rem"><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Verify commands (' + m.verify.length + ')</summary>' +
+        '<ul style="margin:.3rem 0 0 1rem;font-size:.74rem;color:var(--txt2)">' + m.verify.map(function(v) {
+          return '<li style="margin:.1rem 0"><code style="background:var(--bg2);padding:.05rem .3rem;border-radius:3px;font-size:.73rem;color:var(--cyan)">' + v + '</code></li>';
+        }).join('') + '</ul>' +
+      '</details>' +
+      '<details><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Fix steps (' + m.fix.length + ')</summary>' +
+        '<ol style="margin:.3rem 0 0 1.1rem;font-size:.74rem;color:var(--txt1)">' + m.fix.map(function(f) {
+          return '<li style="margin:.2rem 0">' + f + '</li>';
+        }).join('') + '</ol>' +
+      '</details>' +
+      '</div>';
+  });
+
+  results.innerHTML = html;
+}
+
+window.classifySymptom         = classifySymptom;
+window.renderSymptomClassifier = renderSymptomClassifier;
+
+/* ════════════════════════════════════════════════════════════════
+   HISTORICAL INCIDENT DATABASE
+   20 curated common network incident patterns with resolution steps.
+   Searchable via the same cosine-similarity engine used by the
+   symptom classifier. Each entry has a full resolution timeline,
+   impact description, and MTTR estimate.
+════════════════════════════════════════════════════════════════ */
+
+var _INCIDENT_DB = [
+  {
+    id: 'INC-001',
+    title: 'BGP Full-Table Memory Exhaustion',
+    keywords: 'bgp full table memory exhaustion rib fib route prefix limit exceeded',
+    category: 'bgp',
+    impact: 'All BGP peers dropped; network unreachable for 18 minutes. Affected 3 edge routers.',
+    rootCause: 'Full BGP table (~950k prefixes) received without prefix-limit configured; router ran out of RIB memory.',
+    resolution: [
+      'Configure "neighbor <ip> maximum-prefix 800000 warning-only" on all eBGP peers',
+      'Add "bgp default local-preference 100" and route summarization to reduce table size',
+      'Upgrade DRAM from 8GB to 32GB on edge routers',
+      'Implement route filtering with prefix-list to accept only customer and default routes from transit',
+      'Enable graceful-restart to preserve forwarding during BGP re-initialization',
+    ],
+    mttr: '18 min',
+    lastSeen: '2025-11-14',
+  },
+  {
+    id: 'INC-002',
+    title: 'STP Loop — Broadcast Storm',
+    keywords: 'stp loop broadcast storm spanning tree unidirectional link bpdu guard portfast trunk',
+    category: 'stp',
+    impact: 'Campus network segment saturated at 100% utilization for 7 minutes; all hosts unreachable.',
+    rootCause: 'Rogue unmanaged switch plugged into access port configured with portfast but no BPDU guard. Caused STP reconvergence loop.',
+    resolution: [
+      'Enable "spanning-tree bpduguard default" globally on all access switches',
+      'Enable "spanning-tree portfast bpduguard" per port on host-facing interfaces',
+      'Deploy "storm-control broadcast level 10.00" on all access ports',
+      'Configure "errdisable recovery cause bpduguard" with 300s interval',
+      'Implement DHCP snooping + ARP inspection to detect rogue devices early',
+    ],
+    mttr: '7 min',
+    lastSeen: '2025-10-03',
+  },
+  {
+    id: 'INC-003',
+    title: 'VXLAN EVPN MAC Flapping',
+    keywords: 'vxlan evpn mac flapping vtep tunnel overlay mac move duplicate ip',
+    category: 'overlay',
+    impact: 'East-west traffic in DC fabric intermittently dropped for 45 minutes. 12 VMs affected.',
+    rootCause: 'Duplicate MAC address learned on two different VTEPs due to misconfigured VM live migration without MAC flush notification.',
+    resolution: [
+      'Enable "mac address-table notification change" on all leaf switches',
+      'Configure "mac move limit 5 action shutdown vlan" to detect flapping early',
+      'Ensure VMware DVS sends GARP on vMotion completion',
+      'Set "evpn mac-flush" on NX-OS vPC peers to synchronize MAC tables after live migration',
+      'Audit vPC consistency parameters — ensure vPC peer-link is not splitting fabric domains',
+    ],
+    mttr: '45 min',
+    lastSeen: '2025-09-20',
+  },
+  {
+    id: 'INC-004',
+    title: 'OSPF Area 0 Partition — Split Brain',
+    keywords: 'ospf area 0 partition split brain backbone link flap neighbor down adjacency',
+    category: 'routing',
+    impact: 'Two halves of campus backbone could not exchange routes for 22 minutes.',
+    rootCause: 'Dual backbone links between core switches both flapped simultaneously due to faulty SFP module. Area 0 partitioned.',
+    resolution: [
+      'Replace faulty SFP-10G-SR in core switch slot 3/1',
+      'Add virtual-link as temporary measure to re-join partitioned area 0',
+      'Increase number of backbone links from 2 to 4 for redundancy',
+      'Set "ip ospf dead-interval minimal hello-multiplier 4" for sub-second failure detection',
+      'Enable BFD on all OSPF adjacencies: "bfd interval 300 min_rx 300 multiplier 3"',
+    ],
+    mttr: '22 min',
+    lastSeen: '2025-08-31',
+  },
+  {
+    id: 'INC-005',
+    title: 'PFC Pause Storm — RoCEv2 GPU Cluster',
+    keywords: 'pfc pause storm roce rdma gpu cluster lossless ecn congestion buffer',
+    category: 'qos',
+    impact: 'All-reduce operations in GPU training cluster stalled for 12 minutes; training job failed.',
+    rootCause: 'Single slow GPU receiver caused PFC pause frames to propagate back through spine, pausing all traffic on PG3.',
+    resolution: [
+      'Enable ECN (Explicit Congestion Notification) on all GPU-facing ports: "priority-flow-control mode on" + WRED ECN',
+      'Set PFC watchdog: "priority-flow-control watchdog interval 200ms" to break stuck pause states',
+      'Tune buffer allocation: increase ingress buffer for lossless queue, reduce lossy buffer',
+      'Deploy DCQCN (Data Center Quantized Congestion Notification) on NVIDIA ConnectX NICs',
+      'Add rate-limiting on GPU NICs: "mlnx_qos -i <if> --trust dscp" with DSCP marking',
+    ],
+    mttr: '12 min',
+    lastSeen: '2025-12-01',
+  },
+  {
+    id: 'INC-006',
+    title: 'TACACS+ Server Unreachable — Auth Failure',
+    keywords: 'tacacs aaa authentication failure lockout login cannot access mgmt management',
+    category: 'management',
+    impact: 'Network engineers locked out of all 48 switches for 35 minutes during off-hours maintenance.',
+    rootCause: 'TACACS+ primary and secondary servers both unreachable due to management VLAN misconfiguration after VLAN renumbering.',
+    resolution: [
+      'Immediately access via console and enable local fallback: "aaa authentication login default group tacacs+ local"',
+      'Verify management VLAN reachability from all switches to TACACS+ server IPs',
+      'Fix VLAN config: management traffic must use dedicated OOB or dedicated mgmt VRF',
+      'Configure both primary and secondary TACACS+ servers in different failure domains',
+      'Test AAA failover monthly by temporarily blocking TACACS+ connectivity in lab',
+    ],
+    mttr: '35 min',
+    lastSeen: '2025-07-15',
+  },
+  {
+    id: 'INC-007',
+    title: 'BGP Route Reflector Single Point of Failure',
+    keywords: 'bgp route reflector rr cluster single point failure ibgp down all sessions',
+    category: 'bgp',
+    impact: 'All iBGP sessions dropped when single RR reloaded for software upgrade. 15-minute outage.',
+    rootCause: 'Only one route reflector deployed. All iBGP clients pointed to single RR. No redundancy.',
+    resolution: [
+      'Deploy second route reflector in same cluster: "neighbor <ip> route-reflector-client" on both RRs',
+      'Configure clients to peer with both RRs: reduces single-point-of-failure risk',
+      'Enable graceful-restart on all BGP peers to preserve forwarding during RR reload',
+      'Use BFD on RR-to-client links for sub-second failure detection',
+      'Schedule future RR upgrades with active-passive failover: upgrade standby first',
+    ],
+    mttr: '15 min',
+    lastSeen: '2025-06-22',
+  },
+  {
+    id: 'INC-008',
+    title: 'DHCP Scope Exhausted — Client Connectivity Loss',
+    keywords: 'dhcp scope exhausted addresses pool full clients no ip address lease',
+    category: 'management',
+    impact: '800 wireless clients in building-3 unable to get IP addresses for 55 minutes.',
+    rootCause: '/24 DHCP pool exhausted due to short lease time (1 hour) and VoIP phones holding stale leases.',
+    resolution: [
+      'Immediately clear stale leases: "clear ip dhcp binding *" on DHCP server',
+      'Extend pool to /23 to double available addresses',
+      'Increase lease time for VoIP phones VLAN to 12 hours (devices rarely move)',
+      'Implement DHCP snooping to detect rogue DHCP servers and binding table corruption',
+      'Monitor pool utilization with SNMP: alert at 80% to prevent future exhaustion',
+    ],
+    mttr: '55 min',
+    lastSeen: '2025-05-10',
+  },
+  {
+    id: 'INC-009',
+    title: 'MTU Black Hole — Fragmentation Drop',
+    keywords: 'mtu black hole fragmentation drop pmtud jumbo frame path mtu discovery large packets',
+    category: 'interface',
+    impact: 'Large file transfers and SSH sessions intermittently hung. Root cause took 3 hours to diagnose.',
+    rootCause: 'One legacy router in path had MTU 1500 while rest of fabric used 9000 (jumbo). ICMP fragmentation-needed packets were blocked by firewall.',
+    resolution: [
+      'Allow ICMP type 3 code 4 (fragmentation needed) through all firewalls',
+      'Set interface MTU to 9000 on the legacy router or reduce fabric MTU to 1500 on that segment',
+      'Configure TCP MSS clamping: "ip tcp adjust-mss 1452" on WAN-facing interfaces',
+      'Test MTU path: "ping <ip> size 8972 df-bit" to discover lowest MTU in path',
+      'Document MTU policy and enforce via compliance checks in automation pipeline',
+    ],
+    mttr: '3 hr',
+    lastSeen: '2025-04-18',
+  },
+  {
+    id: 'INC-010',
+    title: 'IPSec VPN IKEv2 Phase-2 Mismatch',
+    keywords: 'ipsec vpn ikev2 phase 2 mismatch tunnel down transform proposal crypto',
+    category: 'security',
+    impact: 'Branch office VPN disconnected for 2 hours after ISP router replacement.',
+    rootCause: 'New ISP CPE router sent IKEv2 with AES-128 but hub expects AES-256. Phase-2 SA failed to negotiate.',
+    resolution: [
+      'Match transform-set on both ends: "crypto ipsec transform-set TS esp-aes 256 esp-sha256-hmac"',
+      'Check IKEv2 proposal: "crypto ikev2 proposal PROP encryption aes-cbc-256 integrity sha256 group 14"',
+      'Enable IKEv2 debugging temporarily: "debug crypto ikev2" to see exact negotiation failure',
+      'Use "show crypto ikev2 sa" and "show crypto ipsec sa" to verify SA state',
+      'Document agreed crypto parameters in runbook and test after any ISP equipment change',
+    ],
+    mttr: '2 hr',
+    lastSeen: '2025-03-07',
+  },
+  {
+    id: 'INC-011',
+    title: 'NTP Stratum Failure — Authentication Mismatch',
+    keywords: 'ntp stratum clock drift unsynchronized authentication key mismatch time offset',
+    category: 'management',
+    impact: 'Syslog timestamps drifted by 47 minutes. RADIUS authentication failed due to clock skew exceeding 5-minute tolerance.',
+    rootCause: 'Primary NTP server failed; backup NTP server had MD5 key mismatch — authentication rejected.',
+    resolution: [
+      'Fix NTP key mismatch: ensure same key-id and secret on all devices and NTP servers',
+      'Configure minimum 3 NTP sources: "ntp server <ip1> prefer" + two backups',
+      'Enable "ntp authenticate" + "ntp trusted-key" globally',
+      'Set "clock timezone UTC 0" to avoid DST-related drift',
+      'Monitor with SNMP: ntpEntStatusStratum should be ≤ 3 on all network devices',
+    ],
+    mttr: '1.5 hr',
+    lastSeen: '2025-02-28',
+  },
+  {
+    id: 'INC-012',
+    title: 'LACP Port-Channel Flapping',
+    keywords: 'lacp port channel flapping member port bundle etherchannel lag aggregation',
+    category: 'interface',
+    impact: 'Server connected via 4x10G LAG experienced repeated reconnects for 30 minutes.',
+    rootCause: 'LACP timer mismatch: server NIC set to LACP fast (1s) but switch set to LACP slow (30s). Occasional PDU loss caused partner timeout.',
+    resolution: [
+      'Match LACP timers: "lacp rate fast" on switch port-channel member interfaces',
+      'Verify LACP mode: both ends must be "active" or one "active" + one "passive"',
+      'Check LACP system priority and port priority: "show lacp neighbor" / "show etherchannel summary"',
+      'Enable LACP min-links: "port-channel min-links 2" to fail if too few members active',
+      'Test with "test etherchannel load-balance interface po1 ip <src> <dst>" to verify hashing',
+    ],
+    mttr: '30 min',
+    lastSeen: '2025-01-19',
+  },
+  {
+    id: 'INC-013',
+    title: 'SNMP v3 Engine ID Mismatch after RMA',
+    keywords: 'snmp v3 engine id mismatch rma replacement monitoring alerts stopped no traps',
+    category: 'management',
+    impact: 'All SNMP monitoring alerts stopped for 8 devices after hardware replacement. Silent for 4 days.',
+    rootCause: 'RMA replacement switches have different SNMP engine IDs. NMS had engine IDs hardcoded from original devices.',
+    resolution: [
+      'Re-provision SNMP v3 users on replacement devices: "snmp-server user <name> <group> v3 auth sha <key> priv aes 128 <key>"',
+      'Update NMS with new engine IDs or use SNMP v3 without engine ID pinning',
+      'Automate SNMP credential re-provisioning as part of device replacement runbook',
+      'Verify SNMP reachability post-replacement: "snmpwalk -v3 -u <user> -a SHA -A <key> -x AES -X <key> <ip> sysDescr"',
+      'Add NMS check: alert if any device stops sending traps for >15 minutes',
+    ],
+    mttr: '4 day',
+    lastSeen: '2024-12-11',
+  },
+  {
+    id: 'INC-014',
+    title: 'Asymmetric Routing — Stateful Firewall Drop',
+    keywords: 'asymmetric routing firewall stateful drop return traffic different path tcp reset',
+    category: 'routing',
+    impact: 'Half of all TCP sessions dropped after adding second internet uplink. Affected 300 users.',
+    rootCause: 'ECMP caused outbound traffic to exit ISP-A but inbound return to arrive via ISP-B. Stateful FW on ISP-A path rejected asymmetric return traffic.',
+    resolution: [
+      'Configure PBR (Policy-Based Routing) to ensure symmetric flows through same FW instance',
+      'Use firewall clustering or active-active with flow sync to share session tables',
+      'Implement ECMP with 5-tuple hashing (src-ip, dst-ip, proto, src-port, dst-port) to keep flows symmetric',
+      'For dual-ISP: use BGP local-preference to prefer same ISP for same prefix families',
+      'Monitor with "show ip route" + traceroute in both directions to verify symmetry',
+    ],
+    mttr: '2.5 hr',
+    lastSeen: '2024-11-05',
+  },
+  {
+    id: 'INC-015',
+    title: 'DNS Resolution Failure — Recursive Loop',
+    keywords: 'dns resolution failure recursive loop nxdomain timeout resolver forwarder',
+    category: 'management',
+    impact: 'All hostnames unresolvable for 25 minutes. Application teams saw connection errors.',
+    rootCause: 'Internal DNS forwarder pointed to itself as upstream resolver after misconfiguration. Recursive loop exhausted query retries.',
+    resolution: [
+      'Remove self-referential forwarder: "ip name-server" must not point to the resolver itself',
+      'Set forwarders to upstream authoritative or public resolvers (8.8.8.8 or internal authoritative)',
+      'Enable DNS split-horizon for internal vs external zone separation',
+      'Configure DNS redundancy: two independent resolvers + anycast DNS if possible',
+      'Monitor DNS query latency and NXDOMAIN rates as KPIs — alert on spike',
+    ],
+    mttr: '25 min',
+    lastSeen: '2024-10-22',
+  },
+  {
+    id: 'INC-016',
+    title: 'QoS Mis-marking — Voice Degradation',
+    keywords: 'qos voice quality degradation dscp mis-marking remarking trust boundary jitter latency',
+    category: 'qos',
+    impact: 'VoIP call quality degraded (MOS < 3.0) across campus during business hours for 2 weeks before diagnosis.',
+    rootCause: 'Access switches remarked DSCP EF (46) to 0 due to missing "mls qos trust dscp" on IP phone ports.',
+    resolution: [
+      'Enable DSCP trust on IP phone ports: "mls qos trust dscp" (IOS-XE) or "qos trust dscp" (NX-OS)',
+      'Configure CDP-based auto-detection: "mls qos trust device cisco-phone"',
+      'Verify end-to-end marking: use "show mls qos interface <if> statistics" to confirm DSCP preservation',
+      'Set voice VLAN on access ports with correct QoS policy: "switchport voice vlan <id>"',
+      'Use WireShark/embedded capture to verify DSCP EF marking from phone to fabric edge',
+    ],
+    mttr: '2 week',
+    lastSeen: '2024-09-14',
+  },
+  {
+    id: 'INC-017',
+    title: 'OSPF Neighbor Stuck in EXSTART',
+    keywords: 'ospf neighbor exstart stuck exchange dd database description mtu mismatch',
+    category: 'routing',
+    impact: 'Two directly connected routers failed to form OSPF adjacency after MTU change. 30-minute partial outage.',
+    rootCause: 'MTU set to 9000 on one side of P2P link but 1500 on other. OSPF DB description packets exceeded MTU and were dropped.',
+    resolution: [
+      'Align interface MTU on both ends of every OSPF link',
+      'Enable "ip ospf mtu-ignore" as temporary workaround while fixing MTU',
+      'Use "ip ospf network point-to-point" on /30 or /31 links to avoid DR/BDR election delay',
+      'Verify with "show ip ospf neighbor" — EXSTART means DBD packets being dropped',
+      'Test MTU: "ping <neighbor-ip> size 8972 df-bit" from both sides',
+    ],
+    mttr: '30 min',
+    lastSeen: '2024-08-19',
+  },
+  {
+    id: 'INC-018',
+    title: 'CPU Spike — ACL TCAM Exhaustion',
+    keywords: 'cpu spike high acl tcam exhaustion hardware forwarding software punt control plane policing',
+    category: 'hardware',
+    impact: 'Core switch CPU hit 98% for 20 minutes. Routing protocol PDUs dropped; OSPF flapped.',
+    rootCause: 'ACL TCAM filled after adding 4000-entry prefix-list. Excess entries fell to software forwarding, punting to CPU.',
+    resolution: [
+      'Reduce ACL entry count: use aggregate prefixes instead of /32 host routes where possible',
+      'Check TCAM usage: "show platform resources" or "show system resources" to see TCAM headroom',
+      'Split ACLs across interfaces to use separate TCAM banks',
+      'Upgrade to higher-capacity ASIC or hardware generation if TCAM is structural constraint',
+      'Enable CoPP (Control Plane Policing) to rate-limit CPU-bound traffic during future events',
+    ],
+    mttr: '20 min',
+    lastSeen: '2024-07-03',
+  },
+  {
+    id: 'INC-019',
+    title: 'Multicast RP Failure — PIM Sparse-Mode',
+    keywords: 'multicast rp rendezvous point failure pim sparse mode join pruned no receivers video streaming',
+    category: 'routing',
+    impact: 'Video streaming to 150 conference rooms stopped for 40 minutes.',
+    rootCause: 'Anycast RP primary failed; secondary RP was not reachable due to firewall blocking PIM register messages.',
+    resolution: [
+      'Allow PIM register messages (IP proto 103) through all firewalls in multicast path',
+      'Deploy Anycast-RP with MSDP peering: "ip msdp peer <secondary-rp>" for redundancy',
+      'Configure "ip pim autorp" or "ip pim bsr-candidate" to dynamically distribute RP info',
+      'Verify RP reachability: "show ip pim rp mapping" and "ping <rp-ip>" from all routers',
+      'Monitor with SNMP: ciscoIpMRouteTable or mrouteTable for active multicast groups',
+    ],
+    mttr: '40 min',
+    lastSeen: '2024-06-27',
+  },
+  {
+    id: 'INC-020',
+    title: 'ZTP / POAP Failure — DHCP Option 67 Missing',
+    keywords: 'ztp poap zero touch provisioning dhcp option 67 bootfile tftp failure onboarding',
+    category: 'management',
+    impact: 'Batch deployment of 30 switches took 4 hours longer than planned; 8 switches needed manual intervention.',
+    rootCause: 'DHCP server for ZTP VLAN was missing "option 67 (bootfile-name)" pointing to POAP script URL.',
+    resolution: [
+      'Add DHCP option 67: "option bootfile-name <url-to-poap-script>" in DHCP scope',
+      'Verify DHCP server hands out options 66 (TFTP server) and 67 (boot file) correctly',
+      'Test with "dhclient -v" or packet capture on ZTP VLAN to verify DHCP offer includes option 67',
+      'Ensure POAP/ZTP script is reachable via HTTP/TFTP from switch management interface',
+      'Pre-stage serial-to-hostname CSV so ZTP script can set correct hostname on first boot',
+    ],
+    mttr: '4 hr',
+    lastSeen: '2024-05-14',
+  },
+];
+
+/* ── Reuse the symptom-classifier cosine engine for incident search ── */
+
+var _incVocab = null;
+var _incVecs  = null;
+
+function _incBuildIndex() {
+  if (_incVecs) return;
+  _incVecs = _INCIDENT_DB.map(function(inc) {
+    var text = (inc.title + ' ' + inc.keywords + ' ' + inc.rootCause).toLowerCase();
+    return _scUnitVec(_scTokenize(text));
+  });
+}
+
+function searchIncidentDB(queryText, topN) {
+  if (!queryText || !queryText.trim()) return [];
+  _scBuildIndex();   /* ensure _scTokenize / _scUnitVec available */
+  _incBuildIndex();
+  var k = topN || 5;
+
+  var qTokens = _scTokenize(queryText);
+  if (!qTokens.length) return [];
+  var qVec = _scUnitVec(qTokens);
+
+  var scored = _INCIDENT_DB.map(function(inc, i) {
+    var sim = _scCosine(qVec, _incVecs[i]);
+    return { sim: sim, inc: inc };
+  });
+  scored.sort(function(a, b) { return b.sim - a.sim; });
+
+  return scored.slice(0, k)
+    .filter(function(s) { return s.sim > 0.01; })
+    .map(function(s) {
+      /* Reasoning chain: top matching tokens */
+      var incVec = _incVecs[_INCIDENT_DB.indexOf(s.inc)];
+      var reasons = [];
+      Object.keys(qVec).forEach(function(w) {
+        if (incVec[w]) reasons.push({ token: w, contrib: qVec[w] * incVec[w] });
+      });
+      reasons.sort(function(a, b) { return b.contrib - a.contrib; });
+      return {
+        id:         s.inc.id,
+        title:      s.inc.title,
+        category:   s.inc.category,
+        similarity: Math.min(100, Math.round(s.sim * 100 * 3)),
+        impact:     s.inc.impact,
+        rootCause:  s.inc.rootCause,
+        resolution: s.inc.resolution,
+        mttr:       s.inc.mttr,
+        lastSeen:   s.inc.lastSeen,
+        reasoning:  reasons.slice(0, 4).map(function(r) { return '"' + r.token + '" (' + r.contrib.toFixed(3) + ')'; }),
+      };
+    });
+}
+
+/* ── UI renderer ─────────────────────────────────────────────── */
+
+var _INC_CAT_COLORS = {
+  bgp:        'var(--blue)',
+  routing:    'var(--cyan)',
+  interface:  'var(--green)',
+  stp:        'var(--orange)',
+  hardware:   '#ff5555',
+  overlay:    'var(--purple, #9b59b6)',
+  qos:        'var(--yellow)',
+  management: 'var(--txt2)',
+  security:   '#e74c3c',
+};
+
+function renderIncidentSearch() {
+  var input   = document.getElementById('inc-search-input');
+  var results = document.getElementById('inc-search-results');
+  if (!results) return;
+
+  var query = (input ? input.value : '').trim();
+  if (!query) {
+    results.innerHTML = '<div class="obs-placeholder">Enter keywords above and click Search to find similar past incidents.</div>';
+    return;
+  }
+
+  var matches = searchIncidentDB(query, 5);
+  if (!matches.length) {
+    results.innerHTML = '<div class="obs-placeholder">No similar incidents found — try broader keywords.</div>';
+    return;
+  }
+
+  var html = '';
+  matches.forEach(function(m, i) {
+    var catColor  = _INC_CAT_COLORS[m.category] || 'var(--txt2)';
+    var simColor  = m.similarity >= 60 ? 'var(--green)' : m.similarity >= 30 ? 'var(--orange)' : 'var(--txt2)';
+    var barW      = m.similarity + '%';
+    var border    = i === 0 ? 'border-color:' + catColor + ';' : '';
+
+    html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;margin:.4rem 0;' + border + '">' +
+      '<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.3rem">' +
+        '<span style="font-size:.68rem;font-weight:700;background:var(--bg2);color:var(--txt3);padding:.1rem .35rem;border-radius:3px;flex-shrink:0">' + m.id + '</span>' +
+        (i === 0 ? '<span style="font-size:.68rem;font-weight:700;background:' + catColor + ';color:#000;padding:.1rem .35rem;border-radius:3px">BEST MATCH</span>' : '') +
+        '<span style="font-weight:600;color:var(--txt1);font-size:.81rem">' + m.title + '</span>' +
+        '<span style="margin-left:auto;font-size:.76rem;font-weight:700;color:' + simColor + '">' + m.similarity + '%</span>' +
+        '<span style="font-size:.68rem;background:var(--bg2);color:' + catColor + ';padding:.1rem .35rem;border-radius:3px;font-weight:600">' + m.category + '</span>' +
+      '</div>' +
+      /* Similarity bar */
+      '<div style="height:3px;background:var(--bg2);border-radius:2px;margin-bottom:.4rem;overflow:hidden">' +
+        '<div style="width:' + barW + ';height:100%;background:' + simColor + ';border-radius:2px"></div>' +
+      '</div>' +
+      /* Meta: MTTR + last seen */
+      '<div style="display:flex;gap:1rem;font-size:.73rem;color:var(--txt3);margin-bottom:.35rem;flex-wrap:wrap">' +
+        '<span>MTTR: <strong style="color:var(--txt1)">' + m.mttr + '</strong></span>' +
+        '<span>Last seen: <strong style="color:var(--txt1)">' + m.lastSeen + '</strong></span>' +
+        (m.reasoning.length ? '<span>Matched: ' + m.reasoning.join(', ') + '</span>' : '') +
+      '</div>' +
+      /* Impact */
+      '<div style="font-size:.76rem;color:var(--orange);margin-bottom:.35rem"><strong>Impact:</strong> ' + m.impact + '</div>' +
+      /* Root cause */
+      '<div style="font-size:.76rem;color:var(--txt2);margin-bottom:.35rem"><strong>Root cause:</strong> ' + m.rootCause + '</div>' +
+      /* Resolution */
+      '<details><summary style="cursor:pointer;font-size:.76rem;color:var(--txt2);user-select:none">Resolution steps (' + m.resolution.length + ')</summary>' +
+        '<ol style="margin:.3rem 0 0 1.1rem;font-size:.74rem;color:var(--txt1)">' + m.resolution.map(function(r) {
+          return '<li style="margin:.2rem 0">' + r + '</li>';
+        }).join('') + '</ol>' +
+      '</details>' +
+    '</div>';
+  });
+
+  results.innerHTML = html;
+}
+
+window.searchIncidentDB    = searchIncidentDB;
+window.renderIncidentSearch = renderIncidentSearch;

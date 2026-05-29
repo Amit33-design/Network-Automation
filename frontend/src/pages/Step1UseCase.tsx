@@ -2,56 +2,52 @@ import { useAppStore } from '@/store/useAppStore'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { cn } from '@/lib/utils'
-import type { UseCase, AppType, Scale, Redundancy, Compliance } from '@/types'
+import type { UseCase, OrgSize, BudgetTier } from '@/types'
 
 const USE_CASES: Array<{ id: UseCase; label: string; icon: string; desc: string }> = [
-  { id: 'campus',     icon: '🏢', label: 'Campus',      desc: 'Access/dist/core with PoE, QoS, SDA' },
-  { id: 'dc',         icon: '🖥️',  label: 'Data Centre', desc: 'Spine-leaf with VXLAN/EVPN BGP' },
-  { id: 'gpu',        icon: '🤖', label: 'GPU Cluster',  desc: 'AI/ML fabric with RoCE & PFC/ECN' },
-  { id: 'wan',        icon: '🌐', label: 'WAN / SD-WAN', desc: 'Edge routers and SD-WAN gateways' },
-  { id: 'multisite',  icon: '🔗', label: 'Multi-Site',   desc: 'Spine-leaf with WAN interconnect' },
-  { id: 'multicloud', icon: '☁️',  label: 'Multi-Cloud',  desc: 'Cloud transit and spoke gateways' },
-  { id: 'aviatrix',   icon: '🚀', label: 'Aviatrix',     desc: 'Cloud-native Aviatrix overlay mesh' },
+  { id: 'campus',     icon: '🏢', label: 'Campus',       desc: 'Access/dist/core with PoE, QoS, SDA' },
+  { id: 'dc',         icon: '🖥️',  label: 'Data Centre',  desc: 'Spine-leaf with VXLAN/EVPN BGP' },
+  { id: 'gpu',        icon: '🤖', label: 'GPU Cluster',   desc: 'AI/ML fabric with RoCE & PFC/ECN' },
+  { id: 'wan',        icon: '🌐', label: 'WAN / SD-WAN',  desc: 'Edge routers and SD-WAN gateways' },
+  { id: 'multisite',  icon: '🔗', label: 'Multi-Site',    desc: 'Spine-leaf with WAN interconnect' },
+  { id: 'multicloud', icon: '☁️',  label: 'Multi-Cloud',   desc: 'Cloud transit and spoke gateways' },
+  { id: 'aviatrix',   icon: '🚀', label: 'Aviatrix',      desc: 'Cloud-native Aviatrix overlay mesh' },
 ]
 
-const APP_TYPES: Array<{ id: AppType; label: string }> = [
-  { id: 'voice',    label: 'Voice' },
-  { id: 'video',    label: 'Video' },
-  { id: 'storage',  label: 'Storage' },
-  { id: 'hpc',      label: 'HPC' },
-  { id: 'internet', label: 'Internet' },
+const VENDORS = ['Cisco', 'Fortinet', 'HPE Aruba', 'Arista', 'Juniper', 'Extreme Networks', 'Dell EMC', 'NVIDIA']
+
+const INDUSTRIES: Array<{ icon: string; label: string }> = [
+  { icon: '💰', label: 'Financial' },
+  { icon: '🏥', label: 'Healthcare' },
+  { icon: '🎓', label: 'Education' },
+  { icon: '💻', label: 'Technology' },
+  { icon: '🏗️', label: 'Manufacturing' },
+  { icon: '🛒', label: 'Retail' },
+  { icon: '🏛️', label: 'Government' },
+  { icon: '📡', label: 'Media/Telecom' },
+  { icon: '⚡', label: 'Energy' },
+  { icon: '🔧', label: 'Other' },
 ]
 
-const SCALES: Array<{ id: Scale; label: string; desc: string }> = [
-  { id: 'small',  label: 'Small',  desc: 'Up to ~50 devices' },
-  { id: 'medium', label: 'Medium', desc: 'Up to ~200 devices' },
-  { id: 'large',  label: 'Large',  desc: '200+ devices' },
-]
+interface Props {
+  onBack?: () => void
+}
 
-const COMPLIANCE_OPTIONS: Array<{ id: Compliance; label: string }> = [
-  { id: 'QoS',   label: 'QoS' },
-  { id: 'PCI',   label: 'PCI-DSS' },
-  { id: 'HIPAA', label: 'HIPAA' },
-  { id: 'SOC2',  label: 'SOC 2' },
-]
-
-export function Step1UseCase() {
+export function Step1UseCase({ onBack }: Props) {
   const {
-    useCase, appTypes, siteName, siteCode, scale, redundancy, compliance, linkDistances,
-    setUseCase, setAppTypes, setSiteName, setSiteCode, setScale, setRedundancy, setCompliance,
-    setLinkDistance, nextStep,
+    useCase, orgName, orgSize, budgetTier, vendorPrefs, industry, primaryContact,
+    setUseCase, setOrgName, setOrgSize, setBudgetTier, setVendorPrefs, setIndustry, setPrimaryContact,
+    nextStep,
   } = useAppStore()
 
-  function toggleAppType(id: AppType) {
-    setAppTypes(
-      appTypes.includes(id) ? appTypes.filter(t => t !== id) : [...appTypes, id]
+  function toggleVendor(v: string) {
+    setVendorPrefs(
+      vendorPrefs.includes(v) ? vendorPrefs.filter(x => x !== v) : [...vendorPrefs, v]
     )
   }
 
-  function toggleCompliance(id: Compliance) {
-    setCompliance(
-      compliance.includes(id) ? compliance.filter(c => c !== id) : [...compliance, id]
-    )
+  function toggleIndustry(label: string) {
+    setIndustry(industry === label ? '' : label)
   }
 
   return (
@@ -68,7 +64,7 @@ export function Step1UseCase() {
             key={uc.id}
             onClick={() => setUseCase(uc.id)}
             className={cn(
-              'p-4 rounded-xl border text-left transition-all',
+              'p-4 rounded-xl border text-left transition-all cursor-pointer',
               useCase === uc.id
                 ? 'border-blue-500 bg-blue-600/20 text-gray-100'
                 : 'border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200',
@@ -81,153 +77,118 @@ export function Step1UseCase() {
         ))}
       </div>
 
-      {/* Site info */}
+      {/* Organisation Details */}
       <Card>
-        <h3 className="text-sm font-semibold text-gray-300 mb-3">Site Information</h3>
-        <div className="grid grid-cols-2 gap-4">
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">Organisation Details</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Site Name</label>
+            <label className="text-xs text-gray-400 block mb-1">Org Name</label>
             <input
               type="text"
-              value={siteName}
-              onChange={e => setSiteName(e.target.value)}
-              placeholder="e.g. Washington DC Datacenter"
+              value={orgName}
+              onChange={e => setOrgName(e.target.value)}
+              placeholder="Acme Corporation"
               className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
                          placeholder-gray-600 focus:outline-none focus:border-blue-500"
             />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Site Code (for hostnames)</label>
+            <label className="text-xs text-gray-400 block mb-1">Primary Contact</label>
             <input
               type="text"
-              value={siteCode}
-              onChange={e => setSiteCode(e.target.value.toUpperCase().slice(0, 5))}
-              placeholder="e.g. IAD"
+              value={primaryContact}
+              onChange={e => setPrimaryContact(e.target.value)}
+              placeholder="Jane Smith"
               className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
                          placeholder-gray-600 focus:outline-none focus:border-blue-500"
             />
           </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Org Size</label>
+            <select
+              value={orgSize}
+              onChange={e => setOrgSize(e.target.value as OrgSize)}
+              className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                         focus:outline-none focus:border-blue-500"
+            >
+              <option value="">— select —</option>
+              <option value="startup">Startup (&lt;50 employees)</option>
+              <option value="smb">SMB (50-500)</option>
+              <option value="midmarket">Mid-market (500-5000)</option>
+              <option value="enterprise">Enterprise (5000+)</option>
+              <option value="hyperscale">Hyperscale</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Budget Tier</label>
+            <select
+              value={budgetTier}
+              onChange={e => setBudgetTier(e.target.value as BudgetTier)}
+              className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                         focus:outline-none focus:border-blue-500"
+            >
+              <option value="">— any budget —</option>
+              <option value="smb">SMB (&lt;$50K)</option>
+              <option value="mid">Mid-market ($50K-$500K)</option>
+              <option value="enterprise">Enterprise ($500K-$2M)</option>
+              <option value="hyperscale">Hyperscale ($5M+)</option>
+            </select>
+          </div>
         </div>
       </Card>
 
-      {/* Scale + Redundancy */}
-      <div className="grid grid-cols-2 gap-4">
-        <Card>
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">Scale</h3>
-          <div className="space-y-2">
-            {SCALES.map(s => (
-              <label key={s.id} className="flex items-center gap-3 cursor-pointer group">
-                <input
-                  type="radio"
-                  name="scale"
-                  value={s.id}
-                  checked={scale === s.id}
-                  onChange={() => setScale(s.id)}
-                  className="accent-blue-500"
-                />
-                <div>
-                  <div className="text-sm text-gray-200 group-hover:text-white">{s.label}</div>
-                  <div className="text-xs text-gray-500">{s.desc}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-        </Card>
-
-        <Card>
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">Redundancy</h3>
-          <div className="space-y-2">
-            {(['single', 'dual'] as Redundancy[]).map(r => (
-              <label key={r} className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="radio"
-                  name="redundancy"
-                  value={r}
-                  checked={redundancy === r}
-                  onChange={() => setRedundancy(r)}
-                  className="accent-blue-500"
-                />
-                <span className="text-sm text-gray-200 capitalize">{r}</span>
-              </label>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* Link Distances */}
+      {/* Preferred Vendors */}
       <Card>
-        <h3 className="text-sm font-semibold text-gray-300 mb-3">Link Distances</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {([
-            { key: 'spine-leaf',  label: 'Spine ↔ Leaf' },
-            { key: 'dist-access', label: 'Dist ↔ Access' },
-            { key: 'core-dist',   label: 'Core ↔ Dist' },
-            { key: 'wan-edge',    label: 'WAN Edge' },
-          ] as const).map(({ key, label }) => (
-            <div key={key}>
-              <label className="text-xs text-gray-400 block mb-1">{label}</label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
-                  min={1}
-                  max={80000}
-                  value={linkDistances[key]}
-                  onChange={e => setLinkDistance(key, Number(e.target.value))}
-                  className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm
-                             text-gray-200 focus:outline-none focus:border-blue-500"
-                />
-                <span className="text-xs text-gray-500 whitespace-nowrap">m</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* App types */}
-      <Card>
-        <h3 className="text-sm font-semibold text-gray-300 mb-3">Application Types (optional)</h3>
-        <div className="flex flex-wrap gap-2">
-          {APP_TYPES.map(at => (
+        <h3 className="text-sm font-semibold text-gray-300 mb-1">
+          Preferred Vendors <span className="text-gray-500 font-normal">(optional)</span>
+        </h3>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {VENDORS.map(v => (
             <button
-              key={at.id}
-              onClick={() => toggleAppType(at.id)}
+              key={v}
+              onClick={() => toggleVendor(v)}
               className={cn(
-                'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
-                appTypes.includes(at.id)
+                'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer',
+                vendorPrefs.includes(v)
                   ? 'bg-blue-600/30 border-blue-500 text-blue-300'
                   : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30',
               )}
             >
-              {at.label}
+              {v}
             </button>
           ))}
         </div>
       </Card>
 
-      {/* Compliance */}
+      {/* Industry */}
       <Card>
-        <h3 className="text-sm font-semibold text-gray-300 mb-3">Compliance Requirements (optional)</h3>
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">Industry</h3>
         <div className="flex flex-wrap gap-2">
-          {COMPLIANCE_OPTIONS.map(c => (
+          {INDUSTRIES.map(ind => (
             <button
-              key={c.id}
-              onClick={() => toggleCompliance(c.id)}
+              key={ind.label}
+              onClick={() => toggleIndustry(ind.label)}
               className={cn(
-                'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
-                compliance.includes(c.id)
+                'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer',
+                industry === ind.label
                   ? 'bg-purple-600/30 border-purple-500 text-purple-300'
                   : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30',
               )}
             >
-              {c.label}
+              {ind.icon} {ind.label}
             </button>
           ))}
         </div>
       </Card>
 
-      <div className="flex justify-end">
+      <div className="flex justify-between">
+        {onBack ? (
+          <Button variant="secondary" onClick={onBack}>← Back</Button>
+        ) : (
+          <span />
+        )}
         <Button onClick={nextStep} disabled={!useCase} size="lg">
-          Next: Design →
+          Continue →
         </Button>
       </div>
     </div>

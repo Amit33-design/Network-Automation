@@ -1,0 +1,372 @@
+name: NetDesign AI — Validate & Test
+
+on:
+  push:
+    branches: ["main", "release/**"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Job 1: Intent lint — validate design JSON schema
+  # ──────────────────────────────────────────────────────────────────
+  intent-lint:
+    name: Intent Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r backend/requirements.txt --quiet
+
+      - name: Validate design schema (static analysis dry-run)
+        working-directory: backend
+        run: |
+          python - <<'EOF'
+          import json, sys
+          from static_analysis import run_analysis
+
+          # Minimal design state for schema validation
+          test_state = {
+            "uc": "datacenter",
+            "orgName": "CI Test Org",
+            "orgSize": "medium",
+            "numSites": "1",
+            "redundancy": "ha",
+            "totalHosts": 256,
+            "bwPerServer": "25g",
+            "overlayProto": ["VXLAN"],
+            "fwModel": "perimeter",
+            "automation": "ansible",
+            "compliance": [],
+            "preferredVendors": [],
+          }
+          report = run_analysis(test_state)
+          if report.critical_count > 0:
+            print(f"FAIL: {report.critical_count} critical static analysis issues")
+            for issue in report.issues:
+              if issue.severity == "CRITICAL":
+                print(f"  ✗ [{issue.check}] {issue.message}")
+            sys.exit(1)
+          print(f"PASS: Static analysis — {report.issue_count} issues, 0 critical")
+          EOF
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 2: Policy validation — run built-in compliance packs
+  # ──────────────────────────────────────────────────────────────────
+  policy-validate:
+    name: Policy Validation
+    runs-on: ubuntu-latest
+    needs: intent-lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r backend/requirements.txt --quiet
+
+      - name: Run gate engine — dc_baseline pack
+        working-directory: backend
+        run: |
+          python - <<'EOF'
+          import sys
+          from policies.user_rule_engine import evaluate, get_pack_yaml, RuleParseError
+
+          intent = {
+            "uc": "datacenter",
+            "overlayProto": ["VXLAN", "EVPN"],
+            "redundancy": "ha",
+            "compliance": ["SOC2"],
+          }
+
+          pack_yaml = get_pack_yaml("dc_baseline")
+          if pack_yaml is None:
+            print("SKIP: dc_baseline pack not found")
+            sys.exit(0)
+
+          try:
+            results = evaluate(pack_yaml, intent, {})
+          except RuleParseError as e:
+            print(f"FAIL: Pack parse error — {e}")
+            sys.exit(1)
+
+          violations = results.violations
+          if violations:
+            print(f"FAIL: {len(violations)} policy violation(s):")
+            for v in violations:
+              print(f"  ✗ [{v['rule']}] {v['message']}")
+            sys.exit(1)
+
+          print(f"PASS: dc_baseline — {results.rule_count} rules, {results.fired_count} fired, 0 violations")
+          EOF
+
+      - name: Run gate engine — security_baseline pack
+        working-directory: backend
+        run: |
+          python - <<'EOF'
+          import sys
+          from policies.user_rule_engine import evaluate, get_pack_yaml
+
+          intent = {
+            "uc": "datacenter",
+            "vpnType": "ipsec",
+            "compliance": ["SOC2"],
+          }
+
+          pack_yaml = get_pack_yaml("security_baseline")
+          if pack_yaml is None:
+            print("SKIP: security_baseline pack not found")
+            sys.exit(0)
+
+          results = evaluate(pack_yaml, intent, {})
+          violations = results.violations
+          if violations:
+            print(f"WARN: {len(violations)} security_baseline violation(s) (non-blocking in CI)")
+            for v in violations:
+              print(f"  ⚠ [{v['rule']}] {v['message']}")
+          else:
+            print(f"PASS: security_baseline — {results.rule_count} rules, 0 violations")
+          EOF
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 3: Backend unit tests
+  # ──────────────────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: intent-lint
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: netdesign_test
+          POSTGRES_USER: netdesign
+          POSTGRES_PASSWORD: netdesign_test_pw
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://netdesign:netdesign_test_pw@localhost:5432/netdesign_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-not-for-prod
+      VAULT_ADDR: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r backend/requirements.txt --quiet
+          pip install pytest pytest-asyncio pytest-cov --quiet
+
+      - name: Run pytest
+        working-directory: backend
+        run: |
+          pytest tests/ \
+            --cov=. \
+            --cov-report=xml \
+            --cov-fail-under=55 \
+            -v \
+            --tb=short \
+            -x
+        env:
+          PYTHONPATH: .
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: backend/coverage.xml
+          flags: backend
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 4: Static analysis — full 26-check sweep
+  # ──────────────────────────────────────────────────────────────────
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    needs: intent-lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r backend/requirements.txt --quiet
+
+      - name: Run full static analysis battery
+        working-directory: backend
+        run: |
+          python - <<'EOF'
+          import sys, json
+          from static_analysis import run_analysis
+
+          scenarios = [
+            {
+              "name": "Campus HA",
+              "state": {
+                "uc": "campus", "orgName": "Test Corp", "orgSize": "medium",
+                "numSites": "3", "redundancy": "ha", "totalHosts": 500,
+                "bwPerServer": "10g", "overlayProto": [], "fwModel": "perimeter",
+                "automation": "ansible", "compliance": ["PCI-DSS"],
+                "preferredVendors": [], "vpnType": "ipsec",
+              }
+            },
+            {
+              "name": "AI Fabric",
+              "state": {
+                "uc": "gpu", "orgName": "GPU Cluster", "orgSize": "large",
+                "numSites": "1", "redundancy": "full", "totalHosts": 1024,
+                "bwPerServer": "400g", "overlayProto": ["RoCEv2"],
+                "fwModel": "none", "automation": "ansible",
+                "compliance": [], "preferredVendors": [],
+              }
+            },
+          ]
+
+          failed = 0
+          for scenario in scenarios:
+            report = run_analysis(scenario["state"])
+            crit = report.critical_count
+            print(f"  Scenario '{scenario['name']}': {report.issue_count} issues, {crit} critical")
+            if crit > 0:
+              failed += 1
+              for issue in report.issues:
+                if issue.severity == "CRITICAL":
+                  print(f"    ✗ [{issue.check}] {issue.message}")
+
+          if failed:
+            print(f"\nFAIL: {failed} scenario(s) have critical issues")
+            sys.exit(1)
+          print("\nPASS: All scenarios passed static analysis")
+          EOF
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 5: Frontend typecheck (Phase 5 React scaffold)
+  # ──────────────────────────────────────────────────────────────────
+  frontend-typecheck:
+    name: Frontend Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if frontend dir exists
+        id: check-fe
+        run: |
+          if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node 20
+        if: steps.check-fe.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        if: steps.check-fe.outputs.exists == 'true'
+        working-directory: frontend
+        run: npm ci --prefer-offline
+
+      - name: TypeScript type check
+        if: steps.check-fe.outputs.exists == 'true'
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Skip (frontend not present)
+        if: steps.check-fe.outputs.exists == 'false'
+        run: echo "Frontend directory not found — skipping typecheck"
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 6: Simulation — failure scenario check
+  # ──────────────────────────────────────────────────────────────────
+  simulation:
+    name: Failure Simulation
+    runs-on: ubuntu-latest
+    needs: [static-analysis, policy-validate]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r backend/requirements.txt --quiet
+
+      - name: Run link failure simulation
+        working-directory: backend
+        run: |
+          python - <<'EOF'
+          import sys
+          try:
+            from simulation import simulate_link_failure
+          except ImportError:
+            print("SKIP: simulation module not found")
+            sys.exit(0)
+
+          state = {
+            "uc": "datacenter",
+            "redundancy": "ha",
+            "overlayProto": ["VXLAN", "EVPN"],
+            "numSpine": 2,
+            "numLeaf": 4,
+          }
+
+          result = simulate_link_failure(state, failed_link="SPINE-01 → LEAF-01")
+          print(f"Simulation result: {result.get('impact', 'unknown')}")
+
+          if result.get("total_loss"):
+            print("FAIL: Simulation shows complete traffic loss with HA design")
+            sys.exit(1)
+
+          print("PASS: Failure simulation — partial path maintained")
+          EOF

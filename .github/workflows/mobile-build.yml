@@ -1,0 +1,138 @@
+name: Build Mobile Apps
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+jobs:
+  # ── Android APK / AAB ────────────────────────────────────────────────────────
+  android:
+    name: Android Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Capacitor deps
+        working-directory: mobile
+        run: npm install
+
+      - name: Build web assets
+        working-directory: mobile
+        run: node build-web.js
+
+      - name: Initialize Android platform
+        working-directory: mobile
+        run: |
+          npx cap add android 2>/dev/null || true
+          npx cap sync android
+
+      - name: Copy Android icons
+        working-directory: mobile
+        run: |
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            dest="android/app/src/main/res/mipmap-${density}"
+            mkdir -p "$dest"
+            cp "android-resources/mipmap-${density}/ic_launcher.png" "$dest/" 2>/dev/null || true
+          done
+
+      - name: Update Android app metadata
+        working-directory: mobile/android
+        run: |
+          # Set version name and code
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          BUILD="${{ github.run_number }}"
+          sed -i "s/versionCode .*/versionCode ${BUILD}/" app/build.gradle || true
+          sed -i "s/versionName .*/versionName \"${VERSION}\"/" app/build.gradle || true
+
+      - name: Make gradlew executable
+        working-directory: mobile/android
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Build release AAB (unsigned)
+        working-directory: mobile/android
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: Sign APK
+        if: env.ANDROID_KEYSTORE != ''
+        env:
+          ANDROID_KEYSTORE:          ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE" | base64 --decode > release.keystore
+          $ANDROID_HOME/build-tools/*/apksigner sign \
+            --ks release.keystore \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --key-pass "pass:$ANDROID_KEY_PASSWORD" \
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: netdesign-android
+          path: |
+            mobile/android/app/build/outputs/apk/debug/*.apk
+            mobile/android/app/build/outputs/bundle/release/*.aab
+          retention-days: 30
+
+  # ── Attach to GitHub Release ─────────────────────────────────────────────────
+  release:
+    name: Attach to Release
+    needs: android
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Android artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rename APK for release
+        run: |
+          VERSION="${{ github.ref_name }}"
+          find artifacts -name "*.apk" -exec mv {} "artifacts/NetDesign-AI-${VERSION}.apk" \; 2>/dev/null || true
+          find artifacts -name "*.aab" -exec mv {} "artifacts/NetDesign-AI-${VERSION}.aab" \; 2>/dev/null || true
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.apk
+            artifacts/*.aab
+          body: |
+            ### 📱 Android
+            | File | Use for |
+            |------|---------|
+            | `NetDesign-AI-*.apk` | Direct install (sideload) on Android |
+            | `NetDesign-AI-*.aab` | Google Play Store submission |
+
+            **Sideload instructions:**
+            1. On Android: Settings → Apps → Install unknown apps → allow your browser
+            2. Download the `.apk` file and tap to install
+            3. Open NetDesign AI → enter your server URL → Connect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
