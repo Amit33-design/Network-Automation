@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ToastProvider } from '@/components/ui/Toast'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -20,6 +20,39 @@ const queryClient = new QueryClient({
   },
 })
 
+const STEP_NAMES = [
+  'Use Case',
+  'Network Requirements',
+  'Products & BOM',
+  'Network Design',
+  'Config Generation',
+  'Deploy & Validate',
+]
+
+function BreadcrumbBar({ step }: { step: number }) {
+  const pct = Math.round((step / STEP_NAMES.length) * 100)
+  const label = STEP_NAMES[step - 1] ?? ''
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs text-gray-400">
+          Step {step} of {STEP_NAMES.length}
+        </span>
+        <span className="text-xs text-gray-600">›</span>
+        <span className="text-xs font-medium text-gray-300">{label}</span>
+        <span className="ml-auto text-xs text-gray-500">{pct}%</span>
+      </div>
+      <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-blue-500 rounded-full transition-all duration-300"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 function WizardContent({ onBackToLanding }: { onBackToLanding: () => void }) {
   const step = useAppStore(s => s.step)
 
@@ -40,6 +73,21 @@ export default function App() {
   const [isLive, setIsLive] = useState(false)
   const [backendUrl, setBackendUrl] = useState('http://localhost:8000')
   const setStep = useAppStore(s => s.setStep)
+  const step = useAppStore(s => s.step)
+
+  // M-57: on mount, check for ?design= param and restore state
+  useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get('design')
+    if (param) {
+      try {
+        const decoded = JSON.parse(decodeURIComponent(atob(param)))
+        useAppStore.setState(decoded)
+        setShowLanding(false)
+      } catch {
+        // ignore malformed design param
+      }
+    }
+  }, [])
 
   function goHome() {
     setShowLanding(true)
@@ -82,7 +130,12 @@ export default function App() {
                 </div>
                 {showTroubleshooting
                   ? <TroubleshootingEngine />
-                  : <WizardContent onBackToLanding={() => setShowLanding(true)} />
+                  : (
+                    <>
+                      <BreadcrumbBar step={step} />
+                      <WizardContent onBackToLanding={() => setShowLanding(true)} />
+                    </>
+                  )
                 }
               </main>
             </div>

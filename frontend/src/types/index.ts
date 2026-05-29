@@ -128,6 +128,9 @@ export interface AppState {
   budgetTier: BudgetTier
   vendorPrefs: string[]
   industry: string
+  primaryContact: string
+  // Custom policy rules (M-55)
+  customPolicyRules: string
   // Step 2 — Network Requirements
   trafficPattern: TrafficPattern
   totalEndpoints: number

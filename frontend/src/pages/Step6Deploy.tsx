@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { useTopologySummary, useTopologyDevices } from '@/hooks/useTopology'
 import { useRunZTP } from '@/hooks/useZTP'
 import { useRunChecks } from '@/hooks/useChecks'
@@ -732,6 +732,15 @@ export function Step6Deploy() {
   const [deployDone, setDeployDone] = useState(false)
   const [deviceStatuses, setDeviceStatuses] = useState<Record<string, StageStatus>>({})
 
+  // M-38 — Grid / Table toggle
+  const [deviceView, setDeviceView] = useState<'grid' | 'table'>('grid')
+
+  // M-39 — Canary mode
+  const [canaryMode, setCanaryMode] = useState(false)
+  const [awaitingCanaryConfirm, setAwaitingCanaryConfirm] = useState(false)
+  const [canaryHostname, setCanaryHostname] = useState('')
+  const canaryResolveRef = useRef<((cont: boolean) => void) | null>(null)
+
   // ── topology ──────────────────────────────────────────────────────────────
   const { data: summary } = useTopologySummary()
   const { data: allDevices = [] } = useTopologyDevices()
@@ -742,12 +751,14 @@ export function Step6Deploy() {
     unitPrice: 0, totalPrice: 0, speed: '100G', ports: 48, features: d.tags ?? [],
   }))
 
-  // ── Deploy Pipeline logic ─────────────────────────────────────────────────
+  // ── Deploy Pipeline logic (M-39 canary support) ──────────────────────────
   async function handleStartDeploy() {
     if (isDeploying) return
     setIsDeploying(true)
     setDeployDone(false)
     setDeployLog([])
+    setAwaitingCanaryConfirm(false)
+    setCanaryHostname('')
     setStageStatus({ precheck: 'pending', backup: 'pending', push: 'pending', verify: 'pending', postcheck: 'pending' })
 
     const devStatuses: Record<string, StageStatus> = {}
@@ -772,13 +783,59 @@ export function Step6Deploy() {
 
     setStageStatus(s => ({ ...s, push: 'running' }))
     log('▶ Starting: Push Configurations')
-    for (const d of allDevices) {
+
+    const devList = [...allDevices]
+
+    if (canaryMode && devList.length > 0) {
+      // Deploy canary (first device) only
+      const canary = devList[0]
+      log(`🐤 Canary mode: deploying ${canary.name} first`)
       await new Promise(r => setTimeout(r, 300))
-      setDeviceStatuses(prev => ({ ...prev, [d.name]: 'running' }))
-      await new Promise(r => setTimeout(r, 500))
-      setDeviceStatuses(prev => ({ ...prev, [d.name]: 'done' }))
-      log(`✔ Config pushed: ${d.name}`)
+      setDeviceStatuses(prev => ({ ...prev, [canary.name]: 'running' }))
+      await new Promise(r => setTimeout(r, 600))
+      setDeviceStatuses(prev => ({ ...prev, [canary.name]: 'done' }))
+      log(`✔ Canary config pushed: ${canary.name}`)
+
+      // Pause and wait for user confirmation
+      setCanaryHostname(canary.name)
+      setAwaitingCanaryConfirm(true)
+      const continueRollout = await new Promise<boolean>(resolve => {
+        canaryResolveRef.current = resolve
+      })
+      setAwaitingCanaryConfirm(false)
+      canaryResolveRef.current = null
+
+      if (!continueRollout) {
+        // Abort — reset remaining devices to pending
+        const resets: Record<string, StageStatus> = {}
+        for (const d of devList.slice(1)) resets[d.name] = 'pending'
+        setDeviceStatuses(prev => ({ ...prev, ...resets }))
+        log('⛔ Canary rollout aborted — remaining devices reset to pending')
+        setStageStatus(s => ({ ...s, push: 'failed' }))
+        setIsDeploying(false)
+        showToast('Canary deployment aborted', 'warning')
+        return
+      }
+
+      log(`✅ Canary confirmed — continuing full rollout (${devList.length - 1} remaining)`)
+      for (const d of devList.slice(1)) {
+        await new Promise(r => setTimeout(r, 300))
+        setDeviceStatuses(prev => ({ ...prev, [d.name]: 'running' }))
+        await new Promise(r => setTimeout(r, 500))
+        setDeviceStatuses(prev => ({ ...prev, [d.name]: 'done' }))
+        log(`✔ Config pushed: ${d.name}`)
+      }
+    } else {
+      // Normal (non-canary) push
+      for (const d of devList) {
+        await new Promise(r => setTimeout(r, 300))
+        setDeviceStatuses(prev => ({ ...prev, [d.name]: 'running' }))
+        await new Promise(r => setTimeout(r, 500))
+        setDeviceStatuses(prev => ({ ...prev, [d.name]: 'done' }))
+        log(`✔ Config pushed: ${d.name}`)
+      }
     }
+
     setStageStatus(s => ({ ...s, push: 'done' }))
 
     await runStage('verify', ['✔ BGP sessions re-established', '✔ Route table validated', '✔ Interface states verified'], 1500)
@@ -903,17 +960,46 @@ export function Step6Deploy() {
       {/* ── Deploy Pipeline tab ─────────────────────────────────────────── */}
       {tab === 'deploy' && (
         <div className="space-y-6">
-          {/* Action bar */}
-          <div className="flex gap-3 items-center">
+          {/* M-39 — Canary mode toggle + Action bar */}
+          <div className="flex flex-wrap gap-3 items-center">
+            {/* Canary toggle (only before deploy starts) */}
+            {!isDeploying && !deployDone && (
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <div
+                  onClick={() => setCanaryMode(v => !v)}
+                  className={cn(
+                    'relative w-9 h-5 rounded-full transition-colors',
+                    canaryMode ? 'bg-yellow-500' : 'bg-white/20',
+                  )}
+                >
+                  <span className={cn(
+                    'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                    canaryMode ? 'translate-x-4' : 'translate-x-0',
+                  )} />
+                </div>
+                <span className="text-xs text-gray-400 font-medium">Canary Mode</span>
+              </label>
+            )}
+
             <Button onClick={handleStartDeploy} disabled={isDeploying}>
               {isDeploying ? '⏳ Deploying…' : '🚀 Start Deploy'}
             </Button>
+
+            {/* M-39 — CANARY badge in action bar */}
+            {canaryMode && (
+              <span className="px-2 py-0.5 rounded text-xs font-bold bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 tracking-widest">
+                CANARY
+              </span>
+            )}
+
             {deployDone && (
               <Button variant="secondary" onClick={() => {
                 setStageStatus({ precheck: 'pending', backup: 'pending', push: 'pending', verify: 'pending', postcheck: 'pending' })
                 setDeployLog([])
                 setDeployDone(false)
                 setDeviceStatuses({})
+                setAwaitingCanaryConfirm(false)
+                setCanaryHostname('')
               }}>
                 &#8634; Reset
               </Button>
@@ -924,6 +1010,33 @@ export function Step6Deploy() {
               </Button>
             )}
           </div>
+
+          {/* M-39 — Canary confirmation banner */}
+          {awaitingCanaryConfirm && (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 rounded-xl
+                            border border-yellow-500/40 bg-yellow-500/10">
+              <span className="text-yellow-300 text-sm font-medium flex-1">
+                Canary device <code className="font-mono font-bold">{canaryHostname}</code> deployed
+                successfully. Confirm to continue full rollout?
+              </span>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={() => canaryResolveRef.current?.(false)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded border border-red-500/40
+                             bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                >
+                  Abort
+                </button>
+                <button
+                  onClick={() => canaryResolveRef.current?.(true)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded border border-green-500/40
+                             bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
+                >
+                  Continue Rollout
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Stage pipeline */}
           <div className="space-y-2">
@@ -964,30 +1077,111 @@ export function Step6Deploy() {
             })}
           </div>
 
-          {/* Device status grid */}
+          {/* M-38 — Device status grid with Grid/Table toggle */}
           {Object.keys(deviceStatuses).length > 0 && (
             <Card>
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">Device Status</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                {allDevices.map(d => {
-                  const ds = deviceStatuses[d.name] ?? 'pending'
-                  return (
-                    <div
-                      key={d.name}
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-300">Device Status</h3>
+                {/* Grid / Table toggle */}
+                <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-lg p-0.5">
+                  {(['grid', 'table'] as const).map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setDeviceView(v)}
                       className={cn(
-                        'p-2 rounded-lg border text-xs font-mono',
-                        ds === 'done'    ? 'border-green-500/40 bg-green-500/5 text-green-400' :
-                        ds === 'running' ? 'border-blue-500/40 bg-blue-500/5 text-blue-400' :
-                        ds === 'failed'  ? 'border-red-500/40 bg-red-500/5 text-red-400' :
-                        'border-white/10 text-gray-500',
+                        'px-3 py-1 text-xs font-semibold rounded transition-colors',
+                        deviceView === v
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-500 hover:text-gray-300',
                       )}
                     >
-                      <div className="font-bold truncate">{d.name}</div>
-                      <div className="text-gray-600 capitalize">{ds}</div>
-                    </div>
-                  )
-                })}
+                      {v.charAt(0).toUpperCase() + v.slice(1)}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              {/* Grid view (default) */}
+              {deviceView === 'grid' && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {allDevices.map(d => {
+                    const ds = deviceStatuses[d.name] ?? 'pending'
+                    return (
+                      <div
+                        key={d.name}
+                        className={cn(
+                          'p-2 rounded-lg border text-xs font-mono',
+                          ds === 'done'    ? 'border-green-500/40 bg-green-500/5 text-green-400' :
+                          ds === 'running' ? 'border-blue-500/40 bg-blue-500/5 text-blue-400' :
+                          ds === 'failed'  ? 'border-red-500/40 bg-red-500/5 text-red-400' :
+                          'border-white/10 text-gray-500',
+                        )}
+                      >
+                        <div className="font-bold truncate">{d.name}</div>
+                        <div className="text-gray-600 capitalize">{ds}</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Table view (M-38) */}
+              {deviceView === 'table' && (
+                <div className="overflow-x-auto rounded-lg border border-white/10">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 bg-white/5">
+                        {['#', 'Hostname', 'Role', 'Stage', 'Status', 'Actions'].map(h => (
+                          <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allDevices.map((d, idx) => {
+                        const ds = deviceStatuses[d.name] ?? 'pending'
+                        const statusBadgeStyle: Record<StageStatus, string> = {
+                          pending:  'text-gray-400 bg-white/5 border-white/10',
+                          running:  'text-blue-400 bg-blue-500/10 border-blue-500/30',
+                          done:     'text-green-400 bg-green-500/10 border-green-500/30',
+                          failed:   'text-red-400 bg-red-500/10 border-red-500/30',
+                        }
+                        return (
+                          <tr key={d.name} className="border-b border-white/5 hover:bg-white/[0.02]">
+                            <td className="px-3 py-2 text-xs text-gray-600 font-mono">{idx + 1}</td>
+                            <td className="px-3 py-2 font-mono font-semibold text-gray-200 text-xs">{d.name}</td>
+                            <td className="px-3 py-2 text-xs text-gray-500 capitalize">{d.role}</td>
+                            <td className="px-3 py-2 text-xs text-gray-500">push</td>
+                            <td className="px-3 py-2">
+                              <span className={cn(
+                                'px-2 py-0.5 rounded text-xs font-semibold border',
+                                statusBadgeStyle[ds],
+                              )}>
+                                {ds.charAt(0).toUpperCase() + ds.slice(1)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                disabled={!deployDone}
+                                onClick={() => {
+                                  setDeviceStatuses(prev => ({ ...prev, [d.name]: 'pending' }))
+                                }}
+                                className={cn(
+                                  'px-2 py-0.5 rounded text-xs font-medium border transition-colors',
+                                  deployDone
+                                    ? 'border-white/20 text-gray-400 hover:bg-white/10 hover:text-gray-200 cursor-pointer'
+                                    : 'border-white/5 text-gray-700 cursor-not-allowed',
+                                )}
+                              >
+                                Retry
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </Card>
           )}
 

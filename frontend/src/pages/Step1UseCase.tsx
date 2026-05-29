@@ -35,8 +35,8 @@ interface Props {
 
 export function Step1UseCase({ onBack }: Props) {
   const {
-    useCase, orgName, orgSize, budgetTier, vendorPrefs, industry,
-    setUseCase, setOrgName, setOrgSize, setBudgetTier, setVendorPrefs, setIndustry,
+    useCase, orgName, orgSize, budgetTier, vendorPrefs, industry, primaryContact,
+    setUseCase, setOrgName, setOrgSize, setBudgetTier, setVendorPrefs, setIndustry, setPrimaryContact,
     nextStep,
   } = useAppStore()
 
@@ -80,7 +80,7 @@ export function Step1UseCase({ onBack }: Props) {
       {/* Organisation Details */}
       <Card>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">Organisation Details</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="text-xs text-gray-400 block mb-1">Org Name</label>
             <input
@@ -88,6 +88,17 @@ export function Step1UseCase({ onBack }: Props) {
               value={orgName}
               onChange={e => setOrgName(e.target.value)}
               placeholder="Acme Corporation"
+              className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                         placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Primary Contact</label>
+            <input
+              type="text"
+              value={primaryContact}
+              onChange={e => setPrimaryContact(e.target.value)}
+              placeholder="Jane Smith"
               className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
                          placeholder-gray-600 focus:outline-none focus:border-blue-500"
             />

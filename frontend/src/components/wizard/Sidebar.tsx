@@ -4,6 +4,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { MyDesigns } from '@/components/MyDesigns'
 import { ConfigPolicyModal } from '@/components/ConfigPolicyModal'
 import { ExportModal } from '@/components/ExportModal'
+import { PolicyRulesEditor } from '@/components/PolicyRulesEditor'
 
 interface SidebarProps {
   onGoHome: () => void
@@ -34,8 +35,23 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }
   const [showMyDesigns, setShowMyDesigns] = useState(false)
   const [showConfigPolicy, setShowConfigPolicy] = useState(false)
   const [showExport, setShowExport] = useState(false)
+  const [showPolicyRules, setShowPolicyRules] = useState(false)
+  const [shareCopied, setShareCopied] = useState(false)
 
   function nav(n: number) { setStep(n) }
+
+  function handleShare() {
+    const json = JSON.stringify(useAppStore.getState())
+    const encoded = btoa(encodeURIComponent(json))
+    const url = `${window.location.origin}${window.location.pathname}?design=${encoded}`
+    navigator.clipboard.writeText(url).then(() => {
+      setShareCopied(true)
+      setTimeout(() => setShareCopied(false), 2000)
+    }).catch(() => {
+      // fallback: still update URL
+      window.history.replaceState(null, '', `?design=${encoded}`)
+    })
+  }
 
   const itemCls = (n: number) => cn(
     'flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-left',
@@ -145,6 +161,16 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }
           <span className="text-base">📤</span>
           <span>Export</span>
         </button>
+        <button onClick={handleShare}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+          <span className="text-base">🔗</span>
+          <span>{shareCopied ? 'Copied!' : 'Share Design'}</span>
+        </button>
+        <button onClick={() => setShowPolicyRules(true)}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+          <span className="text-base">📋</span>
+          <span>Policy Rules</span>
+        </button>
       </div>
 
       {/* Step indicator at bottom */}
@@ -164,6 +190,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }
         devices={devices}
         configs={configs}
       />
+      <PolicyRulesEditor open={showPolicyRules} onClose={() => setShowPolicyRules(false)} />
     </aside>
   )
 }

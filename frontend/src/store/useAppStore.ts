@@ -26,6 +26,9 @@ interface AppStore extends AppState {
   setBudgetTier: (tier: BudgetTier) => void
   setVendorPrefs: (prefs: string[]) => void
   setIndustry: (industry: string) => void
+  setPrimaryContact: (contact: string) => void
+  // M-55
+  setCustomPolicyRules: (rules: string) => void
 
   // Step 2 setters — requirements
   setTrafficPattern: (p: TrafficPattern) => void
@@ -99,6 +102,8 @@ const DEFAULT_STATE: AppState = {
   budgetTier: '',
   vendorPrefs: [],
   industry: '',
+  primaryContact: '',
+  customPolicyRules: '',
   // Step 2 — Network Requirements
   trafficPattern: 'ew',
   totalEndpoints: 500,
@@ -147,6 +152,8 @@ export const useAppStore = create<AppStore>()(
       setBudgetTier: budgetTier => set({ budgetTier }),
       setVendorPrefs: vendorPrefs => set({ vendorPrefs }),
       setIndustry: industry => set({ industry }),
+      setPrimaryContact: primaryContact => set({ primaryContact }),
+      setCustomPolicyRules: customPolicyRules => set({ customPolicyRules }),
 
       setTrafficPattern: trafficPattern => set({ trafficPattern }),
       setTotalEndpoints: totalEndpoints => set({ totalEndpoints }),
