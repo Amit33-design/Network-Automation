@@ -136,6 +136,7 @@ export interface AppState {
   protoFeatures: string[]
   firewallModel: FirewallModel
   redundancyModel: RedundancyModel
+  numSites: number
 }
 
 // ── Lab Demo API types ────────────────────────────────────────────────────────

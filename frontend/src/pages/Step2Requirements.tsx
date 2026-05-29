@@ -59,10 +59,10 @@ const OVERSUBSCRIPTION_OPTIONS = [
 export function Step2Requirements() {
   const {
     redundancyModel, trafficPattern, totalEndpoints, bandwidthPerServer, oversubscription,
-    underlayProtocol, overlayProtocols, protoFeatures, compliance, appTypes,
+    underlayProtocol, overlayProtocols, protoFeatures, compliance, appTypes, numSites,
     setRedundancyModel, setTrafficPattern, setTotalEndpoints, setBandwidthPerServer,
     setOversubscription, setUnderlayProtocol, setOverlayProtocols, setProtoFeatures,
-    setCompliance, setAppTypes,
+    setCompliance, setAppTypes, setNumSites,
     nextStep, prevStep,
   } = useAppStore()
 
@@ -145,7 +145,7 @@ export function Step2Requirements() {
       {/* Capacity */}
       <Card>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">Capacity</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="text-xs text-gray-400 block mb-1">Total Endpoints</label>
             <input
@@ -183,6 +183,18 @@ export function Step2Requirements() {
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Number of Sites</label>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={numSites}
+              onChange={e => setNumSites(Math.max(1, Math.min(500, Number(e.target.value))))}
+              className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                         focus:outline-none focus:border-blue-500"
+            />
           </div>
         </div>
       </Card>

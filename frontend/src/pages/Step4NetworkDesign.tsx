@@ -20,13 +20,14 @@ export function Step4NetworkDesign() {
   const {
     useCase, scale, siteCode, linkDistances,
     underlayProtocol, overlayProtocols, redundancyModel,
+    totalEndpoints, bandwidthPerServer, oversubscription,
     devices, setDevices,
     nextStep, prevStep,
   } = useAppStore()
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
-    () => buildBOM({ useCase, scale, siteCode }),
-    [useCase, scale, siteCode]
+    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription }),
+    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription]
   )
 
   // Sync generated devices into store
@@ -55,7 +56,11 @@ export function Step4NetworkDesign() {
             ↺ Regenerate
           </button>
         </div>
-        <TopologyDiagram devices={generatedDevices} />
+        <TopologyDiagram
+          devices={generatedDevices}
+          underlayProtocol={underlayProtocol}
+          overlayProtocols={overlayProtocols}
+        />
       </Card>
 
       {/* Design Summary */}

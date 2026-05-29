@@ -36,6 +36,7 @@ interface AppStore extends AppState {
   setProtoFeatures: (f: string[]) => void
   setFirewallModel: (m: FirewallModel) => void
   setRedundancyModel: (m: RedundancyModel) => void
+  setNumSites: (n: number) => void
 
   // Design computed results
   setDevices: (devices: BOMDevice[]) => void
@@ -93,6 +94,7 @@ const DEFAULT_STATE: AppState = {
   protoFeatures: [],
   firewallModel: '',
   redundancyModel: 'ha',
+  numSites: 1,
 }
 
 export const useAppStore = create<AppStore>()(
@@ -128,6 +130,7 @@ export const useAppStore = create<AppStore>()(
       setProtoFeatures: protoFeatures => set({ protoFeatures }),
       setFirewallModel: firewallModel => set({ firewallModel }),
       setRedundancyModel: redundancyModel => set({ redundancyModel }),
+      setNumSites: numSites => set({ numSites }),
 
       setDevices: devices => set({ devices }),
       setCabling: cabling => set({ cabling }),
