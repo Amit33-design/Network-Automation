@@ -1,0 +1,125 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "description": "NetDesign AI — GPU Fabric Telemetry (RoCEv2 / PFC / DCQCN)",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 500 },
+            { "color": "red",    "value": 1000 }
+          ]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "showThresholdLabels": true, "showThresholdMarkers": true },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "gnmi_pfc_watchdog_drops_total{device=~\"gpu.*\"}",
+        "legendFormat": "{{device}}",
+        "refId": "A"
+      }],
+      "title": "PFC Watchdog Drop Events (GPU Leaves)",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right" } },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "gnmi_pfc_watchdog_drops_total{device=~\"gpu.*\"}",
+        "legendFormat": "{{device}}",
+        "refId": "A"
+      }],
+      "title": "PFC Drop Rate Over Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percent", "min": 0, "max": 100 },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right" } },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "gnmi_cpu_utilization{device=~\"spine.*SJC.*|gpu.*\"}",
+        "legendFormat": "{{device}}",
+        "refId": "A"
+      }],
+      "title": "GPU Spine / Leaf CPU Utilization (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "mbits" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right" } },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "gnmi_throughput_mbps{device=~\"gpu.*|spine.*SJC.*\"}",
+        "legendFormat": "{{device}} (RoCEv2 est.)",
+        "refId": "A"
+      }],
+      "title": "GPU Fabric Throughput / RoCEv2 Utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "id": 5,
+      "options": { "legend": { "calcs": ["last"], "displayMode": "list", "placement": "bottom" } },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "rate(gnmi_interface_errors_in_total{device=~\"gpu.*\"}[5m])",
+        "legendFormat": "{{device}} ECN marking est.",
+        "refId": "A"
+      }],
+      "title": "ECN Marking Rate Estimate (errors/s proxy)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["netdesign", "gpu", "rocev2", "pfc"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "GPU Fabric — RoCEv2 / PFC / DCQCN",
+  "uid": "netdesign-gpu",
+  "version": 1
+}

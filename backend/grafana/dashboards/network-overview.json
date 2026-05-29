@@ -1,0 +1,142 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "description": "NetDesign AI — Network Device Overview (gNMI Telemetry)",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 60 },
+            { "color": "red",    "value": 80 }
+          ]},
+          "unit": "percent",
+          "min": 0, "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "showThresholdLabels": false, "showThresholdMarkers": true },
+      "pluginVersion": "9.0.0",
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "gnmi_cpu_utilization",
+        "legendFormat": "{{device}}",
+        "refId": "A"
+      }],
+      "title": "CPU Utilization per Device (%)",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 70 },
+            { "color": "red",    "value": 90 }
+          ]},
+          "unit": "percent",
+          "min": 0, "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "showThresholdLabels": false, "showThresholdMarkers": true },
+      "pluginVersion": "9.0.0",
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "gnmi_memory_utilization",
+        "legendFormat": "{{device}}",
+        "refId": "A"
+      }],
+      "title": "Memory Utilization per Device (%)",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "mbits" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi" } },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "gnmi_throughput_mbps",
+        "legendFormat": "{{device}}",
+        "refId": "A"
+      }],
+      "title": "Interface Throughput (Mbps)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 4,
+      "options": { "legend": { "calcs": ["last"], "displayMode": "list", "placement": "bottom" } },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "rate(gnmi_interface_errors_in_total[5m])",
+        "legendFormat": "{{device}} in",
+        "refId": "A"
+      },{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "rate(gnmi_interface_errors_out_total[5m])",
+        "legendFormat": "{{device}} out",
+        "refId": "B"
+      }],
+      "title": "Interface Error Rate (errors/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 5,
+      "options": { "legend": { "calcs": ["last"], "displayMode": "list", "placement": "bottom" } },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "netdesign-prometheus" },
+        "expr": "gnmi_bgp_prefixes_received",
+        "legendFormat": "{{device}}",
+        "refId": "A"
+      }],
+      "title": "BGP Prefixes Received",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["netdesign", "network", "overview"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Network Overview",
+  "uid": "netdesign-overview",
+  "version": 1
+}

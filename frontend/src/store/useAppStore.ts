@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import type {
   AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry,
   OrgSize, BudgetTier, TrafficPattern, BandwidthPerServer, UnderlayProtocol, FirewallModel, RedundancyModel,
-  VpnType, DcTopology,
+  VpnType, DcTopology, DemoTopology,
 } from '@/types'
 
 interface AppStore extends AppState {
@@ -68,6 +68,10 @@ interface AppStore extends AppState {
   // Config policy blocks
   setPolicyBlocks: (blocks: string[]) => void
 
+  // Demo topology loader
+  demoTopologyId: string
+  loadDemoTopology: (t: DemoTopology) => void
+
   reset: () => void
 }
 
@@ -129,6 +133,7 @@ const DEFAULT_STATE: AppState = {
   bgpAsn: '',
   orgCidr: '',
   aviatrixOptions: [],
+  demoTopologyId: '',
 }
 
 export const useAppStore = create<AppStore>()(
@@ -190,6 +195,24 @@ export const useAppStore = create<AppStore>()(
       setPrometheusAlerts: prometheusAlerts => set({ prometheusAlerts }),
 
       setPolicyBlocks: policyBlocks => set({ policyBlocks }),
+
+      demoTopologyId: '',
+      loadDemoTopology: (t: DemoTopology) => set({
+        useCase: t.useCase,
+        scale: t.scale,
+        siteCode: t.siteCode,
+        siteName: t.siteName,
+        orgName: t.orgName,
+        trafficPattern: t.trafficPattern,
+        underlayProtocol: t.underlayProtocol,
+        totalEndpoints: t.totalEndpoints,
+        devices: t.devices,
+        cabling: t.cabling,
+        optics: t.optics,
+        configs: {},
+        demoTopologyId: t.id,
+        step: 3,
+      }),
 
       reset: () => set(DEFAULT_STATE),
     }),
