@@ -22,24 +22,40 @@
 | M-09 | Richer routing features list | ✅ Done | afb1382 |
 | M-10 | Live summary sidebar Step 2 | ✅ Done | afb1382 |
 | M-13 | Requirement validator | ✅ Done | afb1382 |
-| M-15 | AI product scoring badges | 🔄 In progress | — |
-| M-16 | EOL alert panel | 🔄 In progress | — |
-| M-19 | IP plan tab Step 3 | 🔄 In progress | — |
-| M-23 | Physical Links tab Step 4 | 🔄 In progress | — |
-| M-25 | Mermaid Diagram tab Step 4 | 🔄 In progress | — |
-| M-26 | Simulate tab Step 4 | 🔄 In progress | — |
-| M-27 | Summary tab Step 4 | 🔄 In progress | — |
-| M-33 | Config section nav Step 5 | 🔄 In progress | — |
-| M-35 | Layer filter tabs Step 5 | 🔄 In progress | — |
-| M-48 | Download pre-check script | 🔄 In progress | — |
-| M-49 | Download post-check script | 🔄 In progress | — |
-| M-50 | Download push_configs.py | 🔄 In progress | — |
-| M-51 | Grok log parsing config download | 🔄 In progress | — |
-| M-52 | NetFlow/sFlow exporter config | 🔄 In progress | — |
-| M-54 | Config Policy modal | 🔄 In progress | — |
-| M-56 | My Designs panel | 🔄 In progress | — |
-| M-58 | Backend toggle | 🔄 In progress | — |
-| M-59 | Export modal | 🔄 In progress | — |
+| M-15 | AI product scoring badges | ✅ Done | dd6fb03 |
+| M-16 | EOL alert panel | ✅ Done | dd6fb03 |
+| M-19 | IP plan tab Step 3 | ✅ Done | dd6fb03 |
+| M-23 | Physical Links tab Step 4 | ✅ Done | 8f88526 |
+| M-25 | Mermaid Diagram tab Step 4 | ✅ Done | 8f88526 |
+| M-26 | Simulate tab Step 4 | ✅ Done | 8f88526 |
+| M-27 | Summary tab Step 4 | ✅ Done | 8f88526 |
+| M-33 | Config section nav Step 5 | ✅ Done | 94e3a3c |
+| M-35 | Layer filter tabs Step 5 | ✅ Done | 94e3a3c |
+| M-44 | BGP convergence predictor | ✅ Done | 0910dd1 |
+| M-45 | Symptom classifier | ✅ Done | 0910dd1 |
+| M-46 | Incident search / KB | ✅ Done | 0910dd1 |
+| M-47 | RCA Playbook Generator | ✅ Done | cc01ab9 |
+| M-48 | Download pre-check script | ✅ Done | 94e3a3c |
+| M-49 | Download post-check script | ✅ Done | 94e3a3c |
+| M-50 | Download push_configs.py | ✅ Done | 94e3a3c |
+| M-51 | Grok log parsing config download | ✅ Done | 94e3a3c |
+| M-52 | NetFlow/sFlow exporter config | ✅ Done | 94e3a3c |
+| M-54 | Config Policy modal | ✅ Done | fdca43e |
+| M-56 | My Designs panel | ✅ Done | fdca43e |
+| M-58 | Backend toggle | ✅ Done | fdca43e |
+| M-59 | Export modal | ✅ Done | fdca43e |
+| M-11 | Multi-cloud specific fields Step 2 | 🔄 In progress | — |
+| M-17 | Rack plan section Step 3 | 🔄 In progress | — |
+| M-18 | Port capacity table Step 3 | 🔄 In progress | — |
+| M-24 | Reference Designs tab Step 4 | 🔄 In progress | — |
+| M-30 | Export All Configs .txt bundle | 🔄 In progress | — |
+| M-31 | Full HTML Design Report | 🔄 In progress | — |
+| M-34 | Config diff viewer | 🔄 In progress | — |
+| M-38 | Per-device deploy status table | 🔄 In progress | — |
+| M-39 | Canary deployment option | 🔄 In progress | — |
+| M-55 | Policy Rules Editor (YAML DSL) | 🔄 In progress | — |
+| M-57 | Share button / shareable URL | 🔄 In progress | — |
+| M-60 | Breadcrumb / progress bar | 🔄 In progress | — |
 
 > **Session resume**: check this table first — start from first row that is not ✅ Done.
 > Implement in order. After each item: run `cd frontend && npm test -- --run && npm run build`, commit, push to `main`.
