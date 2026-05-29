@@ -247,13 +247,13 @@ type Tab = 'devices' | 'cabling' | 'optics' | 'topology' | 'ipplan' | 'rack' | '
 export function Step2Design() {
   const { useCase, scale, siteCode, linkDistances, devices, setDevices,
           totalEndpoints, bandwidthPerServer, oversubscription,
-          underlayProtocol, compliance,
+          underlayProtocol, compliance, vendorPrefs,
           nextStep, prevStep } = useAppStore()
   const [activeTab, setActiveTab] = useState<Tab>('devices')
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
-    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription }),
-    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription]
+    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs }),
+    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs]
   )
 
   useMemo(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
