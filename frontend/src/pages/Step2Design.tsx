@@ -47,12 +47,14 @@ const CABLE_COLORS: Record<string, string> = {
 type Tab = 'devices' | 'cabling' | 'optics' | 'topology'
 
 export function Step2Design() {
-  const { useCase, scale, siteCode, linkDistances, devices, setDevices, nextStep, prevStep } = useAppStore()
+  const { useCase, scale, siteCode, linkDistances, devices, setDevices,
+          totalEndpoints, bandwidthPerServer, oversubscription,
+          nextStep, prevStep } = useAppStore()
   const [activeTab, setActiveTab] = useState<Tab>('devices')
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
-    () => buildBOM({ useCase, scale, siteCode }),
-    [useCase, scale, siteCode]
+    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription }),
+    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription]
   )
 
   useMemo(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
@@ -62,8 +64,21 @@ export function Step2Design() {
 
   const rows = Object.values(summary)
 
+  const [vendorFilter, setVendorFilter] = useState<string>('All')
+
+  const vendors = useMemo(() => {
+    const vs = Array.from(new Set(Object.values(summary).map(r => r.vendor)))
+    return ['All', ...vs.sort()]
+  }, [summary])
+
+  const tableData = useMemo(() => {
+    const allRows = Object.entries(summary).map(([model, row]) => ({ ...row, model }))
+    if (vendorFilter === 'All') return allRows
+    return allRows.filter(r => r.vendor === vendorFilter)
+  }, [summary, vendorFilter])
+
   const table = useReactTable({
-    data: rows as (BOMSummaryRow & { model: string })[],
+    data: tableData as (BOMSummaryRow & { model: string })[],
     columns,
     getCoreRowModel: getCoreRowModel(),
   })
@@ -149,6 +164,25 @@ export function Step2Design() {
 
       {/* Devices & BOM */}
       {activeTab === 'devices' && (
+        <>
+        {/* Vendor filter tabs */}
+        <div className="flex gap-1 flex-wrap mb-4">
+          {vendors.map(v => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setVendorFilter(v)}
+              className={cn(
+                'px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors cursor-pointer',
+                vendorFilter === v
+                  ? 'bg-blue-600 border-blue-500 text-white'
+                  : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30 hover:text-gray-200',
+              )}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
         <div className="overflow-x-auto rounded-xl border border-white/10">
           <table className="w-full text-sm">
             <thead>
@@ -181,6 +215,7 @@ export function Step2Design() {
             </tfoot>
           </table>
         </div>
+        </>
       )}
 
       {/* Cabling Schedule */}
