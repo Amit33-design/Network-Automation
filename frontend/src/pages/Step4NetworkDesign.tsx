@@ -8,13 +8,17 @@ import { formatUSD, cn } from '@/lib/utils'
 import type { BOMDevice } from '@/types'
 
 // ── Tab types ────────────────────────────────────────────────────
-type DesignTab = 'hld' | 'ipplan' | 'vlan' | 'routing'
+type DesignTab = 'hld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'mermaid' | 'simulate' | 'summary'
 
 const TAB_LABELS: Array<{ id: DesignTab; label: string }> = [
-  { id: 'hld',     label: '📐 High Level Design' },
-  { id: 'ipplan',  label: '🌐 IP Plan' },
-  { id: 'vlan',    label: '🏷 VLAN Design' },
-  { id: 'routing', label: '🔀 Routing & Protocols' },
+  { id: 'hld',      label: '📐 High Level Design' },
+  { id: 'ipplan',   label: '🌐 IP Plan' },
+  { id: 'vlan',     label: '🏷 VLAN Design' },
+  { id: 'routing',  label: '🔀 Routing & Protocols' },
+  { id: 'physical', label: '🔌 Physical Links' },
+  { id: 'mermaid',  label: '📊 Mermaid Diagram' },
+  { id: 'simulate', label: '⚡ Simulate' },
+  { id: 'summary',  label: '📋 Summary' },
 ]
 
 // ── IP Plan data generator ───────────────────────────────────────
@@ -252,15 +256,406 @@ const USE_CASE_LABELS: Record<string, string> = {
   multisite: 'Multi-Site DCI', multicloud: 'Multi-Cloud', aviatrix: 'Aviatrix Overlay',
 }
 
+// ── Physical Links helpers (M-23) ────────────────────────────────
+interface CableRow {
+  from: string; to: string; port: string; speed: string
+  cableType: string; sfp: string; lengthM: string
+}
+
+function genPhysicalLinks(useCase: string, devices: BOMDevice[]): CableRow[] {
+  const rows: CableRow[] = []
+  const isDC     = useCase === 'dc' || useCase === 'multisite' || useCase === 'gpu'
+  const isCampus = useCase === 'campus'
+
+  const spines = devices.filter(d => d.subLayer === 'spine')
+  const leaves = devices.filter(d => d.subLayer === 'leaf')
+  const dists  = devices.filter(d => d.subLayer === 'distribution')
+  const access = devices.filter(d => d.subLayer === 'access')
+  const fws    = devices.filter(d => d.subLayer === 'firewall')
+
+  if (isDC) {
+    // Leaf-Spine links
+    const showLeaves = leaves.slice(0, 8)
+    showLeaves.forEach(leaf => {
+      spines.slice(0, 4).forEach((spine, si) => {
+        rows.push({
+          from: leaf.hostname,
+          to: spine.hostname,
+          port: `Eth1/${si + 49}`,
+          speed: '100G',
+          cableType: 'DAC / Fiber OM4',
+          sfp: 'QSFP-100G-SR4',
+          lengthM: '3m',
+        })
+      })
+    })
+    if (leaves.length > 8) {
+      rows.push({ from: `+${leaves.length - 8} more leaves`, to: 'all spines', port: 'Eth1/49–52', speed: '100G', cableType: 'DAC / OM4', sfp: 'QSFP-100G-SR4', lengthM: '3m' })
+    }
+
+    // Server-Leaf links (simulated servers)
+    const showLeaves2 = leaves.slice(0, 4)
+    showLeaves2.forEach(leaf => {
+      for (let sv = 1; sv <= 2; sv++) {
+        rows.push({
+          from: `${leaf.hostname.replace('LEAF', 'SRV')}-${String(sv).padStart(2, '0')}`,
+          to: leaf.hostname,
+          port: `Eth1/${sv}`,
+          speed: '25G / 10G',
+          cableType: 'Fiber OM3',
+          sfp: 'SFP-10G-SR',
+          lengthM: '10m',
+        })
+      }
+    })
+
+    // Firewall-Spine links
+    fws.forEach((fw, fi) => {
+      spines.slice(0, 2).forEach((spine, si) => {
+        rows.push({
+          from: fw.hostname,
+          to: spine.hostname,
+          port: `Eth1/${si + 1}`,
+          speed: '100G',
+          cableType: 'Fiber OS2',
+          sfp: 'QSFP-100G-LR4',
+          lengthM: `${(fi + 1) * 5}m`,
+        })
+      })
+    })
+  }
+
+  if (isCampus) {
+    // Access-Distribution links
+    const showAccess = access.slice(0, 8)
+    showAccess.forEach((acc, ai) => {
+      dists.slice(0, 2).forEach((dist, di) => {
+        rows.push({
+          from: acc.hostname,
+          to: dist.hostname,
+          port: `Gi0/${di + 1}`,
+          speed: '1G / 10G',
+          cableType: 'Cat6A (copper)',
+          sfp: 'SFP+ / RJ-45',
+          lengthM: `${50 + (ai % 3) * 30}m`,
+        })
+      })
+    })
+    if (access.length > 8) {
+      rows.push({ from: `+${access.length - 8} more access`, to: 'dist switches', port: 'Gi0/1–2', speed: '10G', cableType: 'Cat6A', sfp: 'SFP+ / RJ-45', lengthM: '≤100m' })
+    }
+
+    // Dist-Core (or dist-spine) links
+    dists.forEach((dist, di) => {
+      spines.slice(0, 2).forEach((sp, si) => {
+        rows.push({
+          from: dist.hostname,
+          to: sp.hostname,
+          port: `Te0/${si + 1}`,
+          speed: '40G',
+          cableType: 'Fiber OM4',
+          sfp: '40G QSFP+',
+          lengthM: `${(di + 1) * 20}m`,
+        })
+      })
+    })
+
+    // Firewall-Dist links
+    fws.forEach((fw, fi) => {
+      dists.slice(0, 2).forEach((dist, di) => {
+        rows.push({
+          from: fw.hostname,
+          to: dist.hostname,
+          port: `Gi0/${di + fi * 2}`,
+          speed: '10G',
+          cableType: 'Fiber OM3',
+          sfp: 'SFP-10G-SR',
+          lengthM: '5m',
+        })
+      })
+    })
+  }
+
+  return rows
+}
+
+// ── Mermaid Diagram helpers (M-25) ──────────────────────────────
+function genMermaidDiagram(useCase: string, devices: BOMDevice[], trafficPattern: string): string {
+  const isEW = trafficPattern === 'ew' || useCase === 'dc' || useCase === 'gpu'
+  const dir  = isEW ? 'graph LR' : 'graph TD'
+
+  const spines = devices.filter(d => d.subLayer === 'spine')
+  const leaves = devices.filter(d => d.subLayer === 'leaf')
+  const dists  = devices.filter(d => d.subLayer === 'distribution')
+  const access = devices.filter(d => d.subLayer === 'access')
+  const fws    = devices.filter(d => d.subLayer === 'firewall')
+  const wans   = devices.filter(d => d.subLayer === 'wan-edge')
+
+  const lines: string[] = [dir, '']
+
+  // Node definitions
+  if (fws.length > 0) {
+    lines.push('  %% Firewalls')
+    fws.forEach(d => lines.push(`  ${sanitizeId(d.hostname)}["🔥 ${d.hostname}\\n${d.model}"]`))
+    lines.push('')
+  }
+  if (spines.length > 0) {
+    lines.push('  %% Spines / Core')
+    spines.forEach(d => lines.push(`  ${sanitizeId(d.hostname)}["🔵 ${d.hostname}\\n${d.model}"]`))
+    lines.push('')
+  }
+  if (leaves.length > 0) {
+    const show = leaves.slice(0, 8)
+    lines.push('  %% Leaf / Distribution')
+    show.forEach(d => lines.push(`  ${sanitizeId(d.hostname)}["🟢 ${d.hostname}\\n${d.model}"]`))
+    if (leaves.length > 8) {
+      lines.push(`  LEAVES_MORE["… +${leaves.length - 8} more leaves"]`)
+    }
+    lines.push('')
+  }
+  if (dists.length > 0 && leaves.length === 0) {
+    lines.push('  %% Distribution')
+    dists.forEach(d => lines.push(`  ${sanitizeId(d.hostname)}["🔷 ${d.hostname}\\n${d.model}"]`))
+    lines.push('')
+  }
+  if (access.length > 0) {
+    const show = access.slice(0, 6)
+    lines.push('  %% Access')
+    show.forEach(d => lines.push(`  ${sanitizeId(d.hostname)}["🟡 ${d.hostname}\\n${d.model}"]`))
+    if (access.length > 6) {
+      lines.push(`  ACCESS_MORE["… +${access.length - 6} more access"]`)
+    }
+    lines.push('')
+  }
+  if (wans.length > 0) {
+    lines.push('  %% WAN Edge')
+    wans.forEach(d => lines.push(`  ${sanitizeId(d.hostname)}["🌐 ${d.hostname}\\n${d.model}"]`))
+    lines.push('')
+  }
+
+  // Virtual endpoint nodes
+  if (leaves.length > 0) {
+    lines.push('  SERVERS["💻 Servers / Endpoints"]')
+    lines.push('')
+  } else if (access.length > 0) {
+    lines.push('  ENDPOINTS["💻 Users / Endpoints"]')
+    lines.push('')
+  }
+
+  // Edges: FW → Spine
+  fws.forEach(fw => {
+    spines.forEach(sp => {
+      lines.push(`  ${sanitizeId(fw.hostname)} -->|100G| ${sanitizeId(sp.hostname)}`)
+    })
+  })
+
+  // Edges: Spine → Leaf
+  spines.forEach(sp => {
+    leaves.slice(0, 8).forEach(lf => {
+      lines.push(`  ${sanitizeId(sp.hostname)} -->|100G| ${sanitizeId(lf.hostname)}`)
+    })
+    if (leaves.length > 8) {
+      lines.push(`  ${sanitizeId(sp.hostname)} -->|100G| LEAVES_MORE`)
+    }
+  })
+
+  // Edges: Spine/Core → Dist (campus)
+  if (leaves.length === 0) {
+    spines.forEach(sp => {
+      dists.forEach(d => {
+        lines.push(`  ${sanitizeId(sp.hostname)} -->|40G| ${sanitizeId(d.hostname)}`)
+      })
+    })
+    dists.forEach(d => {
+      access.slice(0, 6).forEach(ac => {
+        lines.push(`  ${sanitizeId(d.hostname)} -->|10G| ${sanitizeId(ac.hostname)}`)
+      })
+      if (access.length > 6) lines.push(`  ${sanitizeId(d.hostname)} -->|10G| ACCESS_MORE`)
+    })
+    if (access.length > 0) {
+      access.slice(0, 6).forEach(ac => {
+        lines.push(`  ${sanitizeId(ac.hostname)} -->|1G| ENDPOINTS`)
+      })
+      if (access.length > 6) lines.push(`  ACCESS_MORE -->|1G| ENDPOINTS`)
+    }
+  } else {
+    // Leaf → Servers
+    leaves.slice(0, 8).forEach(lf => {
+      lines.push(`  ${sanitizeId(lf.hostname)} -->|25G| SERVERS`)
+    })
+    if (leaves.length > 8) lines.push(`  LEAVES_MORE -->|25G| SERVERS`)
+  }
+
+  // WAN edge → FW or Spine
+  wans.forEach(w => {
+    if (fws.length > 0) lines.push(`  ${sanitizeId(w.hostname)} -->|WAN| ${sanitizeId(fws[0].hostname)}`)
+    else if (spines.length > 0) lines.push(`  ${sanitizeId(w.hostname)} -->|WAN| ${sanitizeId(spines[0].hostname)}`)
+  })
+
+  return lines.join('\n')
+}
+
+function sanitizeId(hostname: string): string {
+  return hostname.replace(/[^a-zA-Z0-9_]/g, '_')
+}
+
+// ── Simulate helpers (M-26) ──────────────────────────────────────
+interface ReachabilityEntry { from: string; to: string; reachable: boolean; path: string }
+interface RoutePropRow { device: string; prefix: string; nextHop: string; protocol: string; metric: string }
+
+function getTopDevices(devices: BOMDevice[], n = 6): BOMDevice[] {
+  // Priority order: firewall > spine > leaf > distribution > access > others
+  const order: Record<string, number> = { firewall: 0, spine: 1, leaf: 2, distribution: 3, access: 4 }
+  const sorted = [...devices].sort((a, b) => (order[a.subLayer] ?? 9) - (order[b.subLayer] ?? 9))
+  return sorted.slice(0, n)
+}
+
+function simulateFailure(failedDevice: BOMDevice, allDevices: BOMDevice[], useCase: string): { affected: string[]; vlans: number[]; convergenceMs: number } {
+  const isSpine   = failedDevice.subLayer === 'spine'
+  const isLeaf    = failedDevice.subLayer === 'leaf'
+  const isFirewall= failedDevice.subLayer === 'firewall'
+  const isDC      = useCase === 'dc' || useCase === 'multisite' || useCase === 'gpu'
+
+  const spineCount = allDevices.filter(d => d.subLayer === 'spine').length
+
+  let affected: string[] = []
+  let vlans: number[] = []
+  let convergenceMs = 500
+
+  if (isSpine) {
+    // If only 1 spine left after failure, traffic disrupted
+    if (spineCount <= 1) {
+      affected = allDevices.filter(d => d.subLayer === 'leaf').map(d => d.hostname)
+      vlans = [100, 101, 200, 30, 20]
+    } else {
+      affected = [`ECMP reduced from ${spineCount} to ${spineCount - 1} paths`]
+      vlans = []
+    }
+    convergenceMs = isDC ? 150 : 800
+  } else if (isLeaf) {
+    affected = [`Servers connected to ${failedDevice.hostname}`, `VLANs on ${failedDevice.hostname}`]
+    vlans = [100, 101]
+    convergenceMs = isDC ? 200 : 600
+  } else if (isFirewall) {
+    affected = ['All internet-bound traffic', 'Default-route dependent subnets']
+    vlans = [60, 21]
+    convergenceMs = 2000
+  } else {
+    affected = [`Devices connected to ${failedDevice.hostname}`]
+    vlans = [20, 30]
+    convergenceMs = 300
+  }
+
+  // HA: if spare exists, convergence is fast
+  const spareExists = allDevices.some(d => d.subLayer === failedDevice.subLayer && d.id !== failedDevice.id)
+  if (spareExists) convergenceMs = Math.min(convergenceMs, 300)
+
+  return { affected, vlans, convergenceMs }
+}
+
+function genReachabilityMatrix(topDevices: BOMDevice[], failedId: string | null): ReachabilityEntry[] {
+  const entries: ReachabilityEntry[] = []
+  for (const src of topDevices) {
+    for (const dst of topDevices) {
+      if (src.id === dst.id) continue
+      const srcFailed = src.id === failedId
+      const dstFailed = dst.id === failedId
+      const reachable = !srcFailed && !dstFailed
+      const path = srcFailed || dstFailed
+        ? '—'
+        : `${src.subLayer} → ${dst.subLayer}`
+      entries.push({ from: src.hostname, to: dst.hostname, reachable, path })
+    }
+  }
+  return entries
+}
+
+function genRoutePropagation(devices: BOMDevice[], useCase: string, underlayProtocol: string): RoutePropRow[] {
+  const isDC = useCase === 'dc' || useCase === 'multisite' || useCase === 'gpu'
+  const spines = devices.filter(d => d.subLayer === 'spine')
+  const leaves = devices.filter(d => d.subLayer === 'leaf')
+  const rows: RoutePropRow[] = []
+
+  const samplePrefix = isDC ? '10.255.2.1/32' : '10.0.0.1/32'
+  const proto = isDC ? (underlayProtocol === 'isis' ? 'IS-IS' : 'eBGP') : 'OSPF'
+  const metric = isDC ? 'MED 0' : 'Cost 10'
+
+  if (leaves.length > 0) {
+    rows.push({ device: leaves[0].hostname, prefix: samplePrefix, nextHop: 'Connected', protocol: 'Direct', metric: '0' })
+    spines.slice(0, 2).forEach((sp, i) => {
+      rows.push({ device: sp.hostname, prefix: samplePrefix, nextHop: `10.100.0.${i * 2}`, protocol: proto, metric })
+    })
+    if (leaves.length > 1) {
+      rows.push({ device: leaves[1].hostname, prefix: samplePrefix, nextHop: spines[0]?.hostname ?? 'spine', protocol: proto, metric })
+    }
+  }
+
+  if (isDC) {
+    rows.push({ device: 'EVPN Control Plane', prefix: 'Type-5 route: ' + samplePrefix, nextHop: 'L3VNI 999000', protocol: 'BGP EVPN', metric: 'RT 65000:9000' })
+  }
+
+  return rows
+}
+
+// ── Summary helpers (M-27) ──────────────────────────────────────
+function buildSummaryText(
+  useCase: string, scale: string, siteCode: string, numSites: number,
+  totalEndpoints: number, underlayProtocol: string, overlayProtocols: string[],
+  protoFeatures: string[], compliance: string[], devices: BOMDevice[], grandTotal: number
+): string {
+  const label = USE_CASE_LABELS[useCase] || useCase || '—'
+  const devLines = Object.values(
+    devices.reduce<Record<string, { subLayer: string; count: number; model: string }>>((acc, d) => {
+      const k = d.subLayer
+      if (!acc[k]) acc[k] = { subLayer: d.subLayer, count: 0, model: d.model }
+      acc[k].count += d.count
+      return acc
+    }, {})
+  )
+
+  const lines = [
+    '╔══════════════════════════════════════════════╗',
+    '║        NetDesign AI — Design Summary          ║',
+    '╚══════════════════════════════════════════════╝',
+    '',
+    '── INTENT ──',
+    `Use Case    : ${label}`,
+    `Scale       : ${scale.charAt(0).toUpperCase() + scale.slice(1)}`,
+    `Site Code   : ${siteCode || '—'}`,
+    `Sites       : ${numSites}`,
+    `Endpoints   : ${totalEndpoints}`,
+    '',
+    '── TOPOLOGY ──',
+    `Underlay    : ${underlayProtocol.toUpperCase()}`,
+    `Overlay     : ${overlayProtocols.join(', ') || 'none'}`,
+    `Features    : ${protoFeatures.length ? protoFeatures.join(', ') : 'none'}`,
+    '',
+    '── BOM SUMMARY ──',
+    ...devLines.map(d => `  ${d.subLayer.padEnd(16)}: ${String(d.count).padStart(3)} × ${d.model}`),
+    `  ${'TOTAL DEVICES'.padEnd(16)}: ${devices.reduce((s, d) => s + d.count, 0)}`,
+    `  Est. Cost       : $${grandTotal.toLocaleString()}`,
+    '',
+    '── COMPLIANCE ──',
+    compliance.length ? compliance.map(c => `  ✓ ${c}`).join('\n') : '  None selected',
+    '',
+    `Generated by NetDesign AI — ${new Date().toISOString().slice(0, 10)}`,
+  ]
+  return lines.join('\n')
+}
+
 export function Step4NetworkDesign() {
   const {
     useCase, scale, siteCode, numSites,
-    underlayProtocol, overlayProtocols, redundancyModel,
+    underlayProtocol, overlayProtocols, protoFeatures, redundancyModel,
     totalEndpoints, bandwidthPerServer, oversubscription,
+    trafficPattern, compliance,
     devices, setDevices, nextStep, prevStep,
   } = useAppStore()
 
   const [activeTab, setActiveTab] = useState<DesignTab>('hld')
+  const [failedDeviceId, setFailedDeviceId] = useState<string | null>(null)
+  const [summaryCopied, setSummaryCopied] = useState(false)
+  const [mermaidCopied, setMermaidCopied] = useState(false)
   const svgRef = useRef<HTMLDivElement>(null)
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
@@ -281,6 +676,28 @@ export function Step4NetworkDesign() {
   const vnis      = useMemo(() => genVNIs(), [])
   const isDC      = useCase === 'dc' || useCase === 'multisite'
   const routing   = useMemo(() => genRoutingData(useCase, underlayProtocol, overlayProtocols, generatedDevices), [useCase, underlayProtocol, overlayProtocols, generatedDevices])
+
+  // M-23: Physical Links
+  const physicalLinks = useMemo(() => genPhysicalLinks(useCase, generatedDevices), [useCase, generatedDevices])
+
+  // M-25: Mermaid Diagram
+  const mermaidCode = useMemo(() => genMermaidDiagram(useCase, generatedDevices, trafficPattern), [useCase, generatedDevices, trafficPattern])
+
+  // M-26: Simulate
+  const topDevices = useMemo(() => getTopDevices(generatedDevices, 6), [generatedDevices])
+  const failedDevice = failedDeviceId ? generatedDevices.find(d => d.id === failedDeviceId) ?? null : null
+  const failureSim   = useMemo(
+    () => failedDevice ? simulateFailure(failedDevice, generatedDevices, useCase) : null,
+    [failedDevice, generatedDevices, useCase]
+  )
+  const reachMatrix = useMemo(() => genReachabilityMatrix(topDevices, failedDeviceId), [topDevices, failedDeviceId])
+  const routeProp   = useMemo(() => genRoutePropagation(generatedDevices, useCase, underlayProtocol), [generatedDevices, useCase, underlayProtocol])
+
+  // M-27: Summary
+  const summaryText = useMemo(
+    () => buildSummaryText(useCase, scale, siteCode, numSites, totalEndpoints, underlayProtocol, overlayProtocols, protoFeatures, compliance, generatedDevices, grandTotal),
+    [useCase, scale, siteCode, numSites, totalEndpoints, underlayProtocol, overlayProtocols, protoFeatures, compliance, generatedDevices, grandTotal]
+  )
 
   function handleExportSVG() {
     const svgEl = svgRef.current?.querySelector('svg')
@@ -582,6 +999,364 @@ export function Step4NetworkDesign() {
               </div>
             </Card>
           )}
+        </div>
+      )}
+
+      {/* ── Physical Links tab (M-23) ──────────────────────────────── */}
+      {activeTab === 'physical' && (
+        <div className="space-y-4">
+          <Card>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-300">Cabling Schedule</h3>
+              <span className="text-xs text-gray-500">{physicalLinks.length} cable runs</span>
+            </div>
+            {physicalLinks.length === 0 ? (
+              <p className="text-sm text-gray-500 py-4 text-center">No physical links generated for this use case. Select a DC or Campus use case.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/5">
+                      {['From Device', 'To Device', 'Port', 'Speed', 'Cable Type', 'SFP / QSFP', 'Length'].map(h => (
+                        <th key={h} className={thCls}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {physicalLinks.map((r, i) => (
+                      <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02]">
+                        <td className={`${tdCls} font-semibold text-gray-100 font-mono text-xs`}>{r.from}</td>
+                        <td className={`${tdCls} font-semibold text-gray-100 font-mono text-xs`}>{r.to}</td>
+                        <td className={`${tdCls} font-mono text-xs text-blue-300`}>{r.port}</td>
+                        <td className={tdCls}>
+                          <span className="px-2 py-0.5 rounded text-xs font-bold bg-purple-900/50 text-purple-300">{r.speed}</span>
+                        </td>
+                        <td className={`${tdCls} text-gray-300 text-xs`}>{r.cableType}</td>
+                        <td className={`${tdCls} font-mono text-xs text-green-400`}>{r.sfp}</td>
+                        <td className={`${tdCls} font-mono text-xs text-orange-400`}>{r.lengthM}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+          <div className="rounded-xl border border-white/10 bg-blue-950/20 p-4 text-xs text-blue-300 space-y-1">
+            <div className="font-semibold mb-2">Cable Type Guide</div>
+            <div>• <span className="text-white">QSFP-100G-SR4</span> — 100G multi-mode OM4 fiber, up to 100m (leaf-spine links)</div>
+            <div>• <span className="text-white">SFP-10G-SR</span> — 10G multi-mode OM3 fiber, up to 300m (server-leaf links)</div>
+            <div>• <span className="text-white">40G QSFP+</span> — 40G multi-mode OM4 fiber (dist-core campus links)</div>
+            <div>• <span className="text-white">Cat6A</span> — copper 10GbE, up to 100m (access-distribution campus)</div>
+            <div>• <span className="text-white">QSFP-100G-LR4</span> — 100G single-mode OS2 fiber, up to 10km (FW-spine, inter-DC)</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Mermaid Diagram tab (M-25) ──────────────────────────────── */}
+      {activeTab === 'mermaid' && (
+        <div className="space-y-4">
+          <Card>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-300">Mermaid Topology Diagram</h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(mermaidCode).then(() => {
+                      setMermaidCopied(true)
+                      setTimeout(() => setMermaidCopied(false), 2000)
+                    })
+                  }}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+                  {mermaidCopied ? '✓ Copied!' : '📋 Copy'}
+                </button>
+                <button
+                  onClick={() => {
+                    const blob = new Blob([mermaidCode], { type: 'text/plain' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `topology-${useCase || 'network'}-${new Date().toISOString().slice(0, 10)}.mmd`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+                  ⬇ Download .mmd
+                </button>
+              </div>
+            </div>
+            <pre className="bg-black/40 border border-white/10 rounded-lg p-4 text-xs font-mono text-green-400 overflow-x-auto whitespace-pre leading-relaxed">{mermaidCode}</pre>
+          </Card>
+          <div className="rounded-xl border border-white/10 bg-green-950/20 p-4 text-xs text-green-300 space-y-1">
+            <div className="font-semibold mb-2">How to render this diagram</div>
+            <div>1. Copy the code above (📋 Copy button)</div>
+            <div>2. Open <span className="text-white underline cursor-pointer" onClick={() => window.open('https://mermaid.live', '_blank')}>mermaid.live</span> in a new tab</div>
+            <div>3. Paste the code in the editor — the diagram renders instantly</div>
+            <div>4. Export as SVG, PNG, or share a permalink</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Simulate tab (M-26) ─────────────────────────────────────── */}
+      {activeTab === 'simulate' && (
+        <div className="space-y-4">
+          {/* Failure simulation panel */}
+          <Card>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">Simulate Device Failure</h3>
+            <div className="flex items-center gap-3 mb-4">
+              <select
+                value={failedDeviceId ?? ''}
+                onChange={e => setFailedDeviceId(e.target.value || null)}
+                className="flex-1 rounded-lg border border-white/10 bg-white/5 text-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-blue-500 cursor-pointer">
+                <option value="">— Select a device to fail —</option>
+                {generatedDevices.map(d => (
+                  <option key={d.id} value={d.id}>{d.hostname} ({d.subLayer} · {d.model})</option>
+                ))}
+              </select>
+              {failedDeviceId && (
+                <button
+                  onClick={() => setFailedDeviceId(null)}
+                  className="px-3 py-2 text-xs rounded-lg border border-red-500/30 bg-red-950/20 text-red-400 hover:border-red-500/60 transition-colors cursor-pointer">
+                  ✕ Clear
+                </button>
+              )}
+            </div>
+            {failureSim && failedDevice && (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-red-500/30 bg-red-950/20 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-red-400 font-semibold text-sm">💀 {failedDevice.hostname} failed</span>
+                    <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', LAYER_BADGE[failedDevice.subLayer] ?? 'bg-gray-700 text-gray-300')}>{failedDevice.subLayer}</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <div className="text-gray-400 mb-1 font-semibold">Affected paths / devices</div>
+                      {failureSim.affected.length === 0
+                        ? <div className="text-green-400">No traffic impact (HA redundancy active)</div>
+                        : failureSim.affected.map((a, i) => <div key={i} className="text-red-300">• {a}</div>)
+                      }
+                    </div>
+                    <div>
+                      <div className="text-gray-400 mb-1 font-semibold">Affected VLANs</div>
+                      {failureSim.vlans.length === 0
+                        ? <div className="text-green-400">No VLAN impact</div>
+                        : failureSim.vlans.map(v => <div key={v} className="text-orange-300">• VLAN {v}</div>)
+                      }
+                    </div>
+                    <div>
+                      <div className="text-gray-400 mb-1 font-semibold">Est. Convergence</div>
+                      <div className={cn('text-xl font-bold', failureSim.convergenceMs < 500 ? 'text-green-400' : failureSim.convergenceMs < 1000 ? 'text-yellow-400' : 'text-red-400')}>
+                        {failureSim.convergenceMs < 1000
+                          ? `${failureSim.convergenceMs} ms`
+                          : `${(failureSim.convergenceMs / 1000).toFixed(1)} s`
+                        }
+                      </div>
+                      <div className="text-gray-500 text-xs mt-1">BFD + fast-reroute</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {!failedDeviceId && (
+              <p className="text-xs text-gray-500 italic">Select a device above to simulate its failure and see the blast radius.</p>
+            )}
+          </Card>
+
+          {/* Reachability matrix */}
+          <Card>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">
+              Reachability Matrix
+              <span className="ml-2 text-xs text-gray-500 font-normal">Top {topDevices.length} devices</span>
+              {failedDeviceId && <span className="ml-2 text-xs text-red-400 font-normal">(simulating failure)</span>}
+            </h3>
+            {topDevices.length < 2 ? (
+              <p className="text-sm text-gray-500">Not enough devices to build a matrix.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="text-xs border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="px-2 py-1 text-gray-500 text-right min-w-[80px]">From \ To</th>
+                      {topDevices.map(d => (
+                        <th key={d.id} className={cn('px-2 py-1 font-mono text-center min-w-[70px]', d.id === failedDeviceId ? 'text-red-400' : 'text-gray-300')}>
+                          {d.hostname.length > 10 ? d.hostname.slice(0, 9) + '…' : d.hostname}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topDevices.map(src => (
+                      <tr key={src.id} className="border-b border-white/5">
+                        <td className={cn('px-2 py-1 font-mono font-semibold text-right', src.id === failedDeviceId ? 'text-red-400' : 'text-gray-300')}>
+                          {src.hostname.length > 10 ? src.hostname.slice(0, 9) + '…' : src.hostname}
+                        </td>
+                        {topDevices.map(dst => {
+                          if (src.id === dst.id) {
+                            return <td key={dst.id} className="px-2 py-1 text-center text-gray-600">—</td>
+                          }
+                          const entry = reachMatrix.find(e => e.from === src.hostname && e.to === dst.hostname)
+                          const ok = entry ? entry.reachable : true
+                          return (
+                            <td key={dst.id} className="px-2 py-1 text-center">
+                              {ok
+                                ? <span className="text-green-400 text-base" title={entry?.path}>✓</span>
+                                : <span className="text-red-400 text-base" title="unreachable">✗</span>
+                              }
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+
+          {/* Route propagation */}
+          <Card>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">Route Propagation</h3>
+            {routeProp.length === 0 ? (
+              <p className="text-sm text-gray-500">No route propagation data for this topology.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/5">
+                      {['Device', 'Prefix', 'Next-Hop', 'Protocol', 'Metric'].map(h => (
+                        <th key={h} className={thCls}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {routeProp.map((r, i) => (
+                      <tr key={i} className="border-b border-white/5">
+                        <td className={`${tdCls} font-semibold text-gray-100 font-mono text-xs`}>{r.device}</td>
+                        <td className={`${tdCls} font-mono text-xs text-blue-300`}>{r.prefix}</td>
+                        <td className={`${tdCls} font-mono text-xs text-green-400`}>{r.nextHop}</td>
+                        <td className={tdCls}>
+                          <span className="px-2 py-0.5 rounded text-xs font-semibold bg-purple-900/50 text-purple-300">{r.protocol}</span>
+                        </td>
+                        <td className={`${tdCls} font-mono text-xs text-gray-400`}>{r.metric}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* ── Summary tab (M-27) ──────────────────────────────────────── */}
+      {activeTab === 'summary' && (
+        <div className="space-y-4">
+          <Card>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-300">Full Design Summary</h3>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(summaryText).then(() => {
+                    setSummaryCopied(true)
+                    setTimeout(() => setSummaryCopied(false), 2000)
+                  })
+                }}
+                className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+                {summaryCopied ? '✓ Copied!' : '📋 Copy Summary'}
+              </button>
+            </div>
+
+            {/* Intent section */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
+              <div>
+                <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-3">Intent</div>
+                <div className="space-y-2">
+                  {[
+                    ['Use Case', USE_CASE_LABELS[useCase] || useCase || '—'],
+                    ['Scale', scale.charAt(0).toUpperCase() + scale.slice(1)],
+                    ['Site Code', siteCode || '—'],
+                    ['Sites', String(numSites)],
+                    ['Endpoints', String(totalEndpoints)],
+                  ].map(([k, v]) => (
+                    <div key={k} className="flex justify-between text-sm">
+                      <span className="text-gray-500">{k}</span>
+                      <span className="text-gray-200 font-medium">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-bold text-purple-400 uppercase tracking-wider mb-3">Topology</div>
+                <div className="space-y-2">
+                  {[
+                    ['Underlay', underlayProtocol.toUpperCase()],
+                    ['Overlay', overlayProtocols.join(', ') || 'none'],
+                    ['Features', protoFeatures.length ? protoFeatures.join(', ') : 'none'],
+                    ['Redundancy', redundancyModel],
+                    ['Traffic Pattern', trafficPattern],
+                  ].map(([k, v]) => (
+                    <div key={k} className="flex justify-between text-sm">
+                      <span className="text-gray-500">{k}</span>
+                      <span className="text-gray-200 font-mono text-xs">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* BOM summary */}
+            <div className="mb-6">
+              <div className="text-xs font-bold text-green-400 uppercase tracking-wider mb-3">Bill of Materials</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/5">
+                      {['Layer', 'Model', 'Count', 'Unit Price', 'Total'].map(h => (
+                        <th key={h} className={thCls}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {generatedDevices.map(d => (
+                      <tr key={d.id} className="border-b border-white/5">
+                        <td className={tdCls}>
+                          <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', LAYER_BADGE[d.subLayer] ?? 'bg-gray-700 text-gray-300')}>{d.subLayer}</span>
+                        </td>
+                        <td className={`${tdCls} font-semibold text-gray-100`}>{d.model}</td>
+                        <td className={`${tdCls} font-bold text-orange-400`}>{d.count}×</td>
+                        <td className={`${tdCls} font-mono text-xs text-gray-400`}>{formatUSD(d.unitPrice)}</td>
+                        <td className={`${tdCls} font-mono text-xs text-green-400`}>{formatUSD(d.totalPrice)}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t border-white/20 bg-white/5">
+                      <td colSpan={3} className={`${tdCls} font-bold text-gray-200`}>TOTAL</td>
+                      <td className={tdCls}></td>
+                      <td className={`${tdCls} font-bold text-green-300 font-mono`}>{formatUSD(grandTotal)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Compliance */}
+            <div>
+              <div className="text-xs font-bold text-orange-400 uppercase tracking-wider mb-3">Compliance Requirements</div>
+              {compliance.length === 0 ? (
+                <p className="text-sm text-gray-500">No compliance frameworks selected.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {compliance.map(c => (
+                    <span key={c} className="px-3 py-1 rounded-lg text-xs font-semibold bg-orange-900/40 text-orange-300 border border-orange-700/30">{c}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Printable text version */}
+          <Card>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">Text Version (for copy / docs)</h3>
+            <pre className="bg-black/40 border border-white/10 rounded-lg p-4 text-xs font-mono text-gray-300 overflow-x-auto whitespace-pre leading-relaxed">{summaryText}</pre>
+          </Card>
         </div>
       )}
 
