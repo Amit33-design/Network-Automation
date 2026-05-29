@@ -79,22 +79,23 @@ const NW = 136  // node width
 const NH = 66   // node height
 
 // ─── Style palette by layer ───────────────────────────────────────────────────
+// Node fills must be clearly distinct from the SVG background (#080E1A = rgb(8,14,26))
 
 const LAYER_STYLE: Record<string, { color: string; border: string; textColor: string }> = {
-  internet:     { color: '#0D1117', border: '#6B7280', textColor: '#9CA3AF' },
-  'wan-edge':   { color: '#18181B', border: '#F59E0B', textColor: '#FCD34D' },
-  'corp-fw':    { color: '#450A0A', border: '#EF4444', textColor: '#FCA5A5' },
-  'edge-fw':    { color: '#431407', border: '#F97316', textColor: '#FDBA74' },
-  spine:        { color: '#1E3A5F', border: '#3B82F6', textColor: '#BAE6FD' },
-  core:         { color: '#2E1065', border: '#8B5CF6', textColor: '#DDD6FE' },
-  distribution: { color: '#082F49', border: '#0EA5E9', textColor: '#BAE6FD' },
-  leaf:         { color: '#14532D', border: '#22C55E', textColor: '#BBF7D0' },
-  access:       { color: '#052E16', border: '#16A34A', textColor: '#86EFAC' },
-  host:         { color: '#1C1917', border: '#78716C', textColor: '#D6D3D1' },
-  gpu:          { color: '#064E3B', border: '#10B981', textColor: '#6EE7B7' },
-  storage:      { color: '#1E1B4B', border: '#6366F1', textColor: '#C7D2FE' },
-  oob:          { color: '#1C1917', border: '#57534E', textColor: '#A8A29E' },
-  'cloud-gw':   { color: '#042F2E', border: '#14B8A6', textColor: '#99F6E4' },
+  internet:     { color: '#1A2535', border: '#94A3B8', textColor: '#E2E8F0' },
+  'wan-edge':   { color: '#2A1A05', border: '#F59E0B', textColor: '#FCD34D' },
+  'corp-fw':    { color: '#3D1010', border: '#F87171', textColor: '#FCA5A5' },
+  'edge-fw':    { color: '#3D1E08', border: '#FB923C', textColor: '#FDBA74' },
+  spine:        { color: '#0E2B5C', border: '#60A5FA', textColor: '#BAE6FD' },
+  core:         { color: '#1E0D50', border: '#A78BFA', textColor: '#DDD6FE' },
+  distribution: { color: '#082840', border: '#38BDF8', textColor: '#BAE6FD' },
+  leaf:         { color: '#0B3D1E', border: '#4ADE80', textColor: '#BBF7D0' },
+  access:       { color: '#062A12', border: '#22C55E', textColor: '#86EFAC' },
+  host:         { color: '#252219', border: '#A8A29E', textColor: '#E7E5E4' },
+  gpu:          { color: '#083B25', border: '#34D399', textColor: '#A7F3D0' },
+  storage:      { color: '#0F0C35', border: '#818CF8', textColor: '#C7D2FE' },
+  oob:          { color: '#252219', border: '#78716C', textColor: '#D6D3D1' },
+  'cloud-gw':   { color: '#062D2A', border: '#2DD4BF', textColor: '#99F6E4' },
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -688,6 +689,7 @@ interface Props {
 export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol = 'isis', overlayProtocols = ['vxlan_evpn'], siteCode = '' }: Props) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
   const [hoveredLink, setHoveredLink] = useState<string | null>(null)
+  const [primaryPathOnly, setPrimaryPathOnly] = useState(false)
 
   const topo = useMemo(
     () => buildTopology(devices.length ? devices : [], useCase, underlayProtocol, overlayProtocols, siteCode),
@@ -761,15 +763,26 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
             {activeFlowObj?.desc}
           </span>
         )}
+        {activeFlow && (
+          <button
+            type="button"
+            onClick={() => setPrimaryPathOnly(v => !v)}
+            className={`ml-auto px-3 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer ${
+              primaryPathOnly
+                ? 'bg-blue-600/20 border-blue-400 text-blue-300'
+                : 'border-white/10 text-gray-400 hover:border-white/20 hover:text-gray-300 bg-white/[0.02]'
+            }`}
+          >
+            {primaryPathOnly ? '⬡ Primary Path Only' : '⬡ Show All Devices'}
+          </button>
+        )}
       </div>
 
       {/* ── SVG canvas ────────────────────────────────────────────── */}
       <div className="overflow-x-auto rounded-xl bg-[#080E1A] relative">
         <svg
           viewBox={`0 0 ${SVG_W} ${topo.svgH}`}
-          width={SVG_W}
-          height={topo.svgH}
-          style={{ fontFamily: 'monospace', maxWidth: '100%', display: 'block' }}
+          style={{ width: '100%', height: 'auto', display: 'block', fontFamily: 'monospace' }}
           onClick={(e) => { if (e.currentTarget === e.target) setSelectedNode(null) }}
         >
           <defs>
@@ -812,7 +825,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
           <text x={LEFT_W + 8} y={38} fill="#64748B" fontSize={8.5}>{topo.subtitle}</text>
 
           {/* ── Links (behind nodes) ── */}
-          {topo.links.map(link => {
+          {(primaryPathOnly ? topo.links.filter(l => flowLinkIds.has(l.id)) : topo.links).map(link => {
             const n1 = nodeMap[link.from]
             const n2 = nodeMap[link.to]
             if (!n1 || !n2) return null
@@ -863,7 +876,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
           })}
 
           {/* ── Ambient packet flow on ALL links (always-on background animation) ── */}
-          {topo.links.map((link, li) => {
+          {(primaryPathOnly ? topo.links.filter(l => flowLinkIds.has(l.id)) : topo.links).map((link, li) => {
             const n1 = nodeMap[link.from]
             const n2 = nodeMap[link.to]
             if (!n1 || !n2 || link.isOob) return null
@@ -913,16 +926,15 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
           )}
 
           {/* ── Device nodes ── */}
-          {topo.nodes.map(node => {
+          {(primaryPathOnly ? topo.nodes.filter(n => flowNodeIds.has(n.id)) : topo.nodes).map(node => {
             const isSelected = selectedNode === node.id
             const isInFlow   = flowNodeIds.has(node.id)
-            const dimmed     = activeFlow !== null && !isInFlow
 
             if (node.isCloud) {
               return (
                 <g key={node.id} transform={`translate(${node.x},${node.y - 10})`}
                   onClick={(e) => { e.stopPropagation(); setSelectedNode(isSelected ? null : node.id) }}
-                  style={{ cursor: 'pointer' }} opacity={dimmed ? 0.3 : 1}>
+                  style={{ cursor: 'pointer' }}>
                   <ellipse cx={NW / 2} cy={30} rx={64} ry={22} fill={isInFlow ? '#111827' : '#0F172A'} stroke={isInFlow ? '#60A5FA' : '#374151'} strokeWidth={isSelected ? 2 : 1} />
                   <text x={NW / 2} y={34} textAnchor="middle" fill={isInFlow ? '#BAE6FD' : '#9CA3AF'} fontSize={11}>🌐 {node.label}</text>
                 </g>
@@ -935,7 +947,6 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                 transform={`translate(${node.x},${node.y})`}
                 onClick={(e) => { e.stopPropagation(); setSelectedNode(isSelected ? null : node.id) }}
                 style={{ cursor: 'pointer' }}
-                opacity={dimmed ? 0.25 : 1}
               >
                 {/* Node box */}
                 <rect width={NW} height={NH} rx={6}
