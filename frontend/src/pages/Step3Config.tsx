@@ -104,12 +104,17 @@ export function Step3Config() {
   const [viewMode, setViewMode] = useState<ViewMode>('config')
   const [prevConfig, setPrevConfig] = useState('')
 
-  // Generate configs once
+  // Generate (or re-generate) configs whenever devices or useCase changes.
+  // Check whether ALL current devices already have a config — if any are missing
+  // (empty store, or stale configs from a previous use-case/scale selection) regenerate.
   useEffect(() => {
-    if (devices.length && Object.keys(configs).length === 0) {
+    if (!devices.length) return
+    const needsRegen = devices.some(d => !configs[d.id])
+    if (needsRegen) {
       setConfigs(generateAllConfigs(devices, useCase))
     }
-  }, [devices, configs, setConfigs])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devices, useCase])
 
   // Filtered device list (M-35)
   const filteredDevices = useMemo(

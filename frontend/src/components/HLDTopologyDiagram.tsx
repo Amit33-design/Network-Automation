@@ -687,7 +687,6 @@ interface Props {
 
 export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol = 'isis', overlayProtocols = ['vxlan_evpn'], siteCode = '' }: Props) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
-  const [activeFlow, setActiveFlow] = useState<string | null>(null)
   const [hoveredLink, setHoveredLink] = useState<string | null>(null)
 
   const topo = useMemo(
@@ -695,13 +694,16 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
     [devices, useCase, underlayProtocol, overlayProtocols, siteCode],
   )
 
+  // Default to first flow scenario so packets are always animated on load
+  const [activeFlow, setActiveFlow] = useState<string>(() => topo.flows[0]?.id ?? '')
+
   const nodeMap: Record<string, HLDNode> = useMemo(
     () => Object.fromEntries(topo.nodes.map(n => [n.id, n])),
     [topo.nodes],
   )
 
   const selectedNodeObj = selectedNode ? nodeMap[selectedNode] : null
-  const activeFlowObj   = activeFlow ? topo.flows.find(f => f.id === activeFlow) : null
+  const activeFlowObj   = activeFlow ? (topo.flows.find(f => f.id === activeFlow) ?? topo.flows[0] ?? null) : null
 
   // Build set of link IDs in the active flow path
   const flowLinkIds = useMemo(() => {
@@ -743,7 +745,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
           <button
             key={f.id}
             type="button"
-            onClick={() => setActiveFlow(activeFlow === f.id ? null : f.id)}
+            onClick={() => setActiveFlow(activeFlow === f.id ? '' : f.id)}
             className={`px-3 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer ${
               activeFlow === f.id
                 ? 'border-white/30 text-white'
@@ -856,6 +858,30 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                     )}
                   </g>
                 )}
+              </g>
+            )
+          })}
+
+          {/* ── Ambient packet flow on ALL links (always-on background animation) ── */}
+          {topo.links.map((link, li) => {
+            const n1 = nodeMap[link.from]
+            const n2 = nodeMap[link.to]
+            if (!n1 || !n2 || link.isOob) return null
+            const isInFlow = flowLinkIds.has(link.id)
+            if (isInFlow) return null   // active flow renders its own packets below
+            const d = linkPath(n1, n2, link.isHaSync)
+            const ambId = `amb-${link.id}`
+            const dur = 2.5 + (li % 5) * 0.6
+            const begin = (li % 7) * 0.4
+            const col = link.isHaSync ? '#4B5563' : '#1E40AF'
+            return (
+              <g key={ambId}>
+                <defs><path id={ambId} d={d} /></defs>
+                <circle r="2" fill={col} opacity={0.45}>
+                  <animateMotion dur={`${dur}s`} repeatCount="indefinite" begin={`${begin}s`}>
+                    <mpath href={`#${ambId}`} />
+                  </animateMotion>
+                </circle>
               </g>
             )
           })}

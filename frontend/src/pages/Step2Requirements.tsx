@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -138,6 +138,10 @@ export function Step2Requirements() {
     nextStep, prevStep,
   } = useAppStore()
 
+  // Local draft for numSites — avoids mobile controlled-input clamping bug
+  // where backspace snaps back to min="1" before user can retype.
+  const [numSitesDraft, setNumSitesDraft] = useState(String(numSites))
+
   function toggleOverlay(o: string) {
     setOverlayProtocols(overlayProtocols.includes(o) ? overlayProtocols.filter(x => x !== o) : [...overlayProtocols, o])
   }
@@ -268,8 +272,21 @@ export function Step2Requirements() {
             <div>
               <label className="text-xs text-gray-400 block mb-1">Number of Sites</label>
               <input
-                type="number" min={1} max={500} value={numSites}
-                onChange={e => setNumSites(Math.max(1, Math.min(500, Number(e.target.value))))}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={numSitesDraft}
+                onChange={e => {
+                  const raw = e.target.value.replace(/\D/g, '')
+                  setNumSitesDraft(raw)
+                  const n = parseInt(raw, 10)
+                  if (!isNaN(n) && n >= 1 && n <= 500) setNumSites(n)
+                }}
+                onBlur={() => {
+                  const n = Math.max(1, Math.min(500, parseInt(numSitesDraft, 10) || 1))
+                  setNumSites(n)
+                  setNumSitesDraft(String(n))
+                }}
                 className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
               />
             </div>
