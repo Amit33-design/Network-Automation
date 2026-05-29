@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
+import { MyDesigns } from '@/components/MyDesigns'
+import { ConfigPolicyModal } from '@/components/ConfigPolicyModal'
+import { ExportModal } from '@/components/ExportModal'
 
 interface SidebarProps {
   onGoHome: () => void
@@ -24,8 +27,13 @@ const DEPLOY_STEPS = [
 export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }: SidebarProps) {
   const step    = useAppStore(s => s.step)
   const setStep = useAppStore(s => s.setStep)
+  const devices = useAppStore(s => s.devices)
+  const configs = useAppStore(s => s.configs)
   const [collapsed, setCollapsed] = useState(false)
   const [deployOpen, setDeployOpen] = useState(true)
+  const [showMyDesigns, setShowMyDesigns] = useState(false)
+  const [showConfigPolicy, setShowConfigPolicy] = useState(false)
+  const [showExport, setShowExport] = useState(false)
 
   function nav(n: number) { setStep(n) }
 
@@ -122,6 +130,21 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }
           <span className="text-base">🔬</span>
           <span>Troubleshooting Engine</span>
         </button>
+        <button onClick={() => setShowMyDesigns(true)}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+          <span className="text-base">💾</span>
+          <span>My Designs</span>
+        </button>
+        <button onClick={() => setShowConfigPolicy(true)}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+          <span className="text-base">📜</span>
+          <span>Config Policy</span>
+        </button>
+        <button onClick={() => setShowExport(true)}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+          <span className="text-base">📤</span>
+          <span>Export</span>
+        </button>
       </div>
 
       {/* Step indicator at bottom */}
@@ -131,6 +154,16 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting }
           <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${(step / 6) * 100}%` }} />
         </div>
       </div>
+
+      {/* Modals */}
+      <MyDesigns open={showMyDesigns} onClose={() => setShowMyDesigns(false)} />
+      <ConfigPolicyModal open={showConfigPolicy} onClose={() => setShowConfigPolicy(false)} />
+      <ExportModal
+        open={showExport}
+        onClose={() => setShowExport(false)}
+        devices={devices}
+        configs={configs}
+      />
     </aside>
   )
 }

@@ -141,6 +141,7 @@ export interface AppState {
   vpnType: VpnType
   nacOptions: string[]
   additionalNotes: string
+  policyBlocks: string[]
 }
 
 // ── Lab Demo API types ────────────────────────────────────────────────────────

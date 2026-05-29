@@ -5,6 +5,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Sidebar } from '@/components/wizard/Sidebar'
 import { TroubleshootingEngine } from '@/components/TroubleshootingEngine'
 import { LandingPage } from '@/components/LandingPage'
+import { BackendToggle, BackendToggleProvider } from '@/components/BackendToggle'
 import { useAppStore } from '@/store/useAppStore'
 import { Step1UseCase } from '@/pages/Step1UseCase'
 import { Step2Requirements } from '@/pages/Step2Requirements'
@@ -36,6 +37,8 @@ function WizardContent({ onBackToLanding }: { onBackToLanding: () => void }) {
 export default function App() {
   const [showLanding, setShowLanding] = useState(true)
   const [showTroubleshooting, setShowTroubleshooting] = useState(false)
+  const [isLive, setIsLive] = useState(false)
+  const [backendUrl, setBackendUrl] = useState('http://localhost:8000')
   const setStep = useAppStore(s => s.setStep)
 
   function goHome() {
@@ -60,19 +63,30 @@ export default function App() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          <div className="flex min-h-screen bg-gray-950 text-gray-200">
-            <Sidebar
-              onGoHome={goHome}
-              onShowTroubleshooting={() => setShowTroubleshooting(t => !t)}
-              showTroubleshooting={showTroubleshooting}
-            />
-            <main className="flex-1 px-6 py-8 overflow-y-auto">
-              {showTroubleshooting
-                ? <TroubleshootingEngine />
-                : <WizardContent onBackToLanding={() => setShowLanding(true)} />
-              }
-            </main>
-          </div>
+          <BackendToggleProvider value={{ isLive, baseUrl: backendUrl }}>
+            <div className="relative flex min-h-screen bg-gray-950 text-gray-200">
+              <Sidebar
+                onGoHome={goHome}
+                onShowTroubleshooting={() => setShowTroubleshooting(t => !t)}
+                showTroubleshooting={showTroubleshooting}
+              />
+              <main className="flex-1 px-6 py-8 overflow-y-auto">
+                {/* Backend toggle — floating top-right */}
+                <div className="absolute top-4 right-6 z-40">
+                  <BackendToggle
+                    isLive={isLive}
+                    baseUrl={backendUrl}
+                    onToggle={setIsLive}
+                    onUrlChange={setBackendUrl}
+                  />
+                </div>
+                {showTroubleshooting
+                  ? <TroubleshootingEngine />
+                  : <WizardContent onBackToLanding={() => setShowLanding(true)} />
+                }
+              </main>
+            </div>
+          </BackendToggleProvider>
         </ToastProvider>
       </QueryClientProvider>
     </ErrorBoundary>

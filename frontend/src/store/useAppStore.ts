@@ -53,6 +53,9 @@ interface AppStore extends AppState {
   setPostCheckScript: (s: string) => void
   setPrometheusAlerts: (s: string) => void
 
+  // Config policy blocks
+  setPolicyBlocks: (blocks: string[]) => void
+
   reset: () => void
 }
 
@@ -102,6 +105,7 @@ const DEFAULT_STATE: AppState = {
   vpnType: '',
   nacOptions: [],
   additionalNotes: '',
+  policyBlocks: [],
 }
 
 export const useAppStore = create<AppStore>()(
@@ -150,6 +154,8 @@ export const useAppStore = create<AppStore>()(
       setPreCheckScript: preCheckScript => set({ preCheckScript }),
       setPostCheckScript: postCheckScript => set({ postCheckScript }),
       setPrometheusAlerts: prometheusAlerts => set({ prometheusAlerts }),
+
+      setPolicyBlocks: policyBlocks => set({ policyBlocks }),
 
       reset: () => set(DEFAULT_STATE),
     }),
