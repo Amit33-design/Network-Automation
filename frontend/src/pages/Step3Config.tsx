@@ -137,6 +137,10 @@ export function Step3Config() {
   // Parse sections for the section nav (M-33)
   const sections = useMemo(() => parseSections(configText), [configText])
 
+  // M-36 — collapse/expand all sections toggle (reset when device or view mode changes)
+  const [sectionsCollapsed, setSectionsCollapsed] = useState(false)
+  useEffect(() => { setSectionsCollapsed(false) }, [selectedId, viewMode])
+
   // M-34 — diff computation (current = configText, previous = prevConfig textarea)
   const diffLines = useMemo<DiffLine[]>(() => {
     if (viewMode !== 'diff') return []
@@ -181,6 +185,13 @@ export function Step3Config() {
       scrollIntoView: true,
     })
     view.focus()
+  }
+
+  // M-36 — expand from collapsed view and scroll to the chosen section
+  function expandAndScrollTo(lineIndex: number) {
+    setSectionsCollapsed(false)
+    // Scroll after React re-renders and CodeMirror is visible again
+    setTimeout(() => scrollToSection(lineIndex), 50)
   }
 
   const selectedDevice = devices.find(d => d.id === selectedId)
@@ -283,13 +294,28 @@ export function Step3Config() {
             ))}
           </div>
 
-          {/* Section nav chips (M-33) — only shown when sections exist and in config mode */}
+          {/* Section nav chips (M-33) + Collapse All / Expand All toggle (M-36) */}
           {viewMode === 'config' && sections.length > 0 && (
-            <div className="flex flex-wrap gap-1 px-1">
+            <div className="flex flex-wrap items-center gap-1 px-1">
+              {/* Collapse / Expand All button */}
+              <button
+                onClick={() => setSectionsCollapsed(prev => !prev)}
+                title={sectionsCollapsed ? 'Expand All' : 'Collapse All'}
+                className="px-2 py-0.5 rounded text-xs font-semibold border transition-colors
+                           bg-white/5 border-white/20 text-gray-300
+                           hover:bg-blue-600/20 hover:text-blue-300 hover:border-blue-500/30
+                           mr-1 flex-shrink-0"
+              >
+                {sectionsCollapsed ? '⊞ Expand All' : '⊟ Collapse All'}
+              </button>
+
+              {/* Section chips — still visible in both states so user can jump directly */}
               {sections.map(sec => (
                 <button
                   key={`${sec.label}-${sec.lineIndex}`}
-                  onClick={() => scrollToSection(sec.lineIndex)}
+                  onClick={() => sectionsCollapsed
+                    ? expandAndScrollTo(sec.lineIndex)
+                    : scrollToSection(sec.lineIndex)}
                   className="px-2 py-0.5 rounded text-xs font-mono font-medium bg-white/5 border border-white/10
                              text-gray-400 hover:bg-blue-600/20 hover:text-blue-300 hover:border-blue-500/30
                              transition-colors"
@@ -300,12 +326,40 @@ export function Step3Config() {
             </div>
           )}
 
-          {/* CodeMirror viewer — hidden in diff mode */}
+          {/* CodeMirror viewer — hidden in diff mode or when sections collapsed (M-36) */}
           <div
             ref={editorRef}
-            className={`flex-1 rounded-xl overflow-hidden border border-white/10 text-sm ${viewMode === 'diff' ? 'hidden' : ''}`}
+            className={`flex-1 rounded-xl overflow-hidden border border-white/10 text-sm ${
+              viewMode === 'diff' || sectionsCollapsed ? 'hidden' : ''
+            }`}
             style={{ minHeight: 460 }}
           />
+
+          {/* M-36 — Collapsed section list view */}
+          {viewMode === 'config' && sectionsCollapsed && sections.length > 0 && (
+            <div
+              className="flex-1 rounded-xl border border-white/10 bg-white/5 overflow-y-auto divide-y divide-white/5"
+              style={{ minHeight: 460 }}
+            >
+              {sections.map(sec => (
+                <button
+                  key={`collapsed-${sec.label}-${sec.lineIndex}`}
+                  onClick={() => expandAndScrollTo(sec.lineIndex)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left
+                             text-gray-300 hover:bg-white/5 hover:text-blue-300
+                             transition-colors group"
+                >
+                  <span className="text-gray-500 group-hover:text-blue-400 transition-colors flex-shrink-0">
+                    &#62;
+                  </span>
+                  <span className="font-mono text-sm font-medium">{sec.label}</span>
+                  <span className="ml-auto text-xs text-gray-600 group-hover:text-gray-400 transition-colors">
+                    line {sec.lineIndex + 1}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* M-34 — Diff pane */}
           {viewMode === 'diff' && (
