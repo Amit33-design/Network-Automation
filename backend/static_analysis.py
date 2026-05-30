@@ -629,12 +629,28 @@ def _check_fabric(state: dict, design: dict) -> list[Finding]:
                 "Test: `ping <dst> df-bit packet-size 8972`.",
         ))
     elif uc == "gpu":
-        findings.append(Finding(
-            check_id="FABRIC-1", domain="fabric", severity="critical", status="fail",
-            title="GPU Fabric Requires Jumbo MTU 9214",
-            detail="GPU/RDMA fabric must run MTU 9214 end-to-end for RoCEv2 performance.",
-            fix="Set `mtu 9214` on all GPU TOR and spine interfaces and all GPU host NICs.",
-        ))
+        # A properly specified GPU fabric evidences jumbo MTU in gpuSpecifics.
+        gpu_mtu = 0
+        try:
+            gpu_mtu = int(gpu_spec.get("mtu", 0) or 0)
+        except (TypeError, ValueError):
+            gpu_mtu = 0
+        if gpu_mtu >= 9000:
+            findings.append(Finding(
+                check_id="FABRIC-1", domain="fabric", severity="info", status="pass",
+                title="GPU Fabric Jumbo MTU Configured",
+                detail=f"GPU/RDMA fabric MTU is {gpu_mtu} (≥ 9000). Verify it is applied "
+                       "end-to-end on all GPU TOR/spine interfaces and host NICs.",
+                fix="",
+            ))
+        else:
+            findings.append(Finding(
+                check_id="FABRIC-1", domain="fabric", severity="critical", status="fail",
+                title="GPU Fabric Requires Jumbo MTU 9214",
+                detail="GPU/RDMA fabric must run MTU 9214 end-to-end for RoCEv2 performance.",
+                fix="Set `mtu 9214` on all GPU TOR and spine interfaces and all GPU host NICs "
+                    "(declare via gpuSpecifics.mtu in the intent).",
+            ))
 
     # ── FABRIC-2: BFD for fast failover ─────────────────────────────────────
     has_bfd = any("BFD" in p for p in protocols)
