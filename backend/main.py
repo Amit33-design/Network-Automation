@@ -546,6 +546,37 @@ async def api_generate_configs(
 
 
 # ---------------------------------------------------------------------------
+# Greenfield deployment planner
+# ---------------------------------------------------------------------------
+
+@app.post("/api/greenfield/plan")
+async def api_greenfield_plan(
+    state: DesignState,
+    include_configs: bool = True,
+    user: dict = Depends(require_permission("configs:generate")),
+):
+    """
+    Build an end-to-end greenfield bring-up plan from a design:
+      - Nornir/Ansible inventory generated from the design (no hand-written hosts.yml)
+      - Day-0 bootstrap + Day-N production config bundles (Jinja)
+      - 6-stage ordered workflow (register → ZTP → reachability → pre-checks →
+        tier-ordered push → post-checks) with rollback semantics
+
+    Pure rendering — does NOT touch real devices.
+    """
+    try:
+        import greenfield as gf
+        s = state.model_dump()
+        plan = gf.plan_greenfield(s, include_configs=include_configs)
+        out = plan.to_dict()
+        out["inventory_files"] = gf.render_inventory_files(s, plan.inventory)
+        return out
+    except Exception as exc:
+        log.exception("Greenfield plan failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Pre-checks
 # ---------------------------------------------------------------------------
 

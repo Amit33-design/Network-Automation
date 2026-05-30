@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
 
   # ── NetDesign AI — FastAPI REST backend ────────────────────────────────────
@@ -72,18 +70,23 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # ── Static frontend (Nginx) ─────────────────────────────────────────────────
+  # ── React frontend (Vite build → Nginx) ─────────────────────────────────────
+  # Builds the current React/Vite app in frontend/ and serves the static bundle.
+  # (Previously this mounted the legacy vanilla index.html/src — now stale.)
   frontend:
-    image: nginx:alpine
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: netdesign-frontend
     ports:
       - "8080:80"
-    volumes:
-      - ./index.html:/usr/share/nginx/html/index.html:ro
-      - ./preview.svg:/usr/share/nginx/html/preview.svg:ro
-      - ./src:/usr/share/nginx/html/src:ro
     depends_on:
       - api
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   # ── PostgreSQL — design/deployment/device persistence ──────────────────────

@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir --prefer-binary \
 # Group 3: network automation
 RUN pip install --no-cache-dir --prefer-binary \
     nornir==3.4.1 nornir-netmiko==1.0.1 nornir-utils==0.2.0 \
-    nornir-napalm==0.4.0 netmiko==4.3.0 napalm==5.0.0 \
+    nornir-napalm==0.4.0 netmiko==4.3.0 napalm==4.1.0 \
     ncclient==0.6.15 textfsm==1.1.3 ntc-templates==5.1.0 paramiko==3.4.0
 
 # Group 4: MCP + license

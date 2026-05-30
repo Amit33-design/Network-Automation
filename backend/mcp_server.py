@@ -75,6 +75,8 @@ from monitor_engine import (
 from troubleshoot_engine import quick_triage as _quick_triage
 from static_analysis import run_analysis as _run_static_analysis
 from nornir_tasks import run_post_checks as _run_post_checks
+from nornir_tasks import run_pre_checks as _run_pre_checks
+import greenfield as _greenfield
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -1223,6 +1225,56 @@ def run_static_analysis(state: dict[str, Any]) -> dict[str, Any]:
 
 
 # ===========================================================================
+# ── TOOL — run_pre_checks ────────────────────────────────────────────────────
+# ===========================================================================
+@mcp.tool()
+def run_pre_checks(
+    state: dict[str, Any],
+    inventory: dict[str, Any] | None = None,
+    deployment_id: str = "",
+) -> dict[str, Any]:
+    """
+    Run pre-deployment readiness checks against live devices (or simulation).
+
+    When inventory is provided, connects via SSH (Nornir + Netmiko) and runs:
+      1. Reachability (TCP/22 probe)
+      2. SSH login + "show version" parse
+      3. MANDATORY running-config backup written to BACKUP_DIR/{deployment_id}/
+         {hostname}.cfg — guarantees a rollback restore point before any change.
+
+    When inventory is empty/None, returns simulated pass results (demo mode).
+
+    Args:
+        state:         Network state dict.
+        inventory:     Dict of host_name → {hostname, platform, username, password}.
+        deployment_id: Tag for the backup directory / correlation.
+
+    Returns:
+        ok:      True if all checks passed (backup captured for every device)
+        results: List of {host, check, passed, detail}
+        summary: Pass/fail counts and any failed check names
+    """
+    log.info("run_pre_checks called — inventory hosts=%d", len(inventory or {}))
+    try:
+        results = _run_pre_checks(state, inventory or {}, deployment_id or None)
+        passed  = [r for r in results if r.get("passed")]
+        failed  = [r for r in results if not r.get("passed")]
+        return {
+            "ok":      len(failed) == 0,
+            "results": results,
+            "summary": {
+                "total":  len(results),
+                "passed": len(passed),
+                "failed": len(failed),
+                "failed_checks": [f"{r['host']}/{r['check']}" for r in failed],
+            },
+        }
+    except Exception as exc:
+        log.exception("run_pre_checks error")
+        return {"ok": False, "error": str(exc), "results": []}
+
+
+# ===========================================================================
 # ── TOOL 18 — run_post_checks ────────────────────────────────────────────────
 # ===========================================================================
 @mcp.tool()
@@ -1668,6 +1720,195 @@ def design_multicloud_network(
         "ansible_summary":  ansible_summary,
         "summary":          plan["summary"],
     }
+
+
+# ===========================================================================
+# ── TOOL — plan_greenfield_deployment ───────────────────────────────────────
+# ===========================================================================
+@mcp.tool()
+def plan_greenfield_deployment(
+    state: dict[str, Any],
+    include_configs: bool = True,
+) -> dict[str, Any]:
+    """
+    Produce an end-to-end GREENFIELD bring-up plan for a designed network.
+
+    Turns a design state (from design_network) into the full deployment package:
+      1. A Nornir/Ansible INVENTORY generated from the design (mgmt IPs, per-role
+         platform, groups) — no hand-written hosts.yml needed.
+      2. DAY-0 bootstrap configs (mgmt IP + SSH + NTP) per device via ZTP templates.
+      3. DAY-N production configs per device via the Jinja config generator.
+      4. A 6-stage ordered workflow: register/DHCP → ZTP bootstrap → reachability
+         gate → pre-checks+backup → tier-ordered push → post-checks/validate, with
+         auto-rollback semantics.
+
+    Args:
+        state:           Design state dict (pass the 'state' from design_network).
+        include_configs: When True, also render the day-0 + day-N config bundles.
+
+    Returns:
+        org, use_case, device_count, push_order (tier-ordered hostnames),
+        inventory (Nornir SimpleInventory dict), inventory_files (hosts.yml /
+        groups.yml / ansible_hosts.ini rendered text), stages (the 6-stage plan),
+        bootstrap_configs (day-0), production_configs (day-N), summary.
+    """
+    log.info("plan_greenfield_deployment called — uc=%s", state.get("uc"))
+    try:
+        plan = _greenfield.plan_greenfield(state, include_configs=include_configs)
+        files = _greenfield.render_inventory_files(state, plan.inventory)
+        out = plan.to_dict()
+        out["inventory_files"] = files
+        out["ok"] = True
+        return out
+    except Exception as exc:
+        log.exception("plan_greenfield_deployment error")
+        return {"ok": False, "error": str(exc)}
+
+
+# ===========================================================================
+# ── TOOL — execute_greenfield_deployment ────────────────────────────────────
+# ===========================================================================
+@mcp.tool()
+def execute_greenfield_deployment(
+    state: dict[str, Any],
+    dry_run: bool = True,
+    deployment_id: str = "greenfield",
+) -> dict[str, Any]:
+    """
+    Execute the greenfield pipeline (pre-checks → push → post-checks) against the
+    inventory generated from the design, using the Nornir/Netmiko task runner.
+
+    Safe by default: dry_run=True validates and renders without pushing. When
+    Nornir or live devices are unavailable the runner degrades to simulation.
+    Set dry_run=False only against a reachable lab/inventory.
+
+    Args:
+        state:         Design state dict.
+        dry_run:       True = validate/simulate only (default). False = real push.
+        deployment_id: Tag for backups + event correlation.
+
+    Returns:
+        dry_run, device_count, stages[] (pre_checks/push/post_checks with ok+result),
+        aborted_at (if a gate failed), complete.
+    """
+    log.info("execute_greenfield_deployment called — dry_run=%s", dry_run)
+    try:
+        return {"ok": True, **_greenfield.execute_greenfield(state, dry_run, deployment_id)}
+    except Exception as exc:
+        log.exception("execute_greenfield_deployment error")
+        return {"ok": False, "error": str(exc)}
+
+
+# ===========================================================================
+# ── TOOL — list_policy_packs / evaluate_policy_pack (customer policy engine) ──
+# ===========================================================================
+@mcp.tool()
+def list_policy_packs() -> dict[str, Any]:
+    """
+    List the built-in governance policy packs (customer policy engine).
+
+    Packs are YAML rule sets evaluated against a design intent + generated configs
+    via the user_rule_engine DSL (eq/contains/gt/config_contains/…).
+
+    Returns:
+        packs: [{id, name, description, rule_count, tags}]
+    """
+    try:
+        from policies.user_rule_engine import list_packs
+        return {"ok": True, "packs": list_packs()}
+    except Exception as exc:
+        log.exception("list_policy_packs error")
+        return {"ok": False, "error": str(exc), "packs": []}
+
+
+@mcp.tool()
+def evaluate_policy_pack(
+    intent: dict[str, Any],
+    pack_id: str = "",
+    yaml_content: str = "",
+    configs: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """
+    Evaluate a governance policy pack (or inline YAML ruleset) against a design.
+
+    Provide either a built-in pack_id (see list_policy_packs) OR raw yaml_content.
+    Rules fire when their condition is met; severity drives the gate
+    (PASS / WARN / FAIL / BLOCK).
+
+    Args:
+        intent:       Design intent/state dict.
+        pack_id:      Built-in pack id (e.g. "dc_baseline", "security_baseline", "ai_fabric").
+        yaml_content: Inline ruleset YAML (overrides pack_id when provided).
+        configs:      Optional {hostname: config} for config_contains rules.
+
+    Returns:
+        gate_status, rule_count, fired_count, violations[], warnings[], infos[]
+    """
+    try:
+        from policies.user_rule_engine import evaluate, get_pack_yaml, RuleParseError
+        yaml_src = yaml_content or (get_pack_yaml(pack_id) if pack_id else None)
+        if not yaml_src:
+            return {"ok": False, "error": f"No yaml_content and pack '{pack_id}' not found"}
+        try:
+            res = evaluate(yaml_src, intent, configs or {})
+        except RuleParseError as exc:
+            return {"ok": False, "error": f"Rule parse error: {exc}"}
+        return {
+            "ok": True,
+            "gate_status": res.gate_status,
+            "rule_count":  res.rule_count,
+            "fired_count": res.fired_count,
+            "violations":  res.violations,
+            "warnings":    res.warnings,
+            "infos":       res.infos,
+        }
+    except Exception as exc:
+        log.exception("evaluate_policy_pack error")
+        return {"ok": False, "error": str(exc)}
+
+
+# ===========================================================================
+# ── TOOL — generate_automation_exports (Ansible + Terraform) ─────────────────
+# ===========================================================================
+@mcp.tool()
+def generate_automation_exports(
+    state: dict[str, Any],
+    formats: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Generate Infrastructure-as-Code automation artifacts from a design.
+
+    Args:
+        state:   Design state dict (from design_network).
+        formats: Subset of ["ansible", "terraform"]. Default: both.
+
+    Returns:
+        ansible:   {playbook, inventory} YAML strings (when requested)
+        terraform: main.tf HCL string (when requested)
+    """
+    formats = formats or ["ansible", "terraform"]
+    out: dict[str, Any] = {"ok": True}
+    try:
+        ip_plan = generate_ip_plan(state)
+    except Exception:
+        ip_plan = None
+    try:
+        if "ansible" in formats:
+            from export.ansible import generate_ansible
+            configs = {}
+            try:
+                configs = generate_all_configs(state)
+            except Exception:
+                pass
+            playbook, inventory = generate_ansible(state, configs, ip_plan)
+            out["ansible"] = {"playbook": playbook, "inventory": inventory}
+        if "terraform" in formats:
+            from export.terraform import generate_terraform
+            out["terraform"] = generate_terraform(state, ip_plan)
+        return out
+    except Exception as exc:
+        log.exception("generate_automation_exports error")
+        return {"ok": False, "error": str(exc)}
 
 
 # ===========================================================================
