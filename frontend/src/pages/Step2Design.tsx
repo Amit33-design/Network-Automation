@@ -248,12 +248,13 @@ export function Step2Design() {
   const { useCase, scale, siteCode, linkDistances, devices, setDevices,
           totalEndpoints, bandwidthPerServer, oversubscription,
           underlayProtocol, compliance, vendorPrefs,
+          trafficPattern, firewallModel,
           nextStep, prevStep } = useAppStore()
   const [activeTab, setActiveTab] = useState<Tab>('devices')
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
-    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs }),
-    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs]
+    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel }),
+    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel]
   )
 
   useMemo(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
@@ -755,11 +756,14 @@ export function Step2Design() {
               </thead>
               <tbody>
                 {allRows.map((r, i) => {
-                  const uplinks  = r.subLayer === 'leaf' ? Math.max(2, Math.ceil(r.ports / (oversubscription || 3))) : 0
+                  // Use the product's actual uplink count carried in BOMDevice.uplinks
+                  const uplinks  = r.subLayer === 'leaf' ? (r.uplinks ?? 0) : 0
                   const downlinks = r.subLayer === 'leaf' ? r.ports - uplinks : r.ports
+                  const totalLeafDownlinks = allRows.filter(x => x.subLayer === 'leaf').reduce((s, x) => s + x.qty * (x.ports - (x.uplinks ?? 0)), 0)
+                  const totalLeafUplinks   = allRows.filter(x => x.subLayer === 'leaf').reduce((s, x) => s + x.qty * (x.uplinks ?? 0), 0)
                   const usedPct  = r.subLayer === 'leaf'
-                    ? Math.min(100, Math.round((totalEndpoints / Math.max(1, allRows.filter(x => x.subLayer === 'leaf').reduce((s, x) => s + x.qty * downlinks, 0))) * 100))
-                    : r.subLayer === 'spine' ? Math.min(100, Math.round((allRows.filter(x => x.subLayer === 'leaf').length * uplinks / Math.max(1, r.qty * r.ports)) * 100))
+                    ? Math.min(100, Math.round((totalEndpoints / Math.max(1, totalLeafDownlinks)) * 100))
+                    : r.subLayer === 'spine' ? Math.min(100, Math.round((totalLeafUplinks / Math.max(1, r.qty * r.ports)) * 100))
                     : 50
                   const bar = '█'.repeat(Math.round(usedPct / 10)) + '░'.repeat(10 - Math.round(usedPct / 10))
                   return (
@@ -784,8 +788,8 @@ export function Step2Design() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
-              ['Total Downlink Ports', allRows.filter(r => r.subLayer === 'leaf').reduce((s, r) => s + r.qty * (r.ports - Math.max(2, Math.ceil(r.ports / (oversubscription || 3)))), 0).toString()],
-              ['Max Endpoint Capacity', allRows.filter(r => r.subLayer === 'leaf').reduce((s, r) => s + r.qty * (r.ports - Math.max(2, Math.ceil(r.ports / (oversubscription || 3)))), 0).toLocaleString()],
+              ['Total Downlink Ports', allRows.filter(r => r.subLayer === 'leaf').reduce((s, r) => s + r.qty * (r.ports - (r.uplinks ?? 0)), 0).toString()],
+              ['Max Endpoint Capacity', allRows.filter(r => r.subLayer === 'leaf').reduce((s, r) => s + r.qty * (r.ports - (r.uplinks ?? 0)), 0).toLocaleString()],
               ['Current Load', `${totalEndpoints.toLocaleString()} endpoints`],
             ].map(([label, val]) => (
               <div key={label} className="bg-white/5 border border-white/10 rounded-lg p-3">

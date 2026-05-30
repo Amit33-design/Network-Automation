@@ -55,6 +55,7 @@ export interface BOMDevice {
   totalPrice: number
   speed: string
   ports: number
+  uplinks?: number
   features: string[]
 }
 

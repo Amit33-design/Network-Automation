@@ -1510,15 +1510,51 @@ ${isSpine ? `  ! ── Spine: accept all leaf peers ─────────
 interface virtual-network 1
   vxlan-vni 10001
 !
-${isGpu ? `! ── GPU / RoCEv2 QoS ────────────────────────────────────────────────────────
-qos-map pfc-priority-queue-map RDMA
-  priority 3 queue 3
+${isGpu ? `! ── RoCEv2 / DCB / ECN — Full Lossless Fabric (OS10) ───────────────────────
+!   Priority 3 → RoCEv2/RDMA (lossless, PFC no-drop)
+!   Priority 6 → Storage/NVMe-oF (lossless, PFC no-drop)
+!   Priority 0-2,4,5,7 → Lossy (ECN-marked, WRED)
 !
-interface range ethernet 1/1/1-1/1/${dev.ports}
+! DSCP → Traffic Class mapping
+qos-map dscp-tc RDMA-DSCP-MAP
+  dscp 26 28 traffic-class 3    ! AF31/AF32 → TC3 (RoCEv2 lossless)
+  dscp 34 36 traffic-class 5    ! AF41/AF42 → TC5 (Storage lossless)
+  dscp 46    traffic-class 6    ! EF        → TC6 (Latency-sensitive)
+  dscp 0     traffic-class 0    ! BE        → TC0 (Lossy)
+!
+! ETS (Enhanced Transmission Selection) — bandwidth carving per TC
+qos-map tc-bandwidth-map RDMA-ETS
+  traffic-class 3 bandwidth-percent 40   ! RDMA guaranteed 40%
+  traffic-class 5 bandwidth-percent 10   ! Storage guaranteed 10%
+  traffic-class 6 bandwidth-percent 10   ! Low-latency guaranteed 10%
+  traffic-class 0 bandwidth-percent 40   ! Lossy best-effort 40%
+!
+! DCB map binding DSCP + ETS + PFC
+dcb-map RDMA-LOSSLESS
+  dscp-tc-map RDMA-DSCP-MAP
+  tc-bandwidth-map RDMA-ETS
   priority-flow-control mode on
-  priority-flow-control priority 3 no-drop
-  dcb-map RDMA
-  pfc-watchdog on` : ''}
+    priority 3 no-drop
+    priority 6 no-drop
+!
+! ECN thresholds on lossy queues (TC0, TC6)
+qos-map wred-profile LOSSY-ECN
+  traffic-class 0 green  min-threshold 40 max-threshold 80 drop-probability 100
+  traffic-class 0 yellow min-threshold 35 max-threshold 70 drop-probability 100
+  traffic-class 6 green  min-threshold 50 max-threshold 90 drop-probability 100
+!
+! Apply DCB map + DSCP trust + ECN to all fabric ports
+interface range ethernet 1/1/1-1/1/${dev.ports}
+  trust dscp
+  dcb-map RDMA-LOSSLESS
+  pfc-watchdog on
+  ecn
+!
+! Buffer management — dynamic threshold with lossless headroom
+buffer dynamic-threshold
+  pause-threshold 122880
+  resume-threshold 81920
+!` : ''}
 `
 }
 
@@ -1790,20 +1826,23 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   const isGpu = useCase === 'gpu'
   const v = dev.vendor
   const l = dev.subLayer
+  // Dell EMC and NVIDIA DC fabrics are lossless-first; always enable full RoCEv2/DCB config.
+  // Other vendors (Cisco/Arista) only get the lossless path when use case is explicitly gpu.
+  const needsRoce = isGpu || ((v === 'Dell EMC' || v === 'NVIDIA') && useCase === 'dc')
 
   if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'firewall')                         return ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
-  if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, isGpu)
-  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, isGpu)
+  if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce)
+  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce)
   if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeWanConfig(dev, idx)
-  if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, isGpu)
-  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, isGpu)
+  if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce)
+  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce)
   if (v === 'Juniper'   && (l === 'leaf' || l === 'spine'))          return juniperLeafConfig(dev, idx)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
-  if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, isGpu)
+  if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)
   if (v === 'HPE Aruba')                                             return arubaOsCxConfig(dev, idx)
-  if (v === 'NVIDIA'    && (l === 'spine' || l === 'leaf'))          return nvidiaSpectrumConfig(dev, idx, isGpu)
+  if (v === 'NVIDIA'    && (l === 'spine' || l === 'leaf'))          return nvidiaSpectrumConfig(dev, idx, needsRoce)
   if (v === 'Extreme Networks')                                      return extremeExosConfig(dev, idx)
   return genericConfig(dev)
 }

@@ -145,6 +145,8 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
   bandwidthPerServer?: string
   oversubscription?: number
   vendorPrefs?: string[]
+  trafficPattern?: string
+  firewallModel?: string
 }): BOMDevice[] {
   const useCase = (state.useCase || 'dc') as UseCase
   const scale = (state.scale || 'small') as Scale
@@ -153,12 +155,17 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
     ? resolvePrefs(useCase, state.vendorPrefs)
     : (PREFERRED_PRODUCTS[useCase] ?? PREFERRED_PRODUCTS.dc)
 
+  // Firewall needed when: medium/large scale OR intent explicitly includes N-S traffic
+  const nsTraffic = state.trafficPattern === 'ns' || state.trafficPattern === 'both'
+  const fwAllowed = prefs['firewall'] && state.firewallModel !== 'none'
+  const needFirewall = fwAllowed && (scale !== 'small' || nsTraffic)
+
   // Port-math: derive device counts from topology inputs when totalEndpoints > 0
   let scaleDef: RoleCounts
   const endpointCount = state.totalEndpoints ?? 0
   if (endpointCount > 0 && (useCase === 'dc' || useCase === 'gpu' || useCase === 'campus' || useCase === 'multisite')) {
     const bwGbps = parseInt(state.bandwidthPerServer ?? '25') || 25
-    const oversub = state.oversubscription ?? 3
+    const oversub = Math.max(1, state.oversubscription ?? 3)
 
     if (useCase === 'dc' || useCase === 'gpu') {
       const leafProdId = prefs['leaf']
@@ -167,29 +174,32 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
       const spineSku = spineProdId ? PRODUCTS.find(p => p.id === spineProdId) : undefined
 
       if (leafSku && spineSku) {
-        const rawLeaves = Math.ceil(endpointCount / leafSku.ports)
+        // Use only downlink ports for endpoint capacity (uplink ports connect to spine)
+        const downlinkPorts = Math.max(1, leafSku.ports - (leafSku.uplinks || 0))
+        const rawLeaves = Math.ceil(endpointCount / downlinkPorts)
         const leafCount = rawLeaves % 2 === 0 ? rawLeaves : rawLeaves + 1
 
-        const serverCapacityPerLeaf = leafSku.ports * bwGbps
-        const uplinksNeeded = Math.ceil(serverCapacityPerLeaf / oversub / parseInt(spineSku.speed))
+        // Uplinks needed per leaf, capped at the SKU's actual uplink port count
+        const serverCapacityPerLeaf = downlinkPorts * bwGbps
+        const spinePortSpeed = Math.max(1, parseInt(spineSku.speed) || 100)
+        const rawUplinksNeeded = Math.ceil(serverCapacityPerLeaf / oversub / spinePortSpeed)
+        const uplinksNeeded = Math.min(leafSku.uplinks || leafSku.ports, Math.max(1, rawUplinksNeeded))
 
         const totalLeafUplinks = leafCount * uplinksNeeded
         const spineCount = Math.max(Math.ceil(totalLeafUplinks / spineSku.ports), 2)
 
         scaleDef = { spine: spineCount, leaf: leafCount }
-        // Add firewalls for non-small scale equivalents (when enough endpoints)
-        const hasFirewall = prefs['firewall'] && scale !== 'small'
-        if (hasFirewall) {
-          const fwCount = spineCount <= 4 ? 2 : 4
-          scaleDef['firewall'] = fwCount
+        if (needFirewall) {
+          scaleDef['firewall'] = spineCount <= 4 ? 2 : 4
         }
       } else {
         scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
+        if (needFirewall && !scaleDef['firewall']) scaleDef = { ...scaleDef, firewall: 2 }
       }
     } else if (useCase === 'campus') {
       const accessProdId = prefs['access']
       const accessSku = accessProdId ? PRODUCTS.find(p => p.id === accessProdId) : undefined
-      const accessPorts = accessSku?.ports ?? 48
+      const accessPorts = Math.max(1, (accessSku?.ports ?? 48) - (accessSku?.uplinks ?? 4))
 
       const rawAccess = Math.ceil(endpointCount / accessPorts)
       const accessCount = rawAccess % 2 === 0 ? rawAccess : rawAccess + 1
@@ -197,16 +207,16 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
       const distCount = rawDist % 2 === 0 ? rawDist : rawDist + 1
 
       scaleDef = { distribution: distCount, access: accessCount }
-      const hasFirewall = prefs['firewall'] && scale !== 'small'
-      if (hasFirewall) {
+      if (needFirewall) {
         scaleDef['firewall'] = distCount <= 4 ? 2 : 4
       }
     } else {
-      // multisite with port-math (spine-leaf portion)
       scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
+      if (needFirewall && !scaleDef['firewall']) scaleDef = { ...scaleDef, firewall: 2 }
     }
   } else {
     scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
+    if (needFirewall && !scaleDef['firewall']) scaleDef = { ...scaleDef, firewall: 2 }
   }
 
   const devices: BOMDevice[] = []
@@ -233,6 +243,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
         totalPrice: product.priceUSD,
         speed: product.speed,
         ports: product.ports,
+        uplinks: product.uplinks,
         features: product.features,
       })
     }
@@ -252,6 +263,7 @@ export interface BOMSummaryRow {
   totalCost: number
   speed: string
   ports: number
+  uplinks: number
   features: string[]
   detail: string
 }
@@ -261,6 +273,8 @@ export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>
   bandwidthPerServer?: string
   oversubscription?: number
   vendorPrefs?: string[]
+  trafficPattern?: string
+  firewallModel?: string
 }): {
   devices: BOMDevice[]
   summary: Record<string, BOMSummaryRow>
@@ -281,6 +295,7 @@ export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>
         totalCost: 0,
         speed: dev.speed,
         ports: dev.ports,
+        uplinks: dev.uplinks ?? (product?.uplinks ?? 0),
         features: dev.features,
         detail: product?.detail ?? '',
       }
