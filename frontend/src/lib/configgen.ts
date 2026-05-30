@@ -12,6 +12,7 @@
  */
 
 import type { BOMDevice, UseCase } from '@/types'
+import { applyPolicies } from '@/lib/policies'
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -1810,8 +1811,15 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
 export function generateAllConfigs(
   devices: BOMDevice[],
   useCase: UseCase | '' = '',
+  policyBlocks: string[] = [],
 ): Record<string, string> {
   return Object.fromEntries(
-    devices.map((dev, i) => [dev.id, generateConfig(dev, i, useCase)])
+    devices.map((dev, i) => {
+      const base = generateConfig(dev, i, useCase)
+      const withPolicies = policyBlocks.length
+        ? applyPolicies(base, dev, useCase, policyBlocks)
+        : base
+      return [dev.id, withPolicies]
+    })
   )
 }

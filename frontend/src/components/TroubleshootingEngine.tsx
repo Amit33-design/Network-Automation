@@ -270,6 +270,282 @@ bfd interval 300 min_rx 300 multiplier 3` } },
     ],
     mttrMinutes: [15, 40],
   },
+
+  // ── OSPF adjacency stuck ──────────────────────────────────────────────────
+  {
+    id: 'ospf-adjacency',
+    icon: '🔁',
+    title: 'OSPF Adjacency Stuck (ExStart/Exchange)',
+    severity: 'high',
+    useCaseTag: 'campus / wan / dc',
+    summary: 'OSPF neighbors never reach FULL — stuck in INIT/2-WAY/EXSTART, so routes never install.',
+    relevantRoles: ['core', 'distribution', 'spine', 'leaf', 'wan-edge'],
+    signals: [
+      { name: 'MTU mismatch on P2P link', weight: 0.35, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'Neighbor stuck in EXSTART/EXCHANGE', weight: 0.25, threshold: 50, unit: 'state', higherIsWorse: true },
+      { name: 'Hello/dead interval mismatch', weight: 0.20, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'Area/auth type mismatch', weight: 0.20, threshold: 50, unit: 'flag', higherIsWorse: true },
+    ],
+    rootCauses: [
+      { description: 'MTU mismatch — OSPF DBD packets dropped, adjacency loops in EXSTART/EXCHANGE', severity: 'high', affectedDeviceRoles: ['core', 'distribution', 'spine', 'leaf'], requires: [0, 1], mode: 'any' },
+      { description: 'Hello/dead timer mismatch — neighbors never progress past INIT/2-WAY', severity: 'high', affectedDeviceRoles: ['core', 'distribution'], requires: [2] },
+      { description: 'Area ID or authentication mismatch on the segment', severity: 'medium', affectedDeviceRoles: ['core', 'distribution', 'wan-edge'], requires: [3] },
+    ],
+    remediation: [
+      { title: 'Align MTU + set point-to-point network type', cli: { '*': `interface <P2P-LINK>
+ mtu 9216
+ ip ospf network point-to-point
+ ip ospf mtu-ignore   ! temporary workaround only` } },
+      { title: 'Match timers + authentication', cli: { '*': `interface <P2P-LINK>
+ ip ospf hello-interval 10
+ ip ospf dead-interval 40
+ ip ospf authentication key-chain OSPF-KEY` } },
+    ],
+    verification: [
+      'show ip ospf neighbor   (expect FULL)',
+      'show ip ospf interface <intf> | include MTU|Hello|Dead|Area',
+      'show interface <intf> | include MTU',
+      'debug ip ospf adj   (watch for "Nbr ... MTU mismatch")',
+    ],
+    mttrMinutes: [10, 30],
+  },
+
+  // ── L2 / VLAN connectivity loss ───────────────────────────────────────────
+  {
+    id: 'vlan-l2',
+    icon: '🔌',
+    title: 'Same-VLAN Hosts Cannot Communicate',
+    severity: 'high',
+    useCaseTag: 'campus / dc',
+    summary: 'Two hosts in the same VLAN cannot reach each other — an L2 forwarding or VLAN-plumbing fault.',
+    relevantRoles: ['access', 'distribution', 'leaf'],
+    signals: [
+      { name: 'VLAN missing from trunk allowed-list', weight: 0.35, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'Access port in wrong VLAN', weight: 0.25, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'MAC not learned in VLAN', weight: 0.20, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'STP blocking on expected forwarding port', weight: 0.20, threshold: 50, unit: 'flag', higherIsWorse: true },
+    ],
+    rootCauses: [
+      { description: 'VLAN pruned/absent from a trunk in the path — broadcast domain is split', severity: 'high', affectedDeviceRoles: ['access', 'distribution', 'leaf'], requires: [0] },
+      { description: 'Access port assigned to the wrong VLAN', severity: 'high', affectedDeviceRoles: ['access'], requires: [1] },
+      { description: 'STP blocking the only forwarding path for the VLAN', severity: 'medium', affectedDeviceRoles: ['distribution', 'access'], requires: [3] },
+    ],
+    remediation: [
+      { title: 'Add VLAN to trunk + fix access assignment', cli: {
+        distribution: `interface <TRUNK>
+ switchport trunk allowed vlan add <VLAN>`,
+        access: `interface <ACCESS-PORT>
+ switchport access vlan <VLAN>` } },
+      { title: 'Confirm L2 forwarding', cli: { '*': `show vlan id <VLAN>
+show interface trunk | include <VLAN>
+show mac address-table vlan <VLAN>` } },
+    ],
+    verification: [
+      'show vlan id <VLAN>   (active on every switch in path)',
+      'show interface <trunk> trunk | include <VLAN>',
+      'show mac address-table vlan <VLAN>',
+      'show spanning-tree vlan <VLAN> | include BLK',
+    ],
+    mttrMinutes: [8, 25],
+  },
+
+  // ── DHCP failure ──────────────────────────────────────────────────────────
+  {
+    id: 'dhcp-fail',
+    icon: '📭',
+    title: 'Clients Not Getting an IP (DHCP)',
+    severity: 'high',
+    useCaseTag: 'campus / dc',
+    summary: 'Endpoints fall back to APIPA (169.254.x.x) — DHCP DISCOVER/OFFER is not completing.',
+    relevantRoles: ['access', 'distribution', 'leaf'],
+    signals: [
+      { name: 'Missing ip helper-address on SVI', weight: 0.35, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'DHCP snooping dropping DISCOVER', weight: 0.25, threshold: 50, unit: 'drops/min', higherIsWorse: true },
+      { name: 'DHCP pool/scope exhaustion', weight: 0.25, threshold: 85, unit: '%', higherIsWorse: true },
+      { name: 'Server/relay reachability loss', weight: 0.15, threshold: 50, unit: 'flag', higherIsWorse: true },
+    ],
+    rootCauses: [
+      { description: 'No ip helper-address on the client SVI — relay never forwards DISCOVER to the server', severity: 'high', affectedDeviceRoles: ['distribution', 'leaf'], requires: [0] },
+      { description: 'DHCP snooping marking the uplink untrusted — OFFER/ACK discarded', severity: 'high', affectedDeviceRoles: ['access', 'distribution'], requires: [1] },
+      { description: 'Scope exhaustion — no free addresses in the pool', severity: 'medium', affectedDeviceRoles: ['distribution'], requires: [2] },
+    ],
+    remediation: [
+      { title: 'Add relay + trust uplink', cli: {
+        distribution: `interface Vlan<VLAN>
+ ip helper-address <DHCP-SERVER>`,
+        access: `interface <UPLINK>
+ ip dhcp snooping trust` } },
+      { title: 'Check snooping + pool', cli: { '*': `show ip dhcp snooping statistics
+show ip dhcp binding | count
+show ip dhcp pool` } },
+    ],
+    verification: [
+      'show run interface Vlan<VLAN> | include helper',
+      'show ip dhcp snooping statistics',
+      'show ip dhcp pool   (Leased vs Total)',
+      'debug ip dhcp server packet detail',
+    ],
+    mttrMinutes: [10, 30],
+  },
+
+  // ── MTU black hole ────────────────────────────────────────────────────────
+  {
+    id: 'mtu-blackhole',
+    icon: '🕳️',
+    title: 'Path MTU Black Hole (Jumbo / VXLAN)',
+    severity: 'high',
+    useCaseTag: 'dc / gpu',
+    summary: 'Small packets pass but large transfers stall — an undersized MTU hop silently drops big frames.',
+    relevantRoles: ['spine', 'leaf', 'distribution'],
+    signals: [
+      { name: 'Fabric interface MTU < 9216', weight: 0.40, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'Large ping (DF-bit 8972) fails', weight: 0.25, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'TCP retransmits on bulk flows', weight: 0.20, threshold: 40, unit: '%', higherIsWorse: true },
+      { name: 'VXLAN overhead not accounted (50B)', weight: 0.15, threshold: 50, unit: 'flag', higherIsWorse: true },
+    ],
+    rootCauses: [
+      { description: 'A fabric hop has MTU < 9216 — VXLAN-encapsulated jumbo frames are silently dropped', severity: 'high', affectedDeviceRoles: ['spine', 'leaf'], requires: [0, 1], mode: 'any' },
+      { description: 'NVE source / P2P MTU not raised for 50B VXLAN overhead', severity: 'high', affectedDeviceRoles: ['leaf'], requires: [3] },
+      { description: 'PMTUD broken (ICMP filtered) — senders never learn to shrink', severity: 'medium', affectedDeviceRoles: ['spine', 'leaf', 'distribution'], requires: [2] },
+    ],
+    remediation: [
+      { title: 'Raise fabric + NVE MTU to 9216', cli: { '*': `system jumbomtu 9216
+interface <P2P-LINK>
+ mtu 9216
+interface nve1
+ source-interface loopback1
+! host NIC: set MTU 9000 (9214 for RoCEv2)` } },
+      { title: 'Binary-search the bottleneck hop', cli: { '*': `ping <DST> df-bit size 8972
+traceroute <DST>   ! then check MTU on each hop` } },
+    ],
+    verification: [
+      'show interface <intf> | include MTU',
+      'ping <DST> df-bit size 8972   (must succeed end-to-end)',
+      'show interface nve1',
+      'show interface counters errors | include giants|jumbo',
+    ],
+    mttrMinutes: [10, 30],
+  },
+
+  // ── Physical interface errors / flapping ──────────────────────────────────
+  {
+    id: 'interface-errors',
+    icon: '🩹',
+    title: 'Interface Errors / Link Flapping',
+    severity: 'high',
+    useCaseTag: 'all',
+    summary: 'A link flaps and accrues CRC/input errors, triggering protocol churn and packet loss.',
+    relevantRoles: ['spine', 'leaf', 'core', 'distribution', 'access', 'wan-edge'],
+    signals: [
+      { name: 'CRC / input error rate', weight: 0.35, threshold: 30, unit: 'err/s', higherIsWorse: true },
+      { name: 'Link flap count (last hour)', weight: 0.30, threshold: 40, unit: 'flaps', higherIsWorse: true },
+      { name: 'Optic Rx power out of range', weight: 0.25, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'Adjacency churn on the link', weight: 0.10, threshold: 50, unit: 'flag', higherIsWorse: true },
+    ],
+    rootCauses: [
+      { description: 'Dirty/failing optic or cable — CRC errors and link flaps cascade into protocol loss', severity: 'high', affectedDeviceRoles: ['spine', 'leaf', 'core', 'distribution'], requires: [0, 2], mode: 'any' },
+      { description: 'Repeated link flaps tearing down OSPF/BGP adjacencies', severity: 'high', affectedDeviceRoles: ['spine', 'leaf', 'wan-edge'], requires: [1, 3], mode: 'all' },
+      { description: 'Transceiver Rx/Tx power outside spec — replace optic', severity: 'medium', affectedDeviceRoles: ['spine', 'leaf'], requires: [2] },
+    ],
+    remediation: [
+      { title: 'Quarantine + dampen the link', cli: { '*': `interface <INTF>
+ errdisable recovery cause link-flap
+ carrier-delay msec 200
+! if confirmed bad optic/cable: shutdown and replace` } },
+      { title: 'Inspect optics + counters', cli: { '*': `show interface <INTF> transceiver detail
+show interface <INTF> counters errors
+clear counters <INTF>` } },
+    ],
+    verification: [
+      'show interface <intf> | include error|CRC|flapped',
+      'show interface <intf> transceiver detail   (Rx/Tx dBm in range)',
+      'show logging | include LINK-3-UPDOWN|LINEPROTO',
+      'show interface counters errors',
+    ],
+    mttrMinutes: [10, 35],
+  },
+
+  // ── Spanning-tree loop / broadcast storm ──────────────────────────────────
+  {
+    id: 'stp-loop',
+    icon: '🌀',
+    title: 'Spanning-Tree Loop / Broadcast Storm',
+    severity: 'critical',
+    useCaseTag: 'campus / dc',
+    summary: 'CPU spikes and the segment goes dark — a forwarding loop is flooding broadcast/unknown-unicast.',
+    relevantRoles: ['access', 'distribution', 'core', 'leaf'],
+    signals: [
+      { name: 'Broadcast/unknown-unicast rate', weight: 0.35, threshold: 40, unit: '%', higherIsWorse: true },
+      { name: 'MAC flapping between ports', weight: 0.30, threshold: 50, unit: 'flaps/min', higherIsWorse: true },
+      { name: 'Control-plane CPU from L2 flood', weight: 0.20, threshold: 75, unit: '%', higherIsWorse: true },
+      { name: 'TCN (topology-change) storm', weight: 0.15, threshold: 50, unit: 'TCN/s', higherIsWorse: true },
+    ],
+    rootCauses: [
+      { description: 'L2 forwarding loop — BPDU loss/disabled STP lets broadcast traffic circulate', severity: 'critical', affectedDeviceRoles: ['access', 'distribution', 'core'], requires: [0, 1], mode: 'all' },
+      { description: 'Unidirectional link / missing BPDU Guard let a loop form on an edge port', severity: 'high', affectedDeviceRoles: ['access'], requires: [3] },
+      { description: 'Control-plane saturated by the broadcast flood — management may be unreachable', severity: 'high', affectedDeviceRoles: ['distribution', 'core'], requires: [2] },
+    ],
+    remediation: [
+      { title: 'Contain the loop, then harden', cli: {
+        access: `interface range <EDGE-PORTS>
+ spanning-tree portfast
+ spanning-tree bpduguard enable`,
+        '*': `spanning-tree loopguard default
+udld aggressive
+! locate loop: shut suspect port, watch storm clear` } },
+      { title: 'Find the flapping MAC', cli: { '*': `show mac address-table | include <MAC>
+show spanning-tree detail | include ieee|occurr|from
+show interface counters | include broadcast` } },
+    ],
+    verification: [
+      'show spanning-tree vlan <VLAN>   (one root, no extra forwarding paths)',
+      'show mac address-table count',
+      'show processes cpu history',
+      'show interface counters | include broadcast|flood',
+    ],
+    mttrMinutes: [10, 40],
+  },
+
+  // ── High CPU / control-plane overload ─────────────────────────────────────
+  {
+    id: 'high-cpu',
+    icon: '🔥',
+    title: 'High CPU / Control-Plane Overload',
+    severity: 'high',
+    useCaseTag: 'all',
+    summary: 'Route processor pegged at high CPU — punted traffic or a process is starving the control plane.',
+    relevantRoles: ['spine', 'leaf', 'core', 'distribution', 'wan-edge'],
+    signals: [
+      { name: 'CPU utilization', weight: 0.35, threshold: 80, unit: '%', higherIsWorse: true },
+      { name: 'Packets punted to CPU', weight: 0.30, threshold: 50, unit: 'kpps', higherIsWorse: true },
+      { name: 'CoPP not configured / mis-sized', weight: 0.20, threshold: 50, unit: 'flag', higherIsWorse: true },
+      { name: 'ARP/ND or routing churn', weight: 0.15, threshold: 60, unit: '%', higherIsWorse: true },
+    ],
+    rootCauses: [
+      { description: 'Traffic punted to CPU (TTL-expiry, glean, ACL log) without CoPP protection', severity: 'high', affectedDeviceRoles: ['spine', 'leaf', 'core'], requires: [1, 2], mode: 'any' },
+      { description: 'Routing/ARP churn driving process CPU — instability feedback loop', severity: 'high', affectedDeviceRoles: ['spine', 'core', 'wan-edge'], requires: [3] },
+      { description: 'Missing CoPP — control plane unprotected from punt storms', severity: 'medium', affectedDeviceRoles: ['spine', 'leaf'], requires: [2] },
+    ],
+    remediation: [
+      { title: 'Apply CoPP + rate-limit punt', cli: { '*': `policy-map PM-COPP
+ class CM-COPP-MGMT
+  police 500000 conform transmit exceed drop
+ class class-default
+  police 100000 conform transmit exceed drop
+control-plane
+ service-policy input PM-COPP` } },
+      { title: 'Identify the hog', cli: { '*': `show processes cpu sorted 5sec
+show platform punt statistics   (or "show hardware rate-limiter")
+show ip traffic | include bad|punt` } },
+    ],
+    verification: [
+      'show processes cpu sorted | exclude 0.0',
+      'show policy-map control-plane',
+      'show platform punt statistics',
+      'show processes cpu history',
+    ],
+    mttrMinutes: [15, 45],
+  },
 ]
 
 /** djb2 string hash → unsigned 32-bit */

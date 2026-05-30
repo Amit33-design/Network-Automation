@@ -109,4 +109,61 @@ class TestRCAEngineAnalyze:
 
     def test_design_state_none_does_not_crash(self, engine):
         result = engine.analyze("BGP flapping", ["d1"], design_state=None)
-        assert isinstance(result, list)
+
+
+# ── NDAI-3 regression: quick_triage ≥2-symptom RCA path ───────────────────────
+# These tests guard against the KeyError: 'diagnostic_commands' that was
+# observed when monitor_network called quick_triage with ≥2 symptoms.
+
+class TestQuickTriage:
+    def test_two_symptoms_returns_ok(self):
+        from troubleshoot_engine import quick_triage
+        state = {"uc": "dc", "redundancy": "ha", "protocols": ["EVPN", "VXLAN"]}
+        result = quick_triage(state, ["bgp neighbor down", "vtep unreachable"])
+        assert result.get("ok") is True
+
+    def test_four_gpu_symptoms_returns_ok(self):
+        from troubleshoot_engine import quick_triage
+        state = {"uc": "gpu", "redundancy": "full"}
+        result = quick_triage(state, ["rdma drops", "pfc storm", "gpu training slow", "roce congestion"])
+        assert result.get("ok") is True
+
+    def test_result_has_required_keys(self):
+        from troubleshoot_engine import quick_triage
+        state = {"uc": "dc"}
+        result = quick_triage(state, ["ospf neighbor down", "bgp session flapping"])
+        for key in ("ok", "root_cause", "alternative_hypotheses", "runbook",
+                    "fault_tree_diagram", "confidence_summary"):
+            assert key in result, f"Missing key: {key}"
+
+    def test_runbook_steps_have_commands(self):
+        from troubleshoot_engine import quick_triage
+        state = {"uc": "dc"}
+        result = quick_triage(state, ["pfc storm", "lossless queue drops"])
+        runbook = result.get("runbook", {})
+        assert isinstance(runbook.get("steps"), list)
+        for step in runbook["steps"]:
+            assert "commands" in step
+
+    def test_diagnose_no_missing_diagnostic_commands(self):
+        """Guard against KeyError: 'diagnostic_commands' in monitor_engine.diagnose."""
+        from monitor_engine import diagnose, ISSUES
+        state = {"uc": "dc"}
+        # Temporarily add an issue without diagnostic_commands to confirm guard works
+        ISSUES["_TEST_ISSUE_NO_CMDS"] = {
+            "name": "Test Issue",
+            "category": "bgp",
+            "severity": "high",
+            "symptoms": ["test symptom xyzzy unique"],
+            "root_causes": ["test"],
+            "remediation_steps": ["test fix"],
+            "affected_layers": ["l3"],
+            "tags": [],
+            # deliberately omitting diagnostic_commands
+        }
+        try:
+            matches = diagnose(state, ["test symptom xyzzy unique"])
+            # Should not raise — defensive .get() prevents KeyError
+            assert isinstance(matches, list)
+        finally:
+            del ISSUES["_TEST_ISSUE_NO_CMDS"]

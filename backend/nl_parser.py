@@ -132,6 +132,7 @@ _VENDOR_KEYWORDS: dict[str, list[str]] = {
     "Palo Alto":["palo alto", "pan-os", "panorama"],
     "Fortinet": ["fortinet", "fortigate", "forti"],
     "NVIDIA":   ["nvidia", "mellanox", "spectrum", "connectx"],
+    "SONiC":    ["sonic", "azure sonic", "dent os"],
 }
 
 _SCALE_KEYWORDS: dict[str, list[str]] = {
@@ -177,7 +178,17 @@ def parse_intent(description: str) -> dict[str, Any]:
         leaf_count  = topo.get("leaf_count", 4)
     elif uc == "gpu":
         spine_count = topo.get("spine_count", 2)
-        leaf_count  = topo.get("tor_count", topo.get("leaf_count", 8))
+        # GPU: 1 TOR per rack minimum; derive from rack_count when provided
+        rack_count  = topo.get("rack_count", 0)
+        gpu_count   = topo.get("gpu_count", 0)
+        if rack_count:
+            # Honour explicit rack count — 1 TOR per rack, minimum 4
+            leaf_count = max(rack_count, 4)
+        elif gpu_count:
+            # Estimate TORs from GPU count (typically 8 GPUs per rack per server * 8 servers)
+            leaf_count = max(4, (gpu_count + 63) // 64)   # ~64 GPUs per TOR
+        else:
+            leaf_count = topo.get("tor_count", topo.get("leaf_count", 8))
     elif uc == "campus":
         spine_count = topo.get("core_count", 2)
         leaf_count  = topo.get("distribution_count", topo.get("floor_count", 3))
@@ -274,14 +285,37 @@ def describe_intent(state: dict[str, Any]) -> str:
 # ── Private helpers ───────────────────────────────────────────────────────────
 
 def _score_keywords(text: str, kw_map: dict[str, list[str]]) -> dict[str, int]:
+    """
+    Score keyword matches.  Short keywords (≤3 chars) use word-boundary regex to
+    prevent false substring matches (e.g. "dc" inside "dcqcn", "gpu" inside unrelated words).
+    """
     scores: dict[str, int] = {}
     for key, keywords in kw_map.items():
-        scores[key] = sum(1 for kw in keywords if kw in text)
+        s = 0
+        for kw in keywords:
+            if len(kw) <= 3:
+                # Require word start boundary; allow trailing characters so "gpu" matches "gpus"
+                s += 1 if re.search(r'\b' + re.escape(kw), text) else 0
+            else:
+                s += 1 if kw in text else 0
+        scores[key] = s
     return scores
 
 
+# Priority order when use-case scores tie: more-specific beats generic
+_UC_PRIORITY = ["gpu", "multisite", "wan", "hybrid", "dc", "campus"]
+
+
 def _best(scores: dict[str, int], default: str) -> str:
-    return max(scores, key=scores.get) if max(scores.values(), default=0) > 0 else default  # type: ignore[arg-type]
+    if max(scores.values(), default=0) == 0:
+        return default
+    max_score = max(scores.values())
+    # Among tied candidates, pick the one with the highest priority
+    candidates = [k for k, v in scores.items() if v == max_score]
+    for preferred in _UC_PRIORITY:
+        if preferred in candidates:
+            return preferred
+    return candidates[0]
 
 
 def _detect_uc(text: str) -> str:
@@ -300,19 +334,37 @@ def _detect_scale(text: str, uc: str) -> str:
     nums = [int(n) for n in re.findall(r'\b(\d{2,6})\b', text)]
     if nums:
         mx = max(nums)
-        if mx >= 10_000:
-            return "hyperscale"
-        elif mx >= 2_000:
-            return "large"
-        elif mx >= 500:
-            return "medium"
-        elif mx >= 100:
-            return "small"
+        if uc == "gpu":
+            # For GPU fabrics, size by GPU/device count — thresholds differ from user counts
+            gpu_count = _extract_gpu_count(text)
+            if gpu_count >= 512 or mx >= 10_000:
+                return "hyperscale"
+            elif gpu_count >= 64 or mx >= 256:
+                return "large"
+            elif gpu_count >= 16 or mx >= 64:
+                return "medium"
+            else:
+                return "small"
+        else:
+            if mx >= 10_000:
+                return "hyperscale"
+            elif mx >= 2_000:
+                return "large"
+            elif mx >= 500:
+                return "medium"
+            elif mx >= 100:
+                return "small"
     best = _best(scores, "")
     if best:
         return best
     # Default by use case
     return {"gpu": "large", "dc": "medium", "campus": "medium", "wan": "small"}.get(uc, "medium")
+
+
+def _extract_gpu_count(text: str) -> int:
+    """Extract explicit GPU count from text (e.g. '256 H100 GPUs')."""
+    m = re.search(r'(\d+)\s*(?:x\s*)?(?:nvidia\s*)?(?:h100|a100|h200|gpu)', text, re.IGNORECASE)
+    return int(m.group(1)) if m else 0
 
 
 def _detect_vendor(text: str, uc: str) -> str:
