@@ -170,19 +170,23 @@ result = agent.invoke({
 
 ---
 
-## Available MCP Tools (20 total)
+## Available MCP Tools (27 total)
 
 | Category | Tools |
 |---|---|
 | **Design** | `design_network`, `get_ip_plan`, `get_vlan_plan`, `get_bgp_topology`, `get_topology_graph` |
+| **Multicloud** | `design_multicloud_network` (AWS TGW · Azure vWAN · GCP NCC) |
 | **Explain** | `explain_design` |
-| **Configs** | `generate_configs` (NX-OS · EOS · SONiC · IOS-XE · JunOS + 9 policy domains) |
+| **Configs** | `generate_configs` (NX-OS · EOS · SONiC · IOS-XE · JunOS + 13 policy domains) |
 | **Validation** | `validate_policies` (15 rules — BLOCK / FAIL / WARN / AUTO_FIX / INFO) |
+| **Policy packs** | `list_policy_packs`, `evaluate_policy_pack` (customer governance rule engine: dc_baseline · security_baseline · ai_fabric · inline YAML) |
 | **Simulation** | `simulate_failure`, `simulate_link_failure_tool` |
 | **Gate** | `check_deployment_gate` (0–100 confidence, APPROVED / CONDITIONAL / BLOCKED) |
 | **Monitoring** | `run_health_check`, `diagnose_network`, `get_issue_detail`, `troubleshoot`, `monitor_network` |
 | **Quality** | `run_static_analysis` (26 checks, 5 domains, 0–100 score) |
-| **Post-deploy** | `run_post_checks` |
+| **Deploy checks** | `run_pre_checks` (reachability · SSH · mandatory backup), `run_post_checks` (BGP/EVPN · LLDP · ECN · PFC · MTU) |
+| **Greenfield** | `plan_greenfield_deployment` (design → inventory + day-0/day-N bundles + 6-stage plan), `execute_greenfield_deployment` (pre → push → post) |
+| **IaC export** | `generate_automation_exports` (Ansible playbook + inventory, Terraform HCL) |
 | **Automation** | `full_automation_pipeline` |
 | **Catalogue** | `list_products` (40+ SKUs) |
 

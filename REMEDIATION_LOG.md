@@ -274,3 +274,52 @@ config_gen, ZTP templates, and nornir_tasks). All pass.
 Backend total: 121 passed / 0 failed.
 py_compile: greenfield.py, mcp_server.py, main.py all clean.
 ```
+
+---
+
+## Feature Enhancement — MCP feature-completeness + Docker image refresh (2026-05-30)
+
+User request: *"check MCP for this product is up to date with all features, and the
+docker image is updated to download and test."*
+
+### MCP — was 23 tools, now 27 (full feature coverage)
+Audited `mcp_server.py` against the backend feature set and added the missing tools so every
+headline capability is callable over MCP:
+- `run_pre_checks` — pre-deployment readiness (reachability · SSH · mandatory backup);
+  previously only `run_post_checks` was exposed.
+- `list_policy_packs` + `evaluate_policy_pack` — exposes the **customer policy engine**
+  (`policies/user_rule_engine.py`): evaluate dc_baseline / security_baseline / ai_fabric packs
+  or inline YAML against an intent + configs, returning gate PASS/WARN/FAIL/BLOCK.
+- `generate_automation_exports` — Ansible playbook+inventory and Terraform HCL from a design.
+- (Greenfield `plan_greenfield_deployment` / `execute_greenfield_deployment` added earlier.)
+- Verified the SSE entrypoint (`--transport sse --host --port --log-level`) matches the compose
+  `mcp` service command. Updated `docs/mcp-setup.md` tool table (20 → 27).
+
+### Docker — fixed stale frontend image + validated the stack
+- **Bug:** the `frontend` compose service served the **legacy vanilla** `index.html` + `src/`
+  via a bare `nginx:alpine` mount — the React/Vite app (`frontend/`) was never built or shipped.
+- **Fix:** added `frontend/Dockerfile` (multi-stage `node:22` build → `nginx:alpine` serve),
+  `frontend/nginx.conf` (SPA fallback + `/api` and `/ws` proxy to the api service), and
+  `frontend/.dockerignore` (prevents host `node_modules`/`dist` from clobbering the build).
+  Repointed the compose `frontend` service to `build: ./frontend`; removed the obsolete `version:` key.
+- New backend code (greenfield.py, templates/inventory/*.j2) ships via the existing `COPY . .`
+  in `backend/Dockerfile`; `mcp>=1.0.0` already present.
+
+### Verification
+```
+docker compose config           → valid
+frontend npm run build          → success (the step the image build runs)
+docker build ./frontend         → Dockerfile valid; only blocked pulling base images
+                                  (registry blobs 403 under this sandbox's network policy)
+mcp_server.py / main.py / greenfield.py  → py_compile clean
+Backend 121 passed · Frontend 166 passed
+```
+
+> NOTE: the image could not be physically built/pulled **in this environment** — the sandbox
+> network policy returns 403 on Docker Hub registry blobs. On any host with normal registry
+> access the stack builds and runs with:
+> ```
+> docker compose build            # api, mcp, worker, frontend
+> docker compose up -d            # UI :8080 · API :8000 · MCP/SSE :8001
+> docker compose ps               # all services healthy
+> ```

@@ -1,0 +1,11 @@
+# Never copy host build artifacts into the image — npm ci + vite build regenerate them.
+node_modules
+dist
+.vite
+coverage
+*.log
+.env
+.env.*
+.DS_Store
+Dockerfile
+.dockerignore

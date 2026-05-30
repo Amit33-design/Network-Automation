@@ -7,7 +7,7 @@
 **Intent-Driven Network Automation**
 
 [![Live App](https://img.shields.io/badge/Live-netdesignai.com-00b4d8?style=for-the-badge&logo=vercel)](https://netdesignai.com)
-[![Tests](https://img.shields.io/badge/Tests-127%20passing-22c55e?style=for-the-badge&logo=vitest)](frontend/src/test)
+[![Tests](https://img.shields.io/badge/Tests-166_frontend_+_121_backend_passing-22c55e?style=for-the-badge&logo=vitest)](frontend/src/test)
 [![Stack](https://img.shields.io/badge/React_19_+_TypeScript-3B82F6?style=for-the-badge&logo=react)](frontend)
 [![License](https://img.shields.io/badge/License-NDAL_v1.0-f59e0b?style=for-the-badge)](LICENSE)
 
