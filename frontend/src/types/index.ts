@@ -133,6 +133,8 @@ export interface AppState {
   customPolicyRules: string
   // Active deploy sub-tab
   activeDeployTab: string
+  // UI theme — light / dark mode
+  theme: 'dark' | 'light'
   // Step 2 — Network Requirements
   trafficPattern: TrafficPattern
   totalEndpoints: number

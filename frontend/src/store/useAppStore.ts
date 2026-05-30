@@ -30,6 +30,8 @@ interface AppStore extends AppState {
   // M-55
   setCustomPolicyRules: (rules: string) => void
   setActiveDeployTab: (tab: string) => void
+  setTheme: (theme: 'dark' | 'light') => void
+  toggleTheme: () => void
 
   // Step 2 setters — requirements
   setTrafficPattern: (p: TrafficPattern) => void
@@ -110,6 +112,7 @@ const DEFAULT_STATE: AppState = {
   primaryContact: '',
   customPolicyRules: '',
   activeDeployTab: 'deploy',
+  theme: 'dark',
   // Step 2 — Network Requirements
   trafficPattern: 'ew',
   totalEndpoints: 500,
@@ -164,6 +167,8 @@ export const useAppStore = create<AppStore>()(
       setPrimaryContact: primaryContact => set({ primaryContact }),
       setCustomPolicyRules: customPolicyRules => set({ customPolicyRules }),
       setActiveDeployTab: activeDeployTab => set({ activeDeployTab }),
+      setTheme: theme => set({ theme }),
+      toggleTheme: () => set(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
 
       setTrafficPattern: trafficPattern => set({ trafficPattern }),
       setTotalEndpoints: totalEndpoints => set({ totalEndpoints }),

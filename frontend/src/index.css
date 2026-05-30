@@ -13,3 +13,92 @@ body {
 #root {
   min-height: 100vh;
 }
+
+/* ── Light mode overrides ────────────────────────────────────────────────────
+   Tailwind v4 solid utilities reference var(--color-*) so remapping them here
+   flips all bg-gray-*, text-gray-*, border-gray-* automatically.
+   Opacity utilities (bg-white/10 etc.) compile to literal hex — those need
+   explicit class overrides further below.
+──────────────────────────────────────────────────────────────────────────── */
+html.light {
+  color-scheme: light;
+
+  /* Invert the gray ramp (dark → light surface, light → dark text) */
+  --color-gray-950: #f8fafc;
+  --color-gray-900: #f1f5f9;
+  --color-gray-800: #e2e8f0;
+  --color-gray-700: #cbd5e1;
+  --color-gray-600: #94a3b8;
+  --color-gray-500: #64748b;
+  --color-gray-400: #475569;
+  --color-gray-300: #334155;
+  --color-gray-200: #1e293b;
+  --color-gray-100: #0f172a;
+  --color-gray-50:  #0a1628;
+
+  /* Remap white/black so text-white → near-black and bg-white → near-white */
+  --color-white: #0f172a;
+  --color-black: #ffffff;
+}
+
+html.light body {
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+/* ── White-opacity utility overrides ────────────────────────────────────────
+   These compile to literal rgba(255,255,255,…) in the stylesheet so the CSS
+   variable remap above won't affect them. Override each class explicitly.
+──────────────────────────────────────────────────────────────────────────── */
+
+/* Backgrounds */
+html.light .bg-white\/\[0\.02\] { background-color: rgba(15,23,42,0.02); }
+html.light .bg-white\/\[0\.03\] { background-color: rgba(15,23,42,0.03); }
+html.light .bg-white\/5         { background-color: rgba(15,23,42,0.05); }
+html.light .bg-white\/8         { background-color: rgba(15,23,42,0.08); }
+html.light .bg-white\/10        { background-color: rgba(15,23,42,0.10); }
+html.light .bg-white\/15        { background-color: rgba(15,23,42,0.15); }
+html.light .bg-white\/20        { background-color: rgba(15,23,42,0.20); }
+
+/* Semi-transparent dark surface overlays */
+html.light .bg-gray-950\/95     { background-color: rgba(248,250,252,0.95); }
+html.light .bg-gray-950\/60     { background-color: rgba(248,250,252,0.60); }
+html.light .bg-gray-900\/95     { background-color: rgba(241,245,249,0.95); }
+html.light .bg-gray-900\/80     { background-color: rgba(241,245,249,0.80); }
+html.light .bg-gray-900\/60     { background-color: rgba(241,245,249,0.60); }
+html.light .bg-gray-800\/60     { background-color: rgba(226,232,240,0.60); }
+
+/* Borders */
+html.light .border-white\/5     { border-color: rgba(15,23,42,0.05); }
+html.light .border-white\/8     { border-color: rgba(15,23,42,0.08); }
+html.light .border-white\/10    { border-color: rgba(15,23,42,0.10); }
+html.light .border-white\/15    { border-color: rgba(15,23,42,0.15); }
+html.light .border-white\/20    { border-color: rgba(15,23,42,0.20); }
+html.light .border-white\/25    { border-color: rgba(15,23,42,0.25); }
+html.light .border-white\/30    { border-color: rgba(15,23,42,0.30); }
+
+/* Dividers */
+html.light .divide-white\/5 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(15,23,42,0.05);
+}
+
+/* Ring */
+html.light .ring-white\/10 { --tw-ring-color: rgba(15,23,42,0.10); }
+
+/* ── Blue accent — keep text legible on blue filled buttons in light mode ──── */
+html.light .bg-blue-600         { background-color: #2563eb; }
+html.light .bg-blue-500         { background-color: #3b82f6; }
+html.light .hover\:bg-blue-500:hover { background-color: #3b82f6; }
+html.light .text-blue-400       { color: #2563eb; }
+html.light .text-blue-300       { color: #1d4ed8; }
+
+/* Ensure white text stays on filled blue / green / red buttons */
+html.light .bg-blue-600.text-white,
+html.light .bg-blue-500.text-white,
+html.light .bg-green-600.text-white,
+html.light .bg-red-600.text-white    { color: #ffffff; }
+
+/* ── Scrollbar styling for light mode ──────────────────────────────────────── */
+html.light ::-webkit-scrollbar-track  { background: #f1f5f9; }
+html.light ::-webkit-scrollbar-thumb  { background: #cbd5e1; border-radius: 4px; }
+html.light ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }

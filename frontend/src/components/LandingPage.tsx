@@ -1,4 +1,5 @@
 import { useAppStore } from '@/store/useAppStore'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
 interface Props {
   onStart: () => void
@@ -80,6 +81,7 @@ export function LandingPage({ onStart }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle compact />
             <button
               type="button"
               onClick={onStart}
