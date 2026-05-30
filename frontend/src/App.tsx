@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/wizard/Sidebar'
 import { TroubleshootingEngine } from '@/components/TroubleshootingEngine'
 import { LandingPage } from '@/components/LandingPage'
 import { BackendToggle, BackendToggleProvider } from '@/components/BackendToggle'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useAppStore } from '@/store/useAppStore'
 import { Step1UseCase } from '@/pages/Step1UseCase'
 import { Step2Requirements } from '@/pages/Step2Requirements'
@@ -75,6 +76,12 @@ export default function App() {
   const [backendUrl, setBackendUrl] = useState('http://localhost:8000')
   const setStep = useAppStore(s => s.setStep)
   const step = useAppStore(s => s.step)
+  const theme = useAppStore(s => s.theme)
+
+  // Apply the light/dark theme to <html> so the CSS variable overrides kick in.
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light')
+  }, [theme])
 
   // M-57: on mount, check for ?design= param and restore state
   useEffect(() => {
@@ -135,7 +142,8 @@ export default function App() {
                     <img src="/favicon.svg" alt="" className="w-5 h-5" />
                     <span className="font-bold text-white text-sm">NetDesign <span className="text-blue-400">AI</span></span>
                   </button>
-                  <div className="ml-auto">
+                  <div className="ml-auto flex items-center gap-2">
+                    <ThemeToggle compact />
                     <BackendToggle
                       isLive={isLive}
                       baseUrl={backendUrl}
@@ -148,7 +156,8 @@ export default function App() {
                 {/* Page content */}
                 <div className="flex-1 px-4 sm:px-6 py-4 sm:py-8">
                   {/* Desktop backend toggle — floating top-right, hidden on mobile */}
-                  <div className="hidden lg:block absolute top-4 right-6 z-40">
+                  <div className="hidden lg:flex items-center gap-2 absolute top-4 right-6 z-40">
+                    <ThemeToggle compact />
                     <BackendToggle
                       isLive={isLive}
                       baseUrl={backendUrl}
