@@ -1784,7 +1784,8 @@ def diagnose(
         iss = ISSUES[issue_id]
         # Pick best platform commands
         platform = _best_platform(state)
-        cmds = iss["diagnostic_commands"].get(platform, list(iss["diagnostic_commands"].values())[0])
+        diag_cmds = iss.get("diagnostic_commands") or {}
+        cmds = diag_cmds.get(platform) or (list(diag_cmds.values())[0] if diag_cmds else [])
         verify = iss.get("verification_commands", {})
         results.append(DiagnosticMatch(
             issue_id=issue_id,

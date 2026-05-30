@@ -904,8 +904,51 @@ def run_analysis_with_design(
     )
 
 
+def _state_has_design_data(state: dict[str, Any]) -> bool:
+    """Return True when state already contains design-level outputs (from design_network).
+    A minimal intent-only state lacks ip_plan, spineLoopbacks, p2pLinks, etc."""
+    return bool(
+        state.get("ip_plan")
+        or state.get("spineLoopbacks")
+        or state.get("p2pLinks")
+        or state.get("selectedProducts")
+    )
+
+
 def run_analysis(state: dict[str, Any]) -> AnalysisReport:
-    """Generate design and run all static checks. Convenience wrapper."""
+    """
+    Generate design and run all static checks.
+
+    IMPORTANT: when the caller passes a raw intent state (no design outputs),
+    this function auto-completes defaults via generate_full_design() so every
+    check has something to evaluate.  A top-level INFO finding is injected to
+    make this visible — checks are grading the *synthesized* design, not the
+    literal provided state.  Pass the `state` returned by design_network() for
+    accurate, literal validation.
+    """
     from design_engine import generate_full_design
+    used_defaults = not _state_has_design_data(state)
     design = generate_full_design(state)
-    return run_analysis_with_design(state, design)
+    report = run_analysis_with_design(state, design)
+
+    if used_defaults:
+        warning = Finding(
+            check_id="META-1",
+            domain="ip",
+            severity="info",
+            status="info",
+            title="Analysis run on synthesized design defaults",
+            detail=(
+                "The provided state lacks design-level outputs (no ip_plan, "
+                "spineLoopbacks, or selectedProducts). Static analysis auto-completed "
+                "a design from intent defaults and is grading those defaults — not "
+                "your literal configuration. For accurate validation, pass the `state` "
+                "returned by design_network()."
+            ),
+            fix="Call design_network() first, then pass its returned `state` to run_analysis.",
+            affected=[],
+        )
+        report.findings.insert(0, warning)
+        report.check_count += 1
+
+    return report

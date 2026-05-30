@@ -77,7 +77,13 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "deployments:read", "deploy:lab", "deploy:staging",
         "approvals:read",
     },
-    Role.ADMIN: {"*"},
+    # ADMIN is an explicit superset of OPERATOR so that `perm in ROLE_PERMISSIONS[ADMIN]`
+    # works correctly in both runtime checks and unit tests (no wildcard ambiguity).
+    Role.ADMIN: {
+        "designs:read", "designs:write", "configs:generate",
+        "deployments:read", "deploy:lab", "deploy:staging", "deploy:prod",
+        "approvals:read", "audit:read", "users:manage", "org:admin",
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -160,10 +166,14 @@ def require_permission(permission: str):
     and checks the caller has the requested permission.
 
     Dev mode (JWT_SECRET unset): all requests pass as synthetic admin.
+
+    Parameter order: creds first so that unit tests can call dep(creds) directly
+    without going through FastAPI DI.  FastAPI injects Request by type annotation
+    regardless of position.
     """
     def _dep(
-        request: Request,
         creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+        request: Request | None = None,
     ) -> dict[str, Any]:
         # ── Dev mode ─────────────────────────────────────────────────────────
         if not _SECRET:
@@ -171,7 +181,7 @@ def require_permission(permission: str):
 
         # ── API key (nd-key-...) — accepted in X-API-Key header or Bearer ───────
         raw = creds.credentials if creds else ""
-        x_api_key = request.headers.get("X-API-Key", "")
+        x_api_key = request.headers.get("X-API-Key", "") if request else ""
         if x_api_key.startswith("nd-key-"):
             return _validate_api_key(x_api_key, permission)
         if raw.startswith("nd-key-"):
