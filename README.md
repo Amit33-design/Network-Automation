@@ -269,23 +269,44 @@ https://amit33-design.github.io/Network-Automation/  ←  GitHub Pages demo
 git clone https://github.com/Amit33-design/Network-Automation.git
 cd Network-Automation/frontend
 npm ci
-npm test          # 127 tests
+npm test          # 166 tests
 npm run build     # Vite production build
 npm run dev       # Dev server → http://localhost:5173
 ```
 
-### Option 3 — Docker (full stack)
+### Option 3 — Docker (build the full stack from source)
+Works today on any host with Docker + registry access — builds every image locally:
 ```bash
-cp .env.example .env    # Set JWT_SECRET, POSTGRES_PASSWORD, REDIS_PASSWORD
-docker compose up --build
+git clone https://github.com/Amit33-design/Network-Automation.git
+cd Network-Automation
+cp .env.example .env     # set JWT_SECRET, POSTGRES_PASSWORD, REDIS_PASSWORD, …
+docker compose build     # api · mcp · worker · frontend (React/Vite → Nginx)
+docker compose up -d
 ```
 | Service | URL |
 |---------|-----|
-| Web UI | http://localhost:5173 |
+| Web UI (Nginx) | http://localhost:8080 |
 | API + Swagger | http://localhost:8000/docs |
-| Backend | http://localhost:8000 |
+| MCP server (SSE) | http://localhost:8001/sse |
+| Grafana | http://localhost:3000 |
 
-### Option 4 — Live Backend Toggle
+### Option 4 — Pre-built images (one-line install)
+Pulls published multi-arch images from GHCR — no build needed:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Amit33-design/Network-Automation/main/install.sh | bash
+# or manually:
+curl -fsSL https://raw.githubusercontent.com/Amit33-design/Network-Automation/main/docker-compose.dist.yml -o docker-compose.yml
+cp .env.example .env
+docker compose up -d
+```
+Images: `ghcr.io/amit33-design/network-automation/{api,frontend}:latest`
+→ Web UI http://localhost:8080 · API http://localhost:8000/docs · MCP http://localhost:8001/sse
+
+> **Availability:** pre-built images are published by the `Build & Publish Docker Images`
+> workflow on each `v*.*.*` release tag. Until the first release is tagged, use Option 3
+> (build from source). See [docs/RELEASING.md](docs/RELEASING.md) to cut a release.
+
+### Option 5 — Live Backend Toggle
 The app includes a **SIM / LIVE** toggle in the top-right corner:
 - **SIM** — fully client-side simulation, no backend needed (default)
 - **LIVE** — connects to a FastAPI backend at the configured URL
