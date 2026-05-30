@@ -1,0 +1,15 @@
+# ============================================================================
+# NetDesign AI — Ansible inventory (auto-generated from design)
+# Org: {{ org }} | Use case: {{ use_case }} | Devices: {{ hosts | length }}
+# ============================================================================
+{% for g in groups %}
+[{{ g.name }}]
+{% for h in hosts if h.group == g.name %}
+{{ h.name }} ansible_host={{ h.mgmt_ip }} ansible_network_os={{ h.ansible_os }}
+{% endfor %}
+
+{% endfor %}
+[all:vars]
+ansible_connection=ansible.netcommon.network_cli
+ansible_user={{ username }}
+# ansible_password — supply via vault / --ask-pass, never commit

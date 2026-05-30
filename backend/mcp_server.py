@@ -75,6 +75,7 @@ from monitor_engine import (
 from troubleshoot_engine import quick_triage as _quick_triage
 from static_analysis import run_analysis as _run_static_analysis
 from nornir_tasks import run_post_checks as _run_post_checks
+import greenfield as _greenfield
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -1668,6 +1669,83 @@ def design_multicloud_network(
         "ansible_summary":  ansible_summary,
         "summary":          plan["summary"],
     }
+
+
+# ===========================================================================
+# ── TOOL — plan_greenfield_deployment ───────────────────────────────────────
+# ===========================================================================
+@mcp.tool()
+def plan_greenfield_deployment(
+    state: dict[str, Any],
+    include_configs: bool = True,
+) -> dict[str, Any]:
+    """
+    Produce an end-to-end GREENFIELD bring-up plan for a designed network.
+
+    Turns a design state (from design_network) into the full deployment package:
+      1. A Nornir/Ansible INVENTORY generated from the design (mgmt IPs, per-role
+         platform, groups) — no hand-written hosts.yml needed.
+      2. DAY-0 bootstrap configs (mgmt IP + SSH + NTP) per device via ZTP templates.
+      3. DAY-N production configs per device via the Jinja config generator.
+      4. A 6-stage ordered workflow: register/DHCP → ZTP bootstrap → reachability
+         gate → pre-checks+backup → tier-ordered push → post-checks/validate, with
+         auto-rollback semantics.
+
+    Args:
+        state:           Design state dict (pass the 'state' from design_network).
+        include_configs: When True, also render the day-0 + day-N config bundles.
+
+    Returns:
+        org, use_case, device_count, push_order (tier-ordered hostnames),
+        inventory (Nornir SimpleInventory dict), inventory_files (hosts.yml /
+        groups.yml / ansible_hosts.ini rendered text), stages (the 6-stage plan),
+        bootstrap_configs (day-0), production_configs (day-N), summary.
+    """
+    log.info("plan_greenfield_deployment called — uc=%s", state.get("uc"))
+    try:
+        plan = _greenfield.plan_greenfield(state, include_configs=include_configs)
+        files = _greenfield.render_inventory_files(state, plan.inventory)
+        out = plan.to_dict()
+        out["inventory_files"] = files
+        out["ok"] = True
+        return out
+    except Exception as exc:
+        log.exception("plan_greenfield_deployment error")
+        return {"ok": False, "error": str(exc)}
+
+
+# ===========================================================================
+# ── TOOL — execute_greenfield_deployment ────────────────────────────────────
+# ===========================================================================
+@mcp.tool()
+def execute_greenfield_deployment(
+    state: dict[str, Any],
+    dry_run: bool = True,
+    deployment_id: str = "greenfield",
+) -> dict[str, Any]:
+    """
+    Execute the greenfield pipeline (pre-checks → push → post-checks) against the
+    inventory generated from the design, using the Nornir/Netmiko task runner.
+
+    Safe by default: dry_run=True validates and renders without pushing. When
+    Nornir or live devices are unavailable the runner degrades to simulation.
+    Set dry_run=False only against a reachable lab/inventory.
+
+    Args:
+        state:         Design state dict.
+        dry_run:       True = validate/simulate only (default). False = real push.
+        deployment_id: Tag for backups + event correlation.
+
+    Returns:
+        dry_run, device_count, stages[] (pre_checks/push/post_checks with ok+result),
+        aborted_at (if a gate failed), complete.
+    """
+    log.info("execute_greenfield_deployment called — dry_run=%s", dry_run)
+    try:
+        return {"ok": True, **_greenfield.execute_greenfield(state, dry_run, deployment_id)}
+    except Exception as exc:
+        log.exception("execute_greenfield_deployment error")
+        return {"ok": False, "error": str(exc)}
 
 
 # ===========================================================================

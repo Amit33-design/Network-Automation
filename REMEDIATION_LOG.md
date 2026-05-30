@@ -229,3 +229,48 @@ Backend:  103 passed / 0 failed
 Build + tsc --noEmit: clean
 ```
 New suites: `src/test/policies.test.ts`, `src/test/customPolicy.test.ts`.
+
+---
+
+## Feature Enhancement — Greenfield Deployment Orchestrator (2026-05-30)
+
+User request: *"check Python and Jinja for automating greenfield deployment — should be in
+code; if not, build it."*
+
+### Finding
+All deployment building blocks already exist and are production-ready: Jinja config rendering
+(`config_gen.py` + `templates/{nxos,eos,ios_xe,sonic,junos}/*.j2`), Day-0 ZTP bootstrap
+(`ztp/server.py` + `ztp/templates/*/day0.j2`), Nornir pre/post-checks + push + rollback
+(`nornir_tasks.py`, `jobs/deploy_job.py`), Ansible export, and the design engine's IP plan.
+**Three gaps** remained — nothing tied them into a greenfield workflow:
+1. No generator turned a *design* into a Nornir/Ansible **inventory** (only a static hand-written `hosts.yml`).
+2. No **unified greenfield orchestrator** (register → day-0 → reachability → day-N → verify).
+3. No **inventory-from-design** rendering.
+
+### FEAT-4 — Greenfield orchestrator (`backend/greenfield.py` + Jinja templates)
+- `build_inventory(state)` — Nornir SimpleInventory dict from `generate_ip_plan()` management
+  IPs; infers role from device name, maps role+vendor → nornir/ztp/ansible platform, assigns
+  groups, derives mgmt gateway + loopback. (gaps #1, #3)
+- `render_inventory_files(state)` — Jinja-renders `hosts.yml` (Nornir), `groups.yml`, and
+  `ansible_hosts.ini` from new templates in `backend/templates/inventory/*.j2`. (gap #3)
+- `build_bootstrap_bundle(state)` — Day-0 per device via the existing ZTP day0 Jinja templates.
+- `build_production_bundle(state)` — Day-N via `config_gen.generate_all_configs()`.
+- `deployment_order(inv)` — tier-ordered push (spine/core → leaf/dist → access → edge → firewall).
+- `plan_greenfield(state)` — `GreenfieldPlan` with a 6-stage ordered workflow (register/DHCP →
+  ZTP bootstrap → reachability gate → pre-checks+backup → tier-ordered push → post-checks),
+  each stage carrying actions, success criteria, and rollback policy. `.to_dict()` for JSON. (gap #2)
+- `execute_greenfield(state, dry_run=True)` — runs pre→push→post via the existing `nornir_tasks`
+  (which already degrade to simulation when Nornir/devices are unavailable). Dry-run by default.
+- Credentials emitted as `<CHANGE-ME-*>` placeholders.
+
+### Exposure
+- MCP tools added in `mcp_server.py`: `plan_greenfield_deployment`, `execute_greenfield_deployment`.
+- FastAPI route added in `main.py`: `POST /api/greenfield/plan` (RBAC `configs:generate`).
+
+### Tests
+```
+backend/tests/test_greenfield.py — 18 tests (run against the REAL design engine,
+config_gen, ZTP templates, and nornir_tasks). All pass.
+Backend total: 121 passed / 0 failed.
+py_compile: greenfield.py, mcp_server.py, main.py all clean.
+```

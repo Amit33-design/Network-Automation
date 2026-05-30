@@ -1,0 +1,11 @@
+# ============================================================================
+# NetDesign AI — Nornir groups (auto-generated from design)
+# Org      : {{ org }}
+# ============================================================================
+{% for g in groups %}
+{{ g.name }}:
+  platform: {{ g.platform }}
+  data:
+    role: {{ g.role }}
+    tier: {{ g.tier }}
+{% endfor %}
