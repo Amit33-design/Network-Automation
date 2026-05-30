@@ -172,3 +172,60 @@ This can call "critical" even at 75/100 if any single check has `severity="criti
 Backend:  103 passed / 0 failed  (tests/ — auth, config_gen, gate_engine, rca, ztp)
 Frontend: 142 passed / 0 failed  (10 test files — all Vitest suites)
 ```
+
+---
+
+## Feature Enhancement — Policy Library, Custom Policy Engine, Troubleshooting (2026-05-30)
+
+User report: *"I only see 1 config not different policy option like before"*, *"troubleshooting
+engine should have more network troubleshooting common issues not only 5"*, and *"there was
+a customer policy engine before which needs to be enhanced."*
+
+### Root cause — policy regression
+The backend has 13 rich policy generators (`backend/policies/*.py`) + a full customer rule
+engine (`user_rule_engine.py`), but the demo-mode **frontend never applied any of them**:
+- `ConfigPolicyModal` exposed only 10 basic management blocks, and `policyBlocks` was
+  **set but never consumed** by config generation (dead wiring).
+- `PolicyRulesEditor` (customer policy engine) only did a regex "looks-like-YAML" check —
+  it never evaluated rules against the design.
+
+### FEAT-1 — Client-side policy library + wiring (`frontend/src/lib/policies.ts`)
+- New catalog of **21 enterprise policies** across 5 categories (Management, Security,
+  L2 Switching, L3 Routing, QoS & Voice), mirroring the backend generators:
+  NTP, SNMPv3, Syslog, LLDP, Banner, Archive, AAA/TACACS+, SSH hardening, CoPP, 802.1X,
+  DHCP-snooping/DAI/IPSG, Port-security, Storm-control, Mgmt-ACL, STP hardening, VLAN hygiene,
+  BGP route-policy, IGP auth, Floating-static+IP-SLA, QoS marking, Voice VLAN + LLDP-MED.
+- Each policy is **role-aware and platform-aware** (`render(dev, useCase) → CLI | null`):
+  802.1X/voice/port-security only on access; BGP/IGP/CoPP on routing roles; GPU QoS suppressed
+  (GPU base config owns RoCEv2 QoS). Vendor-correct CLI for Cisco / Arista / Juniper.
+- **Wired into `generateAllConfigs(devices, useCase, policyBlocks)`** — selected policies are
+  appended as individual `! ====== POLICY: <LABEL> ======` sections that appear in the Step-3
+  section navigator. `Step3Config` regenerates configs when the policy selection changes.
+- `ConfigPolicyModal` rebuilt to render the categorized catalog with per-group select/deselect.
+- Secrets use `<CHANGE-ME-*>` placeholders (CLAUDE.md rule 6).
+
+### FEAT-2 — Customer policy engine, functional in demo mode (`frontend/src/lib/customPolicy.ts`)
+- Client-side counterpart to `user_rule_engine.py`: parses a constrained, robustly-parseable
+  rule format and **actually evaluates** rules against live design intent + generated configs.
+- Single-line `when: "<field> <op> <value>"` DSL with the backend op set (eq/neq/contains/
+  not_contains/in/not_in/gt/lt/gte/lte/is_empty/is_not_empty/config_contains/config_not_contains).
+- Rule fires ⇒ finding; severity → gate (PASS/WARN/FAIL/BLOCK), matching backend semantics.
+- `PolicyRulesEditor` gains an **"Evaluate against design"** button + results panel showing
+  fired rules grouped by severity with the gate verdict. State read via `getState()` at
+  click-time (no whole-store subscription).
+
+### FEAT-3 — Troubleshooting engine: 5 → 12 scenarios (`TroubleshootingEngine.tsx`)
+Added 7 common scenarios in the existing `Scenario` shape (signals + weighted root-cause
+correlation + per-platform remediation CLI + verification + MTTR), backed by the existing
+backend issue taxonomy:
+OSPF adjacency stuck (ExStart/MTU), same-VLAN L2 connectivity loss, DHCP failure (relay/
+snooping/scope), Path-MTU black hole (jumbo/VXLAN), interface errors/flapping (optics/CRC),
+spanning-tree loop / broadcast storm, high CPU / control-plane overload.
+
+### Tests
+```
+Frontend: 166 passed / 0 failed  (12 suites; +11 policies, +13 customPolicy)
+Backend:  103 passed / 0 failed
+Build + tsc --noEmit: clean
+```
+New suites: `src/test/policies.test.ts`, `src/test/customPolicy.test.ts`.

@@ -93,7 +93,7 @@ function parseSections(configText: string): ConfigSection[] {
 }
 
 export function Step3Config() {
-  const { devices, configs, setConfigs, useCase, nextStep, prevStep } = useAppStore()
+  const { devices, configs, setConfigs, useCase, policyBlocks, nextStep, prevStep } = useAppStore()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [layerFilter, setLayerFilter] = useState<LayerFilter>('All')
   const editorRef = useRef<HTMLDivElement>(null)
@@ -104,17 +104,21 @@ export function Step3Config() {
   const [viewMode, setViewMode] = useState<ViewMode>('config')
   const [prevConfig, setPrevConfig] = useState('')
 
-  // Generate (or re-generate) configs whenever devices or useCase changes.
-  // Check whether ALL current devices already have a config — if any are missing
-  // (empty store, or stale configs from a previous use-case/scale selection) regenerate.
+  // Generate (or re-generate) configs whenever devices, useCase, or the selected
+  // policy overlay changes. Regenerate when any device is missing a config (empty
+  // store / stale from a previous use-case or scale selection) OR when the policy
+  // block selection changed since the last generation.
+  const policySig = policyBlocks.join(',')
+  const prevPolicySig = useRef<string>('')
   useEffect(() => {
     if (!devices.length) return
     const needsRegen = devices.some(d => !configs[d.id])
-    if (needsRegen) {
-      setConfigs(generateAllConfigs(devices, useCase))
+    if (needsRegen || prevPolicySig.current !== policySig) {
+      setConfigs(generateAllConfigs(devices, useCase, policyBlocks))
+      prevPolicySig.current = policySig
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devices, useCase])
+  }, [devices, useCase, policySig])
 
   // Filtered device list (M-35)
   const filteredDevices = useMemo(
