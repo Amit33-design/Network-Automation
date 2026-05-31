@@ -1,15 +1,31 @@
 """
 Terraform HCL export for NetDesign AI.
 
-Generates a Terraform configuration that provisions network device
-resources via the NetBox provider (primary) plus stub outputs and
-variables.  Users can swap the provider block for their target
-platform (Cisco DCNM, Arista CloudVision, etc.).
+Generates Terraform configurations for:
+  - NetBox provider (device/IP provisioning)
+  - AWS Transit Gateway hub (multicloud)
+  - Azure Virtual WAN hub (multicloud)
+  - GCP Network Connectivity Centre hub (multicloud)
+
+The top-level dispatcher ``generate_terraform(state)`` returns a dict of
+``{provider_name: hcl_string}`` based on the use-case and cloud_providers
+fields in the design state.
 """
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 from typing import Any
+
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+# Jinja2 environment pointed at the multicloud template directory
+_TEMPLATE_DIR = Path(__file__).parent.parent / "templates" / "multicloud"
+_jinja_env = Environment(
+    loader=FileSystemLoader(str(_TEMPLATE_DIR)),
+    undefined=StrictUndefined,
+    keep_trailing_newline=True,
+)
 
 
 _ROLE_PLATFORM: dict[str, str] = {
@@ -84,12 +100,12 @@ def _slug(s: str) -> str:
     return s.lower().replace(" ", "_").replace("-", "_").replace(".", "_")
 
 
-def generate_terraform(
+def generate_netbox_terraform(
     design_state: dict[str, Any],
     ip_plan:      dict[str, Any] | None = None,
 ) -> str:
     """
-    Returns a Terraform HCL string (main.tf).
+    Returns a NetBox-provider Terraform HCL string (main.tf).
     """
     ip_plan  = ip_plan or {}
     org_name = design_state.get("orgName", "network")
@@ -232,3 +248,119 @@ def generate_terraform(
           }}
         }}
     """)
+
+
+# ---------------------------------------------------------------------------
+# Multicloud Terraform generators (Jinja2 template rendering)
+# ---------------------------------------------------------------------------
+
+def generate_aws_terraform(state: dict) -> str:
+    """
+    Renders aws_tgw_stack.tf.j2 with variables extracted from *state*.
+    Returns the rendered Terraform HCL string.
+    """
+    org_raw = state.get("org", "NetDesignAI")
+    ctx = {
+        "org_name":     org_raw,
+        "stack_name":   f"{org_raw.lower().replace(' ', '-')}-tgw",
+        "region":       state.get("cloud_region", "us-east-1"),
+        "region_code":  state.get("cloud_region", "us-east-1").replace("-", "")[:8],
+        "env":          state.get("env", "prod"),
+        "cidr":         state.get("org_cidr", "10.0.0.0/8"),
+        "hub_cidr":     state.get("hub_cidr", "10.254.0.0/16"),
+        "amazon_asn":   state.get("amazon_asn", 64512),
+        "customer_asn": state.get("bgp_asn", 65001),
+        "azs":          state.get("availability_zones", ["a", "b", "c"]),
+        "dx_prefixes":  state.get("dx_prefixes", ["10.0.0.0/8"]),
+    }
+    tmpl = _jinja_env.get_template("aws_tgw_stack.tf.j2")
+    return tmpl.render(**ctx)
+
+
+def generate_azure_terraform(state: dict) -> str:
+    """
+    Renders azure_vwan_stack.tf.j2 with variables extracted from *state*.
+
+    Template variables: org_name, stack_name, location, region_code, env,
+                        cidr, hub_cidr, er_asn, rg_name
+    """
+    org_raw  = state.get("org", "NetDesignAI")
+    location = state.get("cloud_region", "eastus")
+    org_slug = org_raw.lower().replace(" ", "-")
+    ctx = {
+        "org_name":    org_raw,
+        "stack_name":  f"{org_slug}-vwan",
+        "location":    location,
+        "region_code": location.replace("-", "")[:8],
+        "env":         state.get("env", "prod"),
+        "cidr":        state.get("org_cidr", "10.0.0.0/8"),
+        "hub_cidr":    state.get("hub_cidr", "10.254.0.0/16"),
+        "er_asn":      state.get("er_asn", state.get("bgp_asn", 65515)),
+        "rg_name":     state.get("azure_rg", f"{org_slug}-network-rg"),
+    }
+    tmpl = _jinja_env.get_template("azure_vwan_stack.tf.j2")
+    return tmpl.render(**ctx)
+
+
+def generate_gcp_terraform(state: dict) -> str:
+    """
+    Renders gcp_ncc_stack.tf.j2 with variables extracted from *state*.
+
+    Template variables: org_name, stack_name, project, region, region_code,
+                        env, cidr, hub_cidr, cloud_router_asn
+    """
+    org_raw = state.get("org", "NetDesignAI")
+    region  = state.get("cloud_region", "us-central1")
+    org_slug = org_raw.lower().replace(" ", "-")
+    ctx = {
+        "org_name":         org_raw,
+        "stack_name":       f"{org_slug}-ncc",
+        "project":          state.get("gcp_project", f"{org_slug}-network"),
+        "region":           region,
+        "region_code":      region.replace("-", "")[:8],
+        "env":              state.get("env", "prod"),
+        "cidr":             state.get("org_cidr", "10.0.0.0/8"),
+        "hub_cidr":         state.get("hub_cidr", "10.254.0.0/16"),
+        "cloud_router_asn": state.get("cloud_router_asn", state.get("bgp_asn", 65000)),
+    }
+    tmpl = _jinja_env.get_template("gcp_ncc_stack.tf.j2")
+    return tmpl.render(**ctx)
+
+
+# ---------------------------------------------------------------------------
+# Top-level dispatcher
+# ---------------------------------------------------------------------------
+
+def generate_terraform(state: dict) -> dict[str, str]:
+    """
+    Dispatcher that returns a mapping of ``{provider: hcl_string}`` based on
+    the use-case and ``cloud_providers`` list in *state*.
+
+    Always includes "netbox" (NetBox provider HCL).
+    Includes "aws", "azure", "gcp" when the corresponding provider appears in
+    ``state["cloud_providers"]`` or when ``state["use_case"] == "multicloud"``.
+
+    Args:
+        state: Design state dict (keys mirror the frontend STATE/IntentObject).
+
+    Returns:
+        dict mapping provider names to rendered HCL strings.
+    """
+    use_case        = state.get("use_case", state.get("uc", ""))
+    cloud_providers = state.get("cloud_providers", [])
+    is_multicloud   = use_case == "multicloud"
+
+    result: dict[str, str] = {
+        "netbox": generate_netbox_terraform(state),
+    }
+
+    if is_multicloud or "aws" in cloud_providers:
+        result["aws"] = generate_aws_terraform(state)
+
+    if is_multicloud or "azure" in cloud_providers:
+        result["azure"] = generate_azure_terraform(state)
+
+    if is_multicloud or "gcp" in cloud_providers:
+        result["gcp"] = generate_gcp_terraform(state)
+
+    return result
