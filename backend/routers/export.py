@@ -5,6 +5,8 @@ Endpoints:
   POST /api/export/drawio      — generate draw.io XML from design state
   POST /api/export/runbook     — generate Markdown runbook
   POST /api/export/runbook/pdf — generate PDF runbook (requires weasyprint)
+  POST /api/export/ansible     — generate Ansible playbook + inventory
+  POST /api/export/terraform   — generate Terraform HCL (NetBox + AWS/Azure/GCP)
 """
 
 from __future__ import annotations
@@ -29,10 +31,10 @@ class DrawioRequest(BaseModel):
 
 class RunbookRequest(BaseModel):
     design_state:  dict[str, Any]
-    configs:       dict[str, str] = {}    # {hostname: config_text}
+    configs:       dict[str, str] = {}
     ip_plan:       dict[str, Any] | None = None
     deployment_id: str = ""
-    approval_id:   str | None = None      # optional — fetched from DB if provided
+    approval_id:   str | None = None
 
 class AnsibleRequest(BaseModel):
     design_state: dict[str, Any]
@@ -66,7 +68,6 @@ async def export_ansible(
         detail={"filename": filename, "device_count": len(body.configs)},
     )
 
-    # Return both files packed as a JSON object so the client can download each
     import json
     content = json.dumps({"playbook": playbook, "inventory": inventory})
     return Response(
@@ -77,7 +78,7 @@ async def export_ansible(
 
 
 # ---------------------------------------------------------------------------
-# Terraform export
+# Terraform export (NetBox + AWS/Azure/GCP)
 # ---------------------------------------------------------------------------
 
 @router.post("/terraform")
@@ -85,23 +86,42 @@ async def export_terraform(
     body: TerraformRequest,
     payload: dict = Depends(require_permission("designs:read")),
 ):
-    from export.terraform import generate_terraform
-    hcl = generate_terraform(body.design_state, body.ip_plan)
+    """
+    Generate Terraform HCL for the design state.
+
+    Returns a JSON object mapping provider names to HCL strings:
+      { "netbox": "...", "aws": "...", "azure": "...", "gcp": "..." }
+
+    The "netbox" key is always present. Cloud-provider keys are included
+    when the design's use_case is "multicloud" or when the provider appears
+    in state["cloud_providers"].
+    """
+    from export.terraform import generate_terraform, generate_netbox_terraform
+
+    state = body.design_state
+
+    if body.ip_plan:
+        state = {**state, "_ip_plan": body.ip_plan}
+
+    hcl_map = generate_terraform(state)
+
+    if body.ip_plan:
+        hcl_map["netbox"] = generate_netbox_terraform(body.design_state, body.ip_plan)
 
     org_name = body.design_state.get("orgName", "network").replace(" ", "_")
-    filename  = f"{org_name}_main.tf"
 
     await record(
         payload["sub"], "export.terraform", body.design_state.get("id", "design"),
         "design", "success",
         org_id=payload.get("org_id"),
-        detail={"filename": filename},
+        detail={"providers": list(hcl_map.keys()), "org_name": org_name},
     )
 
+    import json
     return Response(
-        content=hcl,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        content=json.dumps(hcl_map, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{org_name}_terraform.json"'},
     )
 
 
