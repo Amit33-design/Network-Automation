@@ -35,7 +35,7 @@ rules:
     name: "PCI DSS: CDE Must Be Isolated in a Dedicated VLAN Segment"
     severity: Fail
     priority: 11
-ractice:
+    condition:
       all:
         - field: compliance
           op: contains
