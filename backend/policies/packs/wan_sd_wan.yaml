@@ -1,0 +1,234 @@
+name: WAN and SD-WAN Network Policy
+description: >
+  Policy checks for WAN edge and SD-WAN designs. Covers BGP security,
+  redundancy requirements, encryption standards, BFD fast-failover, and
+  SD-WAN application policy alignment. Based on Cisco SD-WAN Design Guide,
+  VMware VeloCloud Design Guide, and NIST SP 800-189 (BGP security).
+tags: [wan, sd-wan, bgp, ipsec, redundancy]
+
+rules:
+
+  # ── Hard requirements (FAIL) ──────────────────────────────────────────────────────────
+
+  - id: wan-mpls-sr-requires-bgp
+    name: "WAN: MPLS-SR and Segment Routing Require BGP as Underlay"
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan, dci]
+        - field: protocols
+          op: contains
+          value: mpls_sr
+        - field: protocols
+          op: not_contains
+          value: bgp
+    message: >
+      MPLS Segment Routing (SR-MPLS) and SRv6 require BGP-LS or BGP with
+      SR extensions (draft-ietf-idr-segment-routing-te-policy) to distribute
+      segment identifiers and TE paths. Configuring SR-MPLS with only OSPF or
+      IS-IS as underlay (without BGP-LS) limits you to TI-LFA local protection
+      but prevents end-to-end TE path programming via a PCE or SD-WAN
+      controller. Add BGP to the protocol stack to enable SR Policy and
+      controller-driven traffic engineering.
+
+  - id: wan-medium-large-redundancy
+    name: "WAN: Medium/Large Deployments Require Redundant WAN Paths"
+    severity: Fail
+    priority: 11
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan, dci]
+        - field: orgSize
+          op: in
+          value: [medium, large, hyperscale]
+        - field: topology
+          op: not_contains
+          value: dual-wan
+        - field: protocols
+          op: not_contains
+          value: bgp
+    message: >
+      For medium and large organisations, a single WAN uplink creates a critical
+      single point of failure. Cisco WAN Design Guide and ITIL Service Continuity
+      best practices require at least two independent WAN paths from different
+      providers (primary MPLS + secondary internet, or dual internet with
+      different last-mile technologies). Configure BGP with dual ISP peering,
+      or SD-WAN active-active/active-standby with automatic failover. RTO for
+      WAN failover must be under 30 seconds for business-critical applications.
+
+  - id: wan-ikev1-deprecated
+    name: "WAN: IKEv1 Is Deprecated — Use IKEv2 for All IPsec Tunnels"
+    severity: Fail
+    priority: 12
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan, dci]
+        - field: security
+          op: contains
+          value: ipsec
+        - field: security
+          op: not_contains
+          value: ikev2
+        - field: security
+          op: contains
+          value: ikev1
+    message: >
+      IKEv1 (RFC 2409) is formally deprecated by RFC 9395 and contains known
+      vulnerabilities including susceptibility to offline dictionary attacks
+      against aggressive mode, lack of traffic selector negotiation, and no
+      support for EAP authentication. All new IPsec deployments must use
+      IKEv2 (RFC 7296). IKEv2 provides mutual authentication, MOBIKE for
+      address changes, EAP integration, and DoS protection via cookies.
+      Disable IKEv1 on all WAN edge devices and configure IKEv2-only profiles.
+
+  # ── Strong recommendations (WARN) ──────────────────────────────────────────────
+
+  - id: wan-no-bfd
+    name: "WAN: BFD Recommended for Sub-Second WAN Failover"
+    severity: Warn
+    priority: 20
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan, dci]
+        - field: protocols
+          op: not_contains
+          value: bfd
+    message: >
+      Without BFD, BGP hold-timer expiry (default 180 seconds) is the only
+      failure detection mechanism for WAN links. At WAN standard timers
+      (10/30s), failover takes 30 seconds after a link failure. BFD with
+      300ms intervals and a multiplier of 3 reduces detection to under 1 second
+      on most WAN links. Enable BFD on all BGP sessions and static routes on
+      WAN interfaces. Note: some ISPs do not support BFD — in that case use
+      IP SLA or interface dampening as an alternative.
+
+  - id: wan-sdwan-static-underlay
+    name: "WAN: SD-WAN with Static Underlay Limits Traffic Engineering"
+    severity: Warn
+    priority: 21
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan]
+        - field: protocols
+          op: contains
+          value: SD-WAN
+        - field: protocols
+          op: contains
+          value: static
+    message: >
+      SD-WAN overlays work best when the underlay uses dynamic routing (BGP or
+      OSPF) to detect path failures and reroute traffic. Static underlay routing
+      requires manual intervention when WAN links fail and prevents the SD-WAN
+      controller from making intelligent path decisions based on real-time
+      underlay state. Use BGP for WAN edge-to-ISP peering and let the SD-WAN
+      controller manage overlay path selection based on SLA metrics
+      (latency, jitter, packet loss).
+
+  - id: wan-bgp-no-auth
+    name: "WAN: BGP Sessions Should Use MD5 or TCP-AO Authentication"
+    severity: Warn
+    priority: 22
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan, dci]
+        - field: protocols
+          op: contains
+          value: bgp
+        - field: security
+          op: not_contains
+          value: bgp-auth
+    message: >
+      NIST SP 800-189 and RFC 7454 (BGP Operations and Security) recommend
+      authenticating all external BGP sessions using MD5 (legacy) or TCP
+      Authentication Option (TCP-AO, RFC 5925). Unauthenticated BGP sessions
+      are vulnerable to TCP RST injection and BGP session hijacking. Configure
+      neighbor password on all eBGP sessions. For new deployments, prefer
+      TCP-AO over MD5 as it provides per-segment authentication and replay
+      protection that MD5 lacks.
+
+  - id: wan-sdwan-no-qos
+    name: "WAN: SD-WAN Without QoS Policy Risks Voice/Video Quality"
+    severity: Warn
+    priority: 23
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan]
+        - field: protocols
+          op: contains
+          value: SD-WAN
+        - field: security
+          op: not_contains
+          value: qos
+        - field: protocols
+          op: not_contains
+          value: qos
+    message: >
+      SD-WAN designs carrying voice (DSCP EF), video conferencing (DSCP AF41),
+      and best-effort data require QoS marking and queuing policies at the WAN
+      edge. Without QoS, all traffic competes equally for WAN bandwidth and
+      real-time applications (voice, video) experience jitter and packet loss
+      during congestion. Implement 8-class DiffServ QoS with strict-priority
+      queue for voice (EF) and class-based weighted fair queuing for video
+      (AF41), transactional (AF21), and bulk (CS1) traffic classes.
+
+  # ── Informational ───────────────────────────────────────────────────────────────
+
+  - id: wan-bgp-hold-timer-high
+    name: "WAN: Consider Tuning BGP Timers for Faster Convergence"
+    severity: Info
+    priority: 40
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan, dci]
+        - field: protocols
+          op: contains
+          value: bgp
+    message: >
+      Default BGP timers (keepalive 60s, hold 180s) mean a 3-minute delay
+      before BGP detects a session failure without BFD. For WAN designs,
+      consider tuning to keepalive 10s / hold 30s (WAN Standard preset) for
+      a 30-second maximum detection window. With BFD enabled, BGP convergence
+      can be reduced to under 1 second regardless of BGP timer values.
+      Coordinate timer changes with your ISP — some providers enforce minimum
+      hold times and may reset sessions with non-standard timers.
+
+  - id: wan-ipsec-without-pfs
+    name: "WAN: IPsec Without PFS Leaves Past Sessions Vulnerable"
+    severity: Info
+    priority: 41
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [wan, sd_wan, dci]
+        - field: security
+          op: contains
+          value: ipsec
+        - field: security
+          op: not_contains
+          value: pfs
+    message: >
+      IPsec without Perfect Forward Secrecy (PFS) means that compromise of the
+      long-term private key could allow decryption of previously recorded
+      sessions. Enable PFS (IKEv2 DH group 14 minimum, group 20 preferred)
+      in the IPsec transform set so that each Phase 2 SA derives fresh keying
+      material independent of the Phase 1 key exchange. PFS adds minor CPU
+      overhead during SA renegotiation but is strongly recommended for any
+      sensitive WAN traffic.

@@ -1,0 +1,223 @@
+name: Campus / Enterprise Network Baseline
+description: >
+  Baseline policy checks for campus and enterprise LAN designs. Covers STP
+  hardening, 802.1X access control, DHCP security, wireless security, and
+  redundancy requirements for medium and large organisations. Based on Cisco
+  CVD (Campus LAN Design Guide), CIS Benchmark for Network Devices, and
+  NSA/CISA Hardening Guides.
+tags: [campus, enterprise, lan, access-layer, baseline]
+
+rules:
+
+  # ── Hard requirements (FAIL) ──────────────────────────────────────────────────────────
+
+  - id: campus-stp-required
+    name: "Campus: STP Must Be Configured with BPDU Guard and PortFast"
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: security
+          op: not_contains
+          value: stp-hardened
+    message: >
+      Cisco CVD and CIS Benchmark for Switches require that all campus access
+      layer ports have PortFast enabled (to skip STP listening/learning) and
+      BPDU Guard configured (to immediately err-disable a port that receives a
+      BPDU, preventing rogue switches). Without BPDU Guard, an attacker can
+      attach an unmanaged switch and manipulate the spanning tree root, causing
+      network disruption. Configure spanning-tree portfast and spanning-tree
+      bpduguard enable on all access ports. Distribution and core uplinks must
+      not have PortFast enabled.
+
+  - id: campus-large-dual-homed
+    name: "Campus: Large-Scale Designs Require Dual-Homed Core Switches"
+    severity: Fail
+    priority: 11
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: orgSize
+          op: in
+          value: [large, hyperscale]
+        - field: topology
+          op: not_contains
+          value: dual-homed
+        - field: protocols
+          op: not_contains
+          value: stackwise
+    message: >
+      For large-scale campus designs (500+ endpoints), Cisco CVD requires a
+      redundant core with dual-homed distribution switches using VSS, StackWise
+      Virtual, or MLAG. A single-homed distribution/core design creates a
+      single point of failure. Implement dual-homed uplinks with a virtual
+      chassis technology (VSS/StackWise Virtual on Cisco, MLAG on Arista,
+      Virtual Chassis on Juniper) to eliminate SPoF and achieve sub-second
+      failover without spanning tree reconvergence.
+
+  - id: campus-pci-hipaa-wireless-wpa3
+    name: "Campus: WPA3-Enterprise Required for PCI/HIPAA Wireless"
+    severity: Fail
+    priority: 12
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: compliance
+          op: any_of
+          value: [pci_dss, hipaa]
+        - field: security
+          op: not_contains
+          value: wpa3
+    message: >
+      PCI DSS v4.0 Requirement 4.2 and HIPAA Technical Safeguard §164.312(e)
+      require that wireless networks transmitting cardholder or PHI data use
+      strong encryption. WPA2-Personal (PSK) is insufficient — it is vulnerable
+      to PMKID and offline dictionary attacks. Deploy WPA3-Enterprise (SAE +
+      802.1X EAP-TLS with per-user certificates) for all wireless networks in
+      PCI or HIPAA scope. Isolate guest wireless on a separate SSID and VLAN
+      with no access to production segments.
+
+  # ── Strong recommendations (WARN) ──────────────────────────────────────────────
+
+  - id: campus-8021x-compliance
+    name: "Campus: 802.1X NAC Recommended for Wired Access Ports"
+    severity: Warn
+    priority: 20
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: security
+          op: not_contains
+          value: "802.1x"
+        - field: security
+          op: not_contains
+          value: nac
+    message: >
+      NIST SP 800-125B and CIS Benchmark for Network Devices recommend 802.1X
+      port-based NAC on all wired access ports to prevent rogue devices from
+      obtaining network access simply by connecting a cable. Without NAC, an
+      attacker with physical access can plug in and obtain an IP address on the
+      production network. Deploy 802.1X with EAP-TLS or PEAP-MSCHAPv2 using
+      a RADIUS server (Cisco ISE, FreeRADIUS, or equivalent). Use MAB as a
+      fallback for non-802.1X devices (printers, IP phones) with strict profiling.
+
+  - id: campus-isis-unusual
+    name: "Campus: IS-IS Is Uncommon for Campus — Consider OSPF"
+    severity: Warn
+    priority: 21
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: protocols
+          op: contains
+          value: is-is
+    message: >
+      Cisco CVD (Campus LAN Design Guide) and Arista AVD both recommend OSPF
+      as the campus underlay routing protocol. IS-IS is primarily used in
+      service provider backbone and large-scale DC fabrics where its lack of
+      IP dependency and fast convergence are advantageous. For campus LAN, OSPF
+      Area 0 with BFD provides equivalent convergence with broader operational
+      familiarity. IS-IS is a valid choice but requires team expertise in
+      NET addressing, level design, and IS-IS-specific troubleshooting tools.
+
+  - id: campus-vxlan-evpn-warn
+    name: "Campus: VXLAN/EVPN on Campus Requires Careful Planning"
+    severity: Warn
+    priority: 22
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: protocols
+          op: contains
+          value: vxlan_evpn
+    message: >
+      VXLAN/EVPN on campus networks (vs. DC fabrics) is an emerging pattern
+      supported by Arista's Campus Fabric and Cisco's SDA (Software-Defined
+      Access). It provides macro-segmentation and workload mobility but adds
+      complexity. Ensure all campus switches support VXLAN hardware offload
+      (not software-only). Plan VTEP placement at distribution layer. Consider
+      whether traditional VLAN-based campus design meets requirements before
+      adopting VXLAN/EVPN, which requires BGP expertise on the campus team.
+
+  - id: campus-dhcp-security
+    name: "Campus: DHCP Snooping and Dynamic ARP Inspection Recommended"
+    severity: Warn
+    priority: 23
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: security
+          op: not_contains
+          value: dhcp-snooping
+    message: >
+      DHCP snooping prevents rogue DHCP servers from poisoning client leases
+      (DHCP starvation, DHCP spoofing). Dynamic ARP Inspection (DAI) validates
+      ARP packets against the DHCP snooping binding table to prevent ARP
+      spoofing and man-in-the-middle attacks. Enable ip dhcp snooping on all
+      production VLANs, mark uplinks as trusted ports, and enable ip arp
+      inspection on user-facing VLANs. Also enable IP Source Guard on access
+      ports to prevent IP spoofing.
+
+  - id: campus-internet-firewall
+    name: "Campus: Internet-Facing Design Requires Stateful Firewall"
+    severity: Warn
+    priority: 24
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: security
+          op: not_contains
+          value: firewall
+    message: >
+      Any campus design with internet connectivity or remote access (VPN, guest
+      WiFi) must have a stateful firewall between the campus network and the
+      internet. ACLs on routers are not a substitute for a stateful firewall —
+      they lack connection tracking and application awareness. Deploy an NGFW
+      (Palo Alto, Fortinet FortiGate, Cisco FTD) at the internet edge with
+      explicit deny-all default policy, split DNS, and IPS signatures enabled
+      for inbound and outbound traffic inspection.
+
+  # ── Informational ───────────────────────────────────────────────────────────────
+
+  - id: campus-no-compliance
+    name: "Campus: No Compliance Framework Selected — Consider CIS Benchmarks"
+    severity: Info
+    priority: 50
+    condition:
+      all:
+        - field: use_case
+          op: in
+          value: [campus, enterprise]
+        - field: compliance
+          op: not_contains
+          value: pci_dss
+        - field: compliance
+          op: not_contains
+          value: hipaa
+        - field: compliance
+          op: not_contains
+          value: iso27001
+    message: >
+      No compliance framework is selected for this campus design. Consider
+      applying the CIS Benchmark for Network Devices (Level 1 or Level 2)
+      as a baseline hardening standard even if formal compliance certification
+      is not required. CIS Benchmarks cover password policy, management plane
+      hardening, NTP, syslog, SNMP v3, and service disablement — all applicable
+      to campus switches and routers regardless of regulatory context.

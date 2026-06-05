@@ -66,7 +66,7 @@ from policies.firewall_policy       import generate_firewall_policy
 
 log = logging.getLogger(__name__)
 
-# ── Policy registry — ordered list of (flag_key, generator_fn) ──────────────────
+# ── Policy registry — ordered list of (flag_key, generator_fn) ────────────────────
 # Execution order is significant:
 #   1. Security hardening  — device baseline (SSH, banners, service disable)
 #   2. Control plane       — CoPP, proto auth, GTSM, uRPF, MPP
@@ -225,6 +225,10 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
         for i, ul in enumerate(uplinks_raw)
     ]
 
+    # GPU/RoCEv2 context variables
+    roce_enabled  = any(x in (protocols + overlay) for x in ("rocev2", "roce_v2", "roce"))
+    ecn_threshold = state.get("ecn_threshold", 100_000_000)  # 100 MB default
+
     return {
         "hostname":        hostname,
         "org":             org,
@@ -241,6 +245,10 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
         "bandwidth_gbps":  bandwidth,
         "endpoint_count":  ep_count,
         "uplinks":         uplinks,
+        "roce_enabled":    roce_enabled,
+        "ecn_threshold":   ecn_threshold,
+        "dcqcn":           any(x in (protocols + overlay) for x in ("dcqcn", "ecn_dcqcn", "ecn")),
+        "vlans":           state.get("vlans", []),
         # Policy flags (default all enabled)
         "include_security_hardening": state.get("include_security_hardening", True),
         "include_control_plane":      state.get("include_control_plane",      True),
@@ -396,7 +404,7 @@ def _derive_layers(state: dict[str, Any]) -> dict[str, int]:
     num_dist   = state.get("numDist",   state.get("num_dist",   2))
     num_core   = state.get("numCore",   state.get("num_core",   2))
     num_fw     = state.get("numFirewalls", 1)
-    num_wan    = state.get("numWanRouters", state.get("num_wan_routers", 0))
+    num_wan    = state.get("numWanRouters", state.get("num_wan_routers", 2))
 
     if uc in ("campus", "enterprise"):
         d = {"campus-access": num_access, "campus-dist": num_dist, "campus-core": num_core}
@@ -409,10 +417,8 @@ def _derive_layers(state: dict[str, Any]) -> dict[str, int]:
     elif uc in ("gpu", "ai_fabric", "gpu_cluster"):
         return {"gpu-spine": num_spine, "gpu-tor": num_leaf}
     elif uc in ("wan", "sd_wan", "dci"):
-        d: dict[str, int] = {}
-        if num_wan:  d["wan-router"] = num_wan
-        if num_core: d["campus-core"] = num_core
-        if num_fw:   d["fw"] = num_fw
+        d: dict[str, int] = {"wan-router": num_wan}
+        if num_fw: d["fw"] = num_fw
         return d
     else:
         # multicloud, sp_mpls, etc. — generic fallback

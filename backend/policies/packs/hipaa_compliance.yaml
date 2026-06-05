@@ -1,0 +1,201 @@
+name: HIPAA Security Rule Network Controls
+description: >
+  Policy checks for HIPAA Security Rule compliance in healthcare network
+  environments. Covers encryption of PHI in transit, access controls,
+  network segmentation, wireless security, and audit logging requirements.
+  Derived from 45 CFR Part 164 Security Standards and HHS guidance documents.
+  Rules fire when the hipaa compliance tag is selected.
+tags: [hipaa, compliance, healthcare, phi, security-rule]
+
+rules:
+
+  # ── Hard requirements (FAIL) ──────────────────────────────────────────────────────────
+
+  - id: hipaa-phi-encryption-transit
+    name: "HIPAA: PHI in Transit Must Be Encrypted — TLS 1.2+ Required"
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: hipaa
+        - field: security
+          op: not_contains
+          value: tls
+        - field: security
+          op: not_contains
+          value: ipsec
+    message: >
+      HIPAA Security Rule §164.312(e)(2)(ii) requires implementation of
+      encryption for electronic PHI in transit when deemed appropriate through
+      a risk analysis. HHS guidance and OCR enforcement actions consistently
+      treat unencrypted PHI transmission as a HIPAA violation. All network
+      paths that may carry PHI (EHR systems, medical imaging, HL7/FHIR APIs,
+      clinical workstations) must be protected by TLS 1.2 or higher, or
+      IPsec tunnel mode for network-level encryption. Disable TLS 1.0/1.1
+      and SSL on all healthcare network devices and load balancers.
+
+  - id: hipaa-phi-nac-required
+    name: "HIPAA: Network Access Control Required for PHI Systems"
+    severity: Fail
+    priority: 11
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: hipaa
+        - field: security
+          op: not_contains
+          value: nac
+        - field: security
+          op: not_contains
+          value: "802.1x"
+    message: >
+      HIPAA Security Rule §164.312(a)(1) Access Control and §164.312(d) Person
+      or Entity Authentication require that access to PHI systems be restricted
+      to authorised users and devices. Network-level access control (802.1X NAC)
+      prevents unauthorised devices (personal laptops, IoT medical devices)
+      from connecting to PHI network segments. Deploy 802.1X with EAP-TLS
+      and device certificates on all wired and wireless ports connected to
+      clinical workstations, EHR servers, and medical imaging systems.
+
+  - id: hipaa-phi-vlan-isolation
+    name: "HIPAA: PHI Systems Must Be Isolated from General IT Network"
+    severity: Fail
+    priority: 12
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: hipaa
+        - field: security
+          op: not_contains
+          value: vlan-isolation
+        - field: security
+          op: not_contains
+          value: microseg
+    message: >
+      HIPAA Security Rule §164.312(e)(1) Transmission Security requires
+      protecting PHI from unauthorised access during transmission across
+      networks. Clinical systems (EHR, PACS, DICOM, HL7 interfaces) must
+      be isolated in dedicated VLANs separate from administrative, guest,
+      and IoT networks. Firewall rules must enforce a default-deny posture
+      between clinical VLANs and other segments, with only documented
+      clinical data flows (HL7, FHIR, DICOM) explicitly permitted.
+
+  - id: hipaa-wireless-wpa3-enterprise
+    name: "HIPAA: Clinical Wireless Networks Require WPA3-Enterprise"
+    severity: Fail
+    priority: 13
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: hipaa
+        - field: security
+          op: contains
+          value: wireless
+        - field: security
+          op: not_contains
+          value: wpa3
+    message: >
+      HIPAA Security Rule §164.312(e)(2)(ii) requires encryption of PHI in
+      transit, including over wireless networks. WPA2-PSK is insufficient for
+      healthcare environments — PMKID attacks allow offline cracking of shared
+      keys, and all devices share the same credential. Deploy WPA3-Enterprise
+      with 802.1X EAP-TLS using unique per-device certificates (issued from
+      healthcare PKI) for all clinical wireless networks. Guest and IoT wireless
+      must be on separate SSIDs with no access to clinical segments.
+
+  - id: hipaa-device-authentication
+    name: "HIPAA: Device-Level Authentication Required for Network Access"
+    severity: Fail
+    priority: 14
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: hipaa
+        - field: security
+          op: not_contains
+          value: pki
+        - field: security
+          op: not_contains
+          value: "802.1x"
+    message: >
+      HIPAA Security Rule §164.312(d) requires person or entity authentication
+      before granting access to ePHI. For network devices and workstations,
+      this extends to device authentication via PKI certificates (X.509).
+      Implement a healthcare PKI (Microsoft AD CS or equivalent) to issue
+      device certificates. Use 802.1X EAP-TLS to authenticate devices by
+      certificate before allowing network access. MAB (MAC Authentication
+      Bypass) alone is insufficient — MAC addresses can be spoofed.
+
+  - id: hipaa-remote-access-vpn
+    name: "HIPAA: Remote Access to PHI Requires Authenticated Encrypted VPN"
+    severity: Fail
+    priority: 15
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: hipaa
+        - field: security
+          op: not_contains
+          value: vpn
+        - field: topology
+          op: contains
+          value: remote-access
+    message: >
+      HIPAA Security Rule §164.312(e)(1) and OCR guidance require that remote
+      access to systems containing ePHI be conducted over an encrypted channel.
+      Unencrypted remote desktop (RDP without TLS), plain HTTP, or Telnet to
+      clinical systems violates HIPAA. Deploy a full-tunnel VPN (IKEv2 IPsec
+      or SSL/TLS with split-tunnel disabled) with MFA (TOTP, push notification,
+      or smart card) for all remote clinical access. Log all VPN sessions with
+      user identity, client IP, and session duration for audit trail purposes.
+
+  # ── Strong recommendations (WARN) ──────────────────────────────────────────────
+
+  - id: hipaa-syslog-audit-logging
+    name: "HIPAA: Audit Logging Must Be Enabled on All PHI-Adjacent Devices"
+    severity: Warn
+    priority: 20
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: hipaa
+        - field: security
+          op: not_contains
+          value: syslog
+    message: >
+      HIPAA Security Rule §164.312(b) Audit Controls requires hardware,
+      software, and procedural mechanisms to record and examine activity in
+      systems that contain or use ePHI. Network devices adjacent to PHI
+      systems (switches, routers, firewalls, wireless controllers) must
+      generate and forward syslog events to a centralised SIEM. Log events
+      must include authentication attempts, configuration changes, privilege
+      escalation, and security policy violations. Retain logs for 6 years
+      per §164.316(b)(2)(i) documentation retention requirements.
+
+  # ── Informational ───────────────────────────────────────────────────────────────
+
+  - id: hipaa-baa-segmentation-audit
+    name: "HIPAA: Business Associate Agreements and Segmentation Audit Required"
+    severity: Info
+    priority: 50
+    condition:
+      field: compliance
+      op: contains
+      value: hipaa
+    message: >
+      HIPAA Security Rule §164.308(b)(1) requires covered entities to execute
+      Business Associate Agreements (BAA) with any vendor that handles ePHI,
+      including managed network service providers, cloud infrastructure (AWS,
+      Azure, GCP all offer HIPAA BAAs), and monitoring vendors. Additionally,
+      conduct an annual network segmentation audit to verify that clinical
+      VLANs remain isolated from non-PHI networks. Document your network
+      architecture in the Security Risk Analysis (§164.308(a)(1)) and update
+      it whenever the network changes.

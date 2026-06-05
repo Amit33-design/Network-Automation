@@ -1,0 +1,221 @@
+name: FedRAMP Network Controls
+description: >
+  Policy checks derived from FedRAMP Moderate/High baselines (NIST SP 800-53
+  Rev 5) and OMB directives for federal cloud and network environments. Covers
+  FIPS-compliant encryption, IPv6 readiness, BGP route integrity, authenticated
+  management, and continuous monitoring. Rules fire only when the fedramp
+  compliance tag is selected.
+tags: [fedramp, compliance, nist, federal, government]
+
+rules:
+
+  # ── Hard requirements (FAIL) ──────────────────────────────────────────────────────────
+
+  - id: fedramp-fips-encryption
+    name: "FedRAMP: FIPS 140-2/140-3 Compliant Encryption Required"
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - field: security
+          op: not_contains
+          value: fips
+    message: >
+      FedRAMP Moderate/High SC-13 requires the use of FIPS 140-2 or 140-3
+      validated cryptographic modules for all protection of federal information.
+      All encryption at rest and in transit must use FIPS-validated algorithms:
+      AES-256 (symmetric), RSA-3072 or ECDH/ECDSA P-384 (asymmetric), and
+      SHA-384 or SHA-512 (hashing). Non-FIPS ciphers (3DES, RC4, MD5, DH
+      groups below 2048-bit) must be explicitly disabled on all devices in the
+      federal authorization boundary.
+
+  - id: fedramp-ipsec-ikev2-fips
+    name: "FedRAMP: IPsec Must Use IKEv2 with FIPS-Compliant Ciphers"
+    severity: Fail
+    priority: 11
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - field: security
+          op: contains
+          value: ipsec
+        - field: security
+          op: not_contains
+          value: ikev2
+    message: >
+      FedRAMP SC-8 and SC-13 require FIPS-validated cryptographic protection for
+      data in transit. IKEv1 is deprecated and does not support FIPS-compliant
+      negotiation profiles. All IPsec tunnels in the federal authorization
+      boundary must use IKEv2 (RFC 7296) with FIPS-approved transform sets:
+      encryption AES-256-GCM, integrity SHA-384, DH group 20 (P-384) or
+      group 16 (4096-bit MODP) minimum.
+
+  - id: fedramp-no-unauthenticated-snmp
+    name: "FedRAMP: Unauthenticated SNMP Must Not Be Used"
+    severity: Fail
+    priority: 12
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - op: config_not_contains
+          value: "snmp-server user"
+    message: >
+      FedRAMP IA-3 and AC-17 require that all management plane protocols
+      use authentication. SNMPv1 and SNMPv2c use community strings sent in
+      cleartext and provide no authentication or encryption. Disable all
+      SNMPv1/v2c community strings and configure SNMPv3 with AuthPriv mode
+      (auth SHA-256 minimum, priv AES-128 minimum) for all devices within
+      the FedRAMP authorization boundary.
+
+  - id: fedramp-continuous-monitoring
+    name: "FedRAMP: Continuous Monitoring — Syslog and SNMP Traps Required"
+    severity: Fail
+    priority: 13
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - field: security
+          op: not_contains
+          value: syslog
+    message: >
+      FedRAMP CA-7 requires continuous monitoring of the security posture of
+      the authorization boundary at a frequency sufficient to support risk
+      management decisions. All network devices within the boundary must
+      forward syslog (minimum severity informational) and SNMP traps to a
+      centralised Security Information and Event Management (SIEM) system.
+      FedRAMP requires monthly vulnerability scans and annual penetration
+      testing of the network boundary.
+
+  # ── Strong recommendations (WARN) ──────────────────────────────────────────────
+
+  - id: fedramp-ipv6-required
+    name: "FedRAMP: IPv6 Required for Federal Networks (OMB M-21-07)"
+    severity: Warn
+    priority: 30
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - field: protocols
+          op: not_contains
+          value: IPv6
+    message: >
+      OMB Memorandum M-21-07 mandates that all federal agencies achieve at least
+      80% IPv6-only network operations by end of FY2025. FedRAMP-authorized cloud
+      and infrastructure providers serving federal agencies should demonstrate
+      IPv6 readiness. Enable dual-stack (IPv4 + IPv6) on all network segments
+      within the authorization boundary and plan IPv6-only migration for
+      applicable segments.
+
+  - id: fedramp-bgp-rpki
+    name: "FedRAMP: BGP Route Filtering and RPKI ROV Recommended"
+    severity: Warn
+    priority: 31
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - field: protocols
+          op: contains
+          value: BGP
+        - field: security
+          op: not_contains
+          value: rpki
+    message: >
+      CISA and the NSA's joint guidance for securing BGP and NIST SP 800-189
+      recommend that federal networks implement RPKI Route Origin Validation
+      (ROV) to protect against BGP route hijacking. Without RPKI ROV, malicious
+      or misconfigured BGP announcements can redirect federal network traffic.
+      Configure RPKI ROV with invalid-route drop policy on all internet-facing
+      BGP sessions and consider deploying a local RPKI validator (Routinator,
+      OctoRPKI) for resilience.
+
+  - id: fedramp-dnssec
+    name: "FedRAMP: DNSSEC Required for Authoritative DNS Zones"
+    severity: Warn
+    priority: 32
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - field: security
+          op: not_contains
+          value: dnssec
+    message: >
+      OMB Memorandum M-08-23 requires all federal agencies to deploy DNSSEC
+      on all second-level .gov and .mil domains. FedRAMP-authorized environments
+      serving federal agencies should sign authoritative DNS zones with DNSSEC
+      (NSEC3, RSASHA256 or ECDSA P-256 minimum) and configure DNS resolvers to
+      perform DNSSEC validation. Unsigned zones are vulnerable to DNS spoofing
+      and cache poisoning attacks.
+
+  - id: fedramp-cac-pki-mgmt
+    name: "FedRAMP: CAC/PKI Authentication Recommended for Device Management"
+    severity: Warn
+    priority: 33
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - op: config_not_contains
+          value: "crypto pki"
+    message: >
+      FedRAMP IA-2(1) and HSPD-12 require that federal agency personnel use
+      Personal Identity Verification (PIV) credentials or equivalent CAC/PKI
+      certificates for logical access to federal systems. Network device
+      management access for federal environments should be authenticated via
+      PKI certificate-based SSH (certificate authority configured with
+      'crypto pki trustpoint') rather than password-based authentication.
+      Password authentication may be retained as a break-glass emergency
+      access only.
+
+  # ── Informational ───────────────────────────────────────────────────────────────
+
+  - id: fedramp-ato-boundary
+    name: "FedRAMP: ATO Boundary Review Recommended"
+    severity: Info
+    priority: 60
+    condition:
+      field: compliance
+      op: contains
+      value: fedramp
+    message: >
+      FedRAMP Authorization to Operate (ATO) requires a formal System Security
+      Plan (SSP) that documents the authorization boundary, data flows, and all
+      network controls. This automated policy check validates design intent
+      against NIST SP 800-53 Rev 5 network controls but does not replace the
+      full FedRAMP assessment process. Engage a Third Party Assessment
+      Organization (3PAO) to perform the formal assessment and penetration test
+      required for ATO issuance or renewal.
+
+  - id: fedramp-zero-trust-alignment
+    name: "FedRAMP: Consider Zero Trust Alignment per CISA TIC 3.0"
+    severity: Info
+    priority: 61
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: fedramp
+        - field: security
+          op: not_contains
+          value: ztna
+    message: >
+      CISA's Trusted Internet Connections (TIC) 3.0 and OMB M-22-09 require
+      federal agencies to adopt Zero Trust Architecture (ZTA) aligned with
+      CISA's Zero Trust Maturity Model. Consider enabling ZTNA policies,
+      microsegmentation, and identity-based access controls in addition to
+      perimeter security to align with federal ZTA requirements.

@@ -1,0 +1,215 @@
+name: Zero Trust Network Architecture
+description: >
+  Policy checks for Zero Trust Network Architecture (ZTNA) alignment based on
+  NIST SP 800-207, CISA Zero Trust Maturity Model v2.0, and DoD ZT Reference
+  Architecture. Validates that designs avoid implicit network trust, enforce
+  microsegmentation, require identity verification, and maintain east-west
+  visibility. Apply to any enterprise network where ZT principles are required.
+tags: [zero-trust, ztna, microsegmentation, security]
+
+rules:
+
+  # ── Hard requirements (FAIL) ──────────────────────────────────────────────────────────
+
+  - id: zt-no-flat-l2
+    name: "Zero Trust: Flat L2 Network Violates Zero Trust Principles"
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: zero-trust
+        - field: security
+          op: not_contains
+          value: microseg
+        - field: security
+          op: not_contains
+          value: vlan-isolation
+        - field: orgSize
+          op: in
+          value: [medium, large, hyperscale]
+    message: >
+      NIST SP 800-207 Principle 2 states that no implicit trust is granted based
+      solely on network location or physical subnet. A flat Layer 2 network where
+      all hosts share the same broadcast domain provides no segmentation and
+      violates this principle. For medium and large organisations, every workload
+      group must be isolated into its own VLAN or segment with explicit firewall
+      or microsegmentation policy controlling east-west flows between segments.
+
+  # ── Strong recommendations (WARN) ──────────────────────────────────────────────
+
+  - id: zt-implicit-trust-segment
+    name: "Zero Trust: Implicit Network Segment Trust Violates ZT Model"
+    severity: Warn
+    priority: 20
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: zero-trust
+        - field: security
+          op: not_contains
+          value: "802.1x"
+        - field: security
+          op: not_contains
+          value: nac
+    message: >
+      NIST SP 800-207 Principle 1 requires that all data sources and computing
+      services be treated as resources regardless of network location. Granting
+      trust based solely on IP subnet membership or VLAN assignment violates this
+      principle. Implement 802.1X NAC or a Zero Trust policy engine that verifies
+      device identity and posture before granting access to any resource,
+      regardless of which network segment the device is connected to.
+
+  - id: zt-device-identity-required
+    name: "Zero Trust: Device Identity Verification Required"
+    severity: Warn
+    priority: 21
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: zero-trust
+        - field: security
+          op: not_contains
+          value: "802.1x"
+        - field: security
+          op: not_contains
+          value: pki
+    message: >
+      NIST SP 800-207 Principle 3 requires continuous validation and
+      authentication of all connection requests before access is granted.
+      Devices must prove identity through a verifiable mechanism — 802.1X with
+      EAP-TLS and device certificates (PKI), or a ZTNA proxy that performs
+      device posture assessment. Password-based or MAC-address-based
+      authentication alone does not satisfy ZT device identity requirements.
+
+  - id: zt-microseg-required
+    name: "Zero Trust: Microsegmentation Firewall Policy Required"
+    severity: Warn
+    priority: 22
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: zero-trust
+        - field: security
+          op: not_contains
+          value: microseg
+        - field: security
+          op: not_contains
+          value: distributed-fw
+    message: >
+      CISA Zero Trust Maturity Model (Network pillar) requires that traffic flows
+      between workload segments be controlled by explicit allow policies with
+      implicit deny-all. A perimeter firewall alone does not enforce ZT — east-west
+      traffic between internal segments must be inspected and policy-controlled by
+      a distributed firewall, microsegmentation platform (VMware NSX, Illumio,
+      Cisco Tetration), or per-VLAN ACLs with a default-deny posture.
+
+  - id: zt-ns-inspection-required
+    name: "Zero Trust: North-South Traffic Inspection Required"
+    severity: Warn
+    priority: 23
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: zero-trust
+        - field: security
+          op: not_contains
+          value: firewall
+    message: >
+      NIST SP 800-207 Principle 5 requires that all communication be secured
+      regardless of network location. North-south traffic (user/device to
+      internet, or external to internal resources) must pass through an inline
+      inspection point — stateful firewall, Next-Generation Firewall (NGFW), or
+      Secure Web Gateway. Hairpinning and inspection bypass (split tunnelling,
+      direct internet access without inspection) violate ZT architecture.
+
+  - id: zt-sdwan-per-app-policy
+    name: "Zero Trust: SD-WAN Without Per-App Policy Is Not ZT Compliant"
+    severity: Warn
+    priority: 24
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: zero-trust
+        - field: protocols
+          op: contains
+          value: SD-WAN
+        - field: security
+          op: not_contains
+          value: per-app-policy
+    message: >
+      Zero Trust requires that access decisions be made at the resource level,
+      not the network level. SD-WAN deployments that route traffic based solely
+      on network destination (IP prefix, VLAN) without application-level policy
+      do not satisfy ZT. Configure SD-WAN with application-aware routing policies
+      that restrict each application to only its required destination paths and
+      SaaS endpoints, and enforce ZTNA for user-to-application access rather
+      than network-level VPN.
+
+  - id: zt-oob-management
+    name: "Zero Trust: Management Plane Should Be Out-of-Band"
+    severity: Warn
+    priority: 25
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: zero-trust
+        - field: security
+          op: not_contains
+          value: oob-mgmt
+    message: >
+      NIST SP 800-207 Principle 6 states that access to resources should be
+      granted on a per-session basis with minimal privilege. In-band management
+      (SSH/HTTPS traffic sharing the same network path as production data)
+      violates this by creating a lateral movement path from a compromised
+      production host to network infrastructure. Implement an out-of-band (OOB)
+      management network (dedicated management VLAN, separate management VRF, or
+      physical OOB network) so that control-plane access is never reachable from
+      production data plane segments.
+
+  # ── Informational ───────────────────────────────────────────────────────────────
+
+  - id: zt-ew-flow-logging
+    name: "Zero Trust: East-West Flow Logging Recommended"
+    severity: Info
+    priority: 50
+    condition:
+      all:
+        - field: security
+          op: contains
+          value: zero-trust
+        - field: security
+          op: not_contains
+          value: syslog
+    message: >
+      CISA Zero Trust Maturity Model (Visibility and Analytics pillar) requires
+      comprehensive logging and analytics of all traffic flows, including
+      east-west flows between internal segments. Enable NetFlow/sFlow or IPFIX
+      on all inter-segment interfaces and forward records to a centralised flow
+      collector (Elastic Stack, Splunk, or dedicated network detection and
+      response platform). Without east-west visibility, lateral movement by an
+      attacker inside the network perimeter will go undetected.
+
+  - id: zt-maturity-assessment
+    name: "Zero Trust: ZT Maturity Assessment Recommended"
+    severity: Info
+    priority: 60
+    condition:
+      field: security
+      op: contains
+      value: zero-trust
+    message: >
+      Enabling Zero Trust principles in network design is a starting point.
+      Full ZT maturity requires alignment across five pillars: Identity, Devices,
+      Networks, Applications, and Data (CISA ZT Maturity Model v2.0). This policy
+      pack validates network-layer ZT controls only. Conduct a formal ZT maturity
+      assessment against the CISA model and NIST SP 800-207 to identify gaps
+      across all five pillars before claiming ZT compliance to auditors or
+      regulators.

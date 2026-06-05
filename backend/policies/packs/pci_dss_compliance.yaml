@@ -1,0 +1,235 @@
+name: PCI DSS v4.0 Network Controls
+description: >
+  Policy checks derived from PCI DSS v4.0 network security requirements.
+  Covers firewall placement, CDE VLAN isolation, management plane security,
+  encryption, logging, and wireless security for environments handling
+  payment card data. Rules fire when the pci_dss compliance tag is selected.
+tags: [pci-dss, compliance, payment, cde, firewall]
+
+rules:
+
+  # ── Hard requirements (FAIL) ──────────────────────────────────────────────────────────
+
+  - id: pci-perimeter-firewall
+    name: "PCI DSS: Firewall Required Between CDE and Untrusted Networks"
+    severity: Fail
+    priority: 10
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: security
+          op: not_contains
+          value: firewall
+    message: >
+      PCI DSS v4.0 Requirement 1.2.1 mandates that network security controls
+      (NSC) be configured between the Cardholder Data Environment (CDE) and
+      untrusted networks. A stateful firewall or NGFW must be positioned at
+      all CDE boundaries with a default-deny inbound policy. Only explicitly
+      required flows (HTTPS to payment processors, DNS, NTP) should be
+      permitted. Document all permitted flows in the firewall ruleset as
+      required by Requirement 1.2.4 (business justification for each rule).
+
+  - id: pci-cde-vlan-isolation
+    name: "PCI DSS: CDE Must Be Isolated in a Dedicated VLAN Segment"
+    severity: Fail
+    priority: 11
+ractice:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: security
+          op: not_contains
+          value: vlan-isolation
+        - field: security
+          op: not_contains
+          value: microseg
+    message: >
+      PCI DSS v4.0 Requirement 1.3.1 requires that network access to and from
+      the CDE be restricted. Flat networks where CDE systems share a broadcast
+      domain with non-CDE systems (POS terminals, office workstations) violate
+      this requirement. Place all CDE systems (card payment servers, POS
+      controllers, HSMs) in a dedicated VLAN with no inter-VLAN routing to
+      non-CDE segments without explicit firewall inspection. Network scans of
+      CDE systems from non-CDE VLANs must be blocked by default.
+
+  - id: pci-no-telnet-http-mgmt
+    name: "PCI DSS: Telnet and HTTP Management Protocols Are Prohibited"
+    severity: Fail
+    priority: 12
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: security
+          op: not_contains
+          value: ssh-only
+    message: >
+      PCI DSS v4.0 Requirement 2.2.7 prohibits the use of unencrypted
+      administrative access protocols (Telnet, HTTP, FTP, RSH). All management
+      access to network devices within or adjacent to the CDE must use
+      encrypted protocols: SSHv2 for CLI, HTTPS with TLS 1.2+ for web
+      management, and SNMPv3 AuthPriv for monitoring. Disable Telnet, HTTP
+      server, and FTP on all in-scope devices. Use an out-of-band management
+      network (dedicated VLAN or physical OOB) for device management traffic.
+
+  - id: pci-snmpv3-required
+    name: "PCI DSS: SNMPv1/v2c Must Not Be Used — SNMPv3 AuthPriv Required"
+    severity: Fail
+    priority: 13
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: security
+          op: not_contains
+          value: snmpv3
+    message: >
+      PCI DSS v4.0 Requirement 2.2.7 prohibits cleartext management protocols.
+      SNMPv1 and SNMPv2c transmit community strings and OID data in plaintext
+      and lack per-message authentication. An attacker on the management VLAN
+      can capture community strings and perform SNMP writes. Configure SNMPv3
+      with AuthPriv mode (auth SHA-256, priv AES-128 minimum) on all network
+      devices in or adjacent to the CDE. Remove all SNMPv1/v2c community
+      strings. Restrict SNMP access to the NMS IP(s) using an access-list.
+
+  - id: pci-no-split-tunnel-vpn
+    name: "PCI DSS: Split Tunneling on Remote Access VPN Is Prohibited"
+    severity: Fail
+    priority: 14
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: security
+          op: contains
+          value: vpn
+        - field: security
+          op: contains
+          value: split-tunnel
+    message: >
+      PCI DSS v4.0 Requirement 1.3.3 prohibits split tunneling for remote
+      access VPN connections to the CDE. Split tunneling allows a remote
+      user's device to simultaneously access the CDE (via VPN) and the
+      internet (direct), creating a path for malware from the internet to
+      pivot into the CDE through the compromised endpoint. Configure all
+      remote access VPN clients accessing CDE segments to use full-tunnel
+      mode (all traffic routed through the VPN gateway for inspection).
+
+  - id: pci-bgp-md5-auth
+    name: "PCI DSS: BGP Sessions Adjacent to CDE Must Use Authentication"
+    severity: Fail
+    priority: 15
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: protocols
+          op: contains
+          value: bgp
+        - field: security
+          op: not_contains
+          value: bgp-auth
+    message: >
+      PCI DSS v4.0 Requirement 1.2 requires that all network security controls
+      be configured to prevent unauthorised access. Unauthenticated BGP sessions
+      on routers adjacent to the CDE are vulnerable to BGP session hijacking
+      via TCP RST injection, potentially causing traffic to be rerouted through
+      an attacker-controlled path. Configure MD5 or TCP-AO authentication on
+      all BGP sessions on routers within or adjacent to the CDE boundary.
+
+  - id: pci-logging-required
+    name: "PCI DSS: Security Event Logging Must Be Enabled and Centralised"
+    severity: Fail
+    priority: 16
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: security
+          op: not_contains
+          value: syslog
+    message: >
+      PCI DSS v4.0 Requirements 10.2-10.4 mandate that all in-scope network
+      devices generate security event logs (authentication success/failure,
+      config changes, privilege escalation, firewall policy hits) and forward
+      them to a centralised log management system (SIEM). Logs must be retained
+      for 12 months (3 months immediately available). Enable syslog at
+      informational level or higher on all CDE-adjacent devices. Protect the
+      log server from unauthorised modification using write-once storage.
+
+  - id: pci-wireless-wpa3
+    name: "PCI DSS: Wireless in CDE Scope Requires WPA3-Enterprise"
+    severity: Fail
+    priority: 17
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: security
+          op: contains
+          value: wireless
+        - field: security
+          op: not_contains
+          value: wpa3
+    message: >
+      PCI DSS v4.0 Requirement 4.2 requires strong encryption for all wireless
+      networks that transmit cardholder data or are connected to the CDE.
+      WPA2-Personal is insufficient due to PMKID attacks and offline dictionary
+      attacks against the 4-way handshake. Deploy WPA3-Enterprise with
+      802.1X EAP-TLS and individual device certificates (not shared PSK) for
+      all wireless access points in or adjacent to the CDE. Conduct quarterly
+      wireless rogue AP scans per Requirement 11.2.
+
+  # ── Strong recommendations (WARN) ──────────────────────────────────────────────
+
+  - id: pci-ids-ips-recommended
+    name: "PCI DSS: IDS/IPS Recommended at CDE Perimeter"
+    severity: Warn
+    priority: 30
+    condition:
+      all:
+        - field: compliance
+          op: contains
+          value: pci_dss
+        - field: security
+          op: not_contains
+          value: ips
+        - field: security
+          op: not_contains
+          value: ids
+    message: >
+      PCI DSS v4.0 Requirement 11.5 requires the use of intrusion detection
+      or prevention techniques to detect and alert on covert malware
+      communication channels. Deploy an IDS/IPS inline at CDE boundaries
+      (NGFW with IPS signatures, or a dedicated IPS appliance). Enable
+      signatures for known payment card malware, C2 callbacks, and lateral
+      movement patterns. Review IPS alerts weekly and tune signatures to
+      reduce false positives while maintaining detection effectiveness.
+
+  # ── Informational ───────────────────────────────────────────────────────────────
+
+  - id: pci-segmentation-advisory
+    name: "PCI DSS: Validate Segmentation Controls Annually"
+    severity: Info
+    priority: 50
+    condition:
+      field: compliance
+      op: contains
+      value: pci_dss
+    message: >
+      PCI DSS v4.0 Requirement 11.4.5 requires organisations using network
+      segmentation to reduce PCI DSS scope to validate segmentation controls
+      at least once every six months (for service providers) or annually
+      (for merchants). Segmentation validation must confirm that all paths
+      between CDE and out-of-scope systems are blocked. This automated policy
+      check validates design intent — engage a QSA to formally validate
+      segmentation controls as part of your annual PCI DSS assessment.
