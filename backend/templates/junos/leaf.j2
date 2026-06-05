@@ -1,0 +1,238 @@
+# NetDesign AI — Juniper JunOS DC Leaf (VTEP / BGP EVPN)
+# Device  : {{ hostname }}
+# Role    : Leaf — VXLAN VTEP, BGP EVPN type-2/type-5
+# Underlay: {{ underlay | upper }}  |  AS: {{ bgp_asn }} (iBGP to spine RRs)
+# L2VNI base: 10000 + vlan_id  |  L3VNI base: 19000 + vrf_idx
+# ============================================================
+# Deploy: load replace terminal → commit
+# Verify: show evpn database | show bgp summary | show route table bgp.evpn.0
+
+version 23.4R1;
+
+system {
+    host-name {{ hostname }};
+    domain-name netdesignai.local;
+    time-zone UTC;
+    root-authentication {
+        encrypted-password "$6$ChangeMe";
+    }
+    login {
+        user admin {
+            uid 2000;
+            class super-user;
+            authentication { encrypted-password "$6$ChangeMe"; }
+        }
+    }
+    services {
+        ssh { root-login deny; protocol-version v2; }
+        netconf { ssh { port 830; } }
+    }
+    syslog {
+        host 10.100.0.200 { any info; }
+        file messages { any warning; }
+    }
+    ntp {
+        server 216.239.35.0 prefer;
+        server 216.239.35.4;
+    }
+}
+
+chassis {
+    aggregated-devices {
+        ethernet { device-count 8; }
+    }
+}
+
+interfaces {
+    # ── OOB management ─────────────────────────────────────────────────────
+    em0 {
+        description OOB-MANAGEMENT;
+        unit 0 { family inet { address {{ mgmt_ip }}/24; } }
+    }
+    # ── Loopback — router-id ────────────────────────────────────────────────
+    lo0 {
+        unit 0 {
+            description ROUTER-ID;
+            family inet { address {{ loopback_ip }}/32 { primary; } }
+        }
+        unit 1 {
+            description VTEP-ANYCAST;
+            family inet { address 10.1.2.{{ index }}/32; }
+        }
+    }
+    # ── P2P uplinks to spines (100GbE, MTU 9192) ─────────────────────────
+    et-0/0/48 {
+        description UPLINK-TO-SPINE-01;
+        mtu 9192;
+        unit 0 { family inet { address 10.2.1.{{ (index - 1) * 2 }}/31; } }
+    }
+    et-0/0/49 {
+        description UPLINK-TO-SPINE-02;
+        mtu 9192;
+        unit 0 { family inet { address 10.2.2.{{ (index - 1) * 2 }}/31; } }
+    }
+    # ── IRB (anycast-gateway SVIs) ─────────────────────────────────────────
+    irb {
+        unit 10 {
+            description VLAN10-PROD-SERVERS;
+            family inet {
+                address 10.10.10.1/24 { virtual-gateway-address 10.10.10.254; }
+            }
+            virtual-gateway-accept-data;
+        }
+        unit 11 {
+            description VLAN11-PROD-STORAGE;
+            family inet {
+                address 10.10.11.1/24 { virtual-gateway-address 10.10.11.254; }
+            }
+            virtual-gateway-accept-data;
+        }
+        unit 20 {
+            description VLAN20-DEV;
+            family inet {
+                address 10.20.0.1/24 { virtual-gateway-address 10.20.0.254; }
+            }
+            virtual-gateway-accept-data;
+        }
+        unit 30 {
+            description VLAN30-STORAGE;
+            family inet {
+                address 10.30.0.1/24 { virtual-gateway-address 10.30.0.254; }
+            }
+            virtual-gateway-accept-data;
+        }
+        unit 31 {
+            description VLAN31-STORAGE-REPLICATION;
+            family inet {
+                address 10.31.0.1/24 { virtual-gateway-address 10.31.0.254; }
+            }
+            virtual-gateway-accept-data;
+        }
+    }
+}
+
+# ── VLAN → VNI mappings ───────────────────────────────────────────────────────
+vlans {
+    VLAN10 { vlan-id 10; l3-interface irb.10; vxlan { vni 10010; } }
+    VLAN11 { vlan-id 11; l3-interface irb.11; vxlan { vni 10011; } }
+    VLAN20 { vlan-id 20; l3-interface irb.20; vxlan { vni 10020; } }
+    VLAN30 { vlan-id 30; l3-interface irb.30; vxlan { vni 10030; } }
+    VLAN31 { vlan-id 31; l3-interface irb.31; vxlan { vni 10031; } }
+}
+
+routing-options {
+    router-id {{ loopback_ip }};
+    autonomous-system {{ bgp_asn }};
+    forwarding-table {
+        export ECMP;
+        ecmp-fast-reroute;
+    }
+}
+
+{% if underlay == 'isis' %}
+protocols {
+    isis {
+        interface lo0.0 { passive; }
+        interface lo0.1 { passive; }
+        interface et-0/0/48.0 { point-to-point; level 1 disable; bfd-liveness-detection { minimum-interval 300; multiplier 3; } }
+        interface et-0/0/49.0 { point-to-point; level 1 disable; bfd-liveness-detection { minimum-interval 300; multiplier 3; } }
+        export ISIS-LOOPBACKS;
+    }
+{% else %}
+protocols {
+    ospf {
+        area 0.0.0.0 {
+            interface lo0.0 { passive; }
+            interface lo0.1 { passive; }
+            interface et-0/0/48.0 { interface-type p2p; bfd-liveness-detection { minimum-interval 300; multiplier 3; } }
+            interface et-0/0/49.0 { interface-type p2p; bfd-liveness-detection { minimum-interval 300; multiplier 3; } }
+        }
+    }
+{% endif %}
+    bgp {
+        log-updown;
+        group SPINES {
+            type internal;
+            local-address {{ loopback_ip }};
+            import LEAF-TO-RR;
+            export LEAF-TO-RR;
+            family inet { unicast; }
+            family evpn { signaling; }
+            bfd-liveness-detection { minimum-interval 300; multiplier 3; }
+            neighbor 10.0.1.1 { description SPINE-01-RR; }
+            neighbor 10.0.2.2 { description SPINE-02-RR; }
+        }
+    }
+    evpn {
+        encapsulation vxlan;
+        multicast-mode ingress-replication;
+        default-gateway advertise-directly;
+        extended-vni-list [ 10010 10011 10020 10030 10031 ];
+    }
+}
+
+# ── Routing instances (VRFs with L3VNI) ──────────────────────────────────────
+routing-instances {
+    PROD {
+        instance-type vrf;
+        interface irb.10;
+        interface irb.11;
+        route-distinguisher {{ loopback_ip }}:19001;
+        vrf-target target:{{ bgp_asn }}:19001;
+        vrf-table-label;
+        protocols {
+            evpn { ip-prefix-routes { advertise direct-nexthop; } }
+        }
+    }
+    DEV {
+        instance-type vrf;
+        interface irb.20;
+        route-distinguisher {{ loopback_ip }}:19002;
+        vrf-target target:{{ bgp_asn }}:19002;
+        vrf-table-label;
+        protocols {
+            evpn { ip-prefix-routes { advertise direct-nexthop; } }
+        }
+    }
+    STORAGE {
+        instance-type vrf;
+        interface irb.30;
+        interface irb.31;
+        route-distinguisher {{ loopback_ip }}:19003;
+        vrf-target target:{{ bgp_asn }}:19003;
+        vrf-table-label;
+        protocols {
+            evpn { ip-prefix-routes { advertise direct-nexthop; } }
+        }
+    }
+}
+
+policy-options {
+    policy-statement ECMP {
+        then { load-balance per-packet; }
+    }
+    policy-statement LEAF-TO-RR {
+        term LOOPBACKS {
+            from { route-filter 10.0.0.0/8 orlonger; }
+            then accept;
+        }
+        term EVPN {
+            from family evpn;
+            then accept;
+        }
+        term DENY-REST { then reject; }
+    }
+}
+
+snmp {
+    v3 {
+        usm {
+            local-engine {
+                user ndai-ro {
+                    authentication-sha { authentication-password "ChangeMe!"; }
+                    privacy-aes128 { privacy-password "ChangeMe!"; }
+                }
+            }
+        }
+    }
+}

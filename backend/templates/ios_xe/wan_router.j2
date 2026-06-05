@@ -1,0 +1,229 @@
+! ═══════════════════════════════════════════════════════════════════
+! NetDesign AI — Cisco IOS-XE  WAN ROUTER (ASR/ISR CLASS)
+! Device   : {{ hostname }}
+! Role     : WAN Edge — Internet uplink, LAN distribution, BGP to ISP
+! Use-case : {{ use_case | upper }}
+! ═══════════════════════════════════════════════════════════════════
+
+hostname {{ hostname }}
+
+! ── Domain / AAA / SSH ───────────────────────────────────────────────────────
+ip domain-name {{ org | lower | replace(' ', '.') }}.local
+crypto key generate rsa modulus 2048
+
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+
+aaa new-model
+aaa authentication login default local
+aaa authorization exec default local if-authenticated
+aaa accounting exec default start-stop local
+
+username admin privilege 15 algorithm-type sha256 secret ChangeMe!
+service password-encryption
+no service tcp-small-servers
+no service udp-small-servers
+
+! ── Management interface (OOB) ───────────────────────────────────────────────
+interface GigabitEthernet0
+ description OOB-MANAGEMENT
+ vrf forwarding MGMT
+ ip address {{ mgmt_ip }} 255.255.255.0
+ no shutdown
+
+ip vrf MGMT
+ description Out-of-band management plane
+
+ip route vrf MGMT 0.0.0.0 0.0.0.0 {{ mgmt_ip.rsplit('.', 1)[0] }}.1
+
+! ── Loopback ─────────────────────────────────────────────────────────────────
+interface Loopback0
+ description Router-ID
+ ip address {{ loopback_ip }} 255.255.255.255
+ no shutdown
+
+! ── WAN interface (GigabitEthernet0/0/0 toward ISP) ─────────────────────────
+! Modify: replace DHCP with static ip address <x.x.x.x> <mask> if provider assigns static
+interface GigabitEthernet0/0/0
+ description WAN-UPLINK-TO-ISP
+ ip address dhcp
+ ip nat outside
+ no ip proxy-arp
+ no ip redirects
+ no ip unreachables
+ no shutdown
+
+! ── LAN uplink (GigabitEthernet0/0/1 toward campus core or DC) ──────────────
+interface GigabitEthernet0/0/1
+ description LAN-UPLINK-TO-CORE
+ ip address 10.0.{{ index }}.1 255.255.255.252
+ ip nat inside
+ no shutdown
+
+! ── Static default route toward ISP ─────────────────────────────────────────
+! Remove if WAN interface uses DHCP default-route (ip address dhcp + default-route)
+! ip route 0.0.0.0 0.0.0.0 <ISP-GATEWAY>
+
+! ── NAT (PAT — overload) ─────────────────────────────────────────────────────
+ip access-list standard ACL-LAN-NAT
+ permit 10.0.0.0 0.255.255.255
+ permit 172.16.0.0 0.15.255.255
+ permit 192.168.0.0 0.0.255.255
+
+ip nat inside source list ACL-LAN-NAT interface GigabitEthernet0/0/0 overload
+
+! ── BGP to ISP ───────────────────────────────────────────────────────────────
+! Replace 65001 with actual ISP AS number and 203.0.113.1 with ISP peering IP.
+{% if 'bgp' in protocols %}
+router bgp {{ bgp_asn }}
+ bgp router-id {{ loopback_ip }}
+ bgp log-neighbor-changes
+ bgp bestpath compare-routerid
+ !
+ ! ── ISP upstream neighbor ────────────────────────────────────────────────
+ neighbor 203.0.113.1 remote-as 65001
+ neighbor 203.0.113.1 description ISP-UPLINK
+ neighbor 203.0.113.1 password ChangeMe!
+ neighbor 203.0.113.1 timers 10 30
+ neighbor 203.0.113.1 ebgp-multihop 2
+ !
+ address-family ipv4
+  neighbor 203.0.113.1 activate
+  neighbor 203.0.113.1 prefix-list PL-WAN-OUT out
+  neighbor 203.0.113.1 prefix-list PL-WAN-IN  in
+  neighbor 203.0.113.1 route-map RM-ISP-OUT out
+  neighbor 203.0.113.1 route-map RM-ISP-IN  in
+  neighbor 203.0.113.1 soft-reconfiguration inbound
+  neighbor 203.0.113.1 maximum-prefix 1000 90
+  redistribute static route-map RM-DEFAULT-ONLY
+ exit-address-family
+{% else %}
+! BGP not selected in intent — using static default route only
+ip route 0.0.0.0 0.0.0.0 GigabitEthernet0/0/0 dhcp 254
+{% endif %}
+
+! ── OSPF — redistribution toward LAN core ────────────────────────────────────
+router ospf 1
+ router-id {{ loopback_ip }}
+ auto-cost reference-bandwidth 10000
+ passive-interface default
+ no passive-interface GigabitEthernet0/0/1
+ network {{ loopback_ip }} 0.0.0.0 area 0
+ network 10.0.{{ index }}.0 0.0.0.3 area 0
+{% if 'bgp' in protocols %}
+ redistribute bgp {{ bgp_asn }} subnets route-map RM-BGP-TO-OSPF
+{% endif %}
+ default-information originate always
+
+! ── Prefix lists ─────────────────────────────────────────────────────────────
+ip prefix-list PL-WAN-OUT seq 5  permit {{ loopback_ip }}/32
+ip prefix-list PL-WAN-OUT seq 10 permit 10.0.0.0/8 le 24
+ip prefix-list PL-WAN-OUT seq 999 deny 0.0.0.0/0 le 32
+
+ip prefix-list PL-WAN-IN  seq 5  permit 0.0.0.0/0
+ip prefix-list PL-WAN-IN  seq 10 permit 0.0.0.0/0 ge 8 le 24
+ip prefix-list PL-WAN-IN  seq 999 deny 0.0.0.0/0 le 32
+
+ip prefix-list PL-DEFAULT seq 5  permit 0.0.0.0/0
+
+! ── Route-maps ───────────────────────────────────────────────────────────────
+route-map RM-ISP-OUT permit 10
+ description Advertise LAN summary and loopback to ISP
+ match ip address prefix-list PL-WAN-OUT
+
+route-map RM-ISP-OUT deny 20
+
+route-map RM-ISP-IN permit 10
+ description Accept default and specific prefixes from ISP
+ match ip address prefix-list PL-WAN-IN
+ set local-preference 100
+
+route-map RM-ISP-IN deny 20
+
+route-map RM-DEFAULT-ONLY permit 10
+ description Originate static default into BGP
+ match ip address prefix-list PL-DEFAULT
+
+route-map RM-DEFAULT-ONLY deny 20
+
+route-map RM-BGP-TO-OSPF permit 10
+ description Redistribute only default from BGP into OSPF
+ match ip address prefix-list PL-DEFAULT
+
+route-map RM-BGP-TO-OSPF deny 20
+
+{% if 'ipsec' in overlay or 'ikev2' in overlay %}
+! ── IKEv2 VPN profile stub ───────────────────────────────────────────────────
+! Replace placeholder values with actual peer IP and pre-shared key.
+crypto ikev2 proposal IKEv2-PROP
+ encryption aes-cbc-256
+ integrity sha256
+ group 14
+
+crypto ikev2 policy IKEv2-POL
+ proposal IKEv2-PROP
+
+crypto ikev2 keyring KEYRING-VPN
+ peer REMOTE-SITE
+  address 0.0.0.0 0.0.0.0
+  pre-shared-key local  ChangeMe!
+  pre-shared-key remote ChangeMe!
+
+crypto ikev2 profile IKEv2-PROFILE
+ match identity remote address 0.0.0.0
+ authentication remote pre-share
+ authentication local  pre-share
+ keyring local KEYRING-VPN
+ dpd 30 5 periodic
+
+crypto ipsec transform-set TSET esp-aes 256 esp-sha256-hmac
+ mode tunnel
+
+crypto ipsec profile IPSEC-PROFILE
+ set transform-set TSET
+ set ikev2-profile IKEv2-PROFILE
+
+interface Tunnel100
+ description IKEv2-IPSEC-VPN
+ ip address 192.168.100.1 255.255.255.0
+ ip mtu 1400
+ ip tcp adjust-mss 1360
+ tunnel source GigabitEthernet0/0/0
+ tunnel destination 0.0.0.0
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile IPSEC-PROFILE
+
+{% endif %}
+! ── NTP ──────────────────────────────────────────────────────────────────────
+ntp server 216.239.35.0 prefer
+ntp server 216.239.35.4
+
+! ── Syslog ───────────────────────────────────────────────────────────────────
+logging trap informational
+logging host 10.100.0.200
+
+! ── SNMP v3 ──────────────────────────────────────────────────────────────────
+snmp-server group NETDESIGN-RO v3 priv
+snmp-server user ndai-ro NETDESIGN-RO v3 auth sha ChangeMe! priv aes 128 ChangeMe!
+snmp-server location {{ org }} WAN Edge
+snmp-server contact noc@{{ org | lower | replace(' ', '.') }}.local
+snmp-server host 10.100.0.200 version 3 priv ndai-ro
+
+! ── VTY / console hardening ──────────────────────────────────────────────────
+line con 0
+ logging synchronous
+ exec-timeout 5 0
+
+line vty 0 15
+ transport input ssh
+ login authentication default
+ exec-timeout 10 0
+ access-class 10 in
+
+ip access-list standard 10
+ permit 10.0.0.0 0.255.255.255
+ permit 172.16.0.0 0.15.255.255
+ deny   any log
+
+end

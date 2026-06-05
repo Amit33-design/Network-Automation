@@ -1,0 +1,159 @@
+# NetDesign AI — SONiC DC Spine (BGP Route Reflector)
+# Device  : {{ hostname }}
+# Role    : Spine — BGP RR, underlay {{ underlay | upper }}, EVPN signaling
+# AS      : {{ bgp_asn }} (iBGP, cluster-id = {{ loopback_ip }})
+# ============================================================
+# This file is rendered as a FRR unified config (frr.conf).
+# Deploy: copy to /etc/frr/frr.conf and reload with `systemctl reload frr`
+
+frr version 9.1
+frr defaults traditional
+hostname {{ hostname }}
+log syslog informational
+log facility daemon
+service integrated-vtysh-config
+
+# ── Loopback ─────────────────────────────────────────────────────────────────
+interface Loopback0
+ ip address {{ loopback_ip }}/32
+{% if underlay == 'isis' %}
+ ip router isis UNDERLAY
+{% else %}
+ ip ospf area 0.0.0.0
+ ip ospf passive
+{% endif %}
+
+# ── P2P downlinks to leaves (100GbE, MTU 9216) ───────────────────────────────
+# Spine end = 10.2.{{ index }}.<(leaf_idx-1)*2+1>/31  (odd)
+{% for i in range(0, 8) %}
+interface Ethernet{{ i * 4 }}
+ description DOWNLINK-TO-LEAF-{{ '%02d' % (i + 1) }}
+ mtu 9216
+ ip address 10.2.{{ index }}.{{ i * 2 + 1 }}/31
+{% if underlay == 'isis' %}
+ ip router isis UNDERLAY
+ isis circuit-type level-2-only
+ isis network point-to-point
+{% else %}
+ ip ospf area 0.0.0.0
+ ip ospf network point-to-point
+{% endif %}
+ bfd
+
+{% endfor %}
+# ── Underlay routing ─────────────────────────────────────────────────────────
+{% if underlay == 'isis' %}
+router isis UNDERLAY
+ net 49.0001.{{ '%04x' % (index * 256) }}.0000.00
+ is-type level-2-only
+ metric-style wide
+ redistribute connected level-2
+ passive-interface Loopback0
+{% else %}
+router ospf
+ ospf router-id {{ loopback_ip }}
+ passive-interface default
+{% for i in range(0, 8) %}
+ no passive-interface Ethernet{{ i * 4 }}
+{% endfor %}
+ redistribute connected
+ network {{ loopback_ip }}/32 area 0.0.0.0
+{% for i in range(0, 8) %}
+ network 10.2.{{ index }}.{{ i * 2 + 1 }}/31 area 0.0.0.0
+{% endfor %}
+{% endif %}
+
+# ── BGP EVPN — Spine RR ───────────────────────────────────────────────────────
+router bgp {{ bgp_asn }}
+ bgp router-id {{ loopback_ip }}
+ bgp log-neighbor-changes
+ bgp bestpath as-path multipath-relax
+ no bgp default ipv4-unicast
+ !
+ # ── Leaf peer-group (RR clients) ─────────────────────────────────────────
+ neighbor LEAFS peer-group
+ neighbor LEAFS remote-as {{ bgp_asn }}
+ neighbor LEAFS update-source Loopback0
+ neighbor LEAFS timers 3 9
+ neighbor LEAFS timers connect 5
+ neighbor LEAFS bfd
+ neighbor LEAFS send-community both
+ neighbor LEAFS route-reflector-client
+ neighbor LEAFS maximum-prefix 100000 warning-only
+ !
+{% for i in range(1, 9) %}
+ neighbor 10.0.{{ i }}.{{ i }} peer-group LEAFS
+ neighbor 10.0.{{ i }}.{{ i }} description LEAF-{{ '%02d' % i }}-RR-CLIENT
+{% endfor %}
+ !
+ # ── IPv4 unicast (underlay loopback reachability) ─────────────────────────
+ address-family ipv4 unicast
+  maximum-paths 64
+  maximum-paths ibgp 64
+  neighbor LEAFS activate
+  neighbor LEAFS route-map RM-LEAF-TO-SPINE in
+  neighbor LEAFS route-map RM-SPINE-TO-LEAF out
+ exit-address-family
+ !
+ # ── L2VPN EVPN (route-reflector — retain all, NH unchanged) ─────────────
+ address-family l2vpn evpn
+  neighbor LEAFS activate
+  neighbor LEAFS route-reflector-client
+  neighbor LEAFS route-map RM-LEAF-TO-SPINE in
+  bgp retain route-target all
+  advertise-all-vni
+  next-hop-unchanged
+ exit-address-family
+
+# ── Route-maps ───────────────────────────────────────────────────────────────
+ip prefix-list LOOPBACKS seq 5 permit 10.0.0.0/16 le 32
+ip prefix-list LOOPBACKS seq 10 permit 10.1.0.0/16 le 32
+ip prefix-list DENY-ALL   seq 5 deny 0.0.0.0/0 le 32
+
+route-map RM-LEAF-TO-SPINE permit 10
+ match ip address prefix-list LOOPBACKS
+
+route-map RM-LEAF-TO-SPINE deny 20
+
+route-map RM-SPINE-TO-LEAF permit 10
+ set local-preference 200
+
+route-map RM-SPINE-TO-LEAF permit 20
+
+# ── BFD ──────────────────────────────────────────────────────────────────────
+bfd
+{% for i in range(1, 9) %}
+ peer 10.0.{{ i }}.{{ i }} local-address {{ loopback_ip }} multihop
+  detect-multiplier 3
+  receive-interval 300
+  transmit-interval 300
+ !
+{% endfor %}
+!
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SONiC config_db.json snippet — DEVICE_METADATA + MGMT_INTERFACE
+# Apply with: sudo config reload /etc/sonic/config_db_spine.json
+# ═══════════════════════════════════════════════════════════════════════════════
+## {
+##   "DEVICE_METADATA": {
+##     "localhost": {
+##       "hostname":    "{{ hostname }}",
+##       "hwsku":       "Mellanox-SN4800-C64O2",
+##       "mac":         "aa:bb:cc:0{{ index }}:00:01",
+##       "platform":    "x86_64-mlnx_msn4800-r0",
+##       "type":        "SpineRouter",
+##       "docker_routing_config_mode": "unified",
+##       "bgp_asn":     "{{ bgp_asn }}"
+##     }
+##   },
+##   "MGMT_INTERFACE": {
+##     "eth0|{{ mgmt_ip }}/24": { "gwaddr": "10.100.0.1" }
+##   },
+##   "LOOPBACK_INTERFACE": {
+##     "Loopback0": {},
+##     "Loopback0|{{ loopback_ip }}/32": {}
+##   },
+##   "NTP_SERVER":    { "10.100.0.1": {}, "10.100.0.2": {} },
+##   "SYSLOG_SERVER": { "10.100.0.200": {} }
+## }

@@ -1,0 +1,252 @@
+# NetDesign AI — SONiC DC Leaf (VTEP / BGP EVPN)
+# Device  : {{ hostname }}
+# Role    : Leaf — VXLAN VTEP, BGP EVPN type-2/type-5, FRR/bgpd
+# Underlay: {{ underlay | upper }}  |  Overlay: BGP EVPN / VXLAN
+# L2VNI base: 10000 + vlan_id  |  L3VNI base: 19000 + vrf_idx
+# RT scheme : {{ bgp_asn }}:vni  (iBGP RR — spine AS {{ bgp_asn }})
+# ============================================================
+#
+# This file is rendered as a FRR unified config (frr.conf).
+# Deploy: copy to /etc/frr/frr.conf and reload with `systemctl reload frr`
+# SONiC config_db JSON snippet for VXLAN/EVPN is appended at end.
+
+frr version 9.1
+frr defaults traditional
+hostname {{ hostname }}
+log syslog informational
+log facility daemon
+service integrated-vtysh-config
+
+# ── Loopback ─────────────────────────────────────────────────────────────────
+interface Loopback0
+ ip address {{ loopback_ip }}/32
+{% if underlay == 'isis' %}
+ ip router isis UNDERLAY
+{% else %}
+ ip ospf area 0.0.0.0
+ ip ospf passive
+{% endif %}
+
+interface Loopback1
+ description VTEP-source — anycast VTEP IP
+ ip address 10.1.2.{{ index }}/32
+{% if underlay == 'isis' %}
+ ip router isis UNDERLAY
+{% else %}
+ ip ospf area 0.0.0.0
+ ip ospf passive
+{% endif %}
+
+# ── P2P uplinks to spines (25GbE/100GbE, MTU 9216) ──────────────────────────
+# Addressing: leaf end = 10.2.<spine_idx>.<(leaf_idx-1)*2>/31    (even)
+interface Ethernet0
+ description UPLINK-TO-SPINE-01
+ mtu 9216
+ ip address 10.2.1.{{ (index - 1) * 2 }}/31
+{% if underlay == 'isis' %}
+ ip router isis UNDERLAY
+ isis circuit-type level-2-only
+ isis network point-to-point
+{% else %}
+ ip ospf area 0.0.0.0
+ ip ospf network point-to-point
+{% endif %}
+ bfd
+
+interface Ethernet4
+ description UPLINK-TO-SPINE-02
+ mtu 9216
+ ip address 10.2.2.{{ (index - 1) * 2 }}/31
+{% if underlay == 'isis' %}
+ ip router isis UNDERLAY
+ isis circuit-type level-2-only
+ isis network point-to-point
+{% else %}
+ ip ospf area 0.0.0.0
+ ip ospf network point-to-point
+{% endif %}
+ bfd
+
+# ── Underlay routing ─────────────────────────────────────────────────────────
+{% if underlay == 'isis' %}
+router isis UNDERLAY
+ net 49.0002.{{ '%04x' % (index * 256) }}.0000.00
+ is-type level-2-only
+ metric-style wide
+ redistribute connected level-2
+ passive-interface Loopback0
+ passive-interface Loopback1
+{% else %}
+router ospf
+ ospf router-id {{ loopback_ip }}
+ passive-interface default
+ no passive-interface Ethernet0
+ no passive-interface Ethernet4
+ redistribute connected
+ network {{ loopback_ip }}/32 area 0.0.0.0
+ network 10.1.2.{{ index }}/32 area 0.0.0.0
+ network 10.2.1.{{ (index - 1) * 2 }}/31 area 0.0.0.0
+ network 10.2.2.{{ (index - 1) * 2 }}/31 area 0.0.0.0
+{% endif %}
+
+# ── BGP EVPN — Leaf VTEP (iBGP RR-client) ────────────────────────────────────
+router bgp {{ bgp_asn }}
+ bgp router-id {{ loopback_ip }}
+ bgp log-neighbor-changes
+ bgp bestpath as-path multipath-relax
+ no bgp default ipv4-unicast
+ !
+ # ── Spine peer-group (RR sessions) ──────────────────────────────────────
+ neighbor SPINES peer-group
+ neighbor SPINES remote-as {{ bgp_asn }}
+ neighbor SPINES update-source Loopback0
+ neighbor SPINES timers 3 9
+ neighbor SPINES timers connect 5
+ neighbor SPINES bfd
+ neighbor SPINES send-community both
+ neighbor SPINES maximum-prefix 50000 warning-only
+ !
+ neighbor 10.0.1.1 peer-group SPINES
+ neighbor 10.0.1.1 description SPINE-01-RR
+ neighbor 10.0.2.2 peer-group SPINES
+ neighbor 10.0.2.2 description SPINE-02-RR
+ !
+ # ── IPv4 unicast (underlay loopback reachability) ─────────────────────────
+ address-family ipv4 unicast
+  redistribute connected route-map RM-VTEP-LOOPBACKS
+  maximum-paths 64
+  maximum-paths ibgp 64
+  neighbor SPINES activate
+  neighbor SPINES route-map RM-VTEP-TO-SPINE out
+  neighbor SPINES route-map RM-SPINE-TO-VTEP in
+ exit-address-family
+ !
+ # ── L2VPN EVPN (VXLAN control plane) ─────────────────────────────────────
+ address-family l2vpn evpn
+  neighbor SPINES activate
+  neighbor SPINES route-map RM-SPINE-TO-VTEP in
+  advertise-all-vni
+  advertise ipv4 unicast
+ exit-address-family
+ !
+ # ── VRF PROD (L3VNI 19001 — symmetric IRB) ───────────────────────────────
+ vrf PROD
+  vni 19001
+  bgp router-id {{ loopback_ip }}
+  address-family ipv4 unicast
+   redistribute connected
+   maximum-paths 64
+  exit-address-family
+  address-family l2vpn evpn
+   advertise ipv4 unicast
+  exit-address-family
+ !
+ # ── VRF DEV (L3VNI 19002) ─────────────────────────────────────────────────
+ vrf DEV
+  vni 19002
+  bgp router-id {{ loopback_ip }}
+  address-family ipv4 unicast
+   redistribute connected
+   maximum-paths 64
+  exit-address-family
+  address-family l2vpn evpn
+   advertise ipv4 unicast
+  exit-address-family
+ !
+ # ── VRF STORAGE (L3VNI 19003) ─────────────────────────────────────────────
+ vrf STORAGE
+  vni 19003
+  bgp router-id {{ loopback_ip }}
+  address-family ipv4 unicast
+   redistribute connected
+   maximum-paths 64
+  exit-address-family
+  address-family l2vpn evpn
+   advertise ipv4 unicast
+  exit-address-family
+
+# ── Route-maps ───────────────────────────────────────────────────────────────
+ip prefix-list LOOPBACKS seq 5 permit 10.0.0.0/16 le 32
+ip prefix-list LOOPBACKS seq 10 permit 10.1.0.0/16 le 32
+ip prefix-list DENY-ALL  seq 5 deny 0.0.0.0/0 le 32
+
+route-map RM-VTEP-LOOPBACKS permit 10
+ match ip address prefix-list LOOPBACKS
+
+route-map RM-VTEP-LOOPBACKS deny 20
+
+route-map RM-VTEP-TO-SPINE permit 10
+ match ip address prefix-list LOOPBACKS
+ set community {{ bgp_asn }}:100 additive
+
+route-map RM-VTEP-TO-SPINE deny 20
+
+route-map RM-SPINE-TO-VTEP permit 10
+ set local-preference 200
+
+route-map RM-SPINE-TO-VTEP permit 20
+
+# ── BFD ──────────────────────────────────────────────────────────────────────
+bfd
+ peer 10.0.1.1 local-address {{ loopback_ip }} multihop
+  detect-multiplier 3
+  receive-interval 300
+  transmit-interval 300
+ !
+ peer 10.0.2.2 local-address {{ loopback_ip }} multihop
+  detect-multiplier 3
+  receive-interval 300
+  transmit-interval 300
+ !
+!
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SONiC config_db.json snippet — VXLAN_TUNNEL + VLAN → VNI mappings
+# Apply with: sudo config reload /etc/sonic/config_db_leaf.json
+# ═══════════════════════════════════════════════════════════════════════════════
+## {
+##   "DEVICE_METADATA": {
+##     "localhost": {
+##       "hostname":    "{{ hostname }}",
+##       "hwsku":       "Mellanox-SN4600C-D112C8",
+##       "mac":         "aa:bb:cc:{{ '%02x' % index }}:00:01",
+##       "platform":    "x86_64-mlnx_msn4600-r0",
+##       "type":        "LeafRouter",
+##       "docker_routing_config_mode": "unified",
+##       "bgp_asn":     "{{ bgp_asn }}"
+##     }
+##   },
+##   "MGMT_INTERFACE": {
+##     "eth0|{{ mgmt_ip }}/24": { "gwaddr": "10.100.0.1" }
+##   },
+##   "LOOPBACK_INTERFACE": {
+##     "Loopback0": {},
+##     "Loopback0|{{ loopback_ip }}/32": {},
+##     "Loopback1": {},
+##     "Loopback1|10.1.2.{{ index }}/32": {}
+##   },
+##   "VXLAN_TUNNEL": {
+##     "vtep0": { "src_ip": "10.1.2.{{ index }}" }
+##   },
+##   "VXLAN_TUNNEL_MAP": {
+##     "vtep0|map_10010_Vlan10":  { "vni": "10010", "vlan": "Vlan10"  },
+##     "vtep0|map_10011_Vlan11":  { "vni": "10011", "vlan": "Vlan11"  },
+##     "vtep0|map_10020_Vlan20":  { "vni": "10020", "vlan": "Vlan20"  },
+##     "vtep0|map_10030_Vlan30":  { "vni": "10030", "vlan": "Vlan30"  },
+##     "vtep0|map_10031_Vlan31":  { "vni": "10031", "vlan": "Vlan31"  }
+##   },
+##   "VLAN": {
+##     "Vlan10": { "vlanid": "10" },
+##     "Vlan11": { "vlanid": "11" },
+##     "Vlan20": { "vlanid": "20" },
+##     "Vlan30": { "vlanid": "30" },
+##     "Vlan31": { "vlanid": "31" }
+##   },
+##   "VRF": {
+##     "PROD":    { "vni": "19001" },
+##     "DEV":     { "vni": "19002" },
+##     "STORAGE": { "vni": "19003" }
+##   },
+##   "NTP_SERVER":    { "10.100.0.1": {}, "10.100.0.2": {} },
+##   "SYSLOG_SERVER": { "10.100.0.200": {} }
+## }
