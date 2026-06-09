@@ -37,6 +37,21 @@ function onUseCaseChange() {
   STATE.useCase = val;
   var gpuSection = document.getElementById('fs-gpu');
   if (gpuSection) gpuSection.style.display = (val === 'gpu') ? '' : 'none';
+  // Auto-set GPU-friendly defaults in the topology form
+  if (val === 'gpu') {
+    var bwEl = document.getElementById('sel-bandwidth-gbps');
+    var osEl = document.getElementById('sel-oversubscription');
+    if (bwEl)  { /* select 400G option if it exists, else leave as-is */
+      for (var i = 0; i < bwEl.options.length; i++) {
+        if (bwEl.options[i].value === '400') { bwEl.selectedIndex = i; break; }
+      }
+    }
+    if (osEl) {
+      for (var j = 0; j < osEl.options.length; j++) {
+        if (osEl.options[j].value === '1') { osEl.selectedIndex = j; break; }
+      }
+    }
+  }
   // Show STP section for dc and campus (G-14)
   var stpSection = document.getElementById('fs-stp-design');
   if (stpSection) stpSection.style.display = (val === 'dc' || val === 'campus') ? '' : 'none';
@@ -77,9 +92,15 @@ function onStep1Submit(e) {
     STATE.protocols.features.push(cb.value);
   });
 
-  // GPU transport
-  var gpuEl = document.getElementById('sel-gpu-transport');
-  STATE.gpu = { transport: gpuEl ? gpuEl.value : 'none' };
+  // GPU transport + rail topology
+  var gpuEl      = document.getElementById('sel-gpu-transport');
+  var gpuCntEl   = document.getElementById('inp-gpus-per-node');
+  var gpuRailEl  = document.getElementById('chk-gpu-rail-optimized');
+  STATE.gpu = {
+    transport:      gpuEl     ? gpuEl.value                        : 'none',
+    gpus_per_node:  gpuCntEl  ? (parseInt(gpuCntEl.value)  || 8)  : 8,
+    rail_optimized: gpuRailEl ? gpuRailEl.checked                  : false
+  };
 
   // BGP timer preset (G-12)
   var bgpTimerEl = document.getElementById('sel-bgp-timers');
@@ -217,27 +238,56 @@ function renderCapacityMath(state) {
 
   var statusClass = calc.uplink_capacity_ok ? 'color:var(--success)' : 'color:var(--danger)';
 
-  capOut.innerHTML =
-    '<div class="form-section">' +
-      '<h3>Port-Math Capacity Calculation</h3>' +
-      '<div class="table-scroll"><table class="bom-table">' +
-        '<thead><tr><th>Parameter</th><th>Input</th><th>Result</th></tr></thead>' +
-        '<tbody>' +
-          '<tr><td>Endpoints / servers</td><td>' + topo.endpoint_count + '</td><td>—</td></tr>' +
-          '<tr><td>Bandwidth per server</td><td>' + topo.bandwidth_gbps + ' GbE</td><td>—</td></tr>' +
-          '<tr><td>Oversubscription</td><td>' + topo.oversubscription + ':1</td><td>—</td></tr>' +
-          '<tr><td>Servers per leaf</td><td>' + t.servers_per_leaf + ' downlinks</td><td>—</td></tr>' +
-          '<tr><td>Raw leaf count</td><td>⌈' + topo.endpoint_count + ' / ' + t.servers_per_leaf + '⌉</td><td>' + t.raw_leaf_count + '</td></tr>' +
-          '<tr><td>Leaf count (even HA pairs)</td><td>→ even</td><td><strong>' + calc.leaf_count + '</strong></td></tr>' +
-          '<tr><td>Server capacity per leaf</td><td>' + t.servers_per_leaf + ' × ' + topo.bandwidth_gbps + 'G</td><td>' + t.server_capacity_gbps + ' Gbps</td></tr>' +
-          '<tr><td>Required uplink capacity</td><td>' + t.server_capacity_gbps + 'G / ' + topo.oversubscription + '</td><td>' + t.required_uplink_gbps.toFixed(0) + ' Gbps</td></tr>' +
-          '<tr><td>Uplinks per leaf</td><td style="' + statusClass + '">' + calc.uplinks_per_leaf + ' × ' + (calc.uplinks_per_leaf > 0 ? (t.required_uplink_gbps / calc.uplinks_per_leaf).toFixed(0) : '?') + 'G</td>' +
-            '<td style="' + statusClass + '"><strong>' + (calc.uplink_capacity_ok ? 'OK' : 'INSUFFICIENT') + '</strong></td></tr>' +
-          '<tr><td>Total leaf uplinks</td><td>' + calc.leaf_count + ' × ' + calc.uplinks_per_leaf + '</td><td>' + t.total_leaf_uplinks + '</td></tr>' +
-          '<tr><td>Spine count</td><td>⌈' + t.total_leaf_uplinks + ' / spine ports⌉ (min 2)</td><td><strong>' + calc.spine_count + '</strong></td></tr>' +
-        '</tbody>' +
-      '</table></div>' +
-    '</div>';
+  if (calc.rail_optimized) {
+    // ── Rail-optimized GPU math table ────────────────────────────────────────
+    var gpuNodes = topo.endpoint_count || 0;
+    var gpuPerNode = t.gpus_per_node || 8;
+    capOut.innerHTML =
+      '<div class="form-section">' +
+        '<h3>GPU Rail-Optimized Capacity Calculation</h3>' +
+        '<p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">' +
+          'Each GPU NIC connects to a dedicated rail. Rails = GPUs/node. Every node appears on every rail.' +
+        '</p>' +
+        '<div class="table-scroll"><table class="bom-table">' +
+          '<thead><tr><th>Step</th><th>Formula</th><th>Result</th></tr></thead>' +
+          '<tbody>' +
+            '<tr><td>GPU nodes</td><td>User input</td><td>' + gpuNodes + ' nodes</td></tr>' +
+            '<tr><td>GPUs per node</td><td>User input</td><td>' + gpuPerNode + ' GPUs/node</td></tr>' +
+            '<tr><td>Total GPU ports</td><td>' + gpuNodes + ' × ' + gpuPerNode + '</td><td><strong>' + (calc.total_gpu_ports || gpuNodes * gpuPerNode) + ' × 400G</strong></td></tr>' +
+            '<tr><td>Leaf downlinks</td><td>Switch model</td><td>' + t.servers_per_leaf + ' ports</td></tr>' +
+            '<tr><td>Leaf uplinks</td><td>Switch model</td><td>' + calc.uplinks_per_leaf + ' × 400G</td></tr>' +
+            '<tr><td>Number of rails</td><td>= GPUs per node</td><td>' + calc.rails + ' rails</td></tr>' +
+            '<tr><td>Leaves per rail</td><td>⌈' + gpuNodes + ' / ' + t.servers_per_leaf + '⌉</td><td>' + calc.leaves_per_rail + ' leaves/rail</td></tr>' +
+            '<tr><td><strong>Total leaves</strong></td><td>' + calc.rails + ' rails × ' + calc.leaves_per_rail + ' leaves/rail</td><td style="color:var(--success)"><strong>' + calc.leaf_count + ' leaves</strong></td></tr>' +
+            '<tr><td>Total uplinks</td><td>' + calc.leaf_count + ' leaves × ' + calc.uplinks_per_leaf + ' uplinks</td><td>' + t.total_leaf_uplinks + ' uplinks</td></tr>' +
+            '<tr><td><strong>Spine count</strong></td><td>⌈' + t.total_leaf_uplinks + ' / spine_ports⌉</td><td style="color:var(--success)"><strong>' + calc.spine_count + ' spines</strong></td></tr>' +
+          '</tbody>' +
+        '</table></div>' +
+      '</div>';
+  } else {
+    // ── Standard DC/campus math table ────────────────────────────────────────
+    capOut.innerHTML =
+      '<div class="form-section">' +
+        '<h3>Port-Math Capacity Calculation</h3>' +
+        '<div class="table-scroll"><table class="bom-table">' +
+          '<thead><tr><th>Parameter</th><th>Input</th><th>Result</th></tr></thead>' +
+          '<tbody>' +
+            '<tr><td>Endpoints / servers</td><td>' + topo.endpoint_count + '</td><td>—</td></tr>' +
+            '<tr><td>Bandwidth per server</td><td>' + topo.bandwidth_gbps + ' GbE</td><td>—</td></tr>' +
+            '<tr><td>Oversubscription</td><td>' + topo.oversubscription + ':1</td><td>—</td></tr>' +
+            '<tr><td>Leaf downlinks</td><td>' + t.servers_per_leaf + ' ports (from switch model)</td><td>—</td></tr>' +
+            '<tr><td>Raw leaf count</td><td>⌈' + topo.endpoint_count + ' / ' + t.servers_per_leaf + '⌉</td><td>' + t.raw_leaf_count + '</td></tr>' +
+            '<tr><td><strong>Leaf count (even HA pairs)</strong></td><td>→ even</td><td style="color:var(--success)"><strong>' + calc.leaf_count + '</strong></td></tr>' +
+            '<tr><td>Server capacity per leaf</td><td>' + t.servers_per_leaf + ' × ' + topo.bandwidth_gbps + 'G</td><td>' + t.server_capacity_gbps + ' Gbps</td></tr>' +
+            '<tr><td>Required uplink capacity</td><td>' + t.server_capacity_gbps + 'G / ' + topo.oversubscription + '</td><td>' + t.required_uplink_gbps.toFixed(0) + ' Gbps</td></tr>' +
+            '<tr><td>Uplinks per leaf</td><td style="' + statusClass + '">⌈required / uplink_speed⌉</td>' +
+              '<td style="' + statusClass + '"><strong>' + calc.uplinks_per_leaf + ' × uplinks — ' + (calc.uplink_capacity_ok ? 'OK' : 'INSUFFICIENT') + '</strong></td></tr>' +
+            '<tr><td>Total leaf uplinks</td><td>' + calc.leaf_count + ' × ' + calc.uplinks_per_leaf + '</td><td>' + t.total_leaf_uplinks + '</td></tr>' +
+            '<tr><td><strong>Spine count</strong></td><td>⌈' + t.total_leaf_uplinks + ' / spine_ports⌉ (min 2)</td><td style="color:var(--success)"><strong>' + calc.spine_count + '</strong></td></tr>' +
+          '</tbody>' +
+        '</table></div>' +
+      '</div>';
+  }
 }
 window.renderCapacityMath = renderCapacityMath;
 

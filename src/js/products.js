@@ -198,7 +198,7 @@ var PRODUCTS = [
     model: 'NVIDIA Spectrum-3 SN4600C',
     vendor: 'NVIDIA',
     subLayer: 'leaf',
-    ports: 64,
+    ports: 32,
     uplinks: 32,
     uplink_speed_gbps: 400,
     speed: '400G',
@@ -207,7 +207,7 @@ var PRODUCTS = [
     priceUSD: 55000,
     features: ['RoCEv2', 'PFC', 'ECN', 'DCQCN', 'VXLAN', 'EVPN', 'BGP', 'RDMA', 'Adaptive-Routing'],
     useCases: ['gpu'],
-    detail: '64x400G QSFP-DD, RoCEv2 GPU ToR, Spectrum-3 ASIC, adaptive routing, 51.2Tbps',
+    detail: '32x400G QSFP-DD downlinks + 32x400G uplinks, RoCEv2 GPU ToR, Spectrum-3, 51.2Tbps',
     eol_date: null,
     eos_date: null,
     successor: null

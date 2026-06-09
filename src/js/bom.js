@@ -135,14 +135,14 @@ function buildDeviceList(state) {
       };
       var spineSku = { port_count: spineProd.ports };
 
-      // GPU clusters require 400G per-server and 1:1 oversubscription (non-blocking fabric).
-      // Override topo defaults so port-math produces correct 400G/1:1 result
-      // regardless of what the user left in the bandwidth/oversubscription fields.
+      // For non-rail GPU, force 400G/1:1 if the form still has DC defaults.
+      // Rail-optimized formula bypasses bandwidth_gbps/oversubscription entirely.
       var calcState = state;
-      if (useCase === 'gpu') {
+      var gpuState = state.gpu || {};
+      if (useCase === 'gpu' && !gpuState.rail_optimized) {
         var gpuTopo = Object.assign({}, state.topology || {});
         if (!gpuTopo.bandwidth_gbps || gpuTopo.bandwidth_gbps < 200) {
-          gpuTopo.bandwidth_gbps = 400;
+          gpuTopo.bandwidth_gbps = leafSku.uplink_speed_gbps || 400;
         }
         if (!gpuTopo.oversubscription || gpuTopo.oversubscription > 1) {
           gpuTopo.oversubscription = 1;

@@ -1436,6 +1436,19 @@
               <option value="none">None</option>
             </select>
           </div>
+          <div class="form-group">
+            <label for="inp-gpus-per-node">GPUs per Node</label>
+            <input id="inp-gpus-per-node" type="number" min="1" max="16" value="8" placeholder="8">
+          </div>
+        </div>
+        <div style="margin-top:10px;">
+          <label class="chk-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" id="chk-gpu-rail-optimized">
+            <span>Rail-Optimized topology (NCCL AllReduce — 1 rail per GPU NIC, separate leaf per rail)</span>
+          </label>
+          <p class="section-sub" style="margin-left:24px;margin-top:4px;">
+            Rail-optimized: total leaves = GPUs/node × ceil(nodes / leaf_downlinks). Use for DGX H100/H200 clusters.
+          </p>
         </div>
       </div>
 
