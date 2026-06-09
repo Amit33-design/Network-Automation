@@ -16,7 +16,7 @@ var SCALE_DEFS = {
   },
   medium: {
     dc:         { spine: 4, leaf: 8, firewall: 2 },
-    gpu:        { spine: 4, leaf: 8 },
+    gpu:        { spine: 8, leaf: 16 },
     campus:     { distribution: 4, access: 12, firewall: 2 },
     wan:        { 'wan-edge': 4, 'sdwan-controller': 2, 'sdwan-orchestrator': 1 },
     multisite:  { spine: 4, leaf: 8, 'wan-edge': 4, firewall: 2 },
@@ -28,7 +28,7 @@ var SCALE_DEFS = {
   },
   large: {
     dc:         { spine: 8, leaf: 24, firewall: 4 },
-    gpu:        { spine: 8, leaf: 16 },
+    gpu:        { spine: 16, leaf: 32 },
     campus:     { distribution: 8, access: 32, firewall: 4 },
     wan:        { 'wan-edge': 8, 'sdwan-controller': 2, 'sdwan-orchestrator': 2 },
     multisite:  { spine: 8, leaf: 24, 'wan-edge': 8, firewall: 4 },
@@ -43,7 +43,7 @@ var SCALE_DEFS = {
 // Vendor-aware product preferences
 var PREFERRED_PRODUCTS_CISCO = {
   dc:         { spine: 'nxos-9336c',    leaf: 'nxos-93180yc', firewall: 'ftd4145' },
-  gpu:        { spine: 'nxos-9364c',    leaf: 'nxos-9332c' },
+  gpu:        { spine: 'nxos-9364c',    leaf: 'nxos-9364d' },
   campus:     { distribution: 'cat9500', access: 'cat9200', firewall: 'ftd4145' },
   wan:        { 'wan-edge': 'asr1002hx', 'sdwan-controller': 'sdwan-vsmart', 'sdwan-orchestrator': 'sdwan-vbond' },
   multisite:  { spine: 'nxos-9336c', leaf: 'nxos-93180yc', 'wan-edge': 'asr1002hx', firewall: 'ftd4145' },
@@ -56,7 +56,7 @@ var PREFERRED_PRODUCTS_CISCO = {
 
 var PREFERRED_PRODUCTS_ARISTA = {
   dc:         { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
-  gpu:        { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
+  gpu:        { spine: 'arista-7060x4-spine', leaf: 'arista-7060px4' },
   campus:     { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
   multisite:  { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
   wan:        { spine: 'arista-7800r3', leaf: 'arista-7050cx3' },
@@ -70,10 +70,16 @@ var PREFERRED_PRODUCTS_JUNIPER = {
   multisite:  { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120', 'wan-edge': 'asr1002hx' }
 };
 
+var PREFERRED_PRODUCTS_NVIDIA = {
+  gpu:        { spine: 'nvidia-quantum2-ndr', leaf: 'nvidia-spectrum3' },
+  dc:         { spine: 'nvidia-quantum2-ndr', leaf: 'nvidia-spectrum3' }
+};
+
 function getPreferredProducts(useCase, vendors) {
   var primary = (vendors && vendors[0] || 'cisco').toLowerCase();
   var map = primary === 'arista'  ? PREFERRED_PRODUCTS_ARISTA
           : primary === 'juniper' ? PREFERRED_PRODUCTS_JUNIPER
+          : primary === 'nvidia'  ? PREFERRED_PRODUCTS_NVIDIA
           : PREFERRED_PRODUCTS_CISCO;
   // Fall back: if the specific use case isn't in the vendor map, use cisco
   return map[useCase] || PREFERRED_PRODUCTS_CISCO[useCase] || PREFERRED_PRODUCTS_CISCO.dc;
@@ -82,7 +88,7 @@ function getPreferredProducts(useCase, vendors) {
 // Product preference per use case + role (kept as fallback; vendor-aware lookup now handled by getPreferredProducts)
 var PREFERRED_PRODUCTS = {
   dc:         { spine: 'nxos-9336c',    leaf: 'nxos-93180yc', firewall: 'ftd4145' },
-  gpu:        { spine: 'nxos-9364c',    leaf: 'nxos-9332c' },
+  gpu:        { spine: 'nxos-9364c',    leaf: 'nxos-9364d' },
   campus:     { distribution: 'cat9500', access: 'cat9200',   firewall: 'ftd4145' },
   wan:        { 'wan-edge': 'asr1002hx', 'sdwan-controller': 'sdwan-vsmart', 'sdwan-orchestrator': 'sdwan-vbond' },
   multisite:  { spine: 'nxos-9336c',    leaf: 'nxos-93180yc', 'wan-edge': 'viptela-vedge', firewall: 'ftd4145' },
@@ -128,7 +134,23 @@ function buildDeviceList(state) {
         model:            leafProd.model
       };
       var spineSku = { port_count: spineProd.ports };
-      var calc     = window.calculateBOM(state, leafSku, spineSku);
+
+      // GPU clusters require 400G per-server and 1:1 oversubscription (non-blocking fabric).
+      // Override topo defaults so port-math produces correct 400G/1:1 result
+      // regardless of what the user left in the bandwidth/oversubscription fields.
+      var calcState = state;
+      if (useCase === 'gpu') {
+        var gpuTopo = Object.assign({}, state.topology || {});
+        if (!gpuTopo.bandwidth_gbps || gpuTopo.bandwidth_gbps < 200) {
+          gpuTopo.bandwidth_gbps = 400;
+        }
+        if (!gpuTopo.oversubscription || gpuTopo.oversubscription > 1) {
+          gpuTopo.oversubscription = 1;
+        }
+        calcState = Object.assign({}, state, { topology: gpuTopo });
+      }
+
+      var calc     = window.calculateBOM(calcState, leafSku, spineSku);
 
       state.capacityMath = calc; // stored for "Capacity Math" panel display
 
@@ -407,6 +429,60 @@ function exportBOMCSV(summary, devices) {
 
   return [header.join(',')].concat(rows).join('\n') + devHeader + '\n' + devRows.join('\n');
 }
+
+/**
+ * Render a rail-optimized NCCL topology advisory banner for GPU clusters.
+ * Shows when gpu.rail_optimized is true or when state.use_case === 'gpu'.
+ */
+window.renderRailOptimizedBanner = function(state) {
+  if (!state) return '';
+  var isGpu = state.useCase === 'gpu' || state.use_case === 'gpu';
+  if (!isGpu) return '';
+
+  var railOpt  = (state.gpu && state.gpu.rail_optimized) || false;
+  var devices  = state.devices || [];
+  var leafCnt  = devices.filter(function(d) { return d.subLayer === 'leaf'; }).length;
+  var spineCnt = devices.filter(function(d) { return d.subLabel === 'spine' || d.subLayer === 'spine'; }).length;
+  var topo     = state.topology || {};
+  var nodes    = topo.endpoint_count || 0;
+  var rails    = Math.min(8, leafCnt);
+
+  var railSection = '';
+  if (railOpt || leafCnt >= 8) {
+    var nodesPerRail = rails > 0 ? Math.ceil(nodes / rails) : nodes;
+    railSection = '<div style="margin-top:10px;padding:10px 12px;background:var(--surface2,#1e293b);border-radius:6px;font-size:12px;">'
+      + '<strong>Rail-Optimized NCCL Topology</strong> — '
+      + rails + ' independent rails, ' + nodesPerRail + ' nodes/rail.<br>'
+      + 'Each DGX H100 NIC connects to a dedicated rail switch. '
+      + 'NCCL AllReduce traverses a single spine hop (Rail → Spine → Rail), '
+      + 'eliminating multi-hop east-west congestion. '
+      + 'Configure <code>NCCL_NET_PLUGIN=NCCL</code> and '
+      + '<code>NCCL_IB_GID_INDEX=3</code> (RoCEv2). '
+      + 'Enable PFC on class 3 and ECN (DCQCN) thresholds: '
+      + '<code>ECN-min 800KB, ECN-max 1600KB, ECN-mark-prob 100%</code>.</div>';
+  }
+
+  return '<div class="val-block val-block-info" style="margin:0 0 12px;">'
+    + '<div class="val-block-hdr">🚀 GPU Fabric — 400G Non-Blocking Design'
+    + (railOpt ? ' · Rail-Optimized' : '') + '</div>'
+    + '<div class="val-item"><span class="val-msg">'
+    + 'BOM uses <strong>1:1 oversubscription (non-blocking)</strong> with 400G per-server links. '
+    + 'Leaf switches connect directly to GPU servers; spines carry only east-west GPU-to-GPU traffic.'
+    + '</span></div>'
+    + '<div class="val-item"><span class="val-msg">'
+    + '<strong>Topology:</strong> '
+    + (spineCnt || '?') + ' × 64-port 400G spine + '
+    + (leafCnt  || '?') + ' × (32-down + 32-up) 400G leaf ToR. '
+    + 'Total fabric bandwidth: '
+    + (spineCnt * 64 * 400 / 1000 || '?') + ' Tbps bisection.'
+    + '</span></div>'
+    + '<div class="val-item"><span class="val-msg">'
+    + '<strong>RoCEv2 requirements:</strong> PFC enabled on CoS-3, ECN/DCQCN on all GPU-facing ports, '
+    + 'MTU 9000, RDMA QoS class EF (DSCP 46).'
+    + '</span></div>'
+    + railSection
+    + '</div>';
+};
 
 window.buildDeviceList       = buildDeviceList;
 window.buildBOM              = buildBOM;

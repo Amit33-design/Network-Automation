@@ -825,8 +825,9 @@ function _renderStep2Body() {
     + '<table class="bom-table"><thead><tr>' + headerCells + '</tr></thead>'
     + '<tbody id="bom-device-tbody"></tbody></table></div>';
 
-  var lcBanner = window.renderLifecycleBanner ? window.renderLifecycleBanner(STATE.devices) : '';
-  container.innerHTML = lcBanner + '<div class="table-scroll">' + html + '</div>' + deviceSection;
+  var lcBanner   = window.renderLifecycleBanner ? window.renderLifecycleBanner(STATE.devices) : '';
+  var gpuBanner  = window.renderRailOptimizedBanner ? window.renderRailOptimizedBanner(STATE) : '';
+  container.innerHTML = gpuBanner + lcBanner + '<div class="table-scroll">' + html + '</div>' + deviceSection;
   // G-45: populate the sortable/filterable tbody now that the DOM exists
   window.bomRenderTable();
 
