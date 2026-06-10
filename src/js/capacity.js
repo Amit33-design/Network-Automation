@@ -88,25 +88,35 @@ function campusCapacity(endpoints = 100, {
 function dcCapacity(servers = 100, {
   nicsPerServer   = 2,
   portsPerLeaf    = 48,
-  uplinkPerLeaf   = 4,
+  uplinkPerLeaf   = 0,    // 0 = derive from oversubscription target
   serverSpeed     = 25,   // Gbps (server-facing ports)
   uplinkSpeed     = 100,  // Gbps (spine-facing uplinks)
+  spinePorts      = 36,   // ports on the selected spine model
+  oversub         = 3,    // target oversubscription ratio N:1
   redundancy      = 'ha',
 } = {}) {
   const ha            = redundancy === 'ha' || redundancy === 'full';
   const totalPorts    = servers * nicsPerServer;
-  const serverPorts   = portsPerLeaf - uplinkPerLeaf; // downlink ports per leaf
+
+  // Uplinks per leaf: honour explicit value, else derive from the
+  // oversubscription target (CLAUDE.md §6 formula):
+  //   uplinksNeeded = ceil(downlinkCapacity / oversub / uplinkSpeed)
+  const upNeeded = uplinkPerLeaf > 0
+    ? uplinkPerLeaf
+    : Math.max(2, Math.ceil(portsPerLeaf * serverSpeed / (Math.max(1, oversub) * uplinkSpeed)));
+
+  const serverPorts   = Math.max(1, portsPerLeaf - upNeeded); // downlink ports per leaf
   const leafs         = Math.max(2, Math.ceil(totalPorts / serverPorts));
 
-  // Spine: 4 for standard scale, scale up for very large fabrics
-  const spines = leafs <= 200
-    ? (ha ? 4 : 2)
-    : Math.ceil(leafs / 50) * 2;
+  // Spine: uplink-driven CLOS count (HA floor of 4 / 2)
+  const totalUplinks  = leafs * upNeeded;
+  const spines        = Math.max(ha ? 4 : 2, Math.ceil(totalUplinks / Math.max(1, spinePorts)));
+  const uplinkPerLeafUsed = upNeeded;
 
-  // Bandwidth / oversubscription
-  const downlinkBW = serverPorts * serverSpeed;           // Gbps per leaf
-  const uplinkBW   = uplinkPerLeaf * uplinkSpeed;         // Gbps per leaf
-  const oversub    = (downlinkBW / uplinkBW).toFixed(2);  // e.g. "3.00"
+  // Bandwidth / actual oversubscription achieved
+  const downlinkBW    = serverPorts * serverSpeed;             // Gbps per leaf
+  const uplinkBW      = uplinkPerLeafUsed * uplinkSpeed;       // Gbps per leaf
+  const oversubActual = (downlinkBW / Math.max(1, uplinkBW)).toFixed(2);
 
   // Function-label breakdown (PROD / STOR / DEV standard split)
   const prodLeafs = Math.ceil(leafs * 0.50);
@@ -115,59 +125,91 @@ function dcCapacity(servers = 100, {
 
   return {
     leafs, spines, totalPorts, serverPorts,
-    servers, nicsPerServer, portsPerLeaf, uplinkPerLeaf,
-    downlinkBW, uplinkBW, oversub,
+    servers, nicsPerServer, portsPerLeaf,
+    uplinkPerLeaf: uplinkPerLeafUsed, totalUplinks, spinePorts,
+    downlinkBW, uplinkBW, oversub: oversubActual,
     prodLeafs, storLeafs, devLeafs,
     serverSpeed, uplinkSpeed,
   };
 }
 
 /* ── 3. GPU / AI CLUSTER ────────────────────────────────────────
-   Goal: non-blocking 1:1 oversubscription (RoCEv2 / RDMA)
+   Goal: non-blocking 1:1 oversubscription (RoCEv2 / RDMA).
+   Math is vendor-agnostic — driven entirely by the selected switch
+   model's port count and the GPU node count.
 
-   Servers:
-     servers = ceil(gpus / gpusPerServer)
+   One 400G NIC per GPU (ConnectX-7 style):
+     servers   = ceil(gpus / gpusPerServer)
+     totalNICs = gpus × nicsPerGpu
 
-   TOR switches:
-     totalNICs = servers × nicsPerServer
-     tors = ceil(totalNICs / portsPerTOR)
+   Leaf port split for target oversubscription (1:1 → half/half):
+     downPerTOR = floor(portsPerTOR × oversub / (oversub + 1))
+     upPerTOR   = portsPerTOR − downPerTOR
 
-   Spine switches (non-blocking requirement):
-     spines = max(2, tors)   // equal or greater for 1:1
+   Standard fat-tree:
+     tors = ceil(totalNICs / downPerTOR)
 
-   Bandwidth validation:
-     leafDownBW = portsPerTOR × speed (Gbps)
-     uplinkBW   = spines × speed       (one uplink per spine)
-     → target oversub ≤ 1.0
+   Rail-optimized (NCCL training — one rail per GPU NIC position):
+     rails         = gpusPerServer
+     leavesPerRail = ceil(servers / downPerTOR)
+     tors          = rails × leavesPerRail
+
+   Spine (CLOS — uplink-driven):
+     spines = ceil(tors × upPerTOR / spinePorts)
+
+   Worked example (flagship 2048-GPU rail-optimized):
+     8 GPUs/node × 256 nodes = 2048 × 400G GPU ports
+     Leaf 64×400G → 32 down / 32 up (1:1)
+     8 rails × ceil(256/32)=8 leaves/rail = 64 leaves
+     64 × 32 = 2048 uplinks / 64 spine ports = 32 spines
 ──────────────────────────────────────────────────────────────── */
 function gpuCapacity(gpus = 64, {
   gpusPerServer  = 8,
-  nicsPerServer  = 2,
-  portsPerTOR    = 32,
-  speed          = 100,   // Gbps (per port, e.g. 100G/200G/400G)
+  nicsPerGpu     = 1,     // one RDMA NIC per GPU (modern training fabric)
+  portsPerTOR    = 64,    // total ports on the selected leaf model
+  spinePorts     = 64,    // ports on the selected spine model
+  speed          = 400,   // Gbps per port
+  oversub        = 1,     // target ratio — GPU fabrics are 1:1 non-blocking
+  railOptimized  = false,
   topology       = 'fat-tree',
 } = {}) {
   const servers    = Math.max(1, Math.ceil(gpus / gpusPerServer));
-  const totalNICs  = servers * nicsPerServer;
-  const tors       = Math.max(2, Math.ceil(totalNICs / portsPerTOR));
+  const totalNICs  = gpus * nicsPerGpu;
 
-  // Non-blocking spine count
-  const spines     = Math.max(2, tors);
+  // Split leaf ports down:up at the target oversubscription ratio
+  const downPerTOR = Math.max(1, Math.floor(portsPerTOR * oversub / (oversub + 1)));
+  const upPerTOR   = Math.max(1, portsPerTOR - downPerTOR);
 
-  // BW validation
-  const torDownBW  = portsPerTOR * speed;       // Gbps (server-facing)
-  const torUpBW    = spines * speed;            // Gbps (spine-facing — 1 per spine)
-  const oversub    = (torDownBW / torUpBW).toFixed(2);
-  const isNonBlocking = parseFloat(oversub) <= 1.0;
+  let tors, rails = 0, leavesPerRail = 0;
+  if (railOptimized) {
+    rails         = gpusPerServer;                       // one rail per GPU NIC position
+    leavesPerRail = Math.max(1, Math.ceil(servers / downPerTOR));
+    tors          = rails * leavesPerRail;
+  } else {
+    tors = Math.max(2, Math.ceil(totalNICs / downPerTOR));
+  }
 
-  // Rail-optimised topology note
-  const railNote   = topology === 'rail' || topology === 'fat-tree'
-    ? `${Math.ceil(tors / 2)}-rail fat-tree` : topology;
+  // Uplink-driven spine count (CLOS)
+  const totalUplinks = tors * upPerTOR;
+  const spines       = Math.max(2, Math.ceil(totalUplinks / spinePorts));
+
+  // BW validation per TOR
+  const torDownBW  = downPerTOR * speed;        // Gbps (server-facing)
+  const torUpBW    = upPerTOR * speed;          // Gbps (spine-facing)
+  const oversubActual = (torDownBW / torUpBW).toFixed(2);
+  const isNonBlocking = parseFloat(oversubActual) <= 1.0;
+
+  const railNote = railOptimized
+    ? `${rails}-rail × ${leavesPerRail} leaves/rail (NCCL rail-optimized)`
+    : `${topology} — enable rail-optimized topology for NCCL training`;
 
   return {
     gpus, servers, totalNICs, tors, spines,
-    gpusPerServer, nicsPerServer, portsPerTOR, speed,
-    torDownBW, torUpBW, oversub, isNonBlocking, railNote, topology,
+    gpusPerServer, nicsPerGpu,
+    nicsPerServer: gpusPerServer * nicsPerGpu,   // kept for display compat
+    portsPerTOR, downPerTOR, upPerTOR, spinePorts, speed,
+    rails, leavesPerRail, totalUplinks, railOptimized,
+    torDownBW, torUpBW, oversub: oversubActual, isNonBlocking, railNote, topology,
   };
 }
 
@@ -185,6 +227,20 @@ function wanCapacity(branches = 4, {
 }
 
 /* ── UNIFIED — derive capacity from UI STATE ─────────────────── */
+
+/* Port count of the user-selected product for a layer (e.g. 'gpu-tor').
+   products.js stores ports as strings like '64x 400GbE QSFP-DD' —
+   parseInt extracts the leading count. Falls back to dflt when no
+   product is selected yet (first scoring pass) or parse fails. */
+function _selectedPorts(st, layerKey, dflt) {
+  try {
+    const pid = (st.selectedProducts || {})[layerKey];
+    const p   = pid && typeof PRODUCTS === 'object' ? PRODUCTS[pid] : null;
+    const n   = p ? parseInt(p.ports) : NaN;
+    return n > 0 ? n : dflt;
+  } catch (e) { return dflt; }
+}
+
 function capacityFromState(st) {
   st = st || (typeof STATE !== 'undefined' ? STATE : {});
 
@@ -193,16 +249,20 @@ function capacityFromState(st) {
   const sites     = parseInt(st.numSites)   || 1;
   const red       = st.redundancy || 'ha';
   const servers   = endpoints;   // for DC: totalHosts = servers
+  const oversub   = parseInt(st.oversub) || 3;
 
   // GPU specifics
   const gpuSpecs   = Array.isArray(st.gpuSpecifics) ? st.gpuSpecifics : [];
   const gpuPerSrv  = parseInt(st.gpusPerServer) || 8;
-  // gpuCount: use explicit GPU count if provided (e.g. "64 H100 GPUs" from NL parser),
-  // otherwise totalHosts means GPU *servers* → multiply by GPUs-per-server.
+  const railOpt    = gpuSpecs.some(s => /rail/i.test(s));
+  // gpuCount: explicit GPU count if provided (e.g. "64 H100 GPUs" from NL parser),
+  // otherwise totalHosts = GPU endpoints (one 400G NIC each). 1024 hosts →
+  // 1024 × 400G ports → 32 leaves (32-down) + 16 spines (64-port) at 1:1.
   const gpuCount   = (parseInt(st.gpuCount) > 0)
     ? parseInt(st.gpuCount)
-    : endpoints * gpuPerSrv;
-  const portSpeed  = parseInt(st.portSpeed) || 100;
+    : endpoints;
+  // GPU training fabrics are 400G per port unless explicitly set otherwise
+  const portSpeed  = parseInt(st.portSpeed) || parseInt(st.bwPerServer) || 400;
 
   // Prefer explicit counts if already set (from NL parser or backend)
   const explicitSpine = parseInt(st.spine_count) || 0;
@@ -211,10 +271,29 @@ function capacityFromState(st) {
   let campus = null, dc = null, gpu = null, wan = null;
 
   if (uc === 'campus' || uc === 'hybrid') {
-    campus = campusCapacity(endpoints, { sites, redundancy: red });
+    campus = campusCapacity(endpoints, {
+      sites, redundancy: red,
+      portsPerSwitch: _selectedPorts(st, 'campus-access', 48),
+    });
   }
   if (uc === 'dc' || uc === 'hybrid' || uc === 'multisite') {
-    dc = dcCapacity(servers, { redundancy: red });
+    // Multi-site / DCI: size each site for its share of endpoints,
+    // then multiply the fabric by the number of sites.
+    const dcSites      = (uc === 'multisite') ? Math.max(1, sites) : 1;
+    const perSiteHosts = Math.max(1, Math.ceil(servers / dcSites));
+    dc = dcCapacity(perSiteHosts, {
+      redundancy:  red,
+      oversub:     oversub,
+      portsPerLeaf: _selectedPorts(st, 'dc-leaf', 48),
+      spinePorts:   _selectedPorts(st, 'dc-spine', 36),
+      serverSpeed:  parseInt(st.bwPerServer) || 25,
+    });
+    if (dcSites > 1) {
+      dc.leafs    = dc.leafs  * dcSites;
+      dc.spines   = dc.spines * dcSites;
+      dc.sites    = dcSites;
+      dc.perSiteHosts = perSiteHosts;
+    }
     // Honour explicit counts if set
     if (explicitLeaf  > 0) dc.leafs  = explicitLeaf;
     if (explicitSpine > 0) dc.spines = explicitSpine;
@@ -222,7 +301,11 @@ function capacityFromState(st) {
   if (uc === 'gpu') {
     gpu = gpuCapacity(gpuCount, {
       gpusPerServer: gpuPerSrv,
-      speed: portSpeed,
+      speed:         portSpeed,
+      portsPerTOR:   _selectedPorts(st, 'gpu-tor', 64),
+      spinePorts:    _selectedPorts(st, 'gpu-spine', 64),
+      oversub:       1,          // GPU training fabric — always 1:1 non-blocking
+      railOptimized: railOpt,
     });
     if (explicitLeaf  > 0) gpu.tors   = explicitLeaf;
     if (explicitSpine > 0) gpu.spines = explicitSpine;

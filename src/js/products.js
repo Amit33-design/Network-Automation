@@ -1,634 +1,880 @@
 'use strict';
 
-// All products must have: id, model, vendor, subLayer, ports, uplinks, speed, asic, powerW, features, useCases, detail
-// Lifecycle fields: eol_date (last purchase), eos_date (last support), successor (model name)
-// Dates are ISO strings: 'YYYY-MM-DD'. null = no announced date yet.
-var PRODUCTS = [
-  // ─── Spine / Core ───────────────────────────────────────────────────────────
-  {
-    id: 'nxos-9336c',
-    model: 'Nexus 9336C-FX2',
-    vendor: 'Cisco',
-    subLayer: 'spine',
-    ports: 36,
-    uplinks: 0,
-    speed: '100G',
-    asic: 'Cloud Scale',
-    powerW: 650,
-    priceUSD: 28000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
-    useCases: ['dc', 'gpu', 'multisite'],
-    detail: '36x100G QSFP28, MACsec, CloudScale ASIC, 3.6Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+/* ════════════════════════════════════════════════════════════════
+   PRODUCTS DATABASE
+   Each product: { id, vendor, vlClass, model, series, layer,
+     subLayer, ports, uplinks, speed, upSpeed, powerW, asic,
+     bufferGB, latencyNs, priceRange, userScale, estimatedCostUSD,
+     rackU, features[], useCases[], detail{} }
+   priceRange : 'smb' | 'mid' | 'enterprise' | 'hyperscale'
+   userScale  : [minUsers, maxUsers]  (per switch, not total)
+   estimatedCostUSD : rough street price (USD, no license)
+   rackU      : rack units consumed (1U fixed/pizza-box, 2U, 4U, 7–14U for chassis)
+════════════════════════════════════════════════════════════════ */
+const PRODUCTS = {
+
+  /* ══════════════════════════════════════════════════════════════
+     CAMPUS ACCESS LAYER
+  ══════════════════════════════════════════════════════════════ */
+
+  /* ── SMB / Branch Access ─────────────────────────────────── */
+  'cat1300-48p': {
+    id:'cat1300-48p', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Catalyst 1300-48P', series:'Catalyst 1300',
+    layer:'access', subLayer:'campus-access',
+    ports:'48x 1GbE PoE+', uplinks:'4x 1G/SFP',
+    speed:'1G', upSpeed:'1G', powerW:370, bufferGB:0.016,
+    latencyNs:4000, asic:'Marvell',
+    priceRange:'smb', userScale:[10,80], estimatedCostUSD:1200,
+    rackU:1,
+    features:['PoE+ 375W','VLAN','QoS','ACL','Web UI','CLI','Limited L3'],
+    useCases:['campus','wan'],
+    detail:{
+      throughput:'104 Gbps', macTable:'16K', vlans:'255',
+      routing:'Static + RIP', ipv6:'Yes', formFactor:'1RU fixed',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Entry-level managed switch for small offices and branches. Simple web GUI for non-expert deployment. Ideal for <80 users.'
+    }
   },
-  {
-    id: 'nxos-9364c',
-    model: 'Nexus 9364C-GX',
-    vendor: 'Cisco',
-    subLayer: 'spine',
-    ports: 64,
-    uplinks: 0,
-    speed: '400G',
-    asic: 'Cloud Scale GX',
-    powerW: 1200,
-    priceUSD: 72000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
-    useCases: ['dc', 'gpu', 'multicloud'],
-    detail: '64x400G QSFP-DD, AI/ML optimised, 25.6Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'fortiswitch-148f-poe': {
+    id:'fortiswitch-148f-poe', vendor:'Fortinet', vlClass:'vl-fortinet',
+    model:'FortiSwitch 148F-POE', series:'FortiSwitch 100F',
+    layer:'access', subLayer:'campus-access',
+    ports:'48x 1GbE PoE+', uplinks:'4x 10GbE SFP+',
+    speed:'1G', upSpeed:'10G', powerW:740, bufferGB:0.016,
+    latencyNs:3200, asic:'Broadcom',
+    priceRange:'smb', userScale:[20,100], estimatedCostUSD:2200,
+    rackU:1,
+    features:['PoE+ 740W','Security Fabric integration','FortiLink','802.1X','VLAN','FortiManager/FortiGate integration','ZTP'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'176 Gbps', macTable:'32K', vlans:'4094',
+      routing:'L2 + limited L3', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Best choice for Fortinet-centric networks. Managed directly from FortiGate via FortiLink — single pane of glass for network + security. No separate switch management needed.'
+    }
   },
-  {
-    id: 'arista-7800r3',
-    model: 'Arista 7800R3',
-    vendor: 'Arista',
-    subLayer: 'spine',
-    ports: 48,
-    uplinks: 0,
-    speed: '400G',
-    asic: 'Jericho2+',
-    powerW: 1400,
-    priceUSD: 95000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'MPLS', 'FlowSpec'],
-    useCases: ['dc', 'gpu', 'wan', 'multisite', 'multicloud'],
-    detail: '48x400G QSFP-DD, segment routing, 19.2Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'fortiswitch-124f-poe': {
+    id:'fortiswitch-124f-poe', vendor:'Fortinet', vlClass:'vl-fortinet',
+    model:'FortiSwitch 124F-POE', series:'FortiSwitch 100F',
+    layer:'access', subLayer:'campus-access',
+    ports:'24x 1GbE PoE+', uplinks:'4x 10GbE SFP+',
+    speed:'1G', upSpeed:'10G', powerW:370, bufferGB:0.008,
+    latencyNs:3200, asic:'Broadcom',
+    priceRange:'smb', userScale:[10,50], estimatedCostUSD:1400,
+    rackU:1,
+    features:['PoE+ 370W','Security Fabric','FortiLink','802.1X','FortiGate managed','ZTP','VLAN'],
+    useCases:['campus','wan'],
+    detail:{
+      throughput:'88 Gbps', macTable:'16K', vlans:'4094',
+      routing:'L2 + static', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Compact 24-port Fortinet access for small branches. Pairs with FortiGate 60/100 series. Zero-touch provisioned via FortiManager.'
+    }
   },
-  {
-    id: 'juniper-qfx10002',
-    model: 'QFX10002-72Q',
-    vendor: 'Juniper',
-    subLayer: 'spine',
-    ports: 72,
-    uplinks: 0,
-    speed: '40G',
-    asic: 'Q5',
-    powerW: 800,
-    priceUSD: 35000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'MPLS'],
-    useCases: ['dc', 'multisite'],
-    detail: '72x40G QSFP+, 2.88Tbps, VC-capable',
-    eol_date: '2025-07-31',
-    eos_date: '2030-07-31',
-    successor: 'QFX10002-60C (Q5C ASIC, 60x100G)'
+  'aruba-2930f-24g': {
+    id:'aruba-2930f-24g', vendor:'HPE Aruba', vlClass:'vl-aruba',
+    model:'Aruba 2930F-24G-PoE+', series:'2930F',
+    layer:'access', subLayer:'campus-access',
+    ports:'24x 1GbE PoE+', uplinks:'4x 1G/10G SFP+',
+    speed:'1G', upSpeed:'10G', powerW:370, bufferGB:0.012,
+    latencyNs:3500, asic:'Broadcom',
+    priceRange:'smb', userScale:[10,60], estimatedCostUSD:1800,
+    rackU:1,
+    features:['PoE+ 370W','ArubaOS-Switch','AirWave','802.1X','ClearPass-ready','VLAN','QoS','SNMPv3'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'92 Gbps', macTable:'16K', vlans:'4094',
+      routing:'Static + RIP + OSPF', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Solid SMB/mid-market access switch. Strong PoE budget and ClearPass NAC integration. Good alternative when Cisco cost is a concern.'
+    }
+  },
+  'extreme-x435-24p': {
+    id:'extreme-x435-24p', vendor:'Extreme', vlClass:'vl-extreme',
+    model:'ExtremeSwitching X435-24P', series:'X435',
+    layer:'access', subLayer:'campus-access',
+    ports:'24x 1GbE PoE+', uplinks:'4x 10GbE SFP+',
+    speed:'1G', upSpeed:'10G', powerW:370, bufferGB:0.016,
+    latencyNs:3000, asic:'Marvell Prestera',
+    priceRange:'smb', userScale:[10,60], estimatedCostUSD:1600,
+    rackU:1,
+    features:['PoE+ 370W','ExtremeXOS','ExtremeCloud IQ','802.1X','VLAN','Universal Port','ZTP'],
+    useCases:['campus'],
+    detail:{
+      throughput:'88 Gbps', macTable:'32K', vlans:'4094',
+      routing:'Static + OSPF', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Cloud-managed access via ExtremeCloud IQ. Universal Port profiles auto-configure ports based on connected device type. Good for education and hospitality.'
+    }
   },
 
-  // ─── Leaf / ToR ─────────────────────────────────────────────────────────────
-  {
-    id: 'nxos-93180yc',
-    model: 'Nexus 93180YC-FX',
-    vendor: 'Cisco',
-    subLayer: 'leaf',
-    ports: 48,
-    uplinks: 6,
-    uplink_speed_gbps: 100,
-    speed: '25G',
-    asic: 'Cloud Scale',
-    powerW: 480,
-    priceUSD: 14000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'LLDP'],
-    useCases: ['dc', 'gpu', 'multisite'],
-    detail: '48x25G SFP28 + 6x100G QSFP28 uplinks',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  /* ── Mid / Enterprise Access ─────────────────────────────── */
+  'cat9300-24p': {
+    id:'cat9300-24p', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Catalyst 9300-24P', series:'Catalyst 9300',
+    layer:'access', subLayer:'campus-access',
+    ports:'24x 1GbE PoE+', uplinks:'4x 1/10GbE SFP+',
+    speed:'1G', upSpeed:'10G', powerW:890, bufferGB:0.032,
+    latencyNs:3500, asic:'UADP 2.0',
+    priceRange:'mid', userScale:[50,200], estimatedCostUSD:6500,
+    rackU:1,
+    features:['PoE+ 740W','802.1X','MACSEC','Stacking (StackWise-320)','SD-Access','DNA Center','NETCONF/YANG'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'208 Gbps', macTable:'32K', vlans:'4094',
+      routing:'Full L3 (RIP,OSPF,EIGRP,BGP)', ipv6:'Yes',
+      formFactor:'1RU fixed', warranty:'Limited Lifetime',
+      certifications:'FIPS 140-2, TAA',
+      notes:'Best-in-class campus access. Native SD-Access fabric edge. Ideal for medium to large enterprise floors.'
+    }
   },
-  {
-    id: 'nxos-9332c',
-    model: 'Nexus 9332C',
-    vendor: 'Cisco',
-    subLayer: 'leaf',
-    ports: 32,
-    uplinks: 2,
-    uplink_speed_gbps: 100,
-    speed: '100G',
-    asic: 'Cloud Scale',
-    powerW: 550,
-    priceUSD: 18000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'PFC'],
-    useCases: ['dc', 'gpu'],
-    detail: '32x100G QSFP28 + 2x100G uplinks, GPU-optimised',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'cat9300-48p': {
+    id:'cat9300-48p', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Catalyst 9300-48P', series:'Catalyst 9300',
+    layer:'access', subLayer:'campus-access',
+    ports:'48x 1GbE PoE+', uplinks:'4x 1/10GbE SFP+',
+    speed:'1G', upSpeed:'10G', powerW:1100, bufferGB:0.032,
+    latencyNs:3500, asic:'UADP 2.0',
+    priceRange:'mid', userScale:[100,400], estimatedCostUSD:8500,
+    rackU:1,
+    features:['PoE+ 740W','802.1X','MACSEC','Stacking','SD-Access','NETCONF/YANG','Trustworthy Systems'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'208 Gbps', macTable:'32K', vlans:'4094',
+      routing:'Full L3', ipv6:'Yes', formFactor:'1RU fixed',
+      warranty:'Limited Lifetime', certifications:'FIPS 140-2, TAA',
+      notes:'High-density campus access. Dual PoE budget 740W. Ideal for open office deployments.'
+    }
   },
-
-  // ─── GPU / AI Fabric — 400G non-blocking SKUs ────────────────────────────────
-  {
-    id: 'arista-7060px4',
-    model: 'Arista 7060PX4-32S',
-    vendor: 'Arista',
-    subLayer: 'leaf',
-    ports: 32,
-    uplinks: 32,
-    uplink_speed_gbps: 400,
-    speed: '400G',
-    asic: 'Tomahawk4',
-    powerW: 1000,
-    priceUSD: 45000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'DCQCN', 'RoCEv2', 'RDMA', 'LLDP'],
-    useCases: ['gpu'],
-    detail: '32x400G QSFP-DD downlinks + 32x400G uplinks, non-blocking GPU ToR, Tomahawk4, 25.6Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'aruba-cx6300m': {
+    id:'aruba-cx6300m', vendor:'HPE Aruba', vlClass:'vl-aruba',
+    model:'Aruba CX 6300M 48G', series:'CX 6300',
+    layer:'access', subLayer:'campus-access',
+    ports:'48x 1GbE PoE+', uplinks:'4x 10/25GbE SFP28',
+    speed:'1G', upSpeed:'25G', powerW:1100, bufferGB:0.064,
+    latencyNs:2500, asic:'Broadcom Trident3',
+    priceRange:'mid', userScale:[100,400], estimatedCostUSD:7200,
+    rackU:1,
+    features:['PoE++ 720W','ArubaOS-CX','ClearPass NAC','VSX stacking','802.1X','Analytics','NETCONF/YANG','REST API'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'336 Gbps', macTable:'64K', vlans:'4094',
+      routing:'Full L3 BGP/OSPF', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Modern CX OS with first-class REST API and analytics. VSX (Virtual Switching Extension) for HA pairs. Strong Aruba Wi-Fi integration.'
+    }
   },
-  {
-    id: 'arista-7060x4-spine',
-    model: 'Arista 7060X4-64S',
-    vendor: 'Arista',
-    subLayer: 'spine',
-    ports: 64,
-    uplinks: 0,
-    speed: '400G',
-    asic: 'Tomahawk4',
-    powerW: 1200,
-    priceUSD: 65000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'DCQCN', 'RoCEv2', 'LLDP'],
-    useCases: ['gpu'],
-    detail: '64x400G QSFP-DD, non-blocking GPU spine, Tomahawk4, 25.6Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'fortiswitch-248e-fpoe': {
+    id:'fortiswitch-248e-fpoe', vendor:'Fortinet', vlClass:'vl-fortinet',
+    model:'FortiSwitch 248E-FPOE', series:'FortiSwitch 200E',
+    layer:'access', subLayer:'campus-access',
+    ports:'48x 1GbE PoE+', uplinks:'4x 10GbE SFP+',
+    speed:'1G', upSpeed:'10G', powerW:1440, bufferGB:0.016,
+    latencyNs:3000, asic:'Broadcom',
+    priceRange:'mid', userScale:[80,300], estimatedCostUSD:3800,
+    rackU:1,
+    features:['PoE+ 1440W full-budget','Security Fabric','FortiLink','802.1X','FortiManager','VLAN','QoS','LLDP-MED'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'176 Gbps', macTable:'32K', vlans:'4094',
+      routing:'L2 + limited L3', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Highest PoE budget in the FortiSwitch line — powers high-density Wi-Fi 6E APs and IP cameras simultaneously. Full FortiGate integration.'
+    }
   },
-  {
-    id: 'nxos-9364d',
-    model: 'Nexus 9364D-GX2A',
-    vendor: 'Cisco',
-    subLayer: 'leaf',
-    ports: 32,
-    uplinks: 32,
-    uplink_speed_gbps: 400,
-    speed: '400G',
-    asic: 'Cloud Scale GX2',
-    powerW: 1100,
-    priceUSD: 52000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECN', 'DCQCN', 'RoCEv2', 'RDMA', 'LLDP'],
-    useCases: ['gpu'],
-    detail: '32x400G QSFP-DD downlinks + 32x400G uplinks, AI/GPU optimised, CloudScale GX2, 25.6Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'extreme-x465-48p': {
+    id:'extreme-x465-48p', vendor:'Extreme', vlClass:'vl-extreme',
+    model:'ExtremeSwitching X465-48P', series:'X465',
+    layer:'access', subLayer:'campus-access',
+    ports:'48x 1GbE PoE+', uplinks:'4x 10/25GbE SFP28',
+    speed:'1G', upSpeed:'25G', powerW:1100, bufferGB:0.032,
+    latencyNs:2800, asic:'Broadcom Trident3',
+    priceRange:'mid', userScale:[100,400], estimatedCostUSD:5500,
+    rackU:1,
+    features:['PoE+ 780W','ExtremeXOS','ExtremeCloud IQ','802.1X','SLX stacking','VXLAN access','Universal Port'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'336 Gbps', macTable:'64K', vlans:'4094',
+      routing:'Full L3', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Flexible mid-market access. Runs ExtremeXOS or VOSS depending on model. Cloud-managed via ExtremeCloud IQ. Good price/performance for education and government.'
+    }
   },
-  {
-    id: 'nvidia-quantum2-ndr',
-    model: 'NVIDIA Quantum-2 QM9700',
-    vendor: 'NVIDIA',
-    subLayer: 'spine',
-    ports: 64,
-    uplinks: 0,
-    speed: '400G',
-    asic: 'Quantum-2',
-    powerW: 1800,
-    priceUSD: 90000,
-    features: ['InfiniBand', 'RoCEv2', 'SHARP', 'MPI', 'NCCL', 'Adaptive-Routing', 'CC'],
-    useCases: ['gpu'],
-    detail: '64x400G NDR InfiniBand/Ethernet spine, SHARP in-network computing, 51.2Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'arista-720xp-48zc2': {
+    id:'arista-720xp-48zc2', vendor:'Arista', vlClass:'vl-arista',
+    model:'720XP-48ZC2', series:'720XP',
+    layer:'access', subLayer:'campus-access',
+    ports:'48x 1/2.5GbE PoE++', uplinks:'2x 100GbE QSFP28',
+    speed:'2.5G', upSpeed:'100G', powerW:2000, bufferGB:0.064,
+    latencyNs:2000, asic:'Broadcom Trident3',
+    priceRange:'enterprise', userScale:[200,600], estimatedCostUSD:14000,
+    rackU:1,
+    features:['PoE++ 90W per port','Multi-gig (mGig)','VXLAN access','EOS','CloudVision','ZTP','RESTCONF'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'510 Gbps', macTable:'128K', vlans:'4094',
+      routing:'Full L3 BGP/OSPF', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year hw', certifications:'TAA',
+      notes:'Multi-gigabit access ideal for Wi-Fi 6E APs requiring 2.5G. High PoE++ budget and 100G uplinks future-proof the access layer.'
+    }
   },
-  {
-    id: 'nvidia-spectrum3',
-    model: 'NVIDIA Spectrum-3 SN4600C',
-    vendor: 'NVIDIA',
-    subLayer: 'leaf',
-    ports: 64,
-    uplinks: 32,
-    uplink_speed_gbps: 400,
-    speed: '400G',
-    asic: 'Spectrum-3',
-    powerW: 1100,
-    priceUSD: 55000,
-    features: ['RoCEv2', 'PFC', 'ECN', 'DCQCN', 'VXLAN', 'EVPN', 'BGP', 'RDMA', 'Adaptive-Routing'],
-    useCases: ['gpu'],
-    detail: '64x400G QSFP-DD, RoCEv2 GPU ToR, Spectrum-3 ASIC, adaptive routing, 51.2Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'ex2300-48p': {
+    id:'ex2300-48p', vendor:'Juniper', vlClass:'vl-juniper',
+    model:'EX2300-48P', series:'EX2300',
+    layer:'access', subLayer:'campus-access',
+    ports:'48x 1GbE PoE+', uplinks:'4x 10GbE SFP+',
+    speed:'1G', upSpeed:'10G', powerW:820, bufferGB:0.016,
+    latencyNs:3000, asic:'Marvell Prestera',
+    priceRange:'mid', userScale:[100,400], estimatedCostUSD:5800,
+    rackU:1,
+    features:['PoE+ 370W','802.1X','Virtual Chassis (VC)','Junos','NETCONF/YANG','ZTP','Mist AI-ready'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'176 Gbps', macTable:'16K', vlans:'4094',
+      routing:'Full L3', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Compact, cost-effective campus access. Mist AI integration for cloud-managed deployments. Virtual Chassis up to 10 units.'
+    }
   },
 
-  {
-    id: 'arista-7050cx3',
-    model: 'Arista 7050CX3-32S',
-    vendor: 'Arista',
-    subLayer: 'leaf',
-    ports: 32,
-    uplinks: 2,
-    uplink_speed_gbps: 100,
-    speed: '100G',
-    asic: 'Trident3',
-    powerW: 460,
-    priceUSD: 16000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECMP'],
-    useCases: ['dc', 'multisite'],
-    detail: '32x100G QSFP28 + 2x100G uplinks, Trident3',
-    eol_date: '2027-03-31',
-    eos_date: '2032-03-31',
-    successor: 'Arista 7050X4 (Trident4)'
+  /* ══════════════════════════════════════════════════════════════
+     CAMPUS DISTRIBUTION
+  ══════════════════════════════════════════════════════════════ */
+  'fortiswitch-424e': {
+    id:'fortiswitch-424e', vendor:'Fortinet', vlClass:'vl-fortinet',
+    model:'FortiSwitch 424E', series:'FortiSwitch 400E',
+    layer:'distribution', subLayer:'campus-dist',
+    ports:'24x 1/10GbE SFP+', uplinks:'4x 40GbE QSFP+',
+    speed:'10G', upSpeed:'40G', powerW:550, bufferGB:0.032,
+    latencyNs:2000, asic:'Broadcom Trident2',
+    priceRange:'smb', userScale:[50,300], estimatedCostUSD:4500,
+    rackU:1,
+    features:['Security Fabric','FortiLink','BGP/OSPF','VLAN','RSTP','FortiManager','802.1Q','QoS'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'480 Gbps', macTable:'64K', vlans:'4094',
+      routing:'Full L3 BGP/OSPF', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Distribution-tier FortiSwitch. Fully integrated with FortiGate for centralized policy. Ideal distribution layer for Fortinet Security Fabric deployments.'
+    }
   },
-  {
-    id: 'juniper-qfx5120',
-    model: 'QFX5120-48Y',
-    vendor: 'Juniper',
-    subLayer: 'leaf',
-    ports: 48,
-    uplinks: 8,
-    uplink_speed_gbps: 100,
-    speed: '25G',
-    asic: 'Trident3',
-    powerW: 440,
-    priceUSD: 12000,
-    features: ['VXLAN', 'EVPN', 'BGP', 'LLDP'],
-    useCases: ['dc', 'multisite'],
-    detail: '48x25G SFP28 + 8x100G QSFP28 uplinks',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'fortiswitch-548d': {
+    id:'fortiswitch-548d', vendor:'Fortinet', vlClass:'vl-fortinet',
+    model:'FortiSwitch 548D', series:'FortiSwitch 500D',
+    layer:'distribution', subLayer:'campus-dist',
+    ports:'48x 10GbE SFP+', uplinks:'6x 40GbE QSFP+',
+    speed:'10G', upSpeed:'40G', powerW:650, bufferGB:0.064,
+    latencyNs:1800, asic:'Broadcom Trident2+',
+    priceRange:'mid', userScale:[200,800], estimatedCostUSD:7500,
+    rackU:1,
+    features:['Security Fabric','FortiLink','Full L3','BGP/OSPF/VRRP','VXLAN','FortiManager','Analytics','NETCONF'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'960 Gbps', macTable:'128K', vlans:'4094',
+      routing:'Full L3 + MPLS', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'High-density distribution for mid-to-large Fortinet campuses. Acts as FortiGate uplink aggregation and policy enforcement boundary. Supports VXLAN for segmented campus fabrics.'
+    }
   },
-
-  // ─── Distribution ────────────────────────────────────────────────────────────
-  {
-    id: 'cat9500',
-    model: 'Catalyst 9500-48Y4C',
-    vendor: 'Cisco',
-    subLayer: 'distribution',
-    ports: 48,
-    uplinks: 4,
-    uplink_speed_gbps: 100,
-    speed: '25G',
-    asic: 'UADP 3.0',
-    powerW: 715,
-    priceUSD: 22000,
-    features: ['SDA', 'VXLAN', 'EVPN', 'BGP', 'QoS', 'MACsec'],
-    useCases: ['campus', 'multisite'],
-    detail: '48x25G + 4x100G, Cisco SDA-ready',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'aruba-cx6405': {
+    id:'aruba-cx6405', vendor:'HPE Aruba', vlClass:'vl-aruba',
+    model:'Aruba CX 6405 Core Switch', series:'CX 6400',
+    layer:'distribution', subLayer:'campus-dist',
+    ports:'Up to 48x 10/25GbE + 8x 100GbE', uplinks:'Up to 8x 100GbE QSFP28',
+    speed:'25G', upSpeed:'100G', powerW:1200, bufferGB:0.256,
+    latencyNs:1500, asic:'Broadcom Jericho+',
+    priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:32000,
+    rackU:7,
+    features:['Modular 5-slot','VSX HA','BGP/OSPF/IS-IS','VXLAN/EVPN','ArubaOS-CX','Hitless failover','NETCONF/YANG','Analytics'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'9.6 Tbps', macTable:'512K', vlans:'4094',
+      routing:'Full L3 + MPLS + SR', ipv6:'Yes', formFactor:'Modular 5-slot',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'Modular enterprise distribution/core. VSX active-active HA. Scales from 5 to multiple chassis. Native Aruba Central integration. Competes with Cat9600 at lower cost.'
+    }
   },
-  {
-    id: 'cat9300l',
-    model: 'Catalyst 9300L-48T-4G',
-    vendor: 'Cisco',
-    subLayer: 'access',
-    ports: 48,
-    uplinks: 4,
-    uplink_speed_gbps: 1,
-    speed: '1G',
-    asic: 'UADP 2.0',
-    powerW: 390,
-    priceUSD: 4800,
-    features: ['PoE+', 'SDA', 'QoS', 'LLDP', 'MACsec'],
-    useCases: ['campus'],
-    detail: '48x1G PoE+ + 4x1G SFP uplinks, 740W PoE budget',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'cat9500-48y4c': {
+    id:'cat9500-48y4c', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Catalyst 9500-48Y4C', series:'Catalyst 9500',
+    layer:'distribution', subLayer:'campus-dist',
+    ports:'48x 25GbE SFP28', uplinks:'4x 100GbE QSFP28',
+    speed:'25G', upSpeed:'100G', powerW:850, bufferGB:0.096,
+    latencyNs:1800, asic:'UADP 3.0',
+    priceRange:'enterprise', userScale:[500,3000], estimatedCostUSD:28000,
+    rackU:1,
+    features:['MACSEC-256','SD-Access border','VXLAN','BGP','ECMP','NetFlow','NETCONF/YANG','StackWise-T'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'2.88 Tbps', macTable:'128K', vlans:'4094',
+      routing:'Full L3 + MPLS', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'FIPS 140-2',
+      notes:'Flagship fixed distribution/aggregation switch. Acts as SD-Access policy plane boundary. Non-blocking at 25G density.'
+    }
   },
-  {
-    id: 'cat9200',
-    model: 'Catalyst 9200-48P',
-    vendor: 'Cisco',
-    subLayer: 'access',
-    ports: 48,
-    uplinks: 4,
-    uplink_speed_gbps: 1,
-    speed: '1G',
-    asic: 'UADP 2.0 Lite',
-    powerW: 370,
-    priceUSD: 3200,
-    features: ['PoE+', 'QoS', 'LLDP'],
-    useCases: ['campus'],
-    detail: '48x1G PoE+ + 4x1G SFP uplinks',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'arista-7280r2a': {
+    id:'arista-7280r2a', vendor:'Arista', vlClass:'vl-arista',
+    model:'7280R2A-30', series:'7280R2',
+    layer:'distribution', subLayer:'campus-dist',
+    ports:'30x 100GbE QSFP28', uplinks:'2x 400GbE QSFP-DD',
+    speed:'100G', upSpeed:'400G', powerW:750, bufferGB:0.512,
+    latencyNs:900, asic:'Broadcom Jericho2',
+    priceRange:'enterprise', userScale:[1000,5000], estimatedCostUSD:35000,
+    rackU:2,
+    features:['Deep buffer 512MB','BGP-LU','MPLS','VXLAN/EVPN','CloudVision','RESTCONF','gNMI'],
+    useCases:['campus','hybrid','dc'],
+    detail:{
+      throughput:'7.2 Tbps', macTable:'512K', vlans:'4094',
+      routing:'Full L3 + MPLS + SR', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Deep buffer makes this ideal for distribution where bursty traffic from access is absorbed. Also used as DC border leaf.'
+    }
   },
-
-  // ─── WAN / Edge ──────────────────────────────────────────────────────────────
-  {
-    id: 'asr1002hx',
-    model: 'ASR 1002-HX',
-    vendor: 'Cisco',
-    subLayer: 'wan-edge',
-    ports: 4,
-    uplinks: 0,
-    speed: '10G',
-    asic: 'QuantumFlow',
-    powerW: 280,
-    priceUSD: 18000,
-    features: ['BGP', 'MPLS', 'OSPF', 'IPSec', 'DMVPN', 'SD-WAN'],
-    useCases: ['wan', 'multisite'],
-    detail: '4x10G, 60Gbps aggregate, crypto capable',
-    eol_date: '2024-01-31',
-    eos_date: '2029-01-31',
-    successor: 'ASR 1001-X / Catalyst 8200'
-  },
-  {
-    id: 'viptela-vedge',
-    model: 'Catalyst SD-WAN vEdge 2000',
-    vendor: 'Cisco',
-    subLayer: 'wan-edge',
-    ports: 8,
-    uplinks: 0,
-    speed: '1G',
-    asic: 'Software',
-    powerW: 150,
-    priceUSD: 9500,
-    features: ['SD-WAN', 'BGP', 'IPSec', 'ZTP', 'AppQoE'],
-    useCases: ['wan', 'multisite', 'multicloud'],
-    detail: '8x1G, SD-WAN ZTP, AppQoE, 20Gbps',
-    eol_date: '2024-08-31',
-    eos_date: '2026-08-31',
-    successor: 'Catalyst 8300 / Catalyst SD-WAN'
+  'ex4650-48y': {
+    id:'ex4650-48y', vendor:'Juniper', vlClass:'vl-juniper',
+    model:'EX4650-48Y', series:'EX4650',
+    layer:'distribution', subLayer:'campus-dist',
+    ports:'48x 25GbE SFP28', uplinks:'8x 100GbE QSFP28',
+    speed:'25G', upSpeed:'100G', powerW:680, bufferGB:0.064,
+    latencyNs:1500, asic:'Broadcom Trident3 X5',
+    priceRange:'enterprise', userScale:[500,3000], estimatedCostUSD:22000,
+    rackU:1,
+    features:['Virtual Chassis','EVPN-VXLAN','BGP','Mist AI','NETCONF/YANG','Analytics'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'2.88 Tbps', macTable:'128K', vlans:'4094',
+      routing:'Full L3', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'TAA',
+      notes:'High-density 25G distribution. Pairs naturally with EX2300/EX3400 access via Virtual Chassis Fabric.'
+    }
   },
 
-  // ─── Aviatrix ────────────────────────────────────────────────────────────────
-  {
-    id: 'aviatrix-gw',
-    model: 'Aviatrix Gateway (c5.xlarge)',
-    vendor: 'Aviatrix',
-    subLayer: 'cloud-gw',
-    ports: 0,
-    uplinks: 0,
-    speed: '10G',
-    asic: 'Software',
-    powerW: 0,
-    priceUSD: 4200,
-    features: ['BGP', 'IPSec', 'SNAT', 'DNAT', 'FireNet', 'TGW'],
-    useCases: ['aviatrix', 'multicloud'],
-    detail: 'Cloud-native gateway, AWS/Azure/GCP',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  /* ══════════════════════════════════════════════════════════════
+     CAMPUS CORE
+  ══════════════════════════════════════════════════════════════ */
+  'cat9600-32c': {
+    id:'cat9600-32c', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Catalyst 9600-32C', series:'Catalyst 9600',
+    layer:'core', subLayer:'campus-core',
+    ports:'32x 100GbE QSFP28', uplinks:'—',
+    speed:'100G', upSpeed:'400G', powerW:1400, bufferGB:0.256,
+    latencyNs:1200, asic:'UADP 3.0',
+    priceRange:'enterprise', userScale:[2000,20000], estimatedCostUSD:95000,
+    rackU:10,
+    features:['Non-blocking','MACSEC-256','BGP','MPLS','SD-Access core','NetFlow','NETCONF/YANG','In-Service Upgrade'],
+    useCases:['campus','hybrid'],
+    detail:{
+      throughput:'6.4 Tbps', macTable:'256K', vlans:'4094',
+      routing:'Full L3 + MPLS', ipv6:'Yes', formFactor:'Modular 7-slot',
+      warranty:'Limited Lifetime', certifications:'FIPS 140-2, TAA',
+      notes:'Modular core switch. Up to 7 line cards. Dual supervisor for full HA. Acts as SD-Access control-plane anchor for large campuses.'
+    }
   },
-  {
-    id: 'aviatrix-transit',
-    model: 'Aviatrix Transit GW (c5.2xlarge)',
-    vendor: 'Aviatrix',
-    subLayer: 'cloud-transit',
-    ports: 0,
-    uplinks: 0,
-    speed: '25G',
-    asic: 'Software',
-    powerW: 0,
-    priceUSD: 9800,
-    features: ['BGP', 'EVPN', 'Segmentation', 'FireNet', 'TGW'],
-    useCases: ['aviatrix', 'multicloud'],
-    detail: 'Cloud transit, multi-cloud meshing',
-    eol_date: null,
-    eos_date: null,
-    successor: null
-  },
-
-  // ─── Firewalls / Security ────────────────────────────────────────────────────
-  {
-    id: 'ftd4145',
-    model: 'Firepower 4145 NGFW',
-    vendor: 'Cisco',
-    subLayer: 'firewall',
-    ports: 8,
-    uplinks: 0,
-    speed: '40G',
-    asic: 'Liqid',
-    powerW: 800,
-    priceUSD: 65000,
-    features: ['IPS', 'AVC', 'TLS-decrypt', 'AMP', 'HA'],
-    useCases: ['campus', 'dc', 'multisite', 'multicloud'],
-    detail: '8x40G, 80Gbps FW throughput, HA pair',
-    eol_date: null,
-    eos_date: null,
-    successor: null
-  },
-  {
-    id: 'panos-pa5260',
-    model: 'PA-5260 NGFW',
-    vendor: 'Palo Alto',
-    subLayer: 'firewall',
-    ports: 16,
-    uplinks: 0,
-    speed: '100G',
-    asic: 'CN-Series',
-    powerW: 1100,
-    priceUSD: 120000,
-    features: ['IPS', 'URL-filter', 'GlobalProtect', 'TLS-decrypt', 'HA'],
-    useCases: ['campus', 'dc', 'multicloud'],
-    detail: '16x100G, 200Gbps threat prevention',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'arista-7500r3': {
+    id:'arista-7500r3', vendor:'Arista', vlClass:'vl-arista',
+    model:'7500R3', series:'7500R3',
+    layer:'core', subLayer:'campus-core',
+    ports:'Up to 576x 100GbE', uplinks:'Up to 144x 400GbE',
+    speed:'100G', upSpeed:'400G', powerW:3200, bufferGB:2.0,
+    latencyNs:800, asic:'Broadcom Jericho2 / Petra2',
+    priceRange:'hyperscale', userScale:[5000,50000], estimatedCostUSD:180000,
+    rackU:14,
+    features:['Deep buffer 2GB','VXLAN/EVPN','BGP SR-MPLS','CloudVision','gNMI/gRPC','Hot-swap LC','Hitless ISSU'],
+    useCases:['campus','dc','hybrid'],
+    detail:{
+      throughput:'57.6 Tbps', macTable:'1M', vlans:'16M (VNI)',
+      routing:'Full L3 + MPLS + SR-MPLS', ipv6:'Yes',
+      formFactor:'Modular 8-slot', warranty:'1-year',
+      certifications:'TAA', notes:'Carrier-grade modular core. Used by hyperscalers as border leaf. Suitable for very large enterprise or DC core.'
+    }
   },
 
-  // ─── IOS-XR SP/MPLS (G-22, G-39) ────────────────────────────────────────────
-  {
-    id: 'asr9001',
-    model: 'ASR 9001',
-    vendor: 'Cisco',
-    subLayer: 'pe-router',
-    ports: 24,
-    uplinks: 0,
-    speed: '10G',
-    asic: 'nPower',
-    powerW: 1200,
-    priceUSD: 45000,
-    features: ['MPLS', 'SR-MPLS', 'BGP-VPNv4', 'IS-IS', 'BFD', 'TE'],
-    useCases: ['sp_mpls'],
-    detail: '24x10G SFP+, nPower ASIC, SR-MPLS PE, 200Gbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  /* ══════════════════════════════════════════════════════════════
+     DATA CENTER — LEAF
+  ══════════════════════════════════════════════════════════════ */
+  'nexus-93180yc-fx': {
+    id:'nexus-93180yc-fx', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Nexus 93180YC-FX', series:'Nexus 9300',
+    layer:'leaf', subLayer:'dc-leaf',
+    ports:'48x 25GbE SFP28', uplinks:'6x 100GbE QSFP28',
+    speed:'25G', upSpeed:'100G', powerW:650, bufferGB:0.04,
+    latencyNs:1100, asic:'Cisco Cloud Scale (Algo Boost)',
+    priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:22000,
+    rackU:1,
+    features:['VXLAN/EVPN','FabricPath','ACI-ready','NX-OS','NETCONF/YANG','Telemetry streaming','MACSEC'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'3.6 Tbps', macTable:'128K', vlans:'4094',
+      routing:'Full L3 BGP/OSPF/IS-IS', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'FIPS 140-2',
+      notes:'Workhorse DC leaf. High-density 25G server connectivity. Commonly deployed in pairs for vPC redundancy. ACI or standalone NX-OS.'
+    }
   },
-  {
-    id: 'asr9006',
-    model: 'ASR 9006',
-    vendor: 'Cisco',
-    subLayer: 'pe-router',
-    ports: 96,
-    uplinks: 0,
-    speed: '100G',
-    asic: 'nPower/CRS',
-    powerW: 3200,
-    priceUSD: 120000,
-    features: ['MPLS', 'SR-MPLS', 'BGP-VPNv4', 'IS-IS', 'BFD', 'TE', 'EVPN'],
-    useCases: ['sp_mpls', 'multicloud'],
-    detail: '6-slot chassis, up to 96x100G, SR-MPLS, BGP EVPN',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'nexus-93360yc-fx2': {
+    id:'nexus-93360yc-fx2', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Nexus 93360YC-FX2', series:'Nexus 9300',
+    layer:'leaf', subLayer:'dc-leaf',
+    ports:'96x 25GbE SFP28', uplinks:'12x 100GbE QSFP28',
+    speed:'25G', upSpeed:'100G', powerW:900, bufferGB:0.064,
+    latencyNs:1100, asic:'Cisco Cloud Scale',
+    priceRange:'enterprise', userScale:[1000,8000], estimatedCostUSD:35000,
+    rackU:2,
+    features:['VXLAN/EVPN','96-port density','vPC','NX-OS','Streaming telemetry','MACSEC','NetFlow'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'7.2 Tbps', macTable:'256K', vlans:'4094',
+      routing:'Full L3', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'FIPS 140-2',
+      notes:'High-density DC leaf for large server pods. 96 servers at 25G per leaf. Double-density vs 93180.'
+    }
   },
-  {
-    id: 'ncs5501',
-    model: 'NCS 5501',
-    vendor: 'Cisco',
-    subLayer: 'p-router',
-    ports: 48,
-    uplinks: 6,
-    uplink_speed_gbps: 100,
-    speed: '25G',
-    asic: 'Jericho',
-    powerW: 650,
-    priceUSD: 55000,
-    features: ['MPLS', 'SR-MPLS', 'IS-IS', 'BFD', 'RSVP-TE'],
-    useCases: ['sp_mpls'],
-    detail: '48x25G SFP28 + 6x100G QSFP28, Jericho ASIC, SR-MPLS P-router',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'arista-7050cx3-32s': {
+    id:'arista-7050cx3-32s', vendor:'Arista', vlClass:'vl-arista',
+    model:'7050CX3-32S', series:'7050CX3',
+    layer:'leaf', subLayer:'dc-leaf',
+    ports:'32x 100GbE QSFP28', uplinks:'2x 400GbE QSFP-DD',
+    speed:'100G', upSpeed:'400G', powerW:550, bufferGB:0.032,
+    latencyNs:900, asic:'Broadcom Trident3',
+    priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:20000,
+    rackU:1,
+    features:['VXLAN/EVPN','BGP EVPN','CloudVision','EOS','gNMI/gRPC','ZTP','RESTCONF'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'6.4 Tbps', macTable:'128K', vlans:'4094',
+      routing:'Full L3 + SR', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'100G server-facing DC leaf. Used in hyperscale-style leaf-spine fabrics. ZTP and EOS automation make it ops-friendly.'
+    }
   },
-  {
-    id: 'ncs5502',
-    model: 'NCS 5502',
-    vendor: 'Cisco',
-    subLayer: 'p-router',
-    ports: 48,
-    uplinks: 0,
-    speed: '100G',
-    asic: 'Jericho+',
-    powerW: 1800,
-    priceUSD: 95000,
-    features: ['MPLS', 'SR-MPLS', 'IS-IS', 'BFD', 'FlowSpec', 'RSVP-TE'],
-    useCases: ['sp_mpls'],
-    detail: '48x100G QSFP28, Jericho+ ASIC, 4.8Tbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'qfx5120-48y': {
+    id:'qfx5120-48y', vendor:'Juniper', vlClass:'vl-juniper',
+    model:'QFX5120-48Y', series:'QFX5120',
+    layer:'leaf', subLayer:'dc-leaf',
+    ports:'48x 25GbE SFP28', uplinks:'8x 100GbE QSFP28',
+    speed:'25G', upSpeed:'100G', powerW:650, bufferGB:0.032,
+    latencyNs:1000, asic:'Broadcom Trident3',
+    priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:19000,
+    rackU:1,
+    features:['VXLAN/EVPN','BGP','Junos','NETCONF/YANG','Analytics','ZTP','Multi-chassis LAG'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'2.88 Tbps', macTable:'256K', vlans:'4094',
+      routing:'Full L3', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Consistent Junos across DC and campus. Strong analytics with Juniper Apstra integration for intent-based networking.'
+    }
   },
-
-  // ─── Private 5G / O-RAN (G-40) ───────────────────────────────────────────────
-  {
-    id: 'oran-fh-sw',
-    model: 'Nexus 3264Q-B2 (O-RAN FH)',
-    vendor: 'Cisco',
-    subLayer: 'fronthaul',
-    ports: 64,
-    uplinks: 8,
-    uplink_speed_gbps: 100,
-    speed: '25G',
-    asic: 'Cloud Scale',
-    powerW: 350,
-    priceUSD: 18000,
-    features: ['PTP', 'eCPRI', 'SyncE', 'LLDP', 'QoS', 'VLAN'],
-    useCases: ['private_5g'],
-    detail: '64x25G SFP28 + 8x100G, PTP/IEEE 1588v2, SyncE, eCPRI fronthaul',
-    eol_date: null,
-    eos_date: null,
-    successor: null
-  },
-  {
-    id: 'oran-mh-rtr',
-    model: 'ASR 1001-X (O-RAN MH)',
-    vendor: 'Cisco',
-    subLayer: 'midhaul',
-    ports: 8,
-    uplinks: 0,
-    speed: '10G',
-    asic: 'QuantumFlow',
-    powerW: 350,
-    priceUSD: 22000,
-    features: ['MPLS', 'PTP', 'SyncE', 'BGP', 'QoS', 'FlexE'],
-    useCases: ['private_5g'],
-    detail: '8x10G SFP+, midhaul transport, PTP Boundary Clock, 20Gbps',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'dell-s5248f-on': {
+    id:'dell-s5248f-on', vendor:'Dell EMC', vlClass:'vl-dell',
+    model:'PowerSwitch S5248F-ON', series:'S5200',
+    layer:'leaf', subLayer:'dc-leaf',
+    ports:'48x 25GbE SFP28', uplinks:'6x 100GbE QSFP28',
+    speed:'25G', upSpeed:'100G', powerW:600, bufferGB:0.032,
+    latencyNs:1000, asic:'Broadcom Trident3',
+    priceRange:'mid', userScale:[200,2000], estimatedCostUSD:12000,
+    rackU:1,
+    features:['SONiC / OS10','Open Networking','VXLAN/EVPN','BGP','ONIE','ZTP','SmartFabric','Dell EMC fabric'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'3.6 Tbps', macTable:'128K', vlans:'4094',
+      routing:'Full L3', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Open networking DC leaf. Runs SONiC or Dell OS10. SmartFabric Director automates CLOS fabric deployment. Good cost alternative to Cisco/Arista for standard DC workloads.'
+    }
   },
 
-  // ─── Storage Networking (G-41) ────────────────────────────────────────────────
-  {
-    id: 'mds9396t',
-    model: 'MDS 9396T',
-    vendor: 'Cisco',
-    subLayer: 'storage-fabric',
-    ports: 96,
-    uplinks: 0,
-    speed: '32G',
-    asic: 'SAN Scale',
-    powerW: 850,
-    priceUSD: 35000,
-    features: ['FC', 'FCoE', 'NVMe-FC', 'FCIP', 'iSCSI', 'VSAN'],
-    useCases: ['storage'],
-    detail: '96x32G FC, NVMe/FC, VSAN, SmartZoning, FCIP gateway',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  /* ══════════════════════════════════════════════════════════════
+     DATA CENTER — SPINE
+  ══════════════════════════════════════════════════════════════ */
+  'nexus-9336c-fx2': {
+    id:'nexus-9336c-fx2', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Nexus 9336C-FX2', series:'Nexus 9300',
+    layer:'spine', subLayer:'dc-spine',
+    ports:'36x 100GbE QSFP28', uplinks:'—',
+    speed:'100G', upSpeed:'400G', powerW:650, bufferGB:0.04,
+    latencyNs:900, asic:'Cisco Cloud Scale',
+    priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:28000,
+    rackU:1,
+    features:['VXLAN/EVPN spine','BGP RR','IS-IS underlay','NX-OS','Streaming telemetry','MACSEC','ECMP 64-way'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'7.2 Tbps', macTable:'128K', vlans:'4094',
+      routing:'Full L3 BGP/OSPF/IS-IS', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'FIPS 140-2',
+      notes:'Industry-standard DC spine. Deployed in pairs or quads. Acts as BGP Route Reflector for EVPN fabric. ACI spine-ready.'
+    }
   },
-  {
-    id: 'nxos-93600cd',
-    model: 'Nexus 93600CD-GX',
-    vendor: 'Cisco',
-    subLayer: 'storage-leaf',
-    ports: 28,
-    uplinks: 8,
-    uplink_speed_gbps: 400,
-    speed: '100G',
-    asic: 'Cloud Scale GX',
-    powerW: 1200,
-    priceUSD: 65000,
-    features: ['NVMe-oF', 'RoCEv2', 'PFC', 'ECN', 'iSCSI', 'VXLAN', 'RDMA'],
-    useCases: ['storage'],
-    detail: '28x100G + 8x400G QSFP-DD, NVMe-oF over RoCEv2/TCP/FC',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  'nexus-9364d-gx': {
+    id:'nexus-9364d-gx', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Nexus 9364D-GX', series:'Nexus 9300',
+    layer:'spine', subLayer:'dc-spine',
+    ports:'64x 400GbE QSFP-DD', uplinks:'—',
+    speed:'400G', upSpeed:'—', powerW:2200, bufferGB:0.256,
+    latencyNs:800, asic:'Cisco Cloud Scale NEXT',
+    priceRange:'hyperscale', userScale:[5000,50000], estimatedCostUSD:120000,
+    rackU:2,
+    features:['400G spine','VXLAN/EVPN','BGP RR','ECMP 128-way','NX-OS','Streaming telemetry','MACSEC-256'],
+    useCases:['dc','hybrid','gpu'],
+    detail:{
+      throughput:'51.2 Tbps', macTable:'256K', vlans:'16M (VNI)',
+      routing:'Full L3 + SR-MPLS', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'FIPS 140-2',
+      notes:'Next-gen 400G spine for hyperscale or AI/GPU fabrics. Connects GPU TOR switches at 400G. Future-proof for 800G migration.'
+    }
+  },
+  'arista-7280r3': {
+    id:'arista-7280r3', vendor:'Arista', vlClass:'vl-arista',
+    model:'7280R3-48YC6', series:'7280R3',
+    layer:'spine', subLayer:'dc-spine',
+    ports:'48x 25GbE + 6x 100GbE', uplinks:'2x 400GbE',
+    speed:'100G', upSpeed:'400G', powerW:700, bufferGB:0.512,
+    latencyNs:850, asic:'Broadcom Jericho2',
+    priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:38000,
+    rackU:2,
+    features:['Deep buffer 512MB','VXLAN/EVPN','BGP RR','SR-MPLS','CloudVision','gNMI','ECMP'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'7.2 Tbps', macTable:'512K', vlans:'16M (VNI)',
+      routing:'Full L3 + SR-MPLS', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Deep-buffer spine ideal for large VXLAN fabrics with bursty east-west traffic. Also used as border spine or route reflector.'
+    }
+  },
+  'qfx10002-60c': {
+    id:'qfx10002-60c', vendor:'Juniper', vlClass:'vl-juniper',
+    model:'QFX10002-60C', series:'QFX10002',
+    layer:'spine', subLayer:'dc-spine',
+    ports:'60x 100GbE QSFP28', uplinks:'—',
+    speed:'100G', upSpeed:'—', powerW:1200, bufferGB:2.0,
+    latencyNs:900, asic:'Juniper Express 2',
+    priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:42000,
+    rackU:2,
+    features:['Deep buffer 2GB','VXLAN/EVPN','BGP RR','Segment Routing','Apstra','NETCONF/YANG','Analytics'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'12 Tbps', macTable:'512K', vlans:'16M (VNI)',
+      routing:'Full L3 + SR + MPLS', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Large-buffer DC spine. Deep 2GB buffer absorbs microburst storms. Integrated Apstra intent-based control.'
+    }
   },
 
-  // ─── SD-WAN Controllers (G-42) ────────────────────────────────────────────────
-  {
-    id: 'sdwan-vsmart',
-    model: 'Catalyst SD-WAN vSmart',
-    vendor: 'Cisco',
-    subLayer: 'sdwan-controller',
-    ports: 0,
-    uplinks: 0,
-    speed: '10G',
-    asic: 'Software',
-    powerW: 0,
-    priceUSD: 12000,
-    features: ['OMP', 'SD-WAN', 'PolicyEngine', 'TLS', 'DTLS', 'ZTP'],
-    useCases: ['wan', 'multisite'],
-    detail: 'SD-WAN control plane, OMP routing policy, 5000 vEdge capacity',
-    eol_date: null,
-    eos_date: null,
-    successor: null
+  /* ══════════════════════════════════════════════════════════════
+     GPU / AI — TOR
+  ══════════════════════════════════════════════════════════════ */
+  'nexus-9336c-fx2-gpu': {
+    id:'nexus-9336c-fx2-gpu', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Nexus 9336C-FX2 (GPU TOR)', series:'Nexus 9300',
+    layer:'tor', subLayer:'gpu-tor',
+    ports:'36x 100GbE QSFP28', uplinks:'—',
+    speed:'100G', upSpeed:'400G', powerW:650, bufferGB:0.04,
+    latencyNs:900, asic:'Cisco Cloud Scale',
+    priceRange:'enterprise', userScale:[100,1000], estimatedCostUSD:28000,
+    rackU:1,
+    features:['RoCEv2','PFC/ECN','DCQCN','Lossless queuing','NX-OS','Streaming telemetry','ECMP'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'7.2 Tbps', macTable:'128K', vlans:'4094',
+      routing:'L3 BGP', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'FIPS 140-2',
+      notes:'Configured in lossless mode for RoCEv2 GPU traffic. PFC enables pause-free RDMA. Each TOR connects 8-16 GPU servers at 100G.'
+    }
   },
-  {
-    id: 'sdwan-vbond',
-    model: 'Catalyst SD-WAN vBond',
-    vendor: 'Cisco',
-    subLayer: 'sdwan-orchestrator',
-    ports: 0,
-    uplinks: 0,
-    speed: '1G',
-    asic: 'Software',
-    powerW: 0,
-    priceUSD: 5000,
-    features: ['NAT-traversal', 'SD-WAN', 'DTLS', 'ZTP', 'Bootstrap'],
-    useCases: ['wan', 'multisite'],
-    detail: 'SD-WAN orchestrator, NAT traversal, WAN Edge zero-touch onboarding',
-    eol_date: null,
-    eos_date: null,
-    successor: null
-  }
-];
+  'arista-7060x4-32s': {
+    id:'arista-7060x4-32s', vendor:'Arista', vlClass:'vl-arista',
+    model:'7060X4-32S', series:'7060X4',
+    layer:'tor', subLayer:'gpu-tor',
+    ports:'32x 400GbE QSFP-DD', uplinks:'—',
+    speed:'400G', upSpeed:'800G', powerW:1050, bufferGB:0.064,
+    latencyNs:650, asic:'Broadcom Trident4',
+    priceRange:'hyperscale', userScale:[500,5000], estimatedCostUSD:65000,
+    rackU:1,
+    features:['400G native','RoCEv2','PFC/ECN','DCQCN','Ultra-low latency','EOS','CloudVision','gNMI'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'12.8 Tbps', macTable:'256K', vlans:'4094',
+      routing:'Full L3 BGP', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'400G GPU TOR — connects H100/A100 servers with 400G NICs. Rail-optimized deployment pairs each TOR with 8 GPUs.'
+    }
+  },
+  'nvidia-sn4600c': {
+    id:'nvidia-sn4600c', vendor:'NVIDIA', vlClass:'vl-nvidia',
+    model:'Spectrum-3 SN4600C', series:'Spectrum-3',
+    layer:'tor', subLayer:'gpu-tor',
+    ports:'64x 400GbE QSFP-DD', uplinks:'—',
+    speed:'400G', upSpeed:'800G', powerW:1200, bufferGB:0.128,
+    latencyNs:300, asic:'NVIDIA Spectrum-3',
+    priceRange:'hyperscale', userScale:[500,5000], estimatedCostUSD:75000,
+    rackU:1,
+    features:['Ultra-low 300ns latency','RoCEv2 native','Adaptive Routing','PFC/ECN','SHARP in-network computing','ConnectX integration'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'25.6 Tbps', macTable:'512K', vlans:'4094',
+      routing:'Full L3 BGP', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Best-in-class for NVIDIA GPU clusters. SHARP offloads collective operations in-network (AllReduce). Adaptive routing eliminates hotspots. Native DGX SuperPOD integration.'
+    }
+  },
+  'arista-7060x4-64s': {
+    id:'arista-7060x4-64s', vendor:'Arista', vlClass:'vl-arista',
+    model:'7060X4-64S', series:'7060X4',
+    layer:'tor', subLayer:'gpu-tor',
+    ports:'64x 400GbE QSFP-DD', uplinks:'—',
+    speed:'400G', upSpeed:'800G', powerW:1200, bufferGB:0.128,
+    latencyNs:650, asic:'Broadcom Tomahawk4',
+    priceRange:'hyperscale', userScale:[1000,10000], estimatedCostUSD:85000,
+    rackU:2,
+    features:['400G native','RoCEv2','PFC/ECN','DCQCN','25.6T Tomahawk4','EOS','CloudVision','gNMI'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'25.6 Tbps', macTable:'256K', vlans:'4094',
+      routing:'Full L3 BGP', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'64x400G GPU leaf — 32 down / 32 up at 1:1 non-blocking. The flagship rail-optimized building block: 8 rails × 8 leaves serves 256 nodes (2048 GPUs).'
+    }
+  },
+  'nexus-9364d-gx2a': {
+    id:'nexus-9364d-gx2a', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Nexus 9364D-GX2A', series:'Nexus 9300-GX2',
+    layer:'tor', subLayer:'gpu-tor',
+    ports:'64x 400GbE QSFP-DD', uplinks:'—',
+    speed:'400G', upSpeed:'800G', powerW:1100, bufferGB:0.12,
+    latencyNs:800, asic:'Cisco Cloud Scale GX2',
+    priceRange:'hyperscale', userScale:[1000,10000], estimatedCostUSD:90000,
+    rackU:2,
+    features:['400G native','RoCEv2','PFC/ECN','DCQCN','25.6T CloudScale GX2','Nexus Dashboard','gNMI'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'25.6 Tbps', macTable:'256K', vlans:'4094',
+      routing:'Full L3 BGP EVPN', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Cisco 64x400G GPU leaf — 32 down / 32 up at 1:1 non-blocking for AI/ML training fabrics.'
+    }
+  },
+  'nvidia-sn2700': {
+    id:'nvidia-sn2700', vendor:'NVIDIA', vlClass:'vl-nvidia',
+    model:'Spectrum SN2700', series:'Spectrum',
+    layer:'tor', subLayer:'gpu-tor',
+    ports:'32x 100GbE QSFP28', uplinks:'—',
+    speed:'100G', upSpeed:'—', powerW:450, bufferGB:0.016,
+    latencyNs:500, asic:'NVIDIA Spectrum',
+    priceRange:'enterprise', userScale:[100,500], estimatedCostUSD:18000,
+    rackU:1,
+    features:['RoCEv2','PFC/ECN','Low latency','Open Ethernet','Cumulus Linux','SONiC compatible'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'6.4 Tbps', macTable:'64K', vlans:'4094',
+      routing:'Full L3', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Entry GPU TOR for 100G server NICs. Cost-effective starting point for RoCEv2 clusters. Runs Cumulus Linux or SONiC.'
+    }
+  },
 
-var LAYER_PAIRS = {
-  dc:         ['spine-leaf'],
-  gpu:        ['spine-leaf'],
-  campus:     ['distribution-access', 'core-distribution'],
-  wan:        ['wan-edge', 'sdwan-controller'],
-  multisite:  ['spine-leaf', 'wan-edge'],
-  multicloud: ['cloud-gw', 'cloud-transit'],
-  aviatrix:   ['cloud-gw', 'cloud-transit'],
-  sp_mpls:    ['pe-router', 'p-router'],
-  private_5g: ['fronthaul', 'midhaul'],
-  storage:    ['storage-fabric', 'storage-leaf']
+  /* ══════════════════════════════════════════════════════════════
+     GPU / AI — SPINE
+  ══════════════════════════════════════════════════════════════ */
+  'nvidia-sn4800': {
+    id:'nvidia-sn4800', vendor:'NVIDIA', vlClass:'vl-nvidia',
+    model:'Spectrum-3 SN4800', series:'Spectrum-3',
+    layer:'spine', subLayer:'gpu-spine',
+    ports:'64x 400GbE QSFP-DD (modular)', uplinks:'—',
+    speed:'400G', upSpeed:'—', powerW:4000, bufferGB:0.512,
+    latencyNs:300, asic:'NVIDIA Spectrum-3',
+    priceRange:'hyperscale', userScale:[2000,20000], estimatedCostUSD:250000,
+    rackU:14,
+    features:['SHARP collective offload','Adaptive Routing','Lossless RoCEv2','In-network computing','Modular chassis','Hot-swap'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'25.6 Tbps/blade', macTable:'512K', vlans:'4094',
+      routing:'Full L3 BGP', ipv6:'Yes', formFactor:'Modular 8-slot',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Hyperscale GPU spine. Used in DGX SuperPOD and Selene clusters. SHARP v2 accelerates distributed ML training by offloading AllReduce to the network.'
+    }
+  },
+  'arista-7800r3-gpu': {
+    id:'arista-7800r3-gpu', vendor:'Arista', vlClass:'vl-arista',
+    model:'7800R3 (GPU Spine)', series:'7800R3',
+    layer:'spine', subLayer:'gpu-spine',
+    ports:'144x 400GbE (chassis, up to 576x 100GbE)', uplinks:'—',
+    speed:'400G', upSpeed:'—', powerW:3500, bufferGB:2.0,
+    latencyNs:700, asic:'Broadcom Jericho2',
+    priceRange:'hyperscale', userScale:[2000,20000], estimatedCostUSD:200000,
+    rackU:14,
+    features:['Deep buffer 2GB','RoCEv2','PFC/ECN','CloudVision','BGP EVPN','Hitless ISSU','ECMP 512-way'],
+    useCases:['gpu','dc'],
+    detail:{
+      throughput:'57.6 Tbps', macTable:'1M', vlans:'16M',
+      routing:'Full L3 + SR', ipv6:'Yes', formFactor:'Modular 8-slot',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Large modular spine for GPU or DC. Deep buffer essential for bursty AllReduce patterns. Up to 144x 400G ports per chassis.'
+    }
+  },
+  'nexus-9364d-spine': {
+    id:'nexus-9364d-spine', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Nexus 9364D-GX2A (Spine)', series:'Nexus 9300-GX2',
+    layer:'spine', subLayer:'gpu-spine',
+    ports:'64x 400GbE QSFP-DD', uplinks:'—',
+    speed:'400G', upSpeed:'—', powerW:1100, bufferGB:0.12,
+    latencyNs:800, asic:'Cisco Cloud Scale GX2',
+    priceRange:'hyperscale', userScale:[1000,10000], estimatedCostUSD:90000,
+    rackU:2,
+    features:['400G native','RoCEv2','PFC/ECN','DCQCN','25.6T CloudScale GX2','eBGP ECMP','gNMI'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'25.6 Tbps', macTable:'256K', vlans:'4094',
+      routing:'Full L3 BGP', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Cisco 64x400G fixed GPU spine. 1:1 CLOS: 2048 leaf uplinks / 64 ports = 32 spines for the 2048-GPU flagship fabric.'
+    }
+  },
+  'arista-7060x4-64s-spine': {
+    id:'arista-7060x4-64s-spine', vendor:'Arista', vlClass:'vl-arista',
+    model:'7060X4-64S (Spine)', series:'7060X4',
+    layer:'spine', subLayer:'gpu-spine',
+    ports:'64x 400GbE QSFP-DD', uplinks:'—',
+    speed:'400G', upSpeed:'—', powerW:1200, bufferGB:0.128,
+    latencyNs:650, asic:'Broadcom Tomahawk4',
+    priceRange:'hyperscale', userScale:[1000,10000], estimatedCostUSD:85000,
+    rackU:2,
+    features:['400G native','RoCEv2','PFC/ECN','DCQCN','25.6T Tomahawk4','eBGP ECMP','CloudVision'],
+    useCases:['gpu'],
+    detail:{
+      throughput:'25.6 Tbps', macTable:'256K', vlans:'4094',
+      routing:'Full L3 BGP', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'TAA',
+      notes:'Arista 64x400G fixed GPU spine. 1:1 CLOS: 2048 leaf uplinks / 64 ports = 32 spines for the 2048-GPU flagship fabric.'
+    }
+  },
+
+  /* ══════════════════════════════════════════════════════════════
+     FIREWALLS / SECURITY
+  ══════════════════════════════════════════════════════════════ */
+  'fp4145': {
+    id:'fp4145', vendor:'Cisco', vlClass:'vl-cisco',
+    model:'Firepower 4145', series:'Firepower 4100',
+    layer:'firewall', subLayer:'fw',
+    ports:'16x 10GbE + 2x 40GbE', uplinks:'—',
+    speed:'10G', upSpeed:'40G', powerW:800, bufferGB:0,
+    latencyNs:0, asic:'Intel CPU + FPGA',
+    priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:55000,
+    rackU:1,
+    features:['IPS/IDS','TLS 1.3 inspection','AMP','URL filtering','RA VPN','FMC managed','FTD software','Zero-Trust ready'],
+    useCases:['campus','dc','hybrid','wan'],
+    detail:{
+      throughput:'45 Gbps FW / 20 Gbps IPS', macTable:'—', vlans:'4094',
+      routing:'BGP / OSPF (ASA mode)', ipv6:'Yes', formFactor:'1RU',
+      warranty:'1-year', certifications:'FIPS 140-2, Common Criteria',
+      notes:'Enterprise perimeter NGFW. Managed by Firepower Management Center or Cisco Defense Orchestrator.'
+    }
+  },
+  'pa-3440': {
+    id:'pa-3440', vendor:'Palo Alto', vlClass:'vl-paloalto',
+    model:'PA-3440', series:'PA-3400',
+    layer:'firewall', subLayer:'fw',
+    ports:'8x 25GbE SFP28 + 4x 100GbE QSFP28', uplinks:'—',
+    speed:'25G', upSpeed:'100G', powerW:600, bufferGB:0,
+    latencyNs:0, asic:'Custom DPDK',
+    priceRange:'enterprise', userScale:[500,5000], estimatedCostUSD:45000,
+    rackU:2,
+    features:['App-ID','User-ID','ML-based IPS','TLS inspection','DNS Security','Panorama managed','SD-WAN','ZTNA'],
+    useCases:['campus','dc','hybrid'],
+    detail:{
+      throughput:'22 Gbps FW / 10 Gbps threat', macTable:'—', vlans:'4094',
+      routing:'BGP / OSPF', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'FIPS 140-2, CC EAL4+',
+      notes:'Best-of-breed NGFW with App-ID. ML-powered inline threat prevention. Ideal for DC perimeter or distributed campus FW.'
+    }
+  },
+  'pa-5445': {
+    id:'pa-5445', vendor:'Palo Alto', vlClass:'vl-paloalto',
+    model:'PA-5445', series:'PA-5400',
+    layer:'firewall', subLayer:'fw',
+    ports:'16x 100GbE QSFP28 + 4x 400GbE', uplinks:'—',
+    speed:'100G', upSpeed:'400G', powerW:1500, bufferGB:0,
+    latencyNs:0, asic:'Custom CN-NGFW',
+    priceRange:'hyperscale', userScale:[5000,50000], estimatedCostUSD:185000,
+    rackU:4,
+    features:['100G+ throughput','App-ID','ML IPS','TLS 1.3','CN-Series Kubernetes','Panorama','ZTNA 2.0'],
+    useCases:['dc','hybrid','gpu'],
+    detail:{
+      throughput:'200 Gbps FW / 100 Gbps threat', macTable:'—', vlans:'4094',
+      routing:'BGP / OSPF / IS-IS', ipv6:'Yes', formFactor:'4RU',
+      warranty:'1-year', certifications:'FIPS 140-2, CC EAL4+',
+      notes:'Hyperscale NGFW for large DC edge. 200 Gbps FW throughput. Supports Kubernetes and container micro-segmentation.'
+    }
+  },
+  'fortigate-100f': {
+    id:'fortigate-100f', vendor:'Fortinet', vlClass:'vl-fortinet',
+    model:'FortiGate 100F', series:'FortiGate F',
+    layer:'firewall', subLayer:'fw',
+    ports:'22x 1GbE + 2x 10GbE SFP+', uplinks:'—',
+    speed:'1G', upSpeed:'10G', powerW:50, bufferGB:0,
+    latencyNs:0, asic:'NP6lite ASIC',
+    priceRange:'smb', userScale:[10,200], estimatedCostUSD:2800,
+    rackU:1,
+    features:['NP6lite ASIC offload','IPS','SSL inspection','SD-WAN built-in','FortiManager','Security Fabric','ZTNA','FortiSwitch integration'],
+    useCases:['campus','wan'],
+    detail:{
+      throughput:'20 Gbps FW / 1 Gbps IPS', macTable:'—', vlans:'4094',
+      routing:'BGP / OSPF', ipv6:'Yes', formFactor:'1RU desktop',
+      warranty:'Limited Lifetime', certifications:'FIPS 140-2',
+      notes:'Best SMB firewall. Manages FortiSwitch and FortiAP via Security Fabric for unified campus control. Ideal for small branches and SMB campuses under 200 users.'
+    }
+  },
+  'fortigate-600f': {
+    id:'fortigate-600f', vendor:'Fortinet', vlClass:'vl-fortinet',
+    model:'FortiGate 600F', series:'FortiGate F',
+    layer:'firewall', subLayer:'fw',
+    ports:'16x 1GbE + 8x 25GbE SFP28 + 2x 100GbE', uplinks:'—',
+    speed:'25G', upSpeed:'100G', powerW:200, bufferGB:0,
+    latencyNs:0, asic:'NP7 + CP9 ASIC',
+    priceRange:'mid', userScale:[200,1000], estimatedCostUSD:12000,
+    rackU:1,
+    features:['NP7 ASIC offload','IPS','SSL inspection','SD-WAN','Security Fabric','ZTNA','FortiManager','SASE-ready'],
+    useCases:['campus','dc','hybrid','wan'],
+    detail:{
+      throughput:'36 Gbps FW / 10 Gbps IPS', macTable:'—', vlans:'4094',
+      routing:'BGP / OSPF / IS-IS', ipv6:'Yes', formFactor:'1RU',
+      warranty:'Limited Lifetime', certifications:'FIPS 140-2',
+      notes:'Mid-market NGFW. Excellent price/performance via NP7. Perfect pair with FortiSwitch 400/500 for full Fortinet campus fabric.'
+    }
+  },
+  'fortigate-1800f': {
+    id:'fortigate-1800f', vendor:'Fortinet', vlClass:'vl-fortinet',
+    model:'FortiGate 1800F', series:'FortiGate F',
+    layer:'firewall', subLayer:'fw',
+    ports:'16x 25GbE SFP28 + 4x 100GbE QSFP28', uplinks:'—',
+    speed:'25G', upSpeed:'100G', powerW:750, bufferGB:0,
+    latencyNs:0, asic:'NP7 + CP9 ASIC',
+    priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:48000,
+    rackU:2,
+    features:['NP7 ASIC offload','IPS','SSL inspection','SD-WAN built-in','FortiManager','Security Fabric','ZTNA','SASE'],
+    useCases:['campus','dc','hybrid','wan'],
+    detail:{
+      throughput:'198 Gbps FW / 35 Gbps IPS', macTable:'—', vlans:'4094',
+      routing:'BGP / OSPF / IS-IS', ipv6:'Yes', formFactor:'2RU',
+      warranty:'Limited Lifetime', certifications:'FIPS 140-2, CC EAL4+',
+      notes:'Best price/performance via NP7 ASIC. Built-in SD-WAN makes it ideal for WAN edge + FW consolidation. Security Fabric for unified visibility.'
+    }
+  },
+  'srx4600': {
+    id:'srx4600', vendor:'Juniper', vlClass:'vl-juniper',
+    model:'SRX4600', series:'SRX4000',
+    layer:'firewall', subLayer:'fw',
+    ports:'6x 100GbE QSFP28 + 24x 10GbE SFP+', uplinks:'—',
+    speed:'100G', upSpeed:'—', powerW:850, bufferGB:0,
+    latencyNs:0, asic:'Juniper Penta',
+    priceRange:'enterprise', userScale:[1000,10000], estimatedCostUSD:52000,
+    rackU:2,
+    features:['Junos UTM','IDP','AppSecure','Sky ATP','JSA SIEM','NETCONF/YANG','Sky Enterprise'],
+    useCases:['dc','hybrid'],
+    detail:{
+      throughput:'80 Gbps FW / 20 Gbps IPS', macTable:'—', vlans:'4094',
+      routing:'Full L3 BGP / OSPF / IS-IS', ipv6:'Yes', formFactor:'2RU',
+      warranty:'1-year', certifications:'FIPS 140-2, CC EAL4+',
+      notes:'DC-focused NGFW with consistent Junos. Ideal for all-Juniper DC deployments. Integrates with QFX via Security Director.'
+    }
+  },
 };
-
-window.PRODUCTS = PRODUCTS;
-window.LAYER_PAIRS = LAYER_PAIRS;

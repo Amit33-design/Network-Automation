@@ -25,6 +25,7 @@ const STATE = {
   latencySla: '',
   automation: '',
   gpuSpecifics: [],
+  gpusPerServer: 8,       // GPUs (and 400G NICs) per server — drives rail count
   extraNotes: '',
   selectedProducts: {},   // layerKey → prodId
   // Phase 2 additions

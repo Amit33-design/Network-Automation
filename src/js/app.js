@@ -220,6 +220,8 @@ function validateStep(n) {
     STATE.latencySla  = document.getElementById('latency-sla').value;
     STATE.automation  = document.getElementById('automation').value;
     STATE.extraNotes  = document.getElementById('extra-notes').value;
+    const gpsEl = document.getElementById('gpus-per-server');
+    if (gpsEl) STATE.gpusPerServer = gpsEl.value;
     if (!STATE.redundancy) { toast('Please select a redundancy model', 'error'); return false; }
     return true;
   }

@@ -291,10 +291,12 @@ function campusHLD() {
   const dual = red === 'ha' || red === 'full';
   const haFW = STATE.fwModel && STATE.fwModel !== 'none';
 
-  // ── Capacity model ────────────────────────────────────────────
+  // ── Capacity model (model-port-driven) ────────────────────────
+  const selAccessProd = PRODUCTS[STATE.selectedProducts['campus-access']];
   const cap  = campusCapacity(parseInt(STATE.totalHosts) || 100, {
     sites: parseInt(STATE.numSites) || 1,
     redundancy: red,
+    portsPerSwitch: (selAccessProd && parseInt(selAccessProd.ports)) || 48,
   });
   const totalAccess = cap.access;
   const totalDist   = cap.dist;
@@ -523,8 +525,14 @@ function dcHLD() {
   const selFW    = PRODUCTS[STATE.selectedProducts['fw']];
   const P = _protos();
 
-  // ── Capacity model ────────────────────────────────────────────
-  const cap = dcCapacity(parseInt(STATE.totalHosts) || 100, { redundancy: red });
+  // ── Capacity model (model-port-driven, matches capacityFromState) ──
+  const cap = dcCapacity(parseInt(STATE.totalHosts) || 100, {
+    redundancy:   red,
+    oversub:      parseInt(STATE.oversub) || 3,
+    portsPerLeaf: (selLeaf  && parseInt(selLeaf.ports))  || 48,
+    spinePorts:   (selSpine && parseInt(selSpine.ports)) || 36,
+    serverSpeed:  parseInt(STATE.bwPerServer) || 25,
+  });
   const totalLeafs  = cap.leafs;
   const totalSpines = cap.spines;
 
@@ -728,13 +736,21 @@ function gpuHLD() {
   const selTOR   = PRODUCTS[STATE.selectedProducts['gpu-tor']];
   const selSpine = PRODUCTS[STATE.selectedProducts['gpu-spine']];
 
-  // ── Capacity model ────────────────────────────────────────────
-  const gpuCount  = parseInt(STATE.gpuCount || STATE.totalHosts) || 64;
+  // ── Capacity model (model-port-driven, matches capacityFromState) ──
   const gpuPerSrv = parseInt(STATE.gpusPerServer) || 8;
-  const portSpd   = parseInt(STATE.portSpeed) || 100;
+  // totalHosts = GPU endpoints (one 400G NIC each); servers derived inside gpuCapacity
+  const gpuCount  = (parseInt(STATE.gpuCount) > 0)
+    ? parseInt(STATE.gpuCount)
+    : (parseInt(STATE.totalHosts) || 64);
+  const portSpd   = parseInt(STATE.portSpeed) || parseInt(STATE.bwPerServer) || 400;
+  const railOpt   = (STATE.gpuSpecifics || []).some(g => /rail/i.test(g));
   const cap = gpuCapacity(gpuCount, {
     gpusPerServer: gpuPerSrv,
-    speed: portSpd,
+    speed:         portSpd,
+    portsPerTOR:   (selTOR   && parseInt(selTOR.ports))   || 64,
+    spinePorts:    (selSpine && parseInt(selSpine.ports)) || 64,
+    oversub:       1,
+    railOptimized: railOpt,
   });
   const totalTORs   = cap.tors;
   const totalSpines = cap.spines;
@@ -826,6 +842,7 @@ function gpuHLD() {
   ];
 
   const meta = `Capacity: ${totalTORs} TOR switches · ${totalSpines} spines · ${cap.servers} servers · ${cap.gpus} GPUs · ` +
+    `${cap.railNote} · ` +
     `Oversubscription: ${cap.oversub}:1 ${cap.isNonBlocking?'✓ non-blocking':'⚠ check uplinks'} · ` +
     `${portSpd}G ports · ${hasPFC?'PFC lossless · ':''}${hasECN?'ECN · ':''}` +
     `${selTOR?selTOR.model:'—'} TOR · ${selSpine?selSpine.model:'—'} spine`;
