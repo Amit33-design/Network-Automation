@@ -104,12 +104,21 @@ function lookupProduct(id) {
   return window.PRODUCTS.find(function(p) { return p.id === id; }) || null;
 }
 
-// Use cases where port-math BOM applies (spine-leaf topologies)
-var PORT_MATH_CASES = { dc: true, gpu: true, multisite: true };
+// Two-tier port-math role mapping per use case. "lower" connects endpoints,
+// "upper" aggregates the lower tier's uplinks. Same CLAUDE.md §6 math
+// applies to every pair — only the role names differ.
+var PORT_MATH_ROLES = {
+  dc:        { lower: 'leaf',         upper: 'spine' },
+  gpu:       { lower: 'leaf',         upper: 'spine' },
+  multisite: { lower: 'leaf',         upper: 'spine' },
+  campus:    { lower: 'access',       upper: 'distribution' },
+  storage:   { lower: 'storage-leaf', upper: 'storage-fabric' }
+};
 
 /**
  * Build a flat device list for the given use case and scale.
- * For DC/GPU/multisite: quantities come from calculateBOM() port-math (G-03/G-04).
+ * For DC/GPU/multisite/campus/storage: quantities come from calculateBOM()
+ * port-math (G-03/G-04) using the preferred product's actual port counts.
  * For other use cases: fall back to SCALE_DEFS.
  */
 function buildDeviceList(state) {
@@ -120,9 +129,10 @@ function buildDeviceList(state) {
   var scaleDef;
 
   // ── Port-math sizing (G-03 + G-04) ────────────────────────────────────────
-  if (PORT_MATH_CASES[useCase] && window.calculateBOM && state.topology) {
-    var leafProdId  = prefProducts['leaf'];
-    var spineProdId = prefProducts['spine'];
+  var pmRoles = PORT_MATH_ROLES[useCase];
+  if (pmRoles && window.calculateBOM && state.topology) {
+    var leafProdId  = prefProducts[pmRoles.lower];
+    var spineProdId = prefProducts[pmRoles.upper];
     var leafProd    = leafProdId  ? lookupProduct(leafProdId)  : null;
     var spineProd   = spineProdId ? lookupProduct(spineProdId) : null;
 
@@ -135,30 +145,44 @@ function buildDeviceList(state) {
       };
       var spineSku = { port_count: spineProd.ports };
 
+      var calcState = state;
+
+      // Multi-site / DCI: size each site for its share of endpoints; the
+      // per-site fabric is multiplied by the site count further below.
+      var pmSites = (useCase === 'multisite' && state.org && state.org.sites > 1)
+        ? Math.max(1, parseInt(state.org.sites) || 1) : 1;
+      if (pmSites > 1) {
+        var msTopo = Object.assign({}, state.topology || {});
+        msTopo.endpoint_count = Math.max(1, Math.ceil((msTopo.endpoint_count || 500) / pmSites));
+        calcState = Object.assign({}, state, { topology: msTopo });
+      }
+
       // For non-rail GPU, force 400G/1:1 if the form still has DC defaults.
       // Rail-optimized formula bypasses bandwidth_gbps/oversubscription entirely.
-      var calcState = state;
       var gpuState = state.gpu || {};
       if (useCase === 'gpu' && !gpuState.rail_optimized) {
-        var gpuTopo = Object.assign({}, state.topology || {});
+        var gpuTopo = Object.assign({}, calcState.topology || {});
         if (!gpuTopo.bandwidth_gbps || gpuTopo.bandwidth_gbps < 200) {
           gpuTopo.bandwidth_gbps = leafSku.uplink_speed_gbps || 400;
         }
         if (!gpuTopo.oversubscription || gpuTopo.oversubscription > 1) {
           gpuTopo.oversubscription = 1;
         }
-        calcState = Object.assign({}, state, { topology: gpuTopo });
+        calcState = Object.assign({}, calcState, { topology: gpuTopo });
       }
 
       var calc     = window.calculateBOM(calcState, leafSku, spineSku);
+      calc.tier_labels = { lower: pmRoles.lower, upper: pmRoles.upper };
 
       state.capacityMath = calc; // stored for "Capacity Math" panel display
 
-      scaleDef = { spine: calc.spine_count, leaf: calc.leaf_count };
-      // Preserve non-spine-leaf roles from SCALE_DEFS
+      scaleDef = {};
+      scaleDef[pmRoles.upper] = calc.spine_count;
+      scaleDef[pmRoles.lower] = calc.leaf_count;
+      // Preserve other roles (firewall, wan-edge…) from SCALE_DEFS
       var fallback = (SCALE_DEFS[scale] || SCALE_DEFS.small)[useCase] || {};
       Object.keys(fallback).forEach(function(role) {
-        if (role !== 'spine' && role !== 'leaf') scaleDef[role] = fallback[role];
+        if (role !== pmRoles.upper && role !== pmRoles.lower) scaleDef[role] = fallback[role];
       });
     }
   }
