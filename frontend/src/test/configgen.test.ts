@@ -458,6 +458,49 @@ describe('IPv6 dual-stack underlay (Enterprise upgrade A6)', () => {
   })
 })
 
+// ── Enterprise upgrade A7: Multisite EVPN DCI route-targets ───────────────────
+describe('Multisite EVPN DCI route-targets (Enterprise upgrade A7)', () => {
+  const nxosLeaf = () => makeDevice({ hostname: 'IAD-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 })
+  const aristaLeaf = () => makeDevice({ hostname: 'IAD-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', ports: 32, uplinks: 2 })
+
+  it('dc use case: no DCI route-targets emitted', () => {
+    expect(generateConfig(nxosLeaf(), 0, 'dc')).not.toContain('65100:')
+    expect(generateConfig(aristaLeaf(), 0, 'dc')).not.toContain('65100:')
+  })
+
+  it('multisite NX-OS leaf: DCI RTs on L3VNI VRF and L2VNI MAC-VRF alongside auto RTs', () => {
+    const cfg = generateConfig(nxosLeaf(), 0, 'multisite')
+    expect(cfg).toContain('route-target both auto evpn')
+    expect(cfg).toContain('route-target import 65100:50000 evpn')
+    expect(cfg).toContain('route-target export 65100:50000 evpn')
+    expect(cfg).toContain('route-target import 65100:10010')
+    expect(cfg).toContain('route-target export 65100:10010')
+  })
+
+  it('NX-OS leaf always has an EVPN MAC-VRF block with auto RTs and correct NVE VNI roles', () => {
+    const cfg = generateConfig(nxosLeaf(), 0, 'dc')
+    expect(cfg).toContain('vni 10010 l2')
+    expect(cfg).toContain('route-target import auto')
+    // L2VNI gets ingress-replication; L3VNI gets associate-vrf (CLAUDE.md §10)
+    expect(cfg).toMatch(/member vni 10010\n\s+ingress-replication protocol bgp/)
+    expect(cfg).toContain('member vni 50000 associate-vrf')
+  })
+
+  it('multisite Arista leaf: MAC-VRF with site RT plus stretched DCI RTs', () => {
+    const cfg = generateConfig(aristaLeaf(), 0, 'multisite')
+    expect(cfg).toContain('route-target both 65000:10010')
+    expect(cfg).toContain('route-target import evpn 65100:10010')
+    expect(cfg).toContain('route-target export evpn 65100:10010')
+  })
+
+  it('Arista leaf always has a MAC-VRF vlan section under router bgp', () => {
+    const cfg = generateConfig(aristaLeaf(), 0, 'dc')
+    expect(cfg).toContain('rd 10.255.2.1:10010')
+    expect(cfg).toContain('route-target both 65000:10010')
+    expect(cfg).toContain('redistribute learned')
+  })
+})
+
 // ── Enterprise upgrade A3: Campus distribution/access — FHRP, STP, IGMP ───────
 describe('Campus distribution/access config (Enterprise upgrade A3)', () => {
   it('Cisco campus distribution uses OSPF, not IS-IS', () => {

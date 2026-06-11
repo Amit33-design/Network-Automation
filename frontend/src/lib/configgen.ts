@@ -427,9 +427,16 @@ function aristaIsisIpv6AddressFamily(ipv6Enabled: boolean): string {
 ` : ''
 }
 
+// ── Multisite EVPN DCI route-targets (Enterprise upgrade A7) ───────────────────
+// Shared DCI route-target namespace stretched across all sites. Site-local
+// routes keep `auto` RTs (scoped to each site's ASN); VNIs that must be
+// extended over the DCI additionally import/export `${DCI_RT_ASN}:<vni>`,
+// which is identical on every site — so cross-site leaking is opt-in per VNI.
+const DCI_RT_ASN = 65100
+
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 
-function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
+function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
@@ -440,6 +447,16 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   const fabricLinks = renderNxosFabricLinks('leaf', dev, allDevices, ipv6Underlay)
   const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
   const vpcRolePriority = isPrimary ? 8192 : 16384
+  const dciL3RtLines = isMultisite ? `
+    route-target import ${DCI_RT_ASN}:50000 evpn
+    route-target export ${DCI_RT_ASN}:50000 evpn` : ''
+  const dciL2RtLines = isMultisite ? `
+    route-target import ${DCI_RT_ASN}:10010
+    route-target export ${DCI_RT_ASN}:10010` : ''
+  const dciComment = isMultisite ? `
+! Multisite DCI: site-local routes use auto RTs (per-site ASN scope); the
+! explicit ${DCI_RT_ASN}:<vni> RTs below are the shared DCI namespace stretched
+! across all sites — only VNIs carrying these RTs are leaked over the DCI.` : ''
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -489,12 +506,12 @@ interface mgmt0
   ip address <CHANGE-ME-mgmt-ip>/24
   no shutdown
 !
-! ── TENANT VRF / VNI (example — replicate per tenant) ────────────────────────
+! ── TENANT VRF / VNI (example — replicate per tenant) ────────────────────────${dciComment}
 vrf context TENANT-A
   vni 50000
   rd auto
   address-family ipv4 unicast
-    route-target both auto evpn
+    route-target both auto evpn${dciL3RtLines}
 !
 vlan 10
   name SERVERS
@@ -549,9 +566,16 @@ interface nve1
   no shutdown
   host-reachability protocol bgp
   source-interface loopback1
-  member vni 10010 associate-vrf
-  member vni 50000
+  member vni 10010
     ingress-replication protocol bgp
+  member vni 50000 associate-vrf
+!
+! ── EVPN MAC-VRF (L2VNI route-targets) ───────────────────────────────────────
+evpn
+  vni 10010 l2
+    rd auto
+    route-target import auto
+    route-target export auto${dciL2RtLines}
 !
 ! ── UPLINKS (topology-driven from BOM port-math) ─────────────────────────────
 ${fabricLinks}
@@ -870,7 +894,7 @@ EOF
 `
 }
 
-function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
+function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
@@ -879,6 +903,11 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const routerIdV6 = `fd00:255:2::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
   const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices, ipv6Underlay)
+  // Site-local MAC-VRF RT uses the fabric (spine) ASN so all leaves in the
+  // site share it; the DCI RT is the cross-site stretched namespace (A7).
+  const dciL2RtLines = isMultisite ? `
+    route-target import evpn ${DCI_RT_ASN}:10010
+    route-target export evpn ${DCI_RT_ASN}:10010` : ''
   const { pairId, peerHostname, domainId } = haPairInfo(dev, idx)
 
   return `! ═══════════════════════════════════════════════════════════════
@@ -948,6 +977,11 @@ router bgp ${leafAsn}
     network ${vtepIp}/32
   address-family evpn
     neighbor SPINE-RR activate
+  !
+  vlan 10
+    rd ${routerId}:10010
+    route-target both 65000:10010${dciL2RtLines}
+    redistribute learned
 !
 ! ── VXLAN ────────────────────────────────────────────────────────────────────
 interface Vxlan1
@@ -2182,10 +2216,10 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Cisco'     && l === 'firewall')                         return ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
   if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
-  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures)
+  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite')
   if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes)
   if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
-  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures)
+  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite')
   if (v === 'Juniper'   && (l === 'leaf' || l === 'spine'))          return juniperLeafConfig(dev, idx)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)

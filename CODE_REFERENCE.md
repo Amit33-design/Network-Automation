@@ -302,6 +302,14 @@ npm test` after ANY change here):
     and `fd00:255:2::${idx+1}` (leaf), mirroring `10.255.1.${idx+1}` /
     `10.255.2.${idx+1}`. The VTEP loopback (`loopback1`/`Loopback1`) stays
     IPv4-only — VXLAN underlay transport is unchanged by this flag.
+- **`DCI_RT_ASN = 65100` (Enterprise Upgrade A7, 2026-06-11)** — module-level
+  constant: the shared multisite DCI route-target namespace. When
+  `useCase === 'multisite'`, `generateConfig` passes `isMultisite = true` to
+  `nxosLeafConfig`/`aristaLeafConfig` (new 6th param, default `false`), which
+  then emit explicit `${DCI_RT_ASN}:<vni>` import/export RTs *alongside* the
+  site-local RTs (`auto` on NX-OS, fabric-ASN `65000:<vni>` on Arista) — so
+  cross-site EVPN leaking is opt-in per VNI and identical on every site.
+  Spine RRs need no change (`retain route-target all` already present).
 
 ### NX-OS (Cisco) — DC/GPU spine-leaf
 - **`nxosSpineConfig(dev, idx, isGpu, allDevices = [], protoFeatures = []):
@@ -332,7 +340,13 @@ npm test` after ANY change here):
   `peer-gateway`, `ip arp synchronize`, `auto-recovery`. IPv6 dual-stack
   (A6) adds `ipv6 address fd00:255:2::${idx+1}/128` + `ipv6 router isis 1`
   to `loopback0` and `address-family ipv6 unicast` under `router isis 1`
-  when `protoFeatures.includes('IPv6 Dual-Stack')`.
+  when `protoFeatures.includes('IPv6 Dual-Stack')`. Post A7 (2026-06-11):
+  signature gains `isMultisite = false` (6th param); always emits an **EVPN
+  MAC-VRF block** (`evpn` → `vni 10010 l2` → `rd auto` + auto RTs) and the
+  NVE member-VNI roles were fixed to match CLAUDE.md §10 (L2VNI 10010 →
+  `ingress-replication protocol bgp`, L3VNI 50000 → `associate-vrf`); when
+  `isMultisite`, the TENANT-A VRF and the MAC-VRF additionally import/export
+  `65100:50000` / `65100:10010` DCI route-targets.
 - **`nxosStdQoS(): string`** / **`nxosGpuQoS(): string`** — standard 4-class
   DSCP QoS vs full RoCEv2 QoS (PFC priority-3 lossless `pause no-drop`,
   RDMA class `bandwidth percent 60`, ECN `congestion-control ecn` +
@@ -368,7 +382,13 @@ npm test` after ANY change here):
   Port-Channel${pairId}00`, plus `aristaTelemetryBlock()`. IPv6 dual-stack
   (A6) adds `address-family ipv6 unicast` under `router isis UNDERLAY` and
   `ipv6 address fd00:255:2::${idx+1}/128` to `Loopback0` when
-  `protoFeatures.includes('IPv6 Dual-Stack')`.
+  `protoFeatures.includes('IPv6 Dual-Stack')`. Post A7 (2026-06-11):
+  signature gains `isMultisite = false` (6th param); always emits a
+  **MAC-VRF `vlan 10` section** under `router bgp` (`rd
+  ${routerId}:10010`, `route-target both 65000:10010` — fabric-ASN-scoped
+  so all leaves in the site share it — `redistribute learned`, previously
+  absent entirely); when `isMultisite`, adds `route-target import/export
+  evpn 65100:10010` DCI RTs.
 - **`aristaGpuQoS(): string`** — PFC priority 3 RoCEv2 (`pfc enable`, `pfc
   priority 3 no-drop`), ECN on lossy queues.
 - **`aristaTelemetryBlock(): string`** *(added 2026-06-11, Enterprise Upgrade
@@ -462,7 +482,9 @@ npm test` after ANY change here):
   topology-driven CLOS fabric links via
   `closFabricLinks()`/`renderNxosFabricLinks()`/`renderAristaFabricLinks()`,
   and `protoFeatures` so they can enable the IPv6 dual-stack underlay (A6)
-  when `protoFeatures.includes('IPv6 Dual-Stack')`.
+  when `protoFeatures.includes('IPv6 Dual-Stack')`. The two leaf branches
+  additionally receive `useCase === 'multisite'` as `isMultisite` to emit
+  DCI route-targets (A7 — see `DCI_RT_ASN` under Shared helpers).
 - **`generateAllConfigs(devices, useCase = '', policyBlocks = [], appTypes =
   [], protoFeatures = [])`** *(signature extended 2026-06-11; A5 — threads
   `allDevices`; A6 — threads `protoFeatures`)* — maps `generateConfig(dev, i,
