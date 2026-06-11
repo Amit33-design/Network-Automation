@@ -100,6 +100,19 @@ export interface LinkDistances {
   [key: string]: number
 }
 
+// ── NetBox/Nautobot import (Enterprise upgrade B1) ───────────────────────────
+// Normalized device row imported from /api/dcim/devices/, consumed by Step 1
+// prefill and the Step 6 ZTP tab (B2).
+
+export interface NetBoxImportedDevice {
+  name: string
+  vendor: string
+  model: string
+  role: string
+  site: string
+  primaryIp: string
+}
+
 // ── App-wide state ────────────────────────────────────────────────────────────
 
 export interface AppState {
@@ -161,6 +174,8 @@ export interface AppState {
   aviatrixOptions: string[]
   // Demo topology tracking
   demoTopologyId: string
+  // NetBox/Nautobot imported inventory (Enterprise upgrade B1)
+  netboxDevices: NetBoxImportedDevice[]
 }
 
 // ── Lab Demo API types ────────────────────────────────────────────────────────

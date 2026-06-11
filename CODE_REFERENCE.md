@@ -600,6 +600,64 @@ interface Product {
 
 ---
 
+## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
+
+**Purpose:** Reads existing inventory from a NetBox or Nautobot instance
+(same REST paths: `/api/dcim/sites/`, `/api/dcim/devices/`,
+`/api/ipam/prefixes/`, `/api/tenancy/tenants/`) and maps it to Step 1 form
+fields plus a normalized device list (`netboxDevices` store field) for the
+Step 6 ZTP tab (B2). Ported from legacy `src/js/netbox.js` 2026-06-11.
+Browser fetch requires CORS configured on the NetBox instance for this
+app's origin.
+
+**Key exports:**
+- Raw API shapes (subset): `NetBoxRawDevice` (handles both `role` —
+  NetBox ≥3.6/Nautobot — and legacy `device_role`), `NetBoxRawSite`,
+  `NetBoxRawTenant`, `NetBoxRawPrefix`, `NetBoxInventory { sites, devices,
+  prefixes, tenants }`.
+- `normalizeVendor(name): string | null` — manufacturer name → app vendor
+  label via slugified lookup (e.g. `"Arista Networks"` → `"Arista"`,
+  `"Mellanox"` → `"NVIDIA"`, `"Dell Technologies"` → `"Dell EMC"`); null if
+  unknown.
+- `roleToUseCase(roleSlug): UseCase | null` — device-role heuristic
+  (leaf/spine/tor → `dc`, access/distribution/core/wlc → `campus`,
+  gpu/compute/storage → `gpu`, wan/cpe/router/sdwan → `wan`).
+- `orgSizeFromDeviceCount(n): OrgSize` — <15 `startup`, <80 `smb`, <400
+  `midmarket`, <2000 `enterprise`, else `hyperscale` (matches the Step 1
+  OrgSize select, unlike the legacy small/medium/large buckets).
+- `fetchNetBoxInventory(url, token, fetchImpl = fetch): Promise<NetBoxInventory>`
+  — fetches all four endpoints in parallel with `Authorization: Token …`;
+  paginates at 200/page (first page sequential, remaining pages parallel);
+  prefixes/tenants fail soft to `[]`, sites/devices throw. `fetchImpl` is
+  injectable for tests.
+- `summarizeInventory(inv): NetBoxImportPreview { orgName, siteCount,
+  deviceCount, orgSize, vendors, useCaseHint, useCaseVotes }` — org name from
+  first tenant else first site; use-case hint by role-vote majority.
+- `toImportedDevices(inv): NetBoxImportedDevice[]` — normalized `{ name,
+  vendor, model, role, site, primaryIp }` rows (skips unnamed devices).
+- `inventoryToStorePatch(inv): NetBoxStorePatch` — pure mapping to
+  `{ orgName?, numSites?, orgSize?, vendorPrefs?, netboxDevices }`; optional
+  fields omitted when the inventory can't infer them.
+- `SAMPLE_INVENTORY` — canned 24-device 2-site inventory (Cisco spines/leaves
+  + Arista leaves) powering the panel's "Try sample data" demo flow.
+
+**UI:** `components/NetBoxImportPanel.tsx` — Card rendered in
+`Step1UseCase.tsx` between the use-case tiles and Organisation Details. URL +
+API-token inputs (URL persisted to localStorage key `netdesign_netbox_url`;
+token deliberately kept in memory only), "Connect & Preview" (live fetch,
+CORS hint shown on error), "Try sample data" (loads `SAMPLE_INVENTORY`),
+preview table (org name / sites / org size / vendors / use-case hint with
+"Will set" column), "Apply to Form" (calls `setOrgName`/`setNumSites`/
+`setOrgSize`/`setVendorPrefs`/`setNetboxDevices`) and "Clear". Uses
+`useToast()` for status messages.
+
+**Tests:** `src/test/netbox.test.ts` — 13 tests covering vendor/role/size
+mapping, summarize/patch behavior (including legacy `device_role` and
+fallbacks), pagination (450 devices → 3 pages), auth-header propagation, and
+fail-soft vs fail-hard endpoints.
+
+---
+
 ## Frontend — `store/useAppStore.ts`
 
 ### `store/useAppStore.ts`
@@ -618,6 +676,7 @@ interface Product {
 - **Design outputs:** `devices: BOMDevice[]`, `cabling: CableLink[]`, `optics: OpticsEntry[]`, `configs: Record<string,string>`, `ztpConfig: {}`, `policies: []`
 - **Scripts/outputs:** `preCheckScript`, `postCheckScript`, `prometheusAlerts`, `grafanaDashboard: {}`, `ansiblePlaybook: {}`
 - **Demo topology:** `demoTopologyId: string`
+- **NetBox import (B1):** `netboxDevices: NetBoxImportedDevice[]` (default `[]`) + `setNetboxDevices(devices)` — normalized inventory imported via `NetBoxImportPanel`, consumed by Step 6 ZTP (B2)
 
 **Key actions/setters (1 line each):**
 - `setStep(n)` — set step directly

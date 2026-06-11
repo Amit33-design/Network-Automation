@@ -1,6 +1,7 @@
 import { useAppStore } from '@/store/useAppStore'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
+import { NetBoxImportPanel } from '@/components/NetBoxImportPanel'
 import { cn } from '@/lib/utils'
 import type { UseCase, OrgSize, BudgetTier } from '@/types'
 
@@ -76,6 +77,9 @@ export function Step1UseCase({ onBack }: Props) {
           </button>
         ))}
       </div>
+
+      {/* NetBox / Nautobot import (B1) */}
+      <NetBoxImportPanel />
 
       {/* Organisation Details */}
       <Card>

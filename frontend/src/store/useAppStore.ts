@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import type {
   AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry,
   OrgSize, BudgetTier, TrafficPattern, BandwidthPerServer, UnderlayProtocol, FirewallModel, RedundancyModel,
-  VpnType, DcTopology, DemoTopology,
+  VpnType, DcTopology, DemoTopology, NetBoxImportedDevice,
 } from '@/types'
 
 interface AppStore extends AppState {
@@ -27,6 +27,8 @@ interface AppStore extends AppState {
   setVendorPrefs: (prefs: string[]) => void
   setIndustry: (industry: string) => void
   setPrimaryContact: (contact: string) => void
+  // B1 — NetBox/Nautobot imported inventory
+  setNetboxDevices: (devices: NetBoxImportedDevice[]) => void
   // M-55
   setCustomPolicyRules: (rules: string) => void
   setActiveDeployTab: (tab: string) => void
@@ -137,6 +139,7 @@ const DEFAULT_STATE: AppState = {
   orgCidr: '',
   aviatrixOptions: [],
   demoTopologyId: '',
+  netboxDevices: [],
 }
 
 export const useAppStore = create<AppStore>()(
@@ -165,6 +168,7 @@ export const useAppStore = create<AppStore>()(
       setVendorPrefs: vendorPrefs => set({ vendorPrefs, configs: {} }),
       setIndustry: industry => set({ industry }),
       setPrimaryContact: primaryContact => set({ primaryContact }),
+      setNetboxDevices: netboxDevices => set({ netboxDevices }),
       setCustomPolicyRules: customPolicyRules => set({ customPolicyRules }),
       setActiveDeployTab: activeDeployTab => set({ activeDeployTab }),
       setTheme: theme => set({ theme }),
