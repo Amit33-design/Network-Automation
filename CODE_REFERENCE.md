@@ -1404,7 +1404,7 @@ FastAPI application entry point (`app = FastAPI(title="NetDesign AI Backend", ve
 - CORS: reads `CORS_ORIGINS` env var. `*` allowed only if explicitly set or if `JWT_SECRET` is unset (dev mode). If `JWT_SECRET` is set but `CORS_ORIGINS` is not, the app **refuses to start** (`RuntimeError`).
 - `CORSMiddleware`: methods `GET/POST/PUT/PATCH/DELETE/OPTIONS`, headers `Authorization/Content-Type/X-API-Key`, `allow_credentials=True`.
 - `/metrics` mounted via `prometheus_client.make_asgi_app()` if telemetry packages available.
-- Graceful optional imports (each wrapped in try/except, sets `_AVAILABLE` flags): Celery deploy job (`jobs.deploy_job`), telemetry (`telemetry.gnmi_collector`, `telemetry.alerting`), RCA engine (`rca.engine`), licensing (`licensing.validator`/`licensing.models`).
+- Graceful optional imports (each wrapped in try/except, sets `_AVAILABLE` flags): Celery deploy job (`jobs.deploy_job`), telemetry (`telemetry.gnmi_collector`, `telemetry.alerting`, `telemetry.anomaly`), RCA engine (`rca.engine`), licensing (`licensing.validator`/`licensing.models`).
 
 **Lifespan (`@asynccontextmanager lifespan`)**:
 - Startup: `create_all_tables()` if `AUTO_CREATE_TABLES=true`; calls `_bootstrap_admin()` (creates admin `UserProfile` from `ADMIN_USER`/`ADMIN_PASS`, default Org "default", and admin org membership); loads license from `LICENSE_KEY` env (`validate_license_key`); starts `TelemetryCollector` if `ENABLE_TELEMETRY=true` (devices from `_load_telemetry_devices()`, parses `GNMI_DEVICES` env).
@@ -1447,10 +1447,11 @@ FastAPI application entry point (`app = FastAPI(title="NetDesign AI Backend", ve
 | `POST /api/post-checks` | Run post-deploy validation (BGP/OSPF/IS-IS adjacency, interface errors, ping) via `run_post_checks`; perm `deploy:staging` |
 | `POST /api/ztp/dhcp-config` | Generate ISC DHCP config snippet for ZTP via `generate_dhcp_config`; perm `configs:generate` |
 | `GET /api/alerts` | Return active alerts from in-process telemetry (`telemetry.alerting.evaluate`); empty list if telemetry disabled; perm `designs:read` |
+| `GET /api/anomalies` | Return rolling z-score anomalies (`telemetry.anomaly.detect_anomalies`, Enterprise Upgrade C3); empty list if telemetry disabled; perm `designs:read` |
 | `POST /api/drift` | Compare intended state vs live gNMI metrics via `telemetry.alerting.evaluate_with_drift`; perm `designs:read` |
 | `POST /api/rca/analyze` | Hypothesis-based RCA (`rca.engine.RCAEngine`), correlates telemetry + recent deployments (last 2h) + design state; perm `designs:read`; 503 if RCA engine unavailable |
 
-**Key Pydantic models**: `DesignState` (mirrors frontend STATE — `uc`, `orgName`, `selectedProducts`, `protocols`, `vlans`, `appFlows`, `include_*` flags), `DeployRequest`, `ConfigResponse`, `CheckResult`/`CheckResponse`, `DeployResponse`/`AsyncDeployResponse`, `DhcpConfigRequest`, `TokenRequest`/`TokenResponse`, `AlertResponse`, `DriftRequest`, `RCARequest`/`HypothesisResponse`.
+**Key Pydantic models**: `DesignState` (mirrors frontend STATE — `uc`, `orgName`, `selectedProducts`, `protocols`, `vlans`, `appFlows`, `include_*` flags), `DeployRequest`, `ConfigResponse`, `CheckResult`/`CheckResponse`, `DeployResponse`/`AsyncDeployResponse`, `DhcpConfigRequest`, `TokenRequest`/`TokenResponse`, `AlertResponse`, `AnomalyResponse`, `DriftRequest`, `RCARequest`/`HypothesisResponse`.
 
 ---
 
@@ -2466,6 +2467,30 @@ Note: this is a **simpler 5-state machine** than the frontend's 8-stage demo sim
 - `def evaluate_with_drift(intended_state: dict, metrics: dict | None = None) -> dict[str, list]` — runs `evaluate()` PLUS `telemetry.drift_detector.DriftDetector().compare(intended_state, metrics)`. Returns `{"alerts": [Alert.to_dict()...], "drift": [DriftAlert.to_dict()...]}`.
 
 **Alert rule format:** Python dataclass-based, hardcoded thresholds (not YAML-configurable) — contrast with `policies/user_rule_engine.py` which IS YAML-configurable for config/policy checks.
+
+---
+
+#### `backend/telemetry/anomaly.py` (Enterprise Upgrade C3)
+**Purpose:** Adaptive anomaly detection via rolling z-score baselines over in-process telemetry metrics — complements `alerting.py`'s static thresholds (CPU > 80%, memory > 90%, etc.) by flagging values that deviate sharply from each series' own recent history (catches gradual drift or spikes still below a fixed alert threshold).
+
+**Data structures:**
+- `@dataclass Anomaly`: `hostname, metric, labels: dict[str,str], value, baseline_mean, baseline_stddev, z_score, detected_at` + `.to_dict()` (rounds `value`/`baseline_mean`/`baseline_stddev` to 3 decimals, `z_score` to 2).
+- `_series_key(metric_name, labels) -> tuple[str, tuple]` — `(metric_name, sorted(labels.items()))`; identifies an independent rolling series per (metric, label-set) combination (e.g. per device + interface).
+
+**`class AnomalyDetector`** — stateful rolling-window detector:
+- `__init__(window=20, min_samples=5, z_threshold=3.0)` — `window` = samples retained per series, `min_samples` = minimum history before z-scores are computed, `z_threshold` = `|z| >=` this flags an anomaly.
+- `observe(metrics: dict[str, list[dict]]) -> list[Anomaly]` — for each `{metric_name: [{"labels":..., "value":...}, ...]}` sample: if the series has `>= min_samples` prior observations and `stddev > 0`, computes `z = (value - mean) / stddev` against the rolling history and appends an `Anomaly` if `|z| >= z_threshold`; always appends the new value to the series' `deque(maxlen=window)` afterward (division-by-zero safe for constant series).
+- `baseline(metric_name, labels) -> dict | None` — current `{"mean", "stddev", "samples"}` for a series, or `None` if `< min_samples`.
+- `reset()` — clears all series history.
+
+**Module-level:**
+- `_detector = AnomalyDetector()` — shared in-process singleton (mirrors `alerting.py`'s module-level pattern).
+- `detect_anomalies(metrics=None, detector=None) -> list[Anomaly]` — `metrics=None` reads the live registry via `telemetry.alerting._collect_metrics()`; `detector=None` uses the shared `_detector` (pass an isolated instance in tests to avoid touching shared state).
+- `reset_detector()` — clears the shared `_detector`'s history.
+
+**Tests:** `backend/tests/test_anomaly.py` (12 tests) — `Anomaly.to_dict()` rounding/keys, min-samples gating, stable-series no-flag, spike detection (`|z| >= 3`), zero-variance no-divide-by-zero, window cap, independent label-set tracking, baseline stats, reset, and `detect_anomalies()` with an isolated detector leaving the shared singleton untouched.
+
+**Wired into `backend/main.py`:** `GET /api/anomalies` (perm `designs:read`, response model `AnomalyResponse` mirroring `Anomaly.to_dict()`) — returns `[]` if telemetry deps unavailable (`_TELEMETRY_AVAILABLE` guard, same pattern as `/api/alerts`); 500 on unexpected errors.
 
 ---
 

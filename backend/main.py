@@ -77,11 +77,13 @@ try:
     from prometheus_client import make_asgi_app as _make_metrics_app
     from telemetry.gnmi_collector import TelemetryCollector, DeviceTarget
     from telemetry.alerting import evaluate as _evaluate_alerts
+    from telemetry.anomaly import detect_anomalies as _detect_anomalies
     _TELEMETRY_AVAILABLE = True
 except ImportError:
     _make_metrics_app = None
     TelemetryCollector = None
     _evaluate_alerts = None
+    _detect_anomalies = None
     _TELEMETRY_AVAILABLE = False
 
 try:
@@ -856,6 +858,39 @@ def api_alerts(user: dict = Depends(require_permission("designs:read"))):
         return [AlertResponse(**a.to_dict()) for a in alerts]
     except Exception as exc:
         log.exception("Alert evaluation failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# C3: Anomaly detection (rolling z-score baselines)
+# ---------------------------------------------------------------------------
+
+class AnomalyResponse(BaseModel):
+    hostname:        str
+    metric:          str
+    labels:          dict[str, str]
+    value:           float
+    baseline_mean:   float
+    baseline_stddev: float
+    z_score:         float
+    detected_at:     float
+
+
+@app.get("/api/anomalies", response_model=list[AnomalyResponse])
+def api_anomalies(user: dict = Depends(require_permission("designs:read"))):
+    """
+    Return metrics whose latest value deviates >= 3 standard deviations from
+    its rolling baseline (telemetry.anomaly.AnomalyDetector). Complements the
+    static thresholds in /api/alerts. Returns an empty list when
+    ENABLE_TELEMETRY is not set (no error).
+    """
+    if not _TELEMETRY_AVAILABLE or _detect_anomalies is None:
+        return []
+    try:
+        anomalies = _detect_anomalies()
+        return [AnomalyResponse(**a.to_dict()) for a in anomalies]
+    except Exception as exc:
+        log.exception("Anomaly detection failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
 
