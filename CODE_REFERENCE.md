@@ -1137,7 +1137,785 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 ## Backend — app entry, routers, core engines
 
-*(Filled in from research agent — see below for full detail.)*
+### Backend — App Entry, Routers & MCP Server
+
+#### `backend/main.py`
+
+FastAPI application entry point (`app = FastAPI(title="NetDesign AI Backend", version="2.4.0")`).
+
+**Setup:**
+- Sentry initialized if `SENTRY_DSN` set (10% trace sample, 5% profile sample, `send_default_pii=False`).
+- CORS: reads `CORS_ORIGINS` env var. `*` allowed only if explicitly set or if `JWT_SECRET` is unset (dev mode). If `JWT_SECRET` is set but `CORS_ORIGINS` is not, the app **refuses to start** (`RuntimeError`).
+- `CORSMiddleware`: methods `GET/POST/PUT/PATCH/DELETE/OPTIONS`, headers `Authorization/Content-Type/X-API-Key`, `allow_credentials=True`.
+- `/metrics` mounted via `prometheus_client.make_asgi_app()` if telemetry packages available.
+- Graceful optional imports (each wrapped in try/except, sets `_AVAILABLE` flags): Celery deploy job (`jobs.deploy_job`), telemetry (`telemetry.gnmi_collector`, `telemetry.alerting`), RCA engine (`rca.engine`), licensing (`licensing.validator`/`licensing.models`).
+
+**Lifespan (`@asynccontextmanager lifespan`)**:
+- Startup: `create_all_tables()` if `AUTO_CREATE_TABLES=true`; calls `_bootstrap_admin()` (creates admin `UserProfile` from `ADMIN_USER`/`ADMIN_PASS`, default Org "default", and admin org membership); loads license from `LICENSE_KEY` env (`validate_license_key`); starts `TelemetryCollector` if `ENABLE_TELEMETRY=true` (devices from `_load_telemetry_devices()`, parses `GNMI_DEVICES` env).
+- Shutdown: stops telemetry collector, calls `dispose_engine()`.
+
+**Routers mounted** (prefixes from each router file):
+- `ztp_router` (from `ztp.router`, unauthenticated)
+- `designs_router` → `/api/designs`
+- `deployments_router` → `/api/deployments`
+- `devices_router` → `/api/devices`
+- `custom_policy_router` → `/api/custom-policy`
+- `user_policies_router` → `/api/user-policies`
+- `users_router` → (no prefix; routes under `/api/auth/*`, `/api/users/*`)
+- `orgs_router` → `/api/orgs`
+- `approvals_router` → `/api/approvals`
+- `integrations_router` (documented elsewhere)
+- `export_router` → `/api/export`
+- `lab_router` (no prefix; `/api/*` lab simulation routes)
+
+**Helper functions:**
+- `_load_telemetry_devices()` — parses `GNMI_DEVICES` env (`hostname:mgmt_ip[:port[:platform]]`) into `DeviceTarget` list.
+- `_bootstrap_admin()` — async; ensures admin `UserProfile` + default `Org` + `OrgMember` exist.
+- `get_active_license()` — returns `_active_license` or `COMMUNITY_LICENSE`.
+
+**Routes defined directly in main.py:**
+
+| Method & Path | Purpose |
+|---|---|
+| `WS /ws/deploy/{deployment_id}` | Subscribes to Redis pub/sub `deploy:{id}` and streams JSON deploy events to client (`api.ws.deployment_stream`) |
+| `GET /` | Service info `{service, version, status}` |
+| `GET /health` | Docker healthcheck — `{status, timestamp}` |
+| `GET /api/license` | Return current license info (tier/features/expiry); perm `designs:read` |
+| `POST /api/auth/token` | Dev/admin JWT issuance — open in dev mode (no `JWT_SECRET`), else checks `ADMIN_USER`/`ADMIN_PASS` (note: also re-defined in `routers/users.py` with DB-backed login — last router wins / overrides this) |
+| `GET /api/inventory` | Return Nornir inventory hosts; perm `designs:read` |
+| `GET /api/policy-rules` | Serve `policies/rules.yaml` as JSON for frontend (fallback to `gate_engine`) |
+| `POST /api/generate-configs` | Generate Jinja2 configs for all devices from `DesignState`; perm `configs:generate`; records audit via `record_config_gen` |
+| `POST /api/greenfield/plan` | Build full greenfield bring-up plan (inventory + day-0/day-N configs + 6-stage workflow) via `greenfield.plan_greenfield`; perm `configs:generate` |
+| `POST /api/pre-checks` | Run pre-deploy checks (ICMP, SSH, mandatory config backup) via Nornir/Netmiko (`run_pre_checks`); perm `deploy:staging` |
+| `POST /api/deploy` | Dispatch deployment — async via Celery+Redis (returns `AsyncDeployResponse` w/ `deployment_id`, persists `Deployment` row status=pending) or sync fallback (blocking `deploy_configs`, returns `DeployResponse`); perm `deploy:staging` |
+| `POST /api/post-checks` | Run post-deploy validation (BGP/OSPF/IS-IS adjacency, interface errors, ping) via `run_post_checks`; perm `deploy:staging` |
+| `POST /api/ztp/dhcp-config` | Generate ISC DHCP config snippet for ZTP via `generate_dhcp_config`; perm `configs:generate` |
+| `GET /api/alerts` | Return active alerts from in-process telemetry (`telemetry.alerting.evaluate`); empty list if telemetry disabled; perm `designs:read` |
+| `POST /api/drift` | Compare intended state vs live gNMI metrics via `telemetry.alerting.evaluate_with_drift`; perm `designs:read` |
+| `POST /api/rca/analyze` | Hypothesis-based RCA (`rca.engine.RCAEngine`), correlates telemetry + recent deployments (last 2h) + design state; perm `designs:read`; 503 if RCA engine unavailable |
+
+**Key Pydantic models**: `DesignState` (mirrors frontend STATE — `uc`, `orgName`, `selectedProducts`, `protocols`, `vlans`, `appFlows`, `include_*` flags), `DeployRequest`, `ConfigResponse`, `CheckResult`/`CheckResponse`, `DeployResponse`/`AsyncDeployResponse`, `DhcpConfigRequest`, `TokenRequest`/`TokenResponse`, `AlertResponse`, `DriftRequest`, `RCARequest`/`HypothesisResponse`.
+
+---
+
+#### `backend/routers/approvals.py`
+
+Prefix: `/api/approvals`. Human-in-the-loop change-approval workflow. TTL via `APPROVAL_TTL_HOURS` env (default 72h).
+
+| Route | Purpose / Permission |
+|---|---|
+| `POST /api/approvals` | Request approval for a design→environment; perm `configs:generate`. Blocks if a pending approval already exists for design+env (409). Fires Slack/ServiceNow notifications. |
+| `GET /api/approvals` | List approvals (org-scoped, filter by `status`/`environment`, paged); perm `approvals:read`. Auto-expires stale pending approvals (`expires_at < now` → `status=expired`). |
+| `GET /api/approvals/{id}` | Get single approval; perm `approvals:read`. |
+| `POST /api/approvals/{id}/approve` | Approve; perm `deploy:staging`. Enforces 4-eyes (requester cannot self-approve unless ADMIN); checks expiry; activates linked `Deployment` (status `pending_approval`→`approved`). |
+| `POST /api/approvals/{id}/reject` | Reject; perm `deploy:staging`. Sets linked `Deployment.status = "rejected"`. |
+| `POST /api/approvals/{id}/escalate` | Escalate (extend TTL +`APPROVAL_TTL_HOURS`, bump `risk_score` by 20, capped at 100); perm `configs:generate`. |
+| `DELETE /api/approvals/{id}` | Cancel (requester or ADMIN only, must be pending); perm `configs:generate`. |
+
+**Helpers**: `_assert_approval_access()` (org/admin check), `_notify_approval_requested()` / `_notify_approval_decided()` (best-effort Slack + ServiceNow integration calls, exceptions swallowed).
+
+---
+
+#### `backend/routers/custom_policy.py`
+
+Prefix: `/api/custom-policy`. No auth currently enforced (placeholder comment). Wraps `policies.custom_policy.CustomPolicy` engine.
+
+| Route | Purpose |
+|---|---|
+| `POST /api/custom-policy/generate` | Accepts `CustomPolicyInput`, returns `GenerateResponse{configs: dict[hostname, str]}` via `_policy_engine.generate(body)` |
+| `POST /api/custom-policy/validate` | Accepts raw dict, validates against `CustomPolicyInput`, returns `ValidateResponse{valid, warnings, errors}` (catches `ValidationError`/general exceptions without 422) |
+| `GET /api/custom-policy/schema` | Returns `CustomPolicyInput.model_json_schema()` |
+
+Models: `GenerateResponse`, `ValidateResponse`.
+
+---
+
+#### `backend/routers/deployments.py`
+
+Prefix: `/api/deployments`. Deployment history/status/rollback.
+
+| Route | Purpose / Permission |
+|---|---|
+| `GET /api/deployments` | List deployments (filter `design_id`/`environment`/`status`, paged via `skip`/`limit`); perm `deployments:read`. Currently scoped to `triggered_by == user["sub"]` regardless of role (docstring says operators/admins see all, but code filters by current user only). |
+| `GET /api/deployments/{id}` | Fetch deployment detail incl. pre/post check results; perm `deployments:read`. |
+| `GET /api/deployments/{id}/diff` | Return `config_snapshot` stored at deploy time for diff viewer; perm `deployments:read`. |
+| `POST /api/deployments/{id}/rollback` | Trigger rollback — only allowed if status is `success`/`failed`; sets `status = "rollback_requested"`; perm `deploy:staging`. Phase 3 will wire actual Celery rollback job. |
+
+**Helper**: `_get_deployment(deployment_id, user_id, db)` — fetches deployment scoped to `triggered_by == user_id`, 404 if not found.
+
+---
+
+#### `backend/routers/designs.py`
+
+Prefix: `/api/designs`. Design CRUD + Pinecone similarity search.
+
+| Route | Purpose / Permission |
+|---|---|
+| `GET /api/designs` | List user's non-deleted designs (filter `use_case`, paged); perm `designs:read`. |
+| `POST /api/designs` | Create design (`name`, `use_case`, `state`); perm `designs:write`. Fires background `asyncio.create_task` to embed design in Pinecone via `services.pinecone_service.embed_design`. |
+| `GET /api/designs/{id}` | Fetch full design (incl. `ip_plan`/`vlan_plan`/`bgp_design`); perm `designs:read`. |
+| `GET /api/designs/{id}/state` | Return raw state dict + plans for wizard mid-session restore; perm `designs:read`. |
+| `GET /api/designs/quota` | Return remaining config-gen quota for current hour via `middleware.rate_limit.get_user_quota` (Upstash rate limit); perm `designs:read`. **Note**: declared after `/{design_id}` routes — path-ordering risk if `quota` could match `{design_id}` (FastAPI matches literal routes registered, but order matters; here `/quota` is registered after `/{design_id}` GET but is a separate path so should still resolve correctly since `/api/designs/quota` ≠ `/api/designs/{design_id}` only by literal match priority — FastAPI prioritizes static paths). |
+| `POST /api/designs/similar` | Returns top-k similar designs from Pinecone (`SimilarRequest`: `intent`, `topology_params`, `use_case`, `vendor`, `top_k` capped at 5) via `services.pinecone_service.find_similar`; perm `designs:read`. |
+| `PUT /api/designs/{id}` | Partial update — only `name`/`state`/`ip_plan`/`vlan_plan`/`bgp_design` fields applied; perm `designs:write`. |
+| `DELETE /api/designs/{id}` | Soft-delete (`is_deleted = True`); perm `designs:write`. |
+
+**Helper**: `_get_owned(design_id, user_id, db)` — fetch design scoped to owner + not deleted, 404 otherwise.
+**Model**: `SimilarRequest`.
+
+---
+
+#### `backend/routers/devices.py`
+
+Prefix: `/api/devices`. Device inventory registry (Nornir/ZTP/monitoring source).
+
+| Route | Purpose / Permission |
+|---|---|
+| `GET /api/devices` | List devices, filters: `site`, `role`, `platform`, `ztp_state`, `design_id`, paged (`skip`/`limit`, max 1000); perm `designs:read`. |
+| `POST /api/devices` | Register device; 409 if `hostname` already exists; perm `designs:write`. |
+| `GET /api/devices/{id}` | Get device detail; perm `designs:read`. |
+| `PUT /api/devices/{id}` | Update device — allowed fields: `mgmt_ip`, `platform`, `vendor`, `model`, `role`, `site`, `design_id`, `ztp_state`; perm `designs:write`. |
+| `DELETE /api/devices/{id}` | Remove device; perm `designs:write`. |
+
+**Helper**: `_get_device(device_id, db)` — 404 if not found.
+
+---
+
+#### `backend/routers/export.py`
+
+Prefix: `/api/export`. All routes return `Response` with `Content-Disposition: attachment` and require perm `designs:read`.
+
+| Route | Purpose |
+|---|---|
+| `POST /api/export/ansible` | Generate Ansible playbook + inventory (`export.ansible.generate_ansible`) → JSON bundle download |
+| `POST /api/export/terraform` | Generate Terraform HCL map (`export.terraform.generate_terraform` + optional `generate_netbox_terraform` if `ip_plan` provided) → keys: `netbox` (always), plus cloud providers for multicloud |
+| `POST /api/export/drawio` | Generate draw.io XML topology (`export.drawio.generate_drawio`) → `.drawio` XML download |
+| `POST /api/export/runbook` | Generate Markdown runbook (`export.runbook.generate_runbook`); optionally loads `ApprovalRequest` by `approval_id` → `.md` download |
+| `POST /api/export/runbook/pdf` | Same as above but converts to PDF via `export.runbook.runbook_to_pdf` (501 if weasyprint unavailable) → `.pdf` download |
+
+**Models**: `DrawioRequest`, `RunbookRequest`, `AnsibleRequest`, `TerraformRequest` (all carry `design_state`, optional `configs`/`ip_plan`).
+
+All routes call `audit.record(...)` with action names `export.ansible`, `export.terraform`, `export.drawio`, `export.runbook`, `export.runbook_pdf`.
+
+---
+
+#### `backend/routers/lab.py`
+
+No prefix (routes are `/api/*` directly), tags `["lab"]`. **No auth, no DB** — pure in-memory demo/simulation data for offline wizard demo (Steps 4-6). Static `_DEVICES` list of 12 demo devices (spines/leaves/firewalls/wan-edge/gpu-leaf across nxos/iosxe/panos/eos/junos).
+
+| Route | Purpose |
+|---|---|
+| `GET /api/topology` | Summary counts of demo devices by role (`total`, `routers`, `switches`, `firewalls`, etc.) |
+| `GET /api/topology/devices` | Returns full `_DEVICES` list |
+| `POST /api/ztp/run` | Simulates ZTP state machine (`_ZTP_STAGES`: dhcp_requested → ... → online) across all devices; supports `fail_device`/`fail_at` fault injection; returns `{results, events, summary}` |
+| `POST /api/checks/pre` | Simulated pre-checks via `_build_checks("pre", fail_devices)` — 10 check types per device, ~4% random WARN, forced FAIL via `fail_devices` map |
+| `POST /api/checks/post` | Same as above with `phase="post"` |
+| `GET/POST /api/monitoring/poll` | Simulated health poll per device (cpu/uptime/errors), status `healthy`/`degraded`/`down` (8% random degraded, or forced via `fail_devices`); returns `{health, summary}` |
+| `GET /api/alerts` | Returns 3 static demo alerts (BGP prefix drop warning, interface flap info, PFC watchdog critical) |
+| `POST /api/rca/analyze` | Returns 3 static RCA hypotheses (BGP hold-timer, CRC errors, ECMP polarization); prepends a 4th "RoCEv2 PFC deadlock" hypothesis (rank 0) if `symptom` contains "pfc" |
+
+**Helpers**: `_ts()` (UTC ISO timestamp), `_uptime()` (random uptime seconds), `_build_checks(phase, fail_devices)`. Constants: `_ZTP_STAGES`, `_CHECK_NAMES`, `_REMEDIATION` dict.
+
+---
+
+#### `backend/routers/orgs.py`
+
+Prefix: `/api/orgs`. Multi-tenant org management + audit log.
+
+| Route | Purpose / Permission |
+|---|---|
+| `POST /api/orgs` | Create org; validates slug regex `^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$`, 409 if slug taken; creator becomes org admin; perm `*` (system admin only). |
+| `GET /api/orgs` | List orgs the caller is an active member of; perm `designs:read`. |
+| `GET /api/orgs/{org_id}` | Get org detail; perm `designs:read`; requires membership (`_assert_member`). |
+| `POST /api/orgs/{org_id}/members/invite` | Invite user by email (must already have a `UserProfile`, 404 if not); perm `designs:write`; requires org admin (`_assert_org_admin`). Reactivates inactive memberships. |
+| `GET /api/orgs/{org_id}/members` | List active members; perm `designs:read`; requires membership. |
+| `PATCH /api/orgs/{org_id}/members/{user_id}` | Change member role (`viewer`/`designer`/`operator`/`admin`); perm `designs:write`; requires org admin. |
+| `DELETE /api/orgs/{org_id}/members/{user_id}` | Remove member (soft — `is_active=False`); cannot remove self; perm `designs:write`; requires org admin. |
+| `GET /api/orgs/{org_id}/audit` | Paged audit log, filter by `action` prefix / `user_id`; perm `audit:read`; requires membership. |
+| `GET /api/orgs/{org_id}/audit/export` | JSONL audit export (filter `since`/`until`); perm `audit:read`; requires org admin. |
+
+**Helpers**: `_caller_org_role()`, `_assert_org_admin()` (403 unless system ADMIN or org admin), `_assert_member()` (403 unless system ADMIN or active member).
+
+---
+
+#### `backend/routers/user_policies.py`
+
+Prefix: `/api/user-policies`. User-defined YAML policy rulesets (in-memory store `_store: dict[str, dict]` — no DB persistence; no auth enforced). Wraps `policies.user_rule_engine`.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/user-policies/packs` | List built-in compliance packs (`list_packs()`) |
+| `GET /api/user-policies/packs/{pack_id}` | Fetch pack YAML (`get_pack_yaml`); 404 if not found |
+| `POST /api/user-policies/validate` | Validate YAML without saving (`validate_yaml`) → `{valid, rule_count, errors}` |
+| `POST /api/user-policies` | Create ruleset (validates YAML first, 422 if invalid); returns 201 |
+| `GET /api/user-policies` | List all active rulesets |
+| `GET /api/user-policies/{id}` | Get ruleset detail incl. YAML + version history |
+| `PUT /api/user-policies/{id}` | Update — re-validates if `yaml_content` changed; bumps `version`, appends to `version_history` |
+| `DELETE /api/user-policies/{id}` | Soft-delete (`is_active=False`), returns 204 |
+| `POST /api/user-policies/{id}/evaluate` | Evaluate stored ruleset against `EvaluateRequest{intent, configs}` via `_engine_evaluate`; returns gate_status/violations/warnings/infos |
+| `POST /api/user-policies/evaluate-yaml` | Evaluate raw inline YAML (for live editor) without saving |
+
+**Helpers**: `_now_str()`, `_make_record(body, rule_count)` (builds new ruleset record with v1 history), `_to_read(r)`, `_to_detail(r)`.
+
+---
+
+#### `backend/routers/users.py`
+
+No prefix — tags `["auth", "users"]`. User profiles, local auth, MFA (TOTP), OIDC SSO, API keys, org-admin user listing. **Note**: this router re-defines `POST /api/auth/token` (DB-backed login) which overlaps with the dev-mode token endpoint in `main.py` — whichever is registered last in `app.include_router()` order takes precedence for routing (users_router is included after the inline main.py route definitions execute, but FastAPI route matching is based on registration order — `users_router` is included via `app.include_router(users_router)` which adds its routes; both `/api/auth/token` definitions exist in the route table, first match wins, so the main.py one (registered at decoration time before routers are included) likely wins — worth checking if dev token logic ever bypasses DB login).
+
+| Route | Purpose |
+|---|---|
+| `POST /api/auth/token` | DB-backed local login (email/password [+TOTP]); returns pre-MFA token if TOTP enabled and no code given; resolves primary org membership |
+| `POST /api/auth/totp-verify` | Second MFA step — verifies TOTP code against pre-MFA token (`mfa_pending=True`), issues full token |
+| `GET /api/auth/oidc/login` | Start OIDC flow — returns `{authorization_url, state}` (state stored in-process `_oidc_states` dict) |
+| `GET /api/auth/oidc/callback` | OIDC code exchange; upserts `UserProfile`, auto-joins org if email domain matches `Org.sso_domain`; redirects to UI with token in URL fragment |
+| `POST /api/auth/switch-org` | Swap active org in token (must be active member of target org) |
+| `GET /api/users/me` | Own profile; perm `designs:read` |
+| `PATCH /api/users/me` | Update `display_name` and/or password (requires `current_password` to change password) |
+| `POST /api/users/me/totp/setup` | Generate TOTP secret + otpauth URI (not yet enabled); 409 if already enabled |
+| `POST /api/users/me/totp/enable` | Verify code → set `totp_enabled=True` |
+| `DELETE /api/users/me/totp` | Disable TOTP (requires password verification) |
+| `POST /api/users/me/api-keys` | Generate new API key — returns raw key once (`generate_api_key()`), stores hash |
+| `DELETE /api/users/me/api-keys` | Revoke API key (clears `api_key_hash`) |
+| `GET /api/users` | List users in caller's org; perm `*` (system admin); requires `org_id` in token |
+| `GET /api/users/{uid}` | Get user profile by id; perm `*` |
+
+**Models**: `TOTPVerifyBody`, `SwitchOrgBody`, `ProfileUpdate`, `DisableTOTPBody` (local); imports `TokenRequest`/`TokenResponse`/`TOTPSetupResponse`/`TOTPVerifyRequest`/`UserProfileRead` from `models`.
+
+---
+
+#### `backend/mcp_server.py`
+
+MCP (Model Context Protocol) server exposing NetDesign AI as an AI-native toolset, built with `FastMCP` (`mcp.server.fastmcp`). Requires Python ≥3.10 and `mcp[cli]>=1.0.0` (exits with clear error messages if unmet). Server name: `"NetDesign AI"`.
+
+**Transports**: CLI args `--transport stdio|sse` (default `stdio` for Claude Desktop), `--port` (default 8001), `--host` (default `0.0.0.0`), `--log-level`. Entry point at bottom (`if __name__ == "__main__"`) parses args and calls `mcp.run(transport=...)`.
+
+**Static reference data** (module-level dicts):
+- `PRODUCT_CATALOGUE` — 7 hardware products (cisco_nexus, arista_eos, sonic_onie, cisco_cat9k, juniper_qfx, fortinet_fortigate, palo_alto_pan) with vendor/family/platform/use_cases/roles/speeds/features/notes.
+- `ARCH_CARDS` — 4 architecture reference cards (dc_fabric, gpu_cluster, campus, branch) with tiers/underlay/overlay/scale/ip_scheme/bgp_scheme/community_scheme/redundancy.
+- `POLICY_RULES_REF` — 15 policy rules (P001–P015) with id/name/action(BLOCK/FAIL/WARN/SUGGEST/INFO)/description.
+
+**Server `instructions`** documents an "auto-chaining workflow": `design_network()` should be called first (auto-chains design + validate + simulate + gate); then `generate_configs()` if `gate.can_deploy`. Includes a tool-reference table and response-formatting guidance.
+
+##### MCP Tools
+
+| Tool | Parameters | Purpose |
+|---|---|---|
+| `design_network` | `description: str` | **Primary entry point.** NL → structured intent (`parse_intent`) → full design (`generate_full_design`: IP/VLAN/BGP/topology/rationale) → auto policy validation (`run_policies`) → auto worst-case spine-failure simulation (`simulate_failure`) → deployment gate (`compute_confidence`/`can_deploy`) → `next_steps`. Returns `{ok, state, design, rationale, validation, simulation, gate, summary, next_steps}`. |
+| `generate_configs` | `state: dict, platforms: list[str]\|None` | Render device configs via `generate_all_configs`. Optional `platforms` filter sets `state["_platform_filter"]`. Returns `{ok, configs, device_count, platforms_generated}`. Supported platforms: nxos, eos, sonic, iosxe, junos, panos, fortios. |
+| `validate_policies` | `state: dict` | Runs all 15 policy rules (`run_policies`). Returns `{ok, can_proceed, gate_status, blocked, auto_fixed, warnings, info, total_issues, details[], resolved_state}` — `details` unifies blocks/violations/warnings/fixes/infos with `category`. |
+| `explain_design` | `state: dict` | Architecture rationale via `generate_design_rationale`. Returns `{ok, decisions[], summary, warnings, decision_count}`. |
+| `simulate_failure` | `state: dict, failed_devices: list[str]` | BFS partition detection + per-role impact + BGP/EVPN/ECMP impact via `simulate_failure` (sim_engine). Returns severity/partitioned/impacted/ecmp/bgp_impact/evpn_impact/remediation/summary. |
+| `simulate_link_failure_tool` | `state: dict, link_a: str, link_b: str` | Single link failure analysis via `simulate_link_failure`. Returns alternate paths, rerouted bool, severity, latency_delta, summary. |
+| `check_deployment_gate` | `state: dict, sim_severity="none", precheck_status="pass", acknowledge_warnings=False` | Combines policy + sim severity + precheck into confidence score (0-100) and gate decision (APPROVED/CONDITIONAL/BLOCKED) via `compute_confidence`/`can_deploy`. |
+| `get_ip_plan` | `state: dict` | IP addressing plan (`generate_ip_plan`) — loopbacks, P2P /31 links, mgmt, VTEP pool, GPU host sessions. |
+| `get_vlan_plan` | `state: dict` | VLAN/VNI table (`generate_vlan_plan`) — VLAN/VNI/L3VNI/VRF/RT/anycast GW/transit VLANs. |
+| `get_bgp_topology` | `state: dict` | BGP design (`generate_bgp_design`) — ASN table, peer topology, RR nodes, communities, EVPN RTs, Mermaid diagram. |
+| `get_topology_graph` | `state: dict` | Adjacency graph (`generate_topology`) — nodes, edges, critical_nodes, spof_risk, Mermaid diagram. |
+| `list_products` | `use_case: str\|None, vendor: str\|None, platform: str\|None` | Filters `PRODUCT_CATALOGUE` by use_case/vendor(substring,ci)/platform. Returns `{ok, count, products}`. |
+| `diagnose_network` | `state: dict, symptoms: list[str], top_n=8` | Matches symptoms against 45+ issue types / 12 categories via `monitor_engine.diagnose`. Returns ranked `matches[]` (issue_id, name, category, severity, confidence, root_causes, diagnostic_commands, remediation_steps, verification_commands, tags), `categories`, `summary`. |
+| `run_health_check` | `state: dict` | Static health check via `monitor_engine.health_check` — spine redundancy, EVPN VRF/L3VNI, VXLAN MTU, GPU PFC, BGP ASN, NTP, OSPF adjacency. Returns `{ok, overall, score, summary, items[], failed_checks, warning_checks}`. |
+| `get_issue_detail` | `issue_id: str, platform="nxos"` | Full drill-down for a known issue ID (45 total, listed in docstring across L2/Routing/BGP/EVPN/VXLAN/DHCP/DataPlane/RDMA-GPU/ControlPlane/E2E/WiFi/Infra categories) via `monitor_engine.get_issue`. Returns commands (requested platform + all platforms), remediation_steps, verification_commands, tags. |
+| `troubleshoot` | `state: dict, symptoms: list[str]` | Multi-symptom RCA via `troubleshoot_engine.quick_triage` — correlates symptoms into one of 11 root-cause patterns (UNDERLAY_FAILURE, SPINE_FAILURE, EVPN_POLICY_MISCONFIGURATION, PFC_DEADLOCK_GPU, VXLAN_ENCAP_MISCONFIGURATION, L2_DOMAIN_ISOLATION, MTU_BLACKHOLE, BGP_POLICY_FILTER, DHCP_INFRASTRUCTURE_FAILURE, PHYSICAL_LAYER_FAILURE, WIRELESS_INFRASTRUCTURE). Returns root_cause, alternative_hypotheses, runbook, fault_tree_diagram (Mermaid), confidence_summary. |
+| `run_static_analysis` | `state: dict` | 26 deterministic design checks across 6 domains (ip, vlan, bgp, evpn, fabric, security) via `static_analysis.run_analysis`. Returns overall/score/summary/check_count/fail_count/warn_count/pass_count/domain_scores/findings[] (check_id, domain, severity, status, title, detail, fix, affected). |
+| `run_pre_checks` | `state: dict, inventory: dict\|None, deployment_id=""` | Pre-deploy checks (reachability, SSH+version, **mandatory config backup** to `BACKUP_DIR/{deployment_id}/{hostname}.cfg`) via `nornir_tasks.run_pre_checks`; simulated if `inventory` empty. Returns `{ok, results[], summary}`. |
+| `run_post_checks` | `state: dict, inventory: dict\|None` | Post-deploy checks (BGP summary, LLDP neighbors, ECN/WRED, PFC storm counters, jumbo-MTU DF-bit ping using `peer_ip`) via `nornir_tasks.run_post_checks`; simulated if `inventory` empty. Returns `{ok, results[], summary}`. |
+| `monitor_network` | `state: dict, symptoms: list[str]\|None, include_troubleshoot=True, top_n=5` | **Unified monitor**: always runs `run_health_check` + `run_static_analysis`; if `symptoms` given, also runs `diagnose_network`; if ≥2 symptoms and `include_troubleshoot`, also runs `troubleshoot`. Computes combined `monitor_status` (healthy/degraded/critical) and `monitor_score` (45% health + 45% analysis − diagnosis severity penalty), plus deduplicated `action_items[]` and a combined `summary`. |
+| `design_multicloud_network` | `use_case="multicloud", clouds, dc_count=2, colo_provider="equinix", dc_edge_vendor="iosxr", enterprise_asn=65000, org_cidr="10.0.0.0/9", aws_regions, azure_regions, gcp_regions` | Multicloud plan via `multicloud_ip_plan` (design_engine) — IP plan, BGP peer table, ASN assignments, circuit summary, Terraform stack descriptors (AWS TGW/Azure vWAN/GCP NCC), Ansible summary. Errors if `use_case != "multicloud"`. |
+| `plan_greenfield_deployment` | `state: dict, include_configs=True` | End-to-end greenfield bring-up plan via `greenfield.plan_greenfield` + `render_inventory_files` — Nornir/Ansible inventory, day-0/day-N configs, 6-stage workflow (register→ZTP→reachability→pre-checks→tier-push→post-checks) with rollback semantics. |
+| `execute_greenfield_deployment` | `state: dict, dry_run=True, deployment_id="greenfield"` | Executes greenfield pipeline via `greenfield.execute_greenfield` (pre-checks→push→post-checks); dry_run validates/simulates only. Returns stages[] with ok+result, aborted_at if gate failed. |
+| `list_policy_packs` | (none) | Lists built-in governance policy packs from `policies.user_rule_engine.list_packs()` — `{id, name, description, rule_count, tags}`. |
+| `evaluate_policy_pack` | `intent: dict, pack_id="", yaml_content="", configs: dict\|None` | Evaluates a built-in pack (by `pack_id`) or inline `yaml_content` ruleset against `intent`/`configs` via `policies.user_rule_engine.evaluate`. Returns gate_status, rule_count, fired_count, violations/warnings/infos. |
+| `generate_automation_exports` | `state: dict, formats: list[str]\|None` | Generates IaC artifacts — `formats` subset of `["ansible","terraform"]` (default both). Ansible via `export.ansible.generate_ansible` (includes rendered configs); Terraform via `export.terraform.generate_terraform`. |
+| `full_automation_pipeline` | `description: str, acknowledge_warnings=False, generate_device_configs=True` | End-to-end: parse+design → policy validation → spine-failure simulation → deployment gate → optional config generation (skipped if gate not approved unless `acknowledge_warnings`). Returns `{ok, errors, stage_results, gate_decision, confidence, can_deploy, state, configs, summary}` (5-stage `stages` dict: design/validation/simulation/gate/configs). |
+
+##### MCP Resources
+
+| Resource URI | Returns |
+|---|---|
+| `netdesign://products` | Full `PRODUCT_CATALOGUE` JSON |
+| `netdesign://architectures/{use_case}` | One of `ARCH_CARDS` (dc_fabric, gpu_cluster, campus, branch); error+available list if unknown |
+| `netdesign://policy-rules` | Full `POLICY_RULES_REF` (15 rules) JSON |
+| `netdesign://community-scheme` | BGP community colouring scheme (standard communities, EVPN RT format, GPU communities) |
+
+##### MCP Prompts
+
+| Prompt | Parameters | Purpose |
+|---|---|---|
+| `design_campus_network` | `org_name, floors=3, users_per_floor=100, wireless=True, redundancy="high"` | Generates a campus design prompt (3-tier, OSPF+BFD, 802.1X/TACACS+, Cisco Catalyst 9000) |
+| `design_dc_fabric` | `org_name, spine_count=2, leaf_count=8, tenant_vrfs=None, underlay="ospf", vendor="cisco"` | Generates DC EVPN/VXLAN fabric design prompt with community scheme (AS:100/300/9999), spine RRs |
+| `design_gpu_cluster` | `org_name, gpu_model="H100", gpus_per_rack=8, rack_count=8, spine_count=2, vendor="sonic"` | Generates GPU fabric design prompt (RoCEv2 PFC 3+4, DCQCN, eBGP, SONiC CONFIG_DB) |
+| `validate_and_deploy` | `state_json: str, environment="production", change_window="Saturday 02:00-06:00 UTC"` | Generates a 5-step validate→simulate→gate→configs workflow prompt for an existing state |
+
+### Backend — Core Engines (config_gen, design_engine, gate_engine, greenfield, nl_parser, models, db, auth, credentials, audit, rate_limit)
+
+#### `backend/config_gen.py`
+
+**Purpose:** Renders per-device configurations using platform-specific Jinja2 templates, then appends a registry of policy blocks (security, AAA, BGP, EVPN, QoS, etc.).
+
+**Key exports:**
+- `generate_device_config(state, layer, index, platform_override=None) -> tuple[hostname, full_config_text]` — renders a single device: builds context, renders base template, appends policies, prepends header.
+- `generate_all_configs(state) -> dict[hostname, config_text]` — main entry point. Derives layer/device counts via `_derive_layers()`, detects vendor override via `_detect_primary_vendor()`, iterates layers × counts, renders + appends policies for each device. Honors `state["_platform_filter"]` (list of platform keys) to restrict output (used by MCP).
+- `_POLICY_REGISTRY: list[tuple[flag_key, generator_fn]]` — ordered list of 13 policy generators (security_hardening → control_plane → aaa → vlan_policy → trunk_policy → dot1x → bgp_policy → evpn_policy → acl → qos → static_routing → wireless → firewall_policy). Order is significant; each generator returns `""` if not applicable to the UC/platform/layer. Imported from `policies/*.py`.
+- `LAYER_PLATFORM_MAP: dict[layer_key, (platform_dir, template_file)]` — dispatch table, e.g. `"dc-leaf" -> ("nxos","leaf.j2")`, `"campus-access" -> ("ios_xe","access.j2")`, `"gpu-tor" -> ("sonic","gpu_tor.j2")`, `"gpu-spine" -> ("eos","gpu_spine.j2")`, `"fw" -> ("ios_xe","firewall.j2")`.
+- `VENDOR_PLATFORM_OVERRIDE: dict[vendor, platform_dir]` — `Arista->eos`, `Juniper->junos`, `NVIDIA->sonic`. Applied only to `dc-spine`/`dc-leaf` layers, and only if the vendor template file exists (else falls back).
+- `_build_device_context(state, layer, index) -> dict` — assembles the full Jinja context: hostname/loopback/mgmt IP from `state.ipPlan.devices[index-1]` (fallback to formula-derived defaults `10.0.{index}.{index}` etc.), uplinks list, RoCEv2/DCQCN flags (detected via protocol/overlay membership), and all `include_*` policy flags (default `True` except `include_wireless`/`include_firewall_policy` default `False`).
+- `_derive_layers(state) -> dict[layer, count]` — if `state.ipPlan.devices` exists, counts by `dev["role"]`; else falls back to use-case sizing dispatch: campus → access/dist/core(+fw); dc/hybrid → spine/leaf(+fw); gpu → gpu-spine/gpu-tor; wan → wan-router(+fw); other → generic fallback.
+- `_build_config_header(ctx, state) -> str` — comment-block header with hostname/role/platform/timestamp and a `sha256(json(state))[:12]` "intent hash" for traceability. Comment char is `#` for sonic/eos, `!` otherwise.
+- `_render(platform_dir, template_file, ctx) -> str` — Jinja2 render with `StrictUndefined`; on `UndefinedError`/`TemplateSyntaxError`/other exceptions returns a `! CONFIG GENERATION ERROR — ...` comment string instead of raising (errors surface inline in generated config).
+- `_append_policies(base_config, ctx, platform, state) -> str` — runs `_POLICY_REGISTRY` generators in order, skipping disabled flags, appending non-empty results; logs (doesn't raise) on generator exceptions.
+- `_platform_from_dir(platform_dir) -> str` — maps template dir name → policy-generator platform key (`ios_xe -> "ios-xe"`, others pass through).
+- `_detect_primary_vendor(state) -> str` — inspects `state.vendors`/`state.selectedVendors[0]` for "arista"/"juniper"/"nvidia"/"sonic" substrings → `"Arista"|"Juniper"|"NVIDIA"|""`.
+
+**Notes:**
+- `TEMPLATE_DIR = backend/templates/`.
+- `generate_all_configs` is called by `greenfield.build_production_bundle()` for Day-N configs.
+- 5 invariant config rules from CLAUDE.md §6 (no dup blocks, real FW configs, no hardcoded secrets, single underlay, GPU QoS) are enforced collectively by templates + policy generators, not directly in this file.
+- Mirrors `frontend/src/lib/configgen.ts` conceptually but is the server-side Jinja2-based generator (separate codepath, not a 1:1 port).
+
+---
+
+#### `backend/design_engine.py`
+
+**Purpose:** Pure functions (no I/O) that derive structured design artefacts — IP plan, VLAN/VNI plan, BGP design, topology graph, design rationale, and multicloud IP plan — from a state dict.
+
+**Key exports:**
+- `generate_ip_plan(state) -> dict` — returns `{loopbacks, p2p_links, management, vtep_pool, vlan_subnets, summary}` (plus `h100_hosts` for GPU). Per-UC addressing schemes:
+  - **dc/hybrid**: spine loopbacks `10.0.1.x/32` (router-ID) + `10.1.1.x/32` (VTEP/NVE); leaf loopbacks `10.0.2.x/32` + `10.1.2.x/32`, leaves labeled via `_make_leaf_labels()`. Spine↔leaf P2P `/31`s at `10.2.{spine}.{(leaf-1)*2}/31`. VLAN subnets `10.{vlan_id}.0.0/24`, anycast GW `.1`, VNI = `10000 + vlan_id`.
+  - **gpu**: GPU-spine loopbacks `10.200.1.x/32`, GPU-TOR loopbacks `10.200.2.x/32`. P2P TOR↔spine `10.3.{spine}.{(tor-1)*2}/31`. H100 host BGP sessions at `10.220.{rack}.{gpu}/32` with per-host ASN `65300 + (rack-1)*gpus_per_rack + gpu`. `gpus_per_rack` derived from `gpu_count // tor_count` (default 8).
+  - **campus**: CORE/DIST/ACCESS loopbacks at `10.0.10/11/12.x/32`; Dist↔Core `/31` uplinks at `10.4.{dist}.{(core-1)*2}/31`; VLAN subnets `192.168.{vlan_id}.0/24`.
+  - **wan**: WAN-HUB loopbacks `10.0.200.x/32`.
+- `generate_vlan_plan(state) -> dict` — returns `{vlans, l3vni_vlans, total_vlans, summary}`. For dc/hybrid: assigns VRF (PROD/DEV/STORAGE) by VLAN name keyword match, `l3vni = 19000 + vrf_idx`, `rt = "65000:{vni}"`, `vni = 10000 + vlan_id`. STP priority 4096 if name contains "CORE" else 32768. Falls back to `nl_parser._generate_vlans()` if no vlans in state.
+- `generate_bgp_design(state) -> dict` — returns `{asns, peers, communities, rt_scheme, evpn_enabled, summary, mermaid, ...}`.
+  - **dc/hybrid**: spine-as-RR (all spines + leaves share `spine_asn`, default 65000); communities table includes LocalPref tagging (`:100`=primary/200, `:300`=backup/100), EVPN type-2/-5 community tags, RTBH `:9999`. Per-VNI `rt_scheme` (L2VNI + L3VNI for PROD/DEV/STORAGE).
+  - **gpu**: eBGP fabric, spine ASN fixed `65200`, each TOR gets unique ASN `65300+i`. ECMP paths = `spine_count * 2`. Hash policy: symmetric 5-tuple.
+  - **campus**: single `CAMPUS-CORE` ASN 65001, OSPF-primary with optional BGP upstream.
+- `generate_topology(state) -> dict` — returns `{nodes, edges, node_count, edge_count, critical_nodes, mermaid, summary}`. Builds CLOS mesh (full spine↔leaf mesh + spine ISL mesh) for dc/hybrid; spine/TOR/H100-server 3-tier for gpu; core/dist/access tree for campus. Firewall pair added for dc if `"fw" in products`.
+- `generate_design_rationale(state) -> dict` — returns `{decisions, summary, warnings, decision_count}`. Produces a list of `{area, choice, rationale, alternatives}` covering: CLOS topology choice, underlay (eBGP for gpu / IS-IS / OSPF), overlay (EVPN/VXLAN symmetric IRB), BGP RR placement, GPU lossless fabric (PFC 3+4, DCQCN ECN Kmin=50KB/Kmax=100KB, MTU 9214), redundancy model, vendor rationale (lookup table for Cisco/Arista/Juniper/NVIDIA/Open-SONiC), compliance/NAC. Also emits `warnings` (e.g. single-spine SPOF, GPU count unspecified, >32 leaves needing 3-stage CLOS).
+- `generate_full_design(state) -> dict` — aggregates `ip_plan`, `vlan_plan`, `bgp_design`, `topology`, `rationale` into one dict with a combined `summary`.
+- `multicloud_ip_plan(intent) -> dict` — returns `{ip_plan, bgp_peers, asn_assignments, circuit_summary, summary}`. Uses reference tables `_MC_CLOUD_ASN` (aws/azure/gcp provider+customer ASNs), `_MC_REGIONS` (region→CIDR/hub_cidr/site), `_MC_DC_SITES` (DC-EAST/DC-WEST), `_MC_CIRCUIT_TYPE` (DX/ExpressRoute/Cloud Interconnect). Builds enterprise super-summary, DC mgmt CIDRs, colo hub CIDRs (`100.64.10.0/24` IAD, `100.64.20.0/24` SEA, AS 65010/65011), and per-cloud-region BGP peer table with primary/backup link-local peer IPs. Mirrors `frontend` multicloud.js reference data.
+- `_make_leaf_labels(leaf_count) -> list[str]` — distributes leaves into `LEAF-PROD-NN` / `LEAF-STOR-NN` / `LEAF-DEV-NN` proportionally (≈50% PROD, 25% STOR, 25% DEV, min 1 each), padded/trimmed to exact count.
+- `_dc_bgp_mermaid()`, `_gpu_bgp_mermaid()`, `_topology_mermaid()` — generate Mermaid `graph TD` diagram strings (capped at 6 leaves / 4 TORs for readability).
+
+**Notes:**
+- All functions pure/no I/O. `generate_ip_plan` is called by `greenfield.build_inventory()` to source mgmt IPs/loopbacks/hostnames.
+- VLAN/VNI/RT conventions here must stay consistent with `config_gen.py`'s EVPN policy generator and the NX-OS EVPN template referenced in CLAUDE.md §10.
+
+---
+
+#### `backend/gate_engine.py`
+
+**Purpose:** Python port of the frontend `gate.js`/`policyengine.js` — evaluates policy rules against a design state, computes a confidence score, and decides the deployment gate (can_deploy).
+
+**Key exports:**
+- `PolicyRule` (dataclass): `id, name, description, severity (BLOCK|FAIL|WARN|INFO|PASS), action_type (BLOCK|FAIL|AUTO_FIX|SUGGEST|NOOP), priority (int, lower = first), condition: Callable[[state], bool], apply: Callable[[state], None] | None, message_fn`.
+- `PolicyResults` (dataclass): `violations, warnings, infos, fixes, blocks` (lists of dicts), `gate_status (PASS|WARN|FAIL|BLOCK)`, `resolved_state`.
+- `run_policies(intent) -> PolicyResults` — **two-phase evaluation**:
+  1. Phase 1 (AUTO_FIX): deep-copies state, sorts AUTO_FIX rules by `priority`, applies each whose condition fires (mutates the copy), records in `result.fixes`.
+  2. Phase 2: evaluates ALL rules (sorted by priority) against the resolved state; routes by `action_type` — `BLOCK`→`blocks`+`violations`, `FAIL`→`violations`, `SUGGEST`/`WARN`→`warnings`, `NOOP`/`INFO`→`infos`.
+  - `gate_status` = `BLOCK` if any blocks, else `FAIL` if any violations, else `WARN` if any warnings, else `PASS`.
+- `compute_confidence(policy_results, sim_severity="PENDING", precheck_status="PENDING") -> dict{score, label, breakdown}` — 0-100 score, mirrors JS `computeConfidenceScore()` exactly:
+  - Simulation: PASS=40, WARN=24, FAIL=0, PENDING=20
+  - Pre-checks: PASS=30, FAIL=0, PENDING=15
+  - Policy gate: PASS=20, WARN=12, FAIL=4, BLOCK=0, PENDING=10
+  - AUTO_FIX bonus: `min(fixes*2, 8)`
+  - Zero-warning bonus: +10 if gate==PASS and no warnings
+  - `label`: "High Confidence" (≥80), "Moderate" (≥50), else "Low Confidence".
+- `can_deploy(policy_results, sim_severity, precheck_status, policy_fail_acknowledged=False) -> dict{allowed, status, blockers, warnings}` — hard blocks (cannot override): sim FAIL, precheck FAIL, policy BLOCK. Soft block: policy FAIL without acknowledgement. `status` ∈ `CLEAR_TO_DEPLOY | PROCEED_WITH_CAUTION | REQUIRES_ACKNOWLEDGEMENT | BLOCKED`.
+- Rule loading: `_make_rules()` tries `_load_rules_from_yaml(backend/policies/rules.yaml)` first (DSL with `_compile_condition`/`_compile_auto_fix` supporting `all/any/not` boolean trees and leaf ops `eq|neq|contains|not_contains|in|not_in|gt|lt|is_empty|is_not_empty`, and auto-fix ops `append|set` on dotted field paths); falls back to `_make_hardcoded_rules()` if YAML missing/fails.
+- `_make_hardcoded_rules()` — ~14 built-in rules including: `no-products-selected` (BLOCK), `evpn-requires-bgp` (AUTO_FIX appends "BGP"), `gpu-requires-pfc` (AUTO_FIX appends "PFC" to gpuSpecifics), `campus-enable-dot1x` (AUTO_FIX), `gpu-requires-roce`/`gpu-requires-ecn` (SUGGEST), `vxlan-requires-evpn-or-flood`, `single-spine-spof`, `large-no-redundancy`, `campus-no-nac`, `wan-no-encryption`, `no-compliance-framework`, `dc-no-evpn`, `gpu-lossless-required` (FAIL if neither PFC nor ECN), `evpn-no-bgp-at-deploy` (FAIL).
+
+**Notes:**
+- All functions pure (no I/O); called directly by the MCP server.
+- Designed to be driven by user-editable YAML rulesets stored via `models.UserRuleset` (see `models.py`); `EvaluateRequest`/`ValidateRequest` Pydantic schemas in `models.py` support a ruleset-evaluation API.
+
+---
+
+#### `backend/greenfield.py`
+
+**Purpose:** Orchestrates an end-to-end greenfield bring-up pipeline — generates a Nornir inventory from a design, builds Day-0/Day-N config bundles, produces a staged deployment plan, and (optionally) executes it via `nornir_tasks`.
+
+**Key exports:**
+- `build_inventory(state) -> dict[hostname, host_dict]` — Nornir SimpleInventory shape: `{hostname(=mgmt_ip), platform, username, password, port:22, groups, data{role, layer, ztp_platform, ansible_network_os, mgmt_ip, mgmt_mask, mgmt_gw, loopback_ip, bgp_asn, serial}}`. Sources mgmt IPs/loopbacks from `design_engine.generate_ip_plan()`. Username/password default to `<CHANGE-ME-USER>`/`<CHANGE-ME-PASS>`.
+- `render_inventory_files(state, inventory=None) -> {"hosts.yml":str, "groups.yml":str, "ansible_hosts.ini":str}` — renders Jinja2 templates from `templates/inventory/`.
+- `build_bootstrap_bundle(state, inventory=None) -> dict[hostname, day0_config]` — renders Day-0 config (mgmt IP/SSH/NTP only) per device using `ztp/templates/{ztp_platform}/day0.j2`; falls back to `_generic_day0()` if template missing.
+- `build_production_bundle(state) -> dict[hostname, dayN_config]` — thin wrapper calling `config_gen.generate_all_configs(state)`.
+- `deployment_order(inventory) -> list[hostname]` — sorts by `(_ROLE_TIER[role], hostname)`.
+- `plan_greenfield(state, include_configs=True) -> GreenfieldPlan` — builds inventory, push order, bootstrap+production bundles, and a fixed **6-stage pipeline**:
+  1. **register** — bulk ZTP registration + DHCP config (`ztp.dhcp_gen.generate_dhcp_config()`)
+  2. **bootstrap** — Day-0 ZTP/POAP, device → PROVISIONED
+  3. **reachability** — `nornir_tasks._icmp_reachable()` gate
+  4. **pre_checks** — `run_pre_checks()` + mandatory running-config backup
+  5. **push** — `deploy_configs()` in tier order (spine/core → leaf/dist → access → edge → firewall), platform-native commit
+  6. **post_checks** — `run_post_checks()` (BGP/EVPN/LLDP/ECN/PFC/MTU validation)
+  Each stage is a `GreenfieldStage` dataclass: `id, name, description, devices, actions, task, success_criteria, on_failure, estimated_minutes`.
+- `execute_greenfield(state, dry_run=True, deployment_id="greenfield") -> dict` — runs `pre_checks → push → post_checks` via `nornir_tasks` (imports `run_pre_checks`, `run_post_checks`, `deploy_configs`); aborts early on stage failure (`aborted_at`); degrades to simulation if `nornir_tasks` unavailable.
+- Role inference: `_role_from_name(name)` matches hostname substrings against `_ROLE_PATTERNS` (ordered most-specific first, e.g. `GPU-SPINE` before `SPINE`) → role string. `_ROLE_TIER` maps role→push-order rank (spine/gpu_spine/core=0, leaf/gpu_tor/distribution=1, access=2, wan_edge/border=3, firewall=4). `_ROLE_TO_LAYER` maps role→`config_gen.LAYER_PLATFORM_MAP` key.
+- `_platforms_for(role, vendor) -> (nornir_platform, ztp_platform_dir, ansible_network_os)` — vendor-first dispatch (Arista→eos, Juniper→junos, NVIDIA/SONiC/Cumulus→sonic/linux), else role-based Cisco defaults (spine/leaf→nxos, gpu_spine→eos, gpu_tor→sonic, else ios).
+- `_gateway_for(mgmt_ip) -> str` — derives `.254` of the `/24` as default gateway.
+
+**Notes:**
+- Deterministic/pure except `execute_greenfield()`. Credentials always emitted as `<CHANGE-ME-*>` placeholders (consistent with CLAUDE.md §9 rollback strategy / §6 secrets rule).
+- Depends on `design_engine.generate_ip_plan()` and `config_gen.generate_all_configs()`.
+
+---
+
+#### `backend/nl_parser.py`
+
+**Purpose:** Converts free-form natural-language network design descriptions into the structured state dict consumed by `design_engine`/`config_gen`/`gate_engine` (this is the backend implementation behind G-A1/G-A15 "Intent NLP parser").
+
+**Key exports:**
+- `parse_intent(description) -> dict` — main entry. Returns a state dict with: `uc, orgName, orgSize, redundancy, protocols, underlayProto, overlayProto, security, compliance, selectedProducts, vlans, gpuSpecifics, spine_count, leaf_count, gpu_count, rack_count, floor_count, user_count, bgp_asn, spineLoopbacks`, plus all `include_*` policy flags and `_raw_description`/`_detected_vendor`/`_detected_scale`/`_topology_extracted`.
+- `describe_intent(state) -> str` — renders a state dict back into a human-readable design brief (org/UC/scale/redundancy/protocols/products/VLANs).
+- Detection pipeline (all keyword-scored via `_score_keywords`):
+  - `_detect_uc(text)` — scores against `_UC_KEYWORDS` (campus/dc/gpu/wan/hybrid/multisite); ties broken by `_UC_PRIORITY = [gpu, multisite, wan, hybrid, dc, campus]` (most-specific wins). Default "campus".
+  - `_detect_redundancy(text)` — full/ha/single via `_REDUNDANCY_KEYWORDS`. Default "ha".
+  - `_detect_scale(text, uc)` — first tries numeric extraction (`\b(\d{2,6})\b`); for GPU UC, sizes by GPU count via `_extract_gpu_count()` (≥512 GPUs or ≥10000 → hyperscale, ≥64 → large, ≥16 → medium, else small); for other UCs, thresholds at 10000/2000/500/100 → hyperscale/large/medium/small. Falls back to keyword scoring, then UC-based default.
+  - `_detect_vendor(text, uc)` — via `_VENDOR_KEYWORDS` (Cisco/Arista/Juniper/Palo Alto/Fortinet/NVIDIA/SONiC); default per UC (gpu→NVIDIA, others→Cisco).
+  - `_detect_protocols(text, uc)` — via `_PROTOCOL_KEYWORDS` (15 protocols incl. OSPF/IS-IS/BGP/EVPN/VXLAN/PFC/RoCEv2/DCQCN); if none found, applies UC-based smart defaults (dc→[OSPF,BGP,EVPN,VXLAN], gpu→[BGP,RoCEv2,PFC,ECN], campus→[OSPF], wan→[BGP,OSPF,MPLS]). Forces BGP if EVPN present for dc.
+  - `_detect_security(text)`, `_detect_compliance(text)` — keyword maps for 802.1x/dhcp-snooping/dai/macsec/ipsec/etc. and PCI-DSS/HIPAA/SOC2/FedRAMP/ISO27001/NIST.
+  - `_has_wireless(text)` — wifi/wireless/wlan/802.11/AP/SSID/WLC keywords.
+- `_recommend_products(uc, scale, vendor) -> dict[layer, product_id]` — lookup table `(uc, scale, vendor) -> {layer: product_id}` over `_PRODUCTS` catalogue (Cisco Cat9xxx/Nexus, Arista 7050/7800, Juniper EX/QFX, NVIDIA SNxxxx, Palo Alto/Fortinet/ASA firewalls, Cisco ASR/ISR WAN). Falls back: drop vendor → try medium/large+Cisco → absolute UC-based fallback.
+- `_generate_vlans(uc, text) -> list[dict]` — UC-specific VLAN templates: campus (DATA/VOICE/WIFI-CORP/WIFI-GUEST/SERVERS/IoT/MGMT, pruned by keyword presence), dc (PROD-SERVERS/PROD-APPS/DEV-SERVERS/DEV-APPS/STORAGE/MGMT), gpu (GPU-COMPUTE/GPU-STORAGE/MGMT), wan (TRANSIT/LOOPBACK/MGMT). **Used by `design_engine.generate_vlan_plan()` as fallback when `state.vlans` is empty.**
+- `_extract_topology_counts(text) -> dict[str,int]` — regex extraction of explicit counts: `"N-spine"/"N spine"`, `"N-leaf"`, `"N TOR"` (also sets leaf_count if unset), `"N access switch(es)"`, `"N distribution switch(es)"`, `"N core switch(es)"`, `"N H100/A100/H200/GPU"`, `"N rack(s)"`, `"N floor(s)"`, `"N users/people/employees/seats"`, `"ASN/AS number/BGP AS NNNNN"`.
+- `_extract_org(description) -> str | None` — regex-based org-name extraction (`"for <Name> with/using/..."` or `"company called/named/is <Name>"`).
+
+**Notes:**
+- `parse_intent()` output feeds directly into `design_engine.generate_full_design()`, `config_gen.generate_all_configs()`, and `gate_engine.run_policies()`.
+- Implements G-A1/G-A15 (Intent NLP parser) from CLAUDE.md §20 — the free-text → structured fields pipeline, currently a regex/keyword-based implementation (not yet Claude-API-based per the gap description).
+
+---
+
+#### `backend/models.py`
+
+**Purpose:** SQLAlchemy 2.0 ORM models (multi-tenant schema) + Pydantic request/response schemas for the FastAPI app.
+
+**Key exports (ORM tables, all gated behind `ORM_AVAILABLE` try/except on SQLAlchemy import):**
+- `Org` — tenant root: `id, name, slug (unique), tier (community|professional|enterprise), sso_domain, is_active`. Has many `OrgMember`, `Design`.
+- `OrgMember` — user↔org membership: `org_id, user_id, org_role (viewer|designer|operator|admin), invited_by, is_active`.
+- `UserProfile` — one row per user (cross-org): `user_id (PK), email (unique), hashed_password (nullable=SSO-only), totp_secret, totp_enabled, sso_subject, sso_provider, api_key_hash (sha256), last_login_at`.
+- `Design` — `org_id, name, owner_id, use_case, state (JSONB), ip_plan/vlan_plan/bgp_design (JSONB), git_commit, is_deleted`. Has many `Deployment`.
+- `Deployment` — `org_id, design_id, environment (lab|staging|prod), triggered_by, status (pending_approval→approved/rejected→running→success/failed/rolled_back), approval_id (FK), config_snapshot (JSONB), pre_check_results/post_check_results (JSONB), confidence_score, itsm_ticket_id/url, git_pr_url`.
+- `ApprovalRequest` — human-in-the-loop gate: `org_id, design_id, requested_by, environment, status (pending|approved|rejected|expired), reviewed_by/at/note, summary, risk_score (0-100), device_count, expires_at, itsm_ticket_id/url`.
+- `IntegrationConfig` — per-org integration settings: `org_id, provider (slack|teams|servicenow|jira|netbox|gitops), config (JSONB), enabled`.
+- `Device` — inventory: `org_id, hostname, mgmt_ip, platform, vendor, model, role, site, design_id (FK nullable), ztp_state, last_seen`.
+- `UserRuleset` — user-authored YAML policy rules (consumed by `gate_engine`'s `_load_rules_from_yaml` pattern): `org_id, name, description, yaml_content, is_active, rule_count, version, version_history (JSONB list of {version, yaml_content, changed_by, changed_at, note})`.
+- `AuditEvent` — maps to `audit_log` table: `timestamp (indexed), org_id, user_id, action, resource_id, resource_type, outcome, ip_address, detail (JSONB)`. Written by `audit.py`.
+
+**Pydantic schemas (always available):**
+- Org: `OrgCreate, OrgRead, OrgMemberInvite, OrgMemberRead`
+- User: `UserProfileRead, TOTPSetupResponse{secret, otpauth_url}, TOTPVerifyRequest{code}`
+- Approval: `ApprovalRequestCreate, ApprovalRequestRead, ApprovalDecision{decision, note}`
+- Integration: `IntegrationConfigCreate, IntegrationConfigRead`
+- Design: `DesignCreate, DesignRead`
+- Deployment: `DeploymentCreate{design_id, environment, dry_run}, DeploymentRead`
+- Device: `DeviceCreate, DeviceRead`
+- Auth: `TokenRequest{username, password, totp_code}, TokenResponse{access_token, token_type, expires_in, role, org_id, mfa_required}`
+- Ruleset: `UserRulesetCreate, UserRulesetUpdate, UserRulesetRead, UserRulesetDetail (+yaml_content, version_history), EvaluateRequest{intent, configs}, ValidateRequest{yaml_content}`
+- Audit: `AuditEventRead`
+
+**Notes:**
+- `_now()` returns naive UTC datetime (asyncpg TIMESTAMP columns require naive — don't change to tz-aware without a migration).
+- `Base` (DeclarativeBase) is re-exported via `db.py` for Alembic `env.py`.
+- `EvaluateRequest`/`ValidateRequest` support an API for testing `UserRuleset` YAML against `gate_engine.run_policies()`.
+
+---
+
+#### `backend/db.py`
+
+**Purpose:** Provides the async SQLAlchemy engine/session factory and the FastAPI `get_db()` dependency; the app runs fully without a database when `DATABASE_URL` is unset.
+
+**Key exports:**
+- `DATABASE_URL: str` — from `os.environ["DATABASE_URL"]`, default `""`.
+- `_engine`, `_SessionLocal` (module-level, `None` if no `DATABASE_URL` or SQLAlchemy[asyncio] not installed) — `create_async_engine(..., pool_size=10, max_overflow=20, pool_pre_ping=True)` and `async_sessionmaker(expire_on_commit=False, autoflush=False)`.
+- `SQLALCHEMY_AVAILABLE: bool` — False if `sqlalchemy.ext.asyncio` import fails.
+- `get_db() -> AsyncGenerator[AsyncSession, None]` — FastAPI dependency. Raises `HTTPException(503, "Database not configured...")` if `_SessionLocal is None`. Otherwise yields a session, commits on success, rolls back on exception.
+- `create_all_tables() -> None` — dev-only; `conn.run_sync(Base.metadata.create_all)`. (Use Alembic in prod.)
+- `dispose_engine() -> None` — closes engine connections on app shutdown.
+
+**Notes:**
+- Re-exports `Base` from `models.py` for Alembic's `env.py`.
+- `audit.py._write_db()` imports `_SessionLocal` directly from this module (bypasses `get_db()` since it runs outside request scope).
+- `auth.py._validate_api_key()` uses raw `asyncpg` (not this session factory) for API-key lookups, converting `postgresql+asyncpg://` → `postgresql://`.
+
+---
+
+#### `backend/auth.py`
+
+**Purpose:** Authentication (local JWT, OIDC/SSO, API keys) + RBAC (4 roles) + TOTP MFA + password hashing for the FastAPI app.
+
+**Key exports:**
+- `Role(str, Enum)`: `VIEWER, DESIGNER, OPERATOR, ADMIN`.
+- `ROLE_PERMISSIONS: dict[Role, set[str]]` — permission sets:
+  - VIEWER: `designs:read, deployments:read, audit:read`
+  - DESIGNER: + `designs:write, configs:generate`
+  - OPERATOR: + `deploy:lab, deploy:staging, approvals:read`
+  - ADMIN: explicit superset of OPERATOR + `deploy:prod, audit:read, users:manage, org:admin` (no wildcard, deliberately enumerated for test correctness).
+- `create_token(user_id, role, *, org_id=None, expires_hours=JWT_EXPIRY_HOURS(8), mfa_pending=False, extra_claims=None) -> str` — JWT (HS256) with `sub, role, exp, iat, mfa_pending, org_id?`. `mfa_pending=True` → short 5-min expiry (`_MFA_EXPIRY_MIN`).
+- `decode_token(token) -> dict` — decodes JWT; raises 401 on `ExpiredSignatureError`/`InvalidTokenError`.
+- `require_permission(permission: str)` — FastAPI dependency factory. Returns `_dep(creds, request)`:
+  - **Dev mode** (no `JWT_SECRET` set): all requests pass as synthetic `{"sub":"dev-user","role":"admin","org_id":None,"dev_mode":True}` — i.e. **auth is fully open** unless `JWT_SECRET` env var is set.
+  - **API key**: `X-API-Key` header or Bearer token starting with `nd-key-` → `_validate_api_key()`.
+  - **Bearer JWT**: decodes, rejects `mfa_pending=True` tokens (403, must call `/api/auth/totp-verify`), checks `_has_permission(role, permission)`.
+- `_validate_api_key(raw_key, permission) -> dict` — SHA-256 hashes the key, looks up `user_profiles.api_key_hash` via raw `asyncpg` (sync wrapper via `asyncio.run()`); returns role=DESIGNER on success.
+- `generate_api_key() -> (raw_key, sha256_hash)` — `raw = "nd-key-" + token_urlsafe(32)`.
+- OIDC/SSO: `get_oidc_login_url(state) -> str` (builds provider-specific authorize URL for okta/azure/google), `exchange_oidc_code(code) -> dict` (async, exchanges code for tokens, decodes `id_token` claims **without signature verification** — noted as simplified).
+- TOTP: `generate_totp_secret()`, `get_totp_uri(secret, user_email)`, `verify_totp(secret, code)` (±30s window via pyotp, `valid_window=1`).
+- Password: `hash_password(plain)`, `verify_password(plain, hashed)` — bcrypt via passlib, falls back to **weak SHA-256** if passlib not installed (logged as dev-only).
+
+**Notes:**
+- Env vars: `JWT_SECRET`, `JWT_EXPIRY_HOURS`, `OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET/PROVIDER/REDIRECT_URI`, `SIEM_WEBHOOK_URL` (declared here but actually used in `audit.py`).
+- `require_permission()` is the gate used by routers (e.g. `configs:generate`, `deploy:prod`); combine with `middleware.rate_limit.config_gen_limit()` for free-tier throttling.
+- Critical: with `JWT_SECRET` unset, the entire API is unauthenticated (admin) — relevant when reviewing deployment configs.
+
+---
+
+#### `backend/credentials.py`
+
+**Purpose:** Unified device-credential store — HashiCorp Vault KV-v2 backed in production, env-var fallback for dev/lab.
+
+**Key exports:**
+- `CredentialStore` class:
+  - `__init__()` — connects to Vault if `VAULT_ADDR` + `VAULT_TOKEN` set and `hvac` installed and `client.is_authenticated()`; else `_vault_available=False`.
+  - `get_device_creds(hostname) -> {"username":str, "password":str}` — reads Vault path `netdesign/devices/{hostname}` (mount = `VAULT_KV_MOUNT`, default `"secret"`); on any failure or if Vault unavailable, falls back to `DEVICE_DEFAULT_USER`/`DEVICE_DEFAULT_PASS` env vars (default user=`"admin"`, pass=`""`).
+  - `store_device_creds(hostname, username, password) -> None` — writes to Vault KV-v2; raises `RuntimeError` if Vault not configured.
+  - `enrich_inventory(inventory: dict) -> dict` — for each host missing `username`/`password`, fills from `get_device_creds()`. Inline creds in inventory take precedence over Vault.
+- `get_store() -> CredentialStore` — module-level lazy singleton.
+
+**Notes:**
+- Env vars: `VAULT_ADDR, VAULT_TOKEN, VAULT_KV_MOUNT (default "secret"), DEVICE_DEFAULT_USER, DEVICE_DEFAULT_PASS`.
+- Used by `nornir_tasks.py` (not in this batch) to enrich `greenfield.build_inventory()` output before live device connections. The greenfield/config-gen modules themselves only ever emit `<CHANGE-ME-USER>`/`<CHANGE-ME-PASS>` placeholders — actual creds are injected at execution time via this store.
+
+---
+
+#### `backend/audit.py`
+
+**Purpose:** Writes immutable, structured audit events to up to 3 destinations (stdout logger, Postgres `audit_log` table, SIEM webhook), all best-effort except the logger.
+
+**Key exports:**
+- `record(user_id, action, resource_id, resource_type, outcome, *, org_id=None, ip_address="", detail=None) -> None` — async core function. Always logs structured event via `log.info(..., extra={"audit": True, ...})`. Then calls `_write_db()` and (if `SIEM_WEBHOOK_URL` set) `_write_siem()`.
+  - Documented `action` dot-notation taxonomy: `auth.login|logout|totp_verify|sso_callback`, `design.create|update|delete`, `config.generate|export`, `deploy.push|rollback|dry_run`, `approval.request|approve|reject`, `integration.trigger`, `export.runbook|drawio`, `audit.export`.
+- `_write_db(event) -> None` — imports `_SessionLocal` from `db.py` (skips silently if `None`); inserts an `AuditEvent` row (from `models.py`); catches/logs all exceptions.
+- `_write_siem(event) -> None` — POSTs `{"event":..., "sourcetype":"netdesign:audit"}` to `SIEM_WEBHOOK_URL`. Auth header: `"Splunk <token>"` if URL contains "splunk", else `"Bearer <token>"`. 4s timeout, logs on >=400 or exception.
+- Convenience wrappers (all async):
+  - `record_deploy(user_id, deployment_id, outcome, *, org_id=None, dry_run, device_count, environment="staging", ip_address="")` → `action="deploy.push"`.
+  - `record_config_gen(user_id, design_id, device_count, org_id=None)` → `action="config.generate"`, `outcome="success"`.
+  - `record_login(user_id, outcome, *, ip_address="", method="local", org_id=None)` → `action="auth.login"`, `detail={"method": ...}`.
+  - `record_approval(user_id, approval_id, action, outcome, org_id=None, ip_address="")` → `resource_type="approval"`.
+
+**Notes:**
+- Env vars: `SIEM_WEBHOOK_URL`, `SIEM_TOKEN`.
+- `AuditEvent` ORM model and `AuditEventRead` Pydantic schema defined in `models.py`.
+- Designed to be called from routers after auth/design/deploy/approval operations; failures here never raise (won't break the primary request).
+
+---
+
+#### `backend/middleware/rate_limit.py`
+
+**Purpose:** Upstash Redis (REST API) based rate limiting — per-user config-gen quota for free-tier users, plus a global per-IP request limiter.
+
+**Key exports:**
+- `RateLimitExceeded(HTTPException)` — 429 with `Retry-After` header; `__init__(detail="Rate limit exceeded", retry_after=60)`.
+- `config_gen_limit(user_id, plan: Literal["free","pro","team","dept"]="free") -> None` — for `plan != "free"` or when Redis not configured, no-op. For free plan: `INCR ratelimit:config_gen:{user_id}` with 1hr TTL; raises `RateLimitExceeded(retry_after=3600)` if count exceeds `FREE_CONFIG_GEN_LIMIT` (env `FREE_CONFIG_GEN_PER_HR`, default 10).
+- `api_rate_limit(ip) -> None` — global guard: `INCR ratelimit:api:{ip}` with 60s TTL; raises `RateLimitExceeded(retry_after=60)` if count exceeds `API_REQ_PER_MIN` (env, default 120).
+- `get_user_quota(user_id) -> dict{used, limit, remaining?, unlimited}` — reads current count for UI display; returns `{"unlimited": True}` if Redis disabled.
+- `_incr(key, ttl_seconds) -> int`, `_get(key) -> str|None` — low-level Upstash REST helpers (`GET /incr/{key}`, `GET /expire/{key}/{ttl}`, `GET /get/{key}`), Bearer-token auth.
+
+**Notes:**
+- Env vars: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (both required to enable; otherwise `_enabled=False` and all functions are no-ops — dev mode unaffected), `FREE_CONFIG_GEN_PER_HR`, `API_REQ_PER_MIN`.
+- Intended usage: `await config_gen_limit(user["sub"], plan=user.get("plan","free"))` inside `POST /api/generate-configs`, after `require_permission("configs:generate")` from `auth.py`.
+
+### Backend — Operations Engines (nornir_tasks, monitor_engine, sim_engine, static_analysis, troubleshoot_engine, rca/engine, lab_server)
+
+#### `backend/nornir_tasks.py`
+
+**Purpose:** Nornir/Netmiko task runner for live device operations — pre/post deployment checks and config push. Falls back to simulated results when Nornir/Netmiko isn't installed or no inventory is provided.
+
+**Key exports:**
+- `_init_nornir(inventory: dict) -> Nornir | None` — builds an in-memory Nornir instance from a dict-format inventory (`{name: {hostname, platform, username, password, port, data}}`), bypassing SimpleInventory files.
+- `get_inventory_hosts() -> list[dict]` — reads `playbooks/inventory/hosts.yml`, returns `[]` if missing.
+- `_icmp_reachable(host, timeout=2) -> bool` — reachability probe via TCP connect to port 22 (not real ICMP).
+- `run_pre_checks(state, inventory, deployment_id=None) -> list[dict]` — per host: (1) reachability (TCP/22), (2) SSH login + `show version`, (3) **mandatory** `show running-config` backup written to `BACKUP_DIR/{deployment_id}/{hostname}.cfg` (env `BACKUP_DIR`, default `/tmp/netdesign_backups`). Backup failure is reported as `passed: False` with detail `"BACKUP FAILED ... deploy blocked"`. If a host is unreachable, all subsequent checks for it are marked `skipped`. Empty inventory → returns 4 simulated checks for `"demo-device"`.
+- `run_post_checks(state, inventory) -> list[dict]` — for each host runs platform-specific commands from `_POST_CHECK_COMMANDS` (BGP/ISIS-or-OSPF/interface-errors/route-summary, keyed by `cisco_nxos`/`cisco_ios`/`arista_eos`/`juniper_junos`), plus 4 additional structured checks:
+  - `collect_lldp()` — runs `_LLDP_COMMANDS` (JSON for NX-OS/EOS via `| json`, text for IOS/JunOS), parsed by `_parse_lldp_json()` (NX-OS `TABLE_nbor_detail/ROW_nbor_detail` shape) or `_parse_lldp_text()` (regex-based interface-pattern heuristic: first matched intf = local, last = remote).
+  - `ecn_thresholds` — runs `_ECN_COMMANDS` (nxos/eos/sonic only); passes if output non-empty and contains `"ecn"`.
+  - `pfc_counters` — runs `_PFC_COMMANDS`; fails if any line containing "storm"/"drop" has a non-zero numeric token (PFC storm drop detection).
+  - `mtu_ping_9000` — only for `uc in ("dc","gpu")`; pings `host_data["peer_ip"]`/`loopback_peer` with 9000-byte DF-bit packet via `_MTU_PING_COMMANDS`; success determined by `_MTU_SUCCESS_STRINGS` (`"!!!"`, `"3/3"`, `"bytes from"`, `"Success rate is 100"`). Skipped (simulated) for campus.
+- `deploy_configs(configs, inventory, dry_run=True, deployment_id=None) -> dict` — `dry_run=True` returns per-host line counts without pushing. `dry_run=False` pushes via `netmiko_send_config` (note: despite the docstring describing platform-native confirm-commit guards for NX-OS/EOS/JunOS, the implementation here is a single generic `netmiko_send_config` push for all platforms — no checkpoint/commit-confirmed logic is actually implemented in this function). Hosts not in inventory get `status: "not_in_inventory"`.
+
+**Notes:** Mirrors backend equivalent of frontend's `simulateChecksResult`/ZTP simulation but operates on real devices via Netmiko when available. Backup step here is the actual implementation behind CLAUDE.md §9's rollback strategy precondition (config saved before any push). `_POST_CHECK_COMMANDS`/ECN/PFC/MTU checks correspond to CLAUDE.md §12 categories (Protocols/Hardware) and §6 GPU QoS rule (PFC priority 3, ECN/DCQCN). Used by routers that implement `/api/checks/pre`, `/api/checks/post`, `/api/deploy`.
+
+---
+
+#### `backend/monitor_engine.py`
+
+**Purpose:** Static issue-taxonomy + symptom-matching engine — 24 documented issues across 11 categories, each with symptoms/root-causes/per-platform diagnostic & verification commands/remediation steps. Provides symptom→issue diagnosis and a design-state health check, all without live device access.
+
+**Key exports:**
+- `DiagnosticMatch` (dataclass) — `issue_id, name, category, severity, score, root_causes, commands (platform→cmds), remediation, verification, tags`.
+- `HealthItem` (dataclass) — `check, status ("pass"|"warn"|"fail"), message, issue_id`.
+- `HealthReport` (dataclass) — `overall ("healthy"|"degraded"|"critical"), score (0-100), items, summary`.
+- `ISSUES: dict[str, dict]` — the 24-entry registry. Categories and issue IDs:
+  - `l2_vlan`: `VLAN_MISMATCH`(high), `NATIVE_VLAN_MISMATCH`(medium), `STP_TOPOLOGY_CHANGE`(high), `PORT_ERRORDISABLED`(high), `MAC_TABLE_EXHAUSTION`(medium)
+  - `l3_routing`: `ROUTE_MISSING`(critical), `ROUTE_BLACKHOLE`(critical), `ASYMMETRIC_ROUTING`(medium), `NO_DEFAULT_ROUTE`(high)
+  - `bgp`: `BGP_NEIGHBOR_DOWN`(critical), `BGP_PREFIX_NOT_SENT`(high), `BGP_MAX_PREFIX`(high), `BGP_AS_PATH_LOOP`(medium)
+  - `evpn`: `EVPN_TYPE2_MISSING`(critical), `EVPN_TYPE3_MISSING`(high), `EVPN_TYPE5_MISSING`(critical), `EVPN_RT_MISMATCH`(critical)
+  - `vxlan_vtep`: `VTEP_UNREACHABLE`(critical), `VNI_MISMATCH`(critical), `NVE_INTERFACE_DOWN`(critical), `L3VNI_MISSING`(critical), `ANYCAST_GW_NOT_RESPONDING`(high)
+  - `dhcp`: `DHCP_NO_ADDRESS`(high), `DHCP_SNOOPING_DROP`(high), `DHCP_POOL_EXHAUSTED`(high)
+  - `data_plane`: `MTU_MISMATCH`(high), `ACL_BLOCKING`(high), `INTERFACE_ERRORS`(high), `ECMP_IMBALANCE`(medium)
+  - `rdma_gpu`: `PFC_STORM`(critical), `DCQCN_NOT_CONFIGURED`(high), `RDMA_LOSSLESS_DROPS`(critical), `PFC_PRIORITY_WRONG`(high)
+  - `control_plane`: `CPU_HIGH_COPP`(high), `OSPF_NEIGHBOR_DOWN`(critical), `NTP_OUT_OF_SYNC`(medium)
+  - `e2e_connectivity`: `PING_FAILURE`(critical), `PORT_NOT_OPEN`(high), `TRACEROUTE_LOOP`(critical)
+  - `wifi`: `AP_NOT_JOINING`(high), `WIFI_AUTH_FAILURE`(high), `SSID_VLAN_MISMATCH`(high)
+  - `infrastructure`: `INTERFACE_DOWN`(critical), `LINK_FLAPPING`(high), `OPTICS_LOW_POWER`(high)
+
+  Each entry: `name, category, severity, affected_layers, symptoms[], root_causes[], diagnostic_commands{platform:[cmds]}, remediation_steps[], verification_commands{platform:[cmds]}, tags[]`.
+
+- `_score(issue, symptom_text, state) -> float` — match score (0-1): +0.15 per matched symptom keyword found in `symptom_text`; +0.1 use-case context boost (gpu→`rdma_gpu/vxlan_vtep/bgp/evpn`; dc/hybrid→`vxlan_vtep/evpn/bgp/l3_routing` at +0.05; campus→`l2_vlan/wifi/dhcp/control_plane`); + severity boost (`critical`+0.05, `high`+0.03, `medium`+0.01). Capped at 1.0.
+- `diagnose(state, symptoms: list[str], top_n=10) -> list[DiagnosticMatch]` — joins symptoms, scores all issues via `_score`, returns top_n sorted descending, each with commands for `_best_platform(state)`.
+- `_best_platform(state) -> str` — dispatch: vendor `Arista`→`eos`, `Juniper`→`junos`; `uc=="gpu"`→`sonic`; `uc=="campus"`→`iosxe`; default `nxos`.
+- `health_check(state) -> HealthReport` — static design-level checks (no live devices): spine redundancy (fail if `spine_count<2` for dc/hybrid/gpu → `ROUTE_MISSING`), EVPN VRF presence (warn if EVPN but no VLANs → `L3VNI_MISSING`), VXLAN MTU reminder (warn, `MTU_MISMATCH`), GPU PFC/lossless (fail if `gpuSpecifics.pfc` falsy → `PFC_PRIORITY_WRONG`), BGP ASN range validity (`BGP_NEIGHBOR_DOWN` if invalid), anycast gateway reminder, NTP redundancy reminder (`NTP_OUT_OF_SYNC`), OSPF adjacency count = `spine_count × leaf_count`. Score formula: `100 - fails*20 - warns*5`; `overall = "critical" if fails>0 else "degraded" if warns>2 else "healthy"`.
+- `get_issue(issue_id) -> dict | None`, `list_categories() -> list[str]`, `list_issues_by_category(category) -> list[str]`.
+
+**Notes:** `ISSUES` and `diagnose()` are imported and reused by `troubleshoot_engine.py` (RCA evidence matching) and `_best_platform` is duplicated there too. `health_check()` aligns with CLAUDE.md §6/§19 (GPU QoS, monitoring alert groups). Backing engine for `/api/rca/analyze`-style endpoints and the Monitoring tab (§19 alert groups: BGP, interface errors, CPU/memory, RoCEv2 CNP, PFC watchdog all map to issue categories here).
+
+---
+
+#### `backend/sim_engine.py`
+
+**Purpose:** "What-if" failure simulation against a pure in-memory topology graph derived from design state — computes blast radius, partition risk, ECMP/BGP/EVPN impact, and remediation, with no live device queries.
+
+**Key exports:**
+- `simulate_failure(state, failed_devices: list[str]) -> dict` — main entry. Pipeline:
+  1. `_build_graph(state)` — adjacency list built per use-case (see below).
+  2. Per failed device: `_analyze_device_failure()` → impact record.
+  3. `_check_partition(graph, found)` — BFS-based: True if removing failed nodes disconnects the remaining graph.
+  4. `_analyze_bgp_impact()`, `_analyze_evpn_impact()`, `_surviving_paths()`.
+  5. Severity: `"FAIL"` if partition or any record severity FAIL; else `"WARN"` if any critical-role device failed; else `"PASS"`. `confidence_delta` = 40/20/5 for FAIL/WARN/PASS.
+  6. ECMP summary: `paths_before=spine_count`, `paths_after=spine_count - failed_spines`, `bandwidth_remaining_pct = 100*after/before`.
+  7. Returns dict with `failed, found_in_topology, not_found, partitioned/partition_risk, severity (mapped to "none"/"minor"/"critical"), impacted (human-readable via _build_impacted_segments), impact_records, surviving_paths, ecmp, bgp_impact, evpn_impact, remediation, confidence_delta, summary`.
+- `simulate_link_failure(state, link_a, link_b) -> dict` — removes one edge from graph, runs `_bfs_paths()` to find up to 5 alternate paths (max depth 6); severity `"PASS"` if alt paths exist, else `"WARN"` (if dual redundancy) or `"FAIL"`.
+- `_build_graph(state) -> dict[str, list[str]]` — topology construction per `uc`:
+  - `dc`/`hybrid`: spine full-mesh ISL + spine↔leaf CLOS full mesh (`SPINE-NN`, leaves from `design_engine._make_leaf_labels` or `LEAF-NN` fallback); if `"fw" in selectedProducts`, adds a 2-tier firewall chain (`CORP-FW-01/02` ↔ spines, `INET-FW-01/02`, `WAN-EDGE-01/02`); 2 servers per leaf (`SRV-{i}-{01,02}`).
+  - `gpu`: `GPU-SPINE-NN` full mesh + `GPU-SPINE` ↔ `GPU-TOR-NN` full mesh; GPUs per rack = `gpu_count // tor_count` (default 8) attached as `H100-R{i}-GPU{g}`.
+  - `campus`: `CORE-01`(+`CORE-02` if dual) ↔ 4 distributions (`DIST-FL1/FL2/SRV/IoT`) ↔ matching `ACC-*`; optional FW chain to `INTERNET`.
+- `_device_role(device_id, uc) -> str` — name-based role classifier: `dc-spine`/`gpu-spine`, `campus-core`, `dc-leaf`/`gpu-tor`, `campus-dist`, `fw`, `wan-hub`, `server`, `unknown`. `_CRITICAL_ROLES = {campus-core, dc-spine, gpu-spine, fw, wan-hub}`.
+- `_analyze_device_failure(device, role, peers, graph, state, dual, has_evpn) -> dict` — role-specific impact text + severity:
+  - `dc-spine`: WARN if another spine survives (EVPN re-establishes via it), else FAIL ("fabric BLACK-HOLED").
+  - `gpu-spine`: WARN if surviving GPU spines (ECMP continues), else FAIL.
+  - `campus-core`: WARN if dual+surviving core (VSS/StackWise failover), else FAIL.
+  - `dc-leaf`/`gpu-tor`: always WARN (vPC/MLAG peer covers).
+  - `fw`: WARN if surviving FW (HA failover), else FAIL.
+  - `server`: PASS (no fabric impact).
+  - returns `{device, role, critical, severity, description, affected_peers (capped 8), evpn_impacted}`.
+- `_check_partition(graph, failed) -> bool` — BFS connectivity check on graph minus failed nodes.
+- `_analyze_bgp_impact(failed, state, has_evpn) -> dict` — for dc/hybrid: `rr_failed` (failed spines), `surviving_rr`, `evpn_control_plane` ("UP"/"DEGRADED"/"DOWN"), `session_impact = len(rr_failed)*4` sessions disrupted (assumes 4 leaves), `reconvergence`. For gpu: `ecmp_paths_lost = len(failed gpu-spines)*4` (assumes 4 TORs/spine).
+- `_analyze_evpn_impact(failed, state, has_evpn) -> dict` — `mac_ip_routes_lost ≈ vtep_failed*200`, `type5_routes_lost ≈ vtep_failed*10`, `arp_suppression` cleared on 30s timer, `control_plane` status derived from spine RR survival.
+- `_surviving_paths(graph, failed, uc, dual) -> list[str]` — text descriptions of remaining ECMP paths per use-case.
+- `_bfs_paths(graph, src, dst, max_depth=6) -> list[list[str]]` — BFS shortest-paths enumeration, returns max 5.
+- `_build_remediation(impacts, bgp, evpn, partition, dual, uc) -> list[str]` — emoji-prefixed action list (🚨 partition, 🔴 EVPN CP down / FAIL devices, ⚠️ no redundancy / WARN devices, 🔧 ARP/MAC flush hints for VTEP loss); falls back to "✅ No immediate action required".
+- `_sim_summary(...)` / `_build_impacted_segments(...)` — human-readable summary string and per-segment impact descriptions (spine/leaf/fw/core/server/BGP/EVPN), used to populate the `impacted` list.
+
+**Notes:** `_build_graph` imports `design_engine._make_leaf_labels` for naming consistency. Used by RCA endpoints and the "what-if" failure-simulation feature in Step 6 (Day-2 Ops / Batfish-adjacent tooling). `rca/engine.py` also imports `_build_graph` for blast-radius computation.
+
+---
+
+#### `backend/static_analysis.py`
+
+**Purpose:** 26-check deterministic design-validation engine run against generated design objects (Step 3) — catches IP/VLAN/BGP/EVPN/fabric/security misconfigurations before deployment, entirely offline.
+
+**Key exports:**
+- `Finding` (dataclass) — `check_id, domain (ip|vlan|bgp|evpn|fabric|security), severity (critical|high|medium|low|info), status (fail|warn|pass|info), title, detail, fix, affected[]`.
+- `AnalysisReport` (dataclass) — `overall (critical|fail|warn|pass), score (0-100), findings[], summary, domain_scores{domain:int}, check_count, fail_count, warn_count, pass_count`.
+- `_score_domain(findings) -> int` — `100 - crits*30 - (fails-crits)*15 - warns*5`, floored at 0.
+- Domain check functions (each returns `list[Finding]`), all reading from `design.ip_plan` / `design.vlan_plan` / `design.bgp_design`:
+  - `_check_ip(state, design)`: **IP-1** duplicate loopback IPs (critical/fail); **IP-2** P2P /31 subnet overlap (critical/fail, via `ipaddress.IPv4Network.overlaps`); **IP-3** VLAN subnet overlap (critical/fail); **IP-4** VTEP pool overlapping P2P space (high/fail); **IP-5** management address info (reminds about MGMT VRF).
+  - `_check_vlan(state, design)`: **VLAN-1** duplicate VNI across `vlans`+`l3vni_vlans` (critical/fail); **VLAN-2** VRF missing L3VNI transit VLAN — `vrfs_with_vlans - vrfs_with_l3vni` (critical/fail); **VLAN-3** L2VNI naming convention check, expects `vni == 10000 + vlan_id` (medium/warn if violated); **VLAN-4** VLAN count >3500 → approaching 4094 limit (high/warn); **VLAN-5** route-target format must contain `:` (high/fail).
+  - `_check_bgp(state, design)`: **BGP-1** ASN range validity (1-4294967295), flags private 2-byte range 64512-65534 as info/pass; **BGP-2** spine-as-RR for EVPN (dc/hybrid) — checks `bgp_design.rr_topology` text; **BGP-3** EVPN AF enabled flag (`bgp_design.evpn_enabled`) — critical/fail if EVPN protocols present but flag false; **BGP-4** community-colouring completeness — requires `primary/backup/blackhole` keys; **BGP-5** ECMP path count — critical/fail if `spine_count < 2`.
+  - `_check_evpn(state, design)`: skipped (EVPN-0 info) if no EVPN/VXLAN protocol. **EVPN-1** RT scheme — pass if `"auto"` in `bgp_design.rt_scheme`, else warn (manual RT consistency risk); **EVPN-2** VTEP pool allocated info; **EVPN-3** symmetric IRB completeness — `vrfs <= l3vni_vrfs` (critical/fail if any VRF lacks L3VNI); **EVPN-4** ARP suppression reminder (medium/warn, always emitted); **EVPN-5** anycast gateway info.
+  - `_check_fabric(state, design)`: **FABRIC-1** VXLAN MTU 9216 reminder (high/warn) for dc/hybrid/gpu with EVPN; for plain `gpu` use-case checks `gpuSpecifics.mtu >= 9000` (critical/fail if not, info/pass if so); **FABRIC-2** BFD presence in protocols (medium/warn if absent for dc/hybrid/gpu); **FABRIC-3** CLOS mesh completeness — `actual P2P links == spine_count*leaf_count` (high/fail if mismatch); **FABRIC-4**/**FABRIC-4b** GPU PFC lossless (critical/fail if `gpuSpecifics.pfc` false) and DCQCN/ECN confirmation (high/warn if `gpuSpecifics.dcqcn` false); **FABRIC-5** NTP ≥2 servers reminder (medium/warn, always emitted); **FABRIC-6** OSPF passive-interface reminder if OSPF underlay (medium/warn).
+  - `_check_security(state, design)`: **SEC-1** SSH-only/telnet-disabled reminder (high/warn, always); **SEC-2** AAA/TACACS+/RADIUS/802.1X presence check; **SEC-3** management VRF isolation reminder (medium/warn, always); **SEC-4** SNMPv3 presence check (medium/warn if absent); **SEC-5** CoPP reminder (medium/warn, always); **SEC-6** compliance framework detection (PCI/HIPAA/SOC2/ISO27001) — info only.
+- `run_analysis_with_design(state, design) -> AnalysisReport` — runs all 6 domain checkers, computes `domain_scores`, counts, and `overall_score = 100 - crit*25 - (fail-crit)*12 - warn*4`; `overall = "critical"` if any critical/fail, else `"fail"` if any fail, else `"warn"` if `warn_count>3`, else `"pass"`.
+- `_state_has_design_data(state) -> bool` — True if state already has `ip_plan`/`spineLoopbacks`/`p2pLinks`/`selectedProducts`.
+- `run_analysis(state) -> AnalysisReport` — top-level entry: calls `design_engine.generate_full_design(state)` if state lacks design data (and injects a `META-1` info Finding noting that defaults were synthesized), then `run_analysis_with_design`.
+
+**Notes:** Depends on `design_engine.generate_full_design()` for state→design expansion. This is the Step 3 BOM/design "lint" pass — distinct from `monitor_engine` (which is symptom/runtime-oriented) and `troubleshoot_engine` (RCA). The L2VNI/L3VNI conventions and RT format checks mirror CLAUDE.md §10 (EVPN config reference) and §6 rule 5 (GPU QoS) / rule 4 (single underlay).
+
+---
+
+#### `backend/troubleshoot_engine.py`
+
+**Purpose:** Step 2 root-cause-analysis correlator — maps symptom text (via `monitor_engine.diagnose()`) to one of 11 weighted root-cause hypotheses, then generates a platform-aware investigation runbook and a Mermaid fault-tree diagram.
+
+**Key exports:**
+- `Hypothesis` (dataclass) — `root_cause_id, title, confidence (0-100), evidence (issue IDs), explanation, blast_radius (isolated|rack|fabric|full-network), urgency (critical|high|medium|low), first_check, resolution_path[]`.
+- `RootCauseAnalysis` (dataclass) — `hypotheses[], top, supporting_issues[], categories_hit[], symptom_count, confidence_summary`.
+- `RunbookStep` (dataclass) — `phase (verify|isolate|fix|confirm), step_num, title, description, commands{platform:[cmds]}, expected, escalate_if`.
+- `Runbook` (dataclass) — `title, hypothesis, platform, steps[], total_steps, estimated_minutes`.
+- `_RCA_RULES: list[dict]` — 11 rules, each `{id, title, description, evidence_weights {issue_id: weight}, blast_radius, urgency, first_check, resolution_path[], uc_relevance[]}`:
+  - `UNDERLAY_FAILURE` (critical, fabric) — weighted heavily on `OSPF_NEIGHBOR_DOWN`(0.45), `BGP_NEIGHBOR_DOWN`(0.35), `VTEP_UNREACHABLE`(0.30).
+  - `SPINE_FAILURE` (critical, fabric) — `ECMP_IMBALANCE`(0.30), `BGP_NEIGHBOR_DOWN`(0.30), `VTEP_UNREACHABLE`(0.25), `INTERFACE_DOWN`(0.25).
+  - `EVPN_POLICY_MISCONFIGURATION` (high, rack) — `EVPN_RT_MISMATCH`(0.50), `VNI_MISMATCH`(0.40), `EVPN_TYPE5_MISSING`(0.35).
+  - `PFC_DEADLOCK_GPU` (critical, fabric, gpu-only) — `PFC_STORM`(0.60), `RDMA_LOSSLESS_DROPS`(0.40), `PFC_PRIORITY_WRONG`(0.30).
+  - `VXLAN_ENCAP_MISCONFIGURATION` (high, rack) — `NVE_INTERFACE_DOWN`(0.50), `L3VNI_MISSING`(0.40), `VNI_MISMATCH`(0.35).
+  - `L2_DOMAIN_ISOLATION` (high, isolated, dc/campus/hybrid) — `VLAN_MISMATCH`(0.55), `NATIVE_VLAN_MISMATCH`(0.25).
+  - `MTU_BLACKHOLE` (high, fabric) — `MTU_MISMATCH`(0.60).
+  - `BGP_POLICY_FILTER` (high, isolated) — `BGP_PREFIX_NOT_SENT`(0.55), `ROUTE_MISSING`(0.30).
+  - `DHCP_INFRASTRUCTURE_FAILURE` (high, rack) — `DHCP_NO_ADDRESS`(0.55), `DHCP_SNOOPING_DROP`(0.35).
+  - `PHYSICAL_LAYER_FAILURE` (high, isolated) — `INTERFACE_ERRORS`(0.50), `OPTICS_LOW_POWER`(0.50), `LINK_FLAPPING`(0.45).
+  - `WIRELESS_INFRASTRUCTURE` (high, rack, campus-only) — `AP_NOT_JOINING`(0.50), `WIFI_AUTH_FAILURE`(0.45).
+- `correlate(state, symptom_texts, top_n=5) -> RootCauseAnalysis` — algorithm:
+  1. `monitor_engine.diagnose(state, symptom_texts, top_n=20)`; keep matches with `score >= 0.15` as `matched_issue_ids` (filters out pure use-case context boosts of 0.10).
+  2. For each rule: if `state.uc not in rule.uc_relevance`, apply `uc_factor=0.4` (penalize irrelevant rules) else `1.0`.
+  3. `score = sum(weight for issue_id in matched_issue_ids if issue_id in rule.evidence_weights)`; `norm_score = (score / sum(all weights)) * uc_factor`.
+  4. Sort descending, take `top_n`; `confidence = min(int(norm_score*100), 95)` (capped at 95% — "never certain").
+- `build_runbook(state, rca) -> Runbook` — looks up `_RUNBOOKS[top.root_cause_id]` (dedicated multi-phase runbooks exist for `UNDERLAY_FAILURE`, `PFC_DEADLOCK_GPU`, `EVPN_POLICY_MISCONFIGURATION`, `L2_DOMAIN_ISOLATION`); falls back to `_GENERIC_RUNBOOK` (4 generic verify/isolate/fix/confirm steps) for other hypotheses or if `rca.top is None`. `estimated_minutes = len(steps) * 4`.
+- `_step_from_dict(num, d, platform) -> RunbookStep` — picks `d["commands"][platform]` else `["all"]` else first available.
+- `_best_platform(state) -> str` — same dispatch logic as `monitor_engine._best_platform` (duplicated): Arista→eos, Juniper→junos, gpu→sonic, campus→iosxe, default nxos.
+- `fault_tree_mermaid(rca) -> str` — generates a Mermaid `graph TD` flowchart: root-cause node (styled `rootcause`), blast-radius/urgency meta node, evidence-issue nodes (colored by severity: critnode/highnode/mednode/lownode), up to 2 alternate hypotheses (dashed `altnode`), and a "▶ Start: {first_check}" action node.
+- `quick_triage(state, symptom_texts) -> dict` — one-shot wrapper combining `correlate` + `build_runbook` + `fault_tree_mermaid` into a single JSON-serializable response (`root_cause`, `alternative_hypotheses`, `runbook`, `fault_tree_diagram`, `confidence_summary`, `supporting_issues`, `categories_affected`).
+
+**Notes:** Imports `diagnose` and `ISSUES` directly from `monitor_engine`. This is the Step 2 / RCA-panel backing engine (`useRunRca` mutation → `POST /api/rca/analyze`), distinct from `rca/engine.py` (which is telemetry/live-metrics-driven rather than symptom-text-driven). The Mermaid output is consumable directly by the frontend RCA panel for fault-tree visualization.
+
+---
+
+#### `backend/rca/engine.py`
+
+**Purpose:** Telemetry-driven RCA engine — correlates a free-text symptom + affected device list against live Prometheus-style metrics, recent deployment history, and topology adjacency to produce ranked, automatable hypotheses.
+
+**Key exports:**
+- `Hypothesis` (dataclass) — `root_cause, confidence (0.0-1.0), evidence[], blast_radius[], remediation_steps[], automation_available (bool), automation_playbook (str|None)`. `.to_dict()` rounds confidence to 2 decimals.
+- `RCAEngine` — stateless; `analyze(symptom, affected_devices, design_state=None, recent_deploys=None) -> list[Hypothesis]`:
+  1. Loads `topology = _load_topology(design_state)` (calls `sim_engine._build_graph`).
+  2. Loads `metrics = _snapshot_metrics()` (calls `telemetry.alerting._collect_metrics()`; returns `{}` on any import/exec failure).
+  3. Runs 5 checker methods, concatenates results.
+  4. Deduplicates by `root_cause`, keeping highest-confidence instance; returns sorted descending by confidence.
+- Checker methods (each returns `[]` if not triggered, else `[Hypothesis]`):
+  - `_check_bgp_session_loss` — triggers on symptom containing `bgp/prefix/neighbor/session` OR any affected host has `bgp_prefixes` metric == 0. Confidence: base 0.1, +0.4 if zero-prefix hosts found, +0.2 for "bgp" in symptom, +0.15 for "prefix"/"neighbor". → `"BGP Session Loss"`, automation playbook `playbooks/rca/bgp_session_restore.yml`.
+  - `_check_pfc_deadlock` — triggers on `pfc/gpu/rdma/roce/deadlock` OR `pfc_drops_total` metric sum > 100 for an affected host (`storm_hosts`). Confidence: base 0.1, +0.5 if storm hosts, +0.2 if `design_state.uc=="gpu"`, +0.15 if "pfc" in symptom. → `"PFC Watchdog Deadlock"`, playbook `playbooks/rca/pfc_reset.yml`.
+  - `_check_recent_deployment` — only fires if `recent_deploys` non-empty AND any deploy `started_at` within last 7200s (2 hours). Confidence: base 0.1, +0.5 per `status=="failed"` deploy, +0.3 per `rolled_back`/`rollback_requested`, +0.1 for any other recent status. → `"Recent Deployment Change"`, playbook `playbooks/rca/rollback_verify.yml`.
+  - `_check_evpn_vxlan` — triggers on `evpn/vxlan/vtep/vni/l2vpn/overlay` in symptom. Confidence: base 0.2, +0.3 if `design_state.protocols` includes EVPN/VXLAN, +0.25 if any SPINE host has `bgp_prefixes==0`. → `"EVPN/VXLAN Overlay Fault"`, `automation_available=False`.
+  - `_check_underlay_failure` — triggers on `ospf/isis/link/interface/flap/underlay/igp`. Confidence: base 0.15, +0.3 if any affected host's `interface_errs_total` sum > 10, +0.2 if ≥2 affected devices contain "SPINE". → `"Underlay / IGP Failure"`, playbook `playbooks/rca/underlay_check.yml`.
+- `_blast_radius(affected, topology) -> list[str]` — 2-hop BFS expansion from affected devices over the topology graph, returns sorted unique node list.
+- `_load_topology(design_state) -> dict` — wraps `sim_engine._build_graph`, returns `{}` on failure.
+- `_snapshot_metrics() -> dict` — wraps `telemetry.alerting._collect_metrics()`, returns `{}` on failure.
+- `_parse_ts(ts: str) -> float` — module-level helper; parses ISO8601 (handles trailing `Z`) to Unix timestamp, returns 0.0 on failure.
+
+**Notes:** This is a *different* RCA engine from `troubleshoot_engine.py` — this one is metrics/deployment-history-driven (live Prometheus + deploy log), the other is symptom-text/issue-taxonomy-driven (static). Both can coexist; `RCAEngine.analyze` is likely the implementation behind a live-mode `/api/rca/analyze` when `isLive=true`, while `troubleshoot_engine.quick_triage` backs the demo/static mode. Depends on `sim_engine._build_graph` and `telemetry/alerting.py` (`_collect_metrics`), both imported lazily/defensively (try/except).
+
+---
+
+#### `backend/lab_server.py`
+
+**Purpose:** Standalone, dependency-light FastAPI app (no DB/Redis/Vault) that serves all endpoints needed by wizard Steps 1-6 for local lab/demo testing.
+
+**Key exports:**
+- `app: FastAPI` — title "NetDesign AI — Lab Server", CORS wide open (`allow_origins=["*"]`, all methods/headers). Mounts `routers.lab.router` (the `lab_router`) — all actual endpoint logic lives in `routers/lab.py`.
+- `health() -> {"status": "ok", "server": "lab"}` — `GET /health`.
+- `root() -> dict` — `GET /`, returns server metadata and an endpoint list documenting: `GET /api/topology`, `GET /api/topology/devices`, `POST /api/ztp/run`, `POST /api/checks/pre`, `POST /api/checks/post`, `GET|POST /api/monitoring/poll`, `GET /api/alerts`, `POST /api/rca/analyze`.
+- `__main__` block — argparse `--host` (default `127.0.0.1`), `--port` (default `8000`), `--reload`; runs via `uvicorn.run("lab_server:app", ...)`.
+
+**Notes:** This is the entry point referenced in CLAUDE.md's "Quick start" / dev-server section as the `:8000` backend that the Vite dev server proxies `/api` to (`isLive=true` mode). All real endpoint implementations (ZTP, checks, monitoring, RCA, deploy) are in `backend/routers/lab.py`, which presumably calls into `nornir_tasks`, `monitor_engine`, `sim_engine`, `static_analysis`, `troubleshoot_engine`, and `rca/engine` documented above.
 
 ---
 
