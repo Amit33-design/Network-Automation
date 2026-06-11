@@ -61,3 +61,6 @@ sentry-sdk[fastapi]==2.5.1       # Error tracking + performance monitoring
 openai==1.35.10                  # text-embedding-3-small for Pinecone
 pinecone==4.1.0                  # Vector DB — design similarity search
 httpx>=0.27.0                    # Async HTTP for Upstash Redis REST + Resend
+
+# ── AI — Claude API (G-A1: intent NLP parser) ──────────────────────────────────
+anthropic==0.109.1                # Structured output (output_config json_schema)

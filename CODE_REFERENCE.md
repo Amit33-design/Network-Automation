@@ -80,6 +80,9 @@ coloProvider, dcEdgeVendor, bgpAsn, orgCidr, aviatrixOptions`), and
 - `Alert` — `{ id, device, severity: critical|warning|info, summary, detail?, timestamp, resolved }`.
 - `RcaHypothesis` — `{ rank, cause, confidence, evidence[], remediation }`.
 
+**Intent NLP parser (G-A1)**
+- `IntentParseResult` — `{ use_case, app_types[], scale, redundancy, compliance[], org_name, org_size, budget_tier, vendor_prefs[], industry, primary_contact, confidence, notes, source: 'ai'|'heuristic' }`. Mirrors `backend/intent_ai.RESPONSE_SCHEMA` + `source`.
+
 **Deploy pipeline**
 - `DeployStage` = `'queued'|'connecting'|'pre_checks'|'pushing_config'|'post_checks'|'done'|'failed'`
 - `DeployEvent` — one WS message from `/ws/deploy/{id}` (`stage, device?, message, progress, timestamp`).
@@ -787,6 +790,7 @@ alert groups (core vs. GPU-only), and Grafana dashboard JSON validity/panels
 - `login(username, password): Promise<{token, role}>` — POST `{baseUrl}/api/auth/token`; saves token via `saveSettings`
 - `fetchAlerts(): Promise<Alert[]>` — GET `/api/alerts`
 - `runRca(symptom, affectedDevices, designId?): Promise<RcaHypothesis[]>` — POST `/api/rca/analyze` with `{symptom, affected_devices, design_id}`
+- `parseIntent(description: string): Promise<IntentParseResult>` — POST `/api/intent/parse` with `{description}` (G-A1)
 - `generateConfigs(state: DesignState): Promise<{configs, generated_at}>` — POST `/api/generate-configs`
 - `runPreChecks(req: DeployRequest): Promise<CheckResponse>` — POST `/api/pre-checks`
 - `runPostChecks(req: DeployRequest): Promise<CheckResponse>` — POST `/api/post-checks`
@@ -821,6 +825,9 @@ alert groups (core vs. GPU-only), and Grafana dashboard JSON validity/panels
 
 #### `hooks/useRca.ts`
 - `useRunRca()` — `useMutation<RcaHypothesis[], Error, RcaRequest>` where `RcaRequest = { symptom, devices: string[], designId? }`; `mutationFn` calls `runRca(symptom, devices, designId)` from `api/client.ts` → POST `/api/rca/analyze`. Returns `RcaHypothesis[]`. No simulation fallback defined in this file (consumed by `RcaPanel`/`TroubleshootingEngine`).
+
+#### `hooks/useIntentParse.ts` (G-A1)
+- `useIntentParse()` — `useMutation<IntentParseResult, Error, string>`; `mutationFn` calls `parseIntent(description)` from `api/client.ts` → POST `/api/intent/parse`. Returns `IntentParseResult` (`source: 'ai'|'heuristic'`). Consumed by `Step1UseCase.tsx`'s free-text "Describe Your Network" card. No client-side simulation — requires a live backend (`useBackendMode().isLive`); the Parse button is disabled otherwise.
 
 #### `hooks/useTopology.ts`
 - `useTopologySummary()` — `useQuery<TopologySummary>({ queryKey: ['topology','summary'], queryFn: GET '/api/topology', staleTime: 30_000 })`
@@ -920,6 +927,7 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 - Constants: `USE_CASES` (7 tiles with icon/label/desc), `VENDORS` (9 vendor chips), `INDUSTRIES` (10 industry chips)
 - Reads/writes via `useAppStore`: `useCase, orgName, orgSize, budgetTier, vendorPrefs, industry, primaryContact` + setters; calls `nextStep()`
 - `toggleVendor(v)`, `toggleIndustry(label)` — local toggle helpers for multi-select chips
+- **G-A1 — "Describe Your Network" card** (first card, above use-case tiles): free-text `<textarea>` + "✨ Parse with AI" button wired to `useIntentParse()` (`hooks/useIntentParse.ts`). On success, applies non-empty fields from `IntentParseResult` to the store via `setUseCase`, `setAppTypes`, `setScale`, `setRedundancy`, `setCompliance`, `setOrgName`, `setOrgSize`, `setBudgetTier`, `setVendorPrefs`, `setIndustry`, `setPrimaryContact`, and shows a result banner (`source: 'ai'|'heuristic'`, `confidence`, `notes`). Button disabled when textarea empty, mutation pending, or `useBackendMode().isLive` is false (shows "Requires live backend" hint) — no client-side simulation, this feature always calls the backend.
 
 **Notes:**
 - "Continue" disabled until `useCase` is set.
@@ -1511,8 +1519,9 @@ FastAPI application entry point (`app = FastAPI(title="NetDesign AI Backend", ve
 | `GET /api/anomalies` | Return rolling z-score anomalies (`telemetry.anomaly.detect_anomalies`, Enterprise Upgrade C3); empty list if telemetry disabled; perm `designs:read` |
 | `POST /api/drift` | Compare intended state vs live gNMI metrics via `telemetry.alerting.evaluate_with_drift`; perm `designs:read` |
 | `POST /api/rca/analyze` | Hypothesis-based RCA (`rca.engine.RCAEngine`), correlates telemetry + recent deployments (last 2h) + design state; perm `designs:read`; 503 if RCA engine unavailable |
+| `POST /api/intent/parse` | G-A1: free-text → structured Step 1 fields via `intent_ai.parse_intent_ai()` (Claude API, `output_config` json_schema) with `intent_ai.heuristic_fallback()` (wraps `nl_parser.parse_intent`) when `ANTHROPIC_API_KEY` unset or the call fails; perm `designs:read`; 400 if `description` empty |
 
-**Key Pydantic models**: `DesignState` (mirrors frontend STATE — `uc`, `orgName`, `selectedProducts`, `protocols`, `vlans`, `appFlows`, `include_*` flags), `DeployRequest`, `ConfigResponse`, `CheckResult`/`CheckResponse`, `DeployResponse`/`AsyncDeployResponse`, `DhcpConfigRequest`, `TokenRequest`/`TokenResponse`, `AlertResponse`, `AnomalyResponse`, `DriftRequest`, `RCARequest`/`HypothesisResponse`.
+**Key Pydantic models**: `DesignState` (mirrors frontend STATE — `uc`, `orgName`, `selectedProducts`, `protocols`, `vlans`, `appFlows`, `include_*` flags), `DeployRequest`, `ConfigResponse`, `CheckResult`/`CheckResponse`, `DeployResponse`/`AsyncDeployResponse`, `DhcpConfigRequest`, `TokenRequest`/`TokenResponse`, `AlertResponse`, `AnomalyResponse`, `DriftRequest`, `RCARequest`/`HypothesisResponse`, `IntentParseRequest`/`IntentParseResponse` (G-A1).
 
 ---
 
@@ -1900,7 +1909,24 @@ MCP (Model Context Protocol) server exposing NetDesign AI as an AI-native toolse
 
 **Notes:**
 - `parse_intent()` output feeds directly into `design_engine.generate_full_design()`, `config_gen.generate_all_configs()`, and `gate_engine.run_policies()`.
-- Implements G-A1/G-A15 (Intent NLP parser) from CLAUDE.md §20 — the free-text → structured fields pipeline, currently a regex/keyword-based implementation (not yet Claude-API-based per the gap description).
+- Also used as the fallback engine behind `intent_ai.heuristic_fallback()` (see below) for the `/api/intent/parse` endpoint (G-A1).
+
+---
+
+#### `backend/intent_ai.py` (G-A1)
+
+**Purpose:** Claude-powered intent parser for `POST /api/intent/parse` — extracts structured Step 1 wizard fields (`use_case, app_types, scale, redundancy, compliance, org_name, org_size, budget_tier, vendor_prefs, industry, primary_contact, confidence, notes`) from a free-text network design description, mirroring the enums in `frontend/src/types/index.ts`.
+
+**Key exports:**
+- `RESPONSE_SCHEMA: dict` — JSON Schema (`additionalProperties: False`) for `output_config.format` passed to `client.messages.create()`; enums mirror `USE_CASES, APP_TYPES, SCALES, REDUNDANCY, COMPLIANCE, ORG_SIZES, BUDGET_TIERS, VENDORS, INDUSTRIES` constants defined at module top.
+- `AI_AVAILABLE: bool` — `bool(ANTHROPIC_API_KEY)`; logs at import time if unset.
+- `parse_intent_ai(description: str) -> dict | None` — calls `anthropic.Anthropic().messages.create(model=ANTHROPIC_MODEL, system=SYSTEM_PROMPT, messages=[...], output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}})`. Returns `None` (caller falls back to heuristic) if: `AI_AVAILABLE` is False, any `anthropic.APIStatusError`/`APIConnectionError` subclass is raised (auth/permission/not-found/rate-limit/connection/generic all logged distinctly), or the response has no parseable JSON text block.
+- `heuristic_fallback(description: str) -> dict` — wraps `nl_parser.parse_intent()`: maps `uc` → `use_case` (unknown/"hybrid"→"dc", other unknowns→"campus"), `orgSize` → `scale` via `scale_map` (xsmall/small→small, medium→medium, large/hyperscale→large), `redundancy` "single"→"single" else "dual", `compliance` via `compliance_map` (PCI-DSS→PCI, NIST→NIST_CSF, others pass through), strips the `"NetDesign-Corp"` default `orgName` to `""`, filters `_detected_vendor` to the frontend `VENDORS` list (drops SONiC etc.), derives `app_types` from keyword search (voice/video/storage/hpc/internet). Always sets `confidence: 0.5` and a fixed `notes` string.
+
+**Notes:**
+- Both functions return dicts matching `RESPONSE_SCHEMA`'s required keys exactly (validated by `tests/test_intent_ai.py::TestHeuristicFallback::test_result_matches_response_schema_keys`); the `/api/intent/parse` endpoint adds `source: "ai"|"heuristic"` before returning `IntentParseResponse`.
+- `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` (default `claude-opus-4-8`) read from env — see `.env.example`.
+- Tests (`tests/test_intent_ai.py`) mock `anthropic.Anthropic` and construct real `httpx.Request`/`httpx.Response` objects for `AuthenticationError`/`RateLimitError`/`APIConnectionError`/etc. (MagicMock alone doesn't satisfy `APIStatusError.__init__`'s typed `response` param at runtime cleanly).
 
 ---
 

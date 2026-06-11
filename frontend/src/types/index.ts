@@ -270,6 +270,25 @@ export interface RcaHypothesis {
   remediation: string
 }
 
+// ── Intent NLP parser (G-A1) ────────────────────────────────────────────────────
+
+export interface IntentParseResult {
+  use_case: UseCase | ''
+  app_types: AppType[]
+  scale: Scale
+  redundancy: Redundancy
+  compliance: Compliance[]
+  org_name: string
+  org_size: OrgSize
+  budget_tier: BudgetTier
+  vendor_prefs: string[]
+  industry: string
+  primary_contact: string
+  confidence: number
+  notes: string
+  source: 'ai' | 'heuristic'
+}
+
 // ── Deploy pipeline ───────────────────────────────────────────────────────────
 
 export type DeployStage =

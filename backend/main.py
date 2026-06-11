@@ -994,3 +994,52 @@ async def api_rca_analyze(
         recent_deploys=recent_deploys,
     )
     return [HypothesisResponse(**h.to_dict()) for h in hypotheses]
+
+
+# ---------------------------------------------------------------------------
+# G-A1: Intent NLP parser — free-text → Step 1 form fields (Claude API)
+# ---------------------------------------------------------------------------
+
+class IntentParseRequest(BaseModel):
+    description: str
+
+
+class IntentParseResponse(BaseModel):
+    use_case:        str
+    app_types:       list[str]
+    scale:           str
+    redundancy:      str
+    compliance:      list[str]
+    org_name:        str
+    org_size:        str
+    budget_tier:     str
+    vendor_prefs:    list[str]
+    industry:        str
+    primary_contact: str
+    confidence:      float
+    notes:           str
+    source:          str   # "ai" | "heuristic"
+
+
+@app.post("/api/intent/parse", response_model=IntentParseResponse)
+async def api_intent_parse(
+    req: IntentParseRequest,
+    user: dict = Depends(require_permission("designs:read")),
+):
+    """
+    Parse a free-text network design description into structured Step 1
+    wizard fields. Uses the Claude API (output_config json_schema) when
+    ANTHROPIC_API_KEY is configured; otherwise falls back to the
+    keyword-based nl_parser heuristics.
+    """
+    if not req.description.strip():
+        raise HTTPException(status_code=400, detail="description must not be empty")
+
+    from intent_ai import parse_intent_ai, heuristic_fallback
+
+    result = parse_intent_ai(req.description)
+    if result is not None:
+        return IntentParseResponse(**result, source="ai")
+
+    result = heuristic_fallback(req.description)
+    return IntentParseResponse(**result, source="heuristic")

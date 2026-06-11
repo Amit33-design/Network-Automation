@@ -85,6 +85,13 @@ export const runRca = (
   design_id: designId,
 })
 
+// ── Intent NLP parser (G-A1) ──────────────────────────────────────────────────
+
+import type { IntentParseResult } from '@/types'
+
+export const parseIntent = (description: string) =>
+  post<IntentParseResult>('/api/intent/parse', { description })
+
 // ── Config generation ─────────────────────────────────────────────────────────
 
 import type { DesignState } from '@/types'
