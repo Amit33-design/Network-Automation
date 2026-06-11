@@ -309,6 +309,38 @@ describe('vPC / MLAG HA-pair config (Enterprise upgrade A1/A2)', () => {
   })
 })
 
+// ── Enterprise upgrade A4: Arista gNMI / eAPI streaming telemetry ─────────────
+describe('Arista gNMI/eAPI telemetry block (Enterprise upgrade A4)', () => {
+  it('Arista spine config enables gNMI transport', () => {
+    const dev = makeDevice({ vendor: 'Arista', subLayer: 'spine' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('management api gnmi')
+    expect(cfg).toContain('transport grpc default')
+  })
+
+  it('Arista spine config enables eAPI (http-commands) over HTTPS', () => {
+    const dev = makeDevice({ vendor: 'Arista', subLayer: 'spine' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('management api http-commands')
+    expect(cfg).toContain('protocol https port 443')
+  })
+
+  it('Arista spine config streams to a TerminAttr collector with placeholder IP', () => {
+    const dev = makeDevice({ vendor: 'Arista', subLayer: 'spine' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('daemon TerminAttr')
+    expect(cfg).toContain('<CHANGE-ME-telemetry-collector-ip>')
+  })
+
+  it('Arista leaf config also includes gNMI/eAPI/TerminAttr telemetry', () => {
+    const dev = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Arista', subLayer: 'leaf' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('management api gnmi')
+    expect(cfg).toContain('management api http-commands')
+    expect(cfg).toContain('daemon TerminAttr')
+  })
+})
+
 // ── Enterprise upgrade A3: Campus distribution/access — FHRP, STP, IGMP ───────
 describe('Campus distribution/access config (Enterprise upgrade A3)', () => {
   it('Cisco campus distribution uses OSPF, not IS-IS', () => {

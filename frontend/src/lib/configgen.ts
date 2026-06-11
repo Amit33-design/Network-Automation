@@ -734,6 +734,8 @@ router bgp ${asn}
 !
 ${qos}
 !
+${aristaTelemetryBlock()}
+!
 ! ── BANNER ───────────────────────────────────────────────────────────────────
 banner login
 *******************************************************************************
@@ -860,7 +862,27 @@ mlag configuration
   reload-delay non-mlag 330
 !
 ${qos}
+!
+${aristaTelemetryBlock()}
 `
+}
+
+function aristaTelemetryBlock(): string {
+  return `! ── TELEMETRY (gNMI streaming + eAPI) ───────────────────────────────────────
+management api gnmi
+  transport grpc default
+    port 6030
+  provider eos-native
+!
+management api http-commands
+  protocol https port 443
+  no shutdown
+  vrf MGMT
+    no shutdown
+!
+daemon TerminAttr
+  exec /usr/bin/TerminAttr -ingestgrpcurl=<CHANGE-ME-telemetry-collector-ip>:9910 -smashexcludes=ale,flexCounter,hardware,kni,pulse,strata -ingestexclude=/Sysdb/cell/1/agent,/Sysdb/cell/2/agent -taillogs
+  no shutdown`
 }
 
 function aristaGpuQoS(): string {
