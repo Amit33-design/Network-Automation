@@ -244,20 +244,57 @@ npm test` after ANY change here):
     `IAD-LEAF-A`) — a stable ID shared by both pair members, used for vPC
     domain numbers / MLAG domain-id / STP comments.
   - Used by `nxosLeafConfig`, `aristaLeafConfig`, and `iosxeCampusConfig`.
+- **`closFabricLinks(role, dev, allDevices): FabricLink[]`** *(added
+  2026-06-11, Enterprise Upgrade A5)* — derives the spine↔leaf CLOS link
+  plan from BOM port-math instead of a static comment block:
+  - `spineCount`/`leafCount` = counts of `subLayer==='spine'|'leaf'` in
+    `allDevices` (fallback 2/1 if `allDevices` is empty, e.g. existing
+    single-device test calls).
+  - `leafUplinks = leaves[0]?.uplinks || dev.uplinks || 2` — number of
+    fabric-facing ports per leaf, taken from the leaf SKU's `uplinks` field
+    (set by `buildDeviceList()` from `PRODUCTS`).
+  - For `role==='leaf'`: distributes the leaf's `leafUplinks` ports
+    round-robin across spines (`spineIdx = i % spineCount`, `linkNum =
+    floor(i/spineCount)` for parallel links to the same spine).
+  - For `role==='spine'`: iterates every leaf and reproduces only the links
+    that round-robin to *this* spine, so both ends compute the same plan
+    independently.
+  - Each `FabricLink` carries `ifIndex` (0-based local port offset),
+    `peerHostname` (real hostname from `allDevices`, else `SPINE-N`/`LEAF-N`),
+    `peerLabel` (e.g. `"spine 1"`), `linkNum`, and `localIp` — a `/31`
+    computed as `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2 [+1 for
+    leaf]}` so the spine and leaf side of each link always agree on the same
+    subnet without manual cabling notes.
+- **`renderNxosFabricLinks(role, dev, allDevices): string`** /
+  **`renderAristaFabricLinks(role, dev, allDevices): string`** *(added
+  2026-06-11, Enterprise Upgrade A5)* — render `closFabricLinks()` output as
+  real (uncommented) interface stanzas:
+  - NX-OS: `interface Ethernet1/${portBase + ifIndex + 1}` with `ip router
+    isis 1`, `isis network point-to-point`, `isis metric 10`, `mtu 9216`.
+  - Arista: `interface Ethernet${portBase + ifIndex + 1}` with `isis enable
+    UNDERLAY`, `isis network point-to-point`, `isis metric 10`, `mtu 9214`.
+  - `portBase = (dev.ports - dev.uplinks)` for leaves (uplinks start after
+    the downlink ports), `0` for spines (all ports face leaves).
+  - `dirLabel` = `"UPLINK"` for leaves, `"DOWNLINK"` for spines.
 
 ### NX-OS (Cisco) — DC/GPU spine-leaf
-- **`nxosSpineConfig(dev, idx, isGpu): string`** — `spineAsn = 65000`
-  (constant), `routerId = 10.255.1.${idx+1}`, `isisNet =
+- **`nxosSpineConfig(dev, idx, isGpu, allDevices = []): string`**
+  *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5)* —
+  `spineAsn = 65000` (constant), `routerId = 10.255.1.${idx+1}`, `isisNet =
   49.0001.0102.5500.${pad(idx+1,4)}.00`. IS-IS L2-only underlay, BGP EVPN
-  with route-reflector `template peer LEAF-RR-CLIENT`, NX-API gRPC telemetry
-  block (`destination-group`/`sensor-group`/`subscription`), QoS via
-  `nxosGpuQoS()` or `nxosStdQoS()`.
-- **`nxosLeafConfig(dev, idx, isGpu): string`** — `leafAsn = 65001+idx`,
-  `routerId = 10.255.2.${idx+1}`, `vtepIp = 10.254.0.${idx+1}`, `isisNet =
-  49.0001.0102.5501.${pad(idx+1,4)}.00`. IS-IS underlay, BGP EVPN
-  `template peer SPINE-RR`, VXLAN `interface nve1` (VNI 10010 + L3VNI
-  50000), NX-API telemetry. **vPC block** (post Enterprise Upgrade A1): `vpc
-  domain ${pairId}` (shared by the HA pair), `role priority` 8192
+  with route-reflector `template peer LEAF-RR-CLIENT`, **SPINE FABRIC
+  INTERFACES** generated via `renderNxosFabricLinks('spine', dev,
+  allDevices)` (replaces the old static comment template), NX-API gRPC
+  telemetry block (`destination-group`/`sensor-group`/`subscription`), QoS
+  via `nxosGpuQoS()` or `nxosStdQoS()`.
+- **`nxosLeafConfig(dev, idx, isGpu, allDevices = []): string`**
+  *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5)* —
+  `leafAsn = 65001+idx`, `routerId = 10.255.2.${idx+1}`, `vtepIp =
+  10.254.0.${idx+1}`, `isisNet = 49.0001.0102.5501.${pad(idx+1,4)}.00`. IS-IS
+  underlay, BGP EVPN `template peer SPINE-RR`, VXLAN `interface nve1` (VNI
+  10010 + L3VNI 50000), **UPLINKS** generated via `renderNxosFabricLinks('leaf',
+  dev, allDevices)`, NX-API telemetry. **vPC block** (post Enterprise Upgrade
+  A1): `vpc domain ${pairId}` (shared by the HA pair), `role priority` 8192
   (primary)/16384 (secondary), `peer-switch`, `peer-keepalive destination
   <CHANGE-ME-${peerHostname}-mgmt-ip> ...`, `peer-gateway`, `ip arp
   synchronize`, `auto-recovery`.
@@ -267,22 +304,36 @@ npm test` after ANY change here):
   `random-detect` on lossy queues, `hardware qos pfc-watchdog on`, DCQCN).
 
 ### Arista EOS — DC/GPU spine-leaf
-- **`aristaSpineConfig(dev, idx, isGpu): string`** — `asn = 65000`,
-  `routerId = 10.255.1.${idx+1}`, `isisNet = 0101.0255.000${idx+1}`.
-  `service routing protocols model multi-agent`, `router isis UNDERLAY`
-  (level-2, `fast-reroute ti-lfa`), BGP EVPN `peer-group LEAF-RR-CLIENTS`
-  (route-reflector-client, `bfd`). QoS via `aristaGpuQoS()` if GPU.
-- **`aristaLeafConfig(dev, idx, isGpu): string`** — `leafAsn = 65001+idx`,
-  `routerId = 10.255.2.${idx+1}`, `vtepIp = 10.254.0.${idx+1}`, `isisNet =
-  0101.0255.000${idx+101}`. BGP `peer-group SPINE-RR` with `bfd`, VXLAN
-  `interface Vxlan1` (`vxlan vlan 10 vni 10010`). **MLAG block** (post
+- **`aristaSpineConfig(dev, idx, isGpu, allDevices = []): string`**
+  *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5)* —
+  `asn = 65000`, `routerId = 10.255.1.${idx+1}`, `isisNet =
+  0101.0255.000${idx+1}`. `service routing protocols model multi-agent`,
+  `router isis UNDERLAY` (level-2, `fast-reroute ti-lfa`), BGP EVPN
+  `peer-group LEAF-RR-CLIENTS` (route-reflector-client, `bfd`),
+  **DOWNLINK INTERFACES** generated via `renderAristaFabricLinks('spine',
+  dev, allDevices)`, QoS via `aristaGpuQoS()` if GPU, plus
+  `aristaTelemetryBlock()` (gNMI/eAPI/TerminAttr — see below).
+- **`aristaLeafConfig(dev, idx, isGpu, allDevices = []): string`**
+  *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5)* —
+  `leafAsn = 65001+idx`, `routerId = 10.255.2.${idx+1}`, `vtepIp =
+  10.254.0.${idx+1}`, `isisNet = 0101.0255.000${idx+101}`. BGP
+  `peer-group SPINE-RR` with `bfd`, VXLAN `interface Vxlan1` (`vxlan vlan 10
+  vni 10010`), **UPLINKS to spines** generated via
+  `renderAristaFabricLinks('leaf', dev, allDevices)`. **MLAG block** (post
   Enterprise Upgrade A2, previously absent): `vlan 4094`/`interface Vlan4094`
   for peer L3 peering, `interface Port-Channel${pairId}00` peer-link,
   `mlag configuration` with `domain-id ${domainId}MLAG${pairId}`,
   `peer-address <CHANGE-ME-${peerHostname}-mlag-peer-ip>`, `peer-link
-  Port-Channel${pairId}00`.
+  Port-Channel${pairId}00`, plus `aristaTelemetryBlock()`.
 - **`aristaGpuQoS(): string`** — PFC priority 3 RoCEv2 (`pfc enable`, `pfc
   priority 3 no-drop`), ECN on lossy queues.
+- **`aristaTelemetryBlock(): string`** *(added 2026-06-11, Enterprise Upgrade
+  A4)* — Arista streaming-telemetry/automation block, appended to both
+  `aristaSpineConfig` and `aristaLeafConfig`: `management api gnmi` (gRPC
+  transport on port 6030, `provider eos-native`), `management api
+  http-commands` (eAPI over HTTPS/443, `vrf MGMT`), and `daemon TerminAttr`
+  streaming to `<CHANGE-ME-telemetry-collector-ip>:9910` (CloudVision/gNMI
+  collector ingest).
 
 ### Juniper JunOS
 - **`juniperLeafConfig(dev, idx): string`** — set-style config, used for
@@ -353,17 +404,24 @@ npm test` after ANY change here):
 
 ### Dispatch
 - **`generateConfig(dev: BOMDevice, idx: number, useCase: UseCase|'' = '',
-  appTypes: AppType[] = []): string`** *(signature extended 2026-06-11 to add
-  `appTypes`)* — the big if/else dispatcher by `(dev.vendor, dev.subLayer)`.
-  `needsRoce = isGpu || ((vendor==='Dell EMC'||vendor==='NVIDIA') &&
-  useCase==='dc')` — Dell/NVIDIA DC fabrics always get lossless QoS;
-  Cisco/Arista only when `useCase==='gpu'`. Cisco
-  `distribution`/`access` → `iosxeCampusConfig(dev, idx, appTypes)`.
+  appTypes: AppType[] = [], allDevices: BOMDevice[] = []): string`**
+  *(signature extended 2026-06-11 to add `appTypes`, then again for
+  `allDevices` — Enterprise Upgrade A5)* — the big if/else dispatcher by
+  `(dev.vendor, dev.subLayer)`. `needsRoce = isGpu ||
+  ((vendor==='Dell EMC'||vendor==='NVIDIA') && useCase==='dc')` — Dell/NVIDIA
+  DC fabrics always get lossless QoS; Cisco/Arista only when
+  `useCase==='gpu'`. Cisco `distribution`/`access` →
+  `iosxeCampusConfig(dev, idx, appTypes)`. The Cisco/Arista spine and leaf
+  branches (`nxosSpineConfig`, `nxosLeafConfig`, `aristaSpineConfig`,
+  `aristaLeafConfig`) now receive `allDevices` as their final argument so
+  they can compute topology-driven CLOS fabric links via
+  `closFabricLinks()`/`renderNxosFabricLinks()`/`renderAristaFabricLinks()`.
 - **`generateAllConfigs(devices, useCase = '', policyBlocks = [], appTypes =
-  [])`** *(signature extended 2026-06-11)* — maps `generateConfig()` over all
-  devices, then runs `applyPolicies()` (from `lib/policies.ts`) if
-  `policyBlocks.length`. Called from `Step3Config.tsx` with `appTypes` from
-  the store.
+  [])`** *(signature extended 2026-06-11; A5 — now threads `allDevices`)* —
+  maps `generateConfig(dev, i, useCase, appTypes, devices)` over all devices
+  (passing the full `devices` array as `allDevices` to every call), then runs
+  `applyPolicies()` (from `lib/policies.ts`) if `policyBlocks.length`. Called
+  from `Step3Config.tsx` with `appTypes` from the store.
 
 ---
 

@@ -637,7 +637,7 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done (commit hash)
 | A2 | Arista leaf MLAG config (currently absent) | [x] | `aristaLeafConfig()`, uses `leafPairInfo()` helper |
 | A3 | Cisco campus distribution/access: dedicated config generator (HSRP/FHRP, STP priority hierarchy, IGMP snooping, voice/data VLANs) — replace `iosxeWanConfig` dispatch for `distribution`/`access` | [x] | new `iosxeCampusConfig()`; `generateConfig`/`generateAllConfigs` now take `appTypes` |
 | A4 | Arista gNMI / eAPI telemetry block (currently none) | [x] (`2643316`) | `aristaTelemetryBlock()` used by `aristaSpineConfig`/`aristaLeafConfig` |
-| A5 | Topology-driven uplink counts (consume `buildDeviceList()` port-math instead of static comments) | [ ] | bom.ts → configgen.ts plumbing |
+| A5 | Topology-driven uplink counts (consume `buildDeviceList()` port-math instead of static comments) | [x] (`5b163df`) | `closFabricLinks()`/`renderNxosFabricLinks()`/`renderAristaFabricLinks()`; `generateConfig`/`generateAllConfigs` now take `allDevices` |
 | A6 | IPv6 dual-stack underlay (stretch) | [ ] | |
 | A7 | Multisite EVPN DCI route-targets (stretch) | [ ] | |
 
