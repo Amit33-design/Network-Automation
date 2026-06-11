@@ -252,6 +252,63 @@ describe('generateConfig — core functionality', () => {
   })
 })
 
+// ── Enterprise upgrade A1/A2: MLAG / vPC HA-pair pairing ──────────────────────
+describe('vPC / MLAG HA-pair config (Enterprise upgrade A1/A2)', () => {
+  it('NX-OS leaf pair (idx 0 & 1) share the same vPC domain', () => {
+    const dev0 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf' })
+    const dev1 = makeDevice({ hostname: 'TST-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf' })
+    const cfg0 = generateConfig(dev0, 0)
+    const cfg1 = generateConfig(dev1, 1)
+    expect(cfg0).toContain('vpc domain 1')
+    expect(cfg1).toContain('vpc domain 1')
+  })
+
+  it('NX-OS leaf next pair (idx 2 & 3) get a different vPC domain', () => {
+    const dev2 = makeDevice({ hostname: 'TST-LEAF-B01', vendor: 'Cisco', subLayer: 'leaf' })
+    const cfg2 = generateConfig(dev2, 2)
+    expect(cfg2).toContain('vpc domain 2')
+  })
+
+  it('NX-OS leaf peer-keepalive references the paired peer hostname', () => {
+    const dev0 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf' })
+    const dev1 = makeDevice({ hostname: 'TST-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf' })
+    const cfg0 = generateConfig(dev0, 0)
+    const cfg1 = generateConfig(dev1, 1)
+    expect(cfg0).toContain('<CHANGE-ME-TST-LEAF-A02-mgmt-ip>')
+    expect(cfg1).toContain('<CHANGE-ME-TST-LEAF-A01-mgmt-ip>')
+  })
+
+  it('NX-OS leaf pair members get distinct vPC role priorities (primary/secondary)', () => {
+    const dev0 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf' })
+    const dev1 = makeDevice({ hostname: 'TST-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf' })
+    const cfg0 = generateConfig(dev0, 0)
+    const cfg1 = generateConfig(dev1, 1)
+    expect(cfg0).toContain('role priority 8192')
+    expect(cfg1).toContain('role priority 16384')
+  })
+
+  it('Arista leaf pair share an MLAG domain-id and peer-link', () => {
+    const dev0 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Arista', subLayer: 'leaf' })
+    const dev1 = makeDevice({ hostname: 'TST-LEAF-A02', vendor: 'Arista', subLayer: 'leaf' })
+    const cfg0 = generateConfig(dev0, 0)
+    const cfg1 = generateConfig(dev1, 1)
+    expect(cfg0).toContain('mlag configuration')
+    expect(cfg0).toContain('domain-id TST-LEAF-AMLAG1')
+    expect(cfg1).toContain('domain-id TST-LEAF-AMLAG1')
+    expect(cfg0).toContain('peer-link Port-Channel100')
+    expect(cfg1).toContain('peer-link Port-Channel100')
+  })
+
+  it('Arista leaf MLAG peer-address points at the paired peer hostname', () => {
+    const dev0 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Arista', subLayer: 'leaf' })
+    const dev1 = makeDevice({ hostname: 'TST-LEAF-A02', vendor: 'Arista', subLayer: 'leaf' })
+    const cfg0 = generateConfig(dev0, 0)
+    const cfg1 = generateConfig(dev1, 1)
+    expect(cfg0).toContain('<CHANGE-ME-TST-LEAF-A02-mlag-peer-ip>')
+    expect(cfg1).toContain('<CHANGE-ME-TST-LEAF-A01-mlag-peer-ip>')
+  })
+})
+
 describe('generateAllConfigs', () => {
   it('returns one config per device keyed by id', () => {
     const devices: BOMDevice[] = [

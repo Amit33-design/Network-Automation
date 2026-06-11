@@ -279,6 +279,18 @@ ip prefix-list LOOPBACKS seq 5 permit 10.255.0.0/16 ge 32
 `
 }
 
+// ── Leaf HA-pair helper (vPC / MLAG) ───────────────────────────────────────────
+// Leaves are deployed as HA pairs: idx 0&1 share pair 1, idx 2&3 share pair 2,
+// etc. (matches generateHostnames() in bom.ts, which assigns rack letters per
+// pair and alternates the trailing 01/02 unit number within a pair).
+function leafPairInfo(dev: BOMDevice, idx: number): { pairId: number; isPrimary: boolean; peerHostname: string; domainId: string } {
+  const pairId = Math.floor(idx / 2) + 1
+  const isPrimary = idx % 2 === 0
+  const peerHostname = dev.hostname.replace(/0([12])$/, (_m, n) => (n === '1' ? '02' : '01'))
+  const domainId = dev.hostname.replace(/0[12]$/, '')
+  return { pairId, isPrimary, peerHostname, domainId }
+}
+
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 
 function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
@@ -287,6 +299,8 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
   const vtepIp   = `10.254.0.${idx + 1}`
   const isisNet  = `49.0001.0102.5501.${String(idx + 1).padStart(4, '0')}.00`
   const qosBlock = isGpu ? nxosGpuQoS() : nxosStdQoS()
+  const { pairId, isPrimary, peerHostname } = leafPairInfo(dev, idx)
+  const vpcRolePriority = isPrimary ? 8192 : 16384
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -413,12 +427,21 @@ interface nve1
 !
 ${qosBlock}
 !
-! ── vPC PEER-LINK (if dual-ToR) ──────────────────────────────────────────────
-vpc domain ${idx + 1}
-  peer-keepalive destination <CHANGE-ME-peer-mgmt-ip> source <CHANGE-ME-local-mgmt-ip> vrf management
+! ── vPC PEER-LINK (HA pair with ${peerHostname}) ──────────────────────────────
+vpc domain ${pairId}
+  role priority ${vpcRolePriority}
+  peer-switch
+  peer-keepalive destination <CHANGE-ME-${peerHostname}-mgmt-ip> source <CHANGE-ME-${dev.hostname}-mgmt-ip> vrf management
   peer-gateway
+  ip arp synchronize
   auto-recovery
   delay restore 150
+!
+! interface port-channel${pairId}
+!   description vPC-PEER-LINK to ${peerHostname}
+!   switchport mode trunk
+!   spanning-tree port type network
+!   vpc peer-link
 !
 telemetry
   destination-group 1
@@ -725,6 +748,7 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
   const vtepIp   = `10.254.0.${idx + 1}`
   const isisNet  = `0101.0255.000${idx + 101}`
   const qos      = isGpu ? aristaGpuQoS() : ''
+  const { pairId, peerHostname, domainId } = leafPairInfo(dev, idx)
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -807,6 +831,32 @@ interface Vxlan1
   vxlan udp-port 4789
   vxlan vlan 10 vni 10010
   vxlan learn-restrict any
+!
+! ── MLAG (HA pair with ${peerHostname}) ─────────────────────────────────────
+vlan 4094
+  name MLAG_PEER
+  trunk group MLAG_PEER
+!
+interface Vlan4094
+  description MLAG_PEER_L3_PEERING
+  no autostate
+  ip address <CHANGE-ME-${dev.hostname}-mlag-peer-ip>/30
+!
+interface Port-Channel${pairId}00
+  description MLAG_PEER_LINK to ${peerHostname}
+  switchport mode trunk
+  switchport trunk group MLAG_PEER
+!
+! interface EthernetN-M  (members of peer-link)
+!   channel-group ${pairId}00 mode active
+!
+mlag configuration
+  domain-id ${domainId}MLAG${pairId}
+  local-interface Vlan4094
+  peer-address <CHANGE-ME-${peerHostname}-mlag-peer-ip>
+  peer-link Port-Channel${pairId}00
+  reload-delay mlag 300
+  reload-delay non-mlag 330
 !
 ${qos}
 `

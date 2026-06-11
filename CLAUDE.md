@@ -612,6 +612,58 @@ Use gap IDs in commit messages and conversations.
 
 ---
 
+## 22. Enterprise Upgrade Tracker (2026-06-11 →)
+
+Working backlog for the "enterprise-grade" pass requested 2026-06-11
+(config-gen topology-awareness, NetBox-driven ZTP, monitoring, HLD/design
+polish). Any session picking this up should scan the status column, pick
+the next `[ ]` item, implement + test + commit + push to
+`claude/network-automation-enterprise-lifybd`, then flip the row to `[x]`
+with the commit hash. Keep this table in sync — it is the single source of
+truth for resuming this work after a context reset.
+
+Status legend: `[ ]` pending · `[~]` in progress · `[x]` done (commit hash)
+
+### A. Config generation — topology-aware (`frontend/src/lib/configgen.ts`)
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| A1 | NX-OS leaf vPC domain: pair-based (`Math.floor(idx/2)+1`) instead of per-device; derive peer hostname + role priority | [x] | `nxosLeafConfig()`, `leafPairInfo()` helper |
+| A2 | Arista leaf MLAG config (currently absent) | [x] | `aristaLeafConfig()`, uses `leafPairInfo()` helper |
+| A3 | Cisco campus distribution/access: dedicated config generator (HSRP/FHRP, STP priority hierarchy, IGMP snooping, voice/data VLANs) — replace `iosxeWanConfig` dispatch for `distribution`/`access` | [ ] | new `iosxeCampusConfig()` |
+| A4 | Arista gNMI / eAPI telemetry block (currently none) | [ ] | `aristaSpineConfig`/`aristaLeafConfig` |
+| A5 | Topology-driven uplink counts (consume `buildDeviceList()` port-math instead of static comments) | [ ] | bom.ts → configgen.ts plumbing |
+| A6 | IPv6 dual-stack underlay (stretch) | [ ] | |
+| A7 | Multisite EVPN DCI route-targets (stretch) | [ ] | |
+
+Run `cd frontend && npm test` after each change in this section (36+ existing
+config-gen tests must keep passing; add new tests alongside).
+
+### B. ZTP + NetBox enterprise integration
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| B1 | NetBox/Nautobot inventory import panel (Step 1) — port `src/js/netbox.js` to React/TS | [ ] | new `frontend/src/lib/netbox.ts` + UI panel |
+| B2 | Wire ZTP device list (Step 6 ZTP tab) to optional NetBox-imported inventory | [ ] | `Step6Deploy.tsx` |
+| B3 | Backend: ZTP→NetBox status sync + DHCP reservations via `backend/integrations/netbox.py` (stretch) | [ ] | |
+
+### C. Monitoring improvements
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| C1 | Telemetry config generation: Prometheus alert rules, Grafana dashboard JSON, gNMI collector config, SNMP/syslog/NetFlow — port from `src/js/telemetry.js` | [ ] | new `frontend/src/lib/telemetry-gen.ts` + Step6Monitor download buttons |
+| C2 | HLD topology health overlay — color nodes by `useMonitoring()` status, click drill-down | [ ] | `HLDTopologyDiagram.tsx` |
+| C3 | Anomaly detection (z-score baselines) (stretch) | [ ] | new `backend/telemetry/anomaly.py` |
+
+### D. Enterprise HLD / design polish
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| D1 | HLD diagram + design summary reflect computed topology (MLAG pairs, FHRP VIPs, DCI links) once A1–A3 land | [ ] | depends on A1–A3 |
+
+---
+
 *Last updated: 2026-05-29. Step 6 enterprise-grade overhaul complete.*
 *HLD topology diagram complete (G-A2 ✅). Sidebar deep-nav complete. ZTP/Checks demo simulation complete. NETCONF interactive complete. Config Automation (Ansible Tower + Terraform + Manual) complete. Policy Gate complete.*
 *Mark resolved gaps with ✅ and date. Add new gaps as G-A17, G-A18, etc.*
+*Section 22 (Enterprise Upgrade Tracker) added 2026-06-11 — see it for current in-flight work.*
