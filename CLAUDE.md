@@ -583,7 +583,7 @@ Use gap IDs in commit messages and conversations.
 
 | ID | Gap | Priority |
 |----|-----|----------|
-| G-A1 | Intent NLP parser — free-text → Step 1 form fields (Claude API) | P1 |
+| G-A1 | ✅ 2026-06-11 Intent NLP parser — free-text → Step 1 form fields (Claude API) | P1 |
 | G-A2 | ✅ 2026-05-29 Professional HLD diagram — all layers interlinked, packet-flow scenarios, device-inspect panel | P1 |
 | G-A3 | ✅ 2026-05-29 Batfish/pyATS dry-run validation placeholder tab (Batfish Validate in Step 6) | P1 |
 | G-A4 | Config drift detection (running vs intended diff) | P1 |
