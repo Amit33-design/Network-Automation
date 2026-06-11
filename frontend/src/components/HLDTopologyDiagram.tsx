@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react'
 import type { BOMDevice } from '@/types'
+import { formatUptime } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface HLDNode {
+export interface HLDNode {
   id: string
   label: string
   model: string
@@ -69,6 +70,21 @@ interface Topo {
   svgH: number
 }
 
+// ─── Health overlay (C2) ────────────────────────────────────────────────────
+
+export type HealthStatus = 'healthy' | 'degraded' | 'down' | 'unknown'
+
+export interface NodeHealth {
+  status: HealthStatus
+  cpu: number
+  mem: number
+  uptimeSec: number
+  bgpSessionsUp: number
+  ifaceErrors: number
+  pfcDrops: number
+  alerts: string[]
+}
+
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
 const SVG_W    = 1280
@@ -96,6 +112,84 @@ const LAYER_STYLE: Record<string, { color: string; border: string; textColor: st
   storage:      { color: '#0F0C35', border: '#818CF8', textColor: '#C7D2FE' },
   oob:          { color: '#252219', border: '#78716C', textColor: '#D6D3D1' },
   'cloud-gw':   { color: '#062D2A', border: '#2DD4BF', textColor: '#99F6E4' },
+}
+
+// ─── Health overlay palette + simulation (C2) ──────────────────────────────
+// Colors mirror MonitoringResult statuses (healthy/degraded/down/unknown) so
+// the HLD overlay is visually consistent with the Step 6 Monitoring tab.
+
+export const HEALTH_COLOR: Record<HealthStatus, string> = {
+  healthy:  '#22C55E',
+  degraded: '#F59E0B',
+  down:     '#EF4444',
+  unknown:  '#6B7280',
+}
+
+export const HEALTH_LABEL: Record<HealthStatus, string> = {
+  healthy: 'Healthy', degraded: 'Degraded', down: 'Down', unknown: 'Unknown',
+}
+
+// Baseline CPU% per layer — GPU/spine/core run hotter than access/OOB.
+const HEALTH_BASELINE_CPU: Record<string, number> = {
+  gpu: 64, spine: 46, core: 46, leaf: 32, distribution: 30,
+  'corp-fw': 28, 'edge-fw': 28, 'wan-edge': 35, access: 20, storage: 24, oob: 12, host: 18,
+}
+
+// Layers that run a routing control-plane (eligible for BGP session metrics).
+const HEALTH_BGP_LAYERS = new Set(['spine', 'core', 'leaf', 'distribution', 'wan-edge'])
+
+function _seed(s: string): number {
+  return s.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+}
+
+function _pseudoRandom(seed: number, offset = 0): number {
+  const x = Math.sin(seed + offset) * 10000
+  return x - Math.floor(x)
+}
+
+// Deterministic per-node "live telemetry" snapshot — keeps the design-time
+// HLD overlay self-contained (no backend dependency) while following the
+// same status thresholds as the Step 6 Monitoring tab / Prometheus alert
+// rules (genPrometheusAlertRules in lib/telemetry-gen.ts).
+export function simulateNodeHealth(node: HLDNode): NodeHealth {
+  const s = _seed(node.id)
+  const baseCpu = HEALTH_BASELINE_CPU[node.layer] ?? 22
+  const r0 = _pseudoRandom(s, 11)
+  const r1 = _pseudoRandom(s, 22)
+  const r2 = _pseudoRandom(s, 33)
+  const r3 = _pseudoRandom(s, 44)
+  const r4 = _pseudoRandom(s, 55)
+
+  const cpu = Math.min(99, Math.max(1, baseCpu + (r0 - 0.5) * baseCpu * 0.7))
+  const mem = Math.min(99, Math.max(5, 50 + (r1 - 0.5) * 36))
+  const ifaceErrors = Math.floor(r2 * 14)
+  const pfcDrops = node.layer === 'gpu' ? Math.floor(r3 * 260) : 0
+  const bgpSessionsUp = HEALTH_BGP_LAYERS.has(node.layer) ? Math.floor(2 + r4 * 4) : 0
+  const uptimeSec = Math.floor(3600 * (4 + r2 * 2000))
+
+  const alerts: string[] = []
+  let status: HealthStatus = 'healthy'
+  if (cpu > 85 || pfcDrops > 200) {
+    status = 'down'
+    if (cpu > 85) alerts.push(`CPU utilization critical: ${cpu.toFixed(0)}%`)
+    if (pfcDrops > 200) alerts.push(`PFC watchdog triggered: ${pfcDrops} drops`)
+  } else if (cpu > 65 || ifaceErrors > 8 || pfcDrops > 100) {
+    status = 'degraded'
+    if (cpu > 65) alerts.push(`CPU utilization elevated: ${cpu.toFixed(0)}%`)
+    if (ifaceErrors > 8) alerts.push(`Interface error rate high: ${ifaceErrors}/min`)
+    if (pfcDrops > 100) alerts.push(`RoCEv2 CNP rate high: ${pfcDrops} drops`)
+  }
+
+  return {
+    status,
+    cpu: Math.round(cpu * 10) / 10,
+    mem: Math.round(mem * 10) / 10,
+    uptimeSec,
+    bgpSessionsUp,
+    ifaceErrors,
+    pfcDrops,
+    alerts,
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -690,10 +784,17 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
   const [hoveredLink, setHoveredLink] = useState<string | null>(null)
   const [primaryPathOnly, setPrimaryPathOnly] = useState(false)
+  const [showHealth, setShowHealth] = useState(false)
 
   const topo = useMemo(
     () => buildTopology(devices.length ? devices : [], useCase, underlayProtocol, overlayProtocols, siteCode),
     [devices, useCase, underlayProtocol, overlayProtocols, siteCode],
+  )
+
+  // C2: per-node health overlay — simulated telemetry snapshot, keyed by node id.
+  const healthMap: Record<string, NodeHealth> = useMemo(
+    () => Object.fromEntries(topo.nodes.filter(n => !n.isCloud).map(n => [n.id, simulateNodeHealth(n)])),
+    [topo.nodes],
   )
 
   // Default to first flow scenario so packets are always animated on load
@@ -763,6 +864,17 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
             {activeFlowObj?.desc}
           </span>
         )}
+        <button
+          type="button"
+          onClick={() => setShowHealth(v => !v)}
+          className={`ml-auto px-3 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer ${
+            showHealth
+              ? 'bg-emerald-600/20 border-emerald-400 text-emerald-300'
+              : 'border-white/10 text-gray-400 hover:border-white/20 hover:text-gray-300 bg-white/[0.02]'
+          }`}
+        >
+          {showHealth ? '🩺 Health Overlay: On' : '🩺 Health Overlay: Off'}
+        </button>
         {activeFlow && (
           <button
             type="button"
@@ -993,6 +1105,18 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                 {isSelected && (
                   <rect width={NW} height={NH} rx={6} fill="none" stroke="#FFFFFF" strokeWidth={0.5} opacity={0.5} />
                 )}
+                {/* C2: health status badge (top-left corner) */}
+                {showHealth && healthMap[node.id] && (
+                  <g>
+                    {healthMap[node.id].status === 'down' && (
+                      <circle cx={9} cy={9} r={7} fill="none" stroke={HEALTH_COLOR.down} strokeWidth={1.5}>
+                        <animate attributeName="r" values="7;11;7" dur="1.5s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.8;0;0.8" dur="1.5s" repeatCount="indefinite" />
+                      </circle>
+                    )}
+                    <circle cx={9} cy={9} r={5} fill={HEALTH_COLOR[healthMap[node.id].status]} stroke="#080E1A" strokeWidth={1.5} />
+                  </g>
+                )}
               </g>
             )
           })}
@@ -1060,6 +1184,58 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
               </div>
             </div>
           )}
+          {/* C2: health drill-down */}
+          {showHealth && healthMap[selectedNodeObj.id] && (() => {
+            const h = healthMap[selectedNodeObj.id]
+            return (
+              <div className="pt-1 border-t border-white/5 mt-2">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="text-gray-600 uppercase tracking-wider text-xs">Live Health</div>
+                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold"
+                    style={{ color: HEALTH_COLOR[h.status], backgroundColor: `${HEALTH_COLOR[h.status]}22`, border: `1px solid ${HEALTH_COLOR[h.status]}55` }}>
+                    {HEALTH_LABEL[h.status]}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <div className="text-gray-600 uppercase tracking-wider text-xs">CPU</div>
+                    <div className={`mt-0.5 ${h.cpu > 85 ? 'text-red-400' : h.cpu > 65 ? 'text-yellow-400' : 'text-gray-200'}`}>{h.cpu}%</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600 uppercase tracking-wider text-xs">Memory</div>
+                    <div className="text-gray-200 mt-0.5">{h.mem}%</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600 uppercase tracking-wider text-xs">Uptime</div>
+                    <div className="text-gray-200 mt-0.5">{formatUptime(h.uptimeSec)}</div>
+                  </div>
+                  {h.bgpSessionsUp > 0 && (
+                    <div>
+                      <div className="text-gray-600 uppercase tracking-wider text-xs">BGP Sessions</div>
+                      <div className="text-green-400 mt-0.5">{h.bgpSessionsUp} up</div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-gray-600 uppercase tracking-wider text-xs">Iface Errors</div>
+                    <div className={`mt-0.5 ${h.ifaceErrors > 8 ? 'text-yellow-400' : 'text-gray-200'}`}>{h.ifaceErrors}/min</div>
+                  </div>
+                  {h.pfcDrops > 0 && (
+                    <div>
+                      <div className="text-gray-600 uppercase tracking-wider text-xs">PFC Drops</div>
+                      <div className={`mt-0.5 ${h.pfcDrops > 100 ? 'text-purple-400' : 'text-gray-200'}`}>{h.pfcDrops}</div>
+                    </div>
+                  )}
+                </div>
+                {h.alerts.length > 0 && (
+                  <div className="mt-1.5 space-y-0.5">
+                    {h.alerts.map(a => (
+                      <div key={a} className="text-yellow-400 text-xs">⚠ {a}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
           <div className="pt-1">
             <div className="text-gray-600 uppercase tracking-wider text-xs mb-1.5">Connected Links</div>
             <div className="space-y-0.5">
