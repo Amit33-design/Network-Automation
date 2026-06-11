@@ -16,6 +16,11 @@ Allowed tools: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`, `We
 
 ## 0. Project Status — READ THIS FIRST
 
+> 📖 **Code map**: [`CODE_REFERENCE.md`](./CODE_REFERENCE.md) is a
+> function-by-function reference for the entire codebase (frontend +
+> backend) — read it first in any new session to understand what exists
+> and where, before grepping/reading source files from scratch.
+
 **Active branch**: `main`
 **Stack**: React 19 + TypeScript 6 + Vite 8 + Tailwind CSS v4 + Zustand 5 + TanStack Query v5
 **React migration**: ✅ COMPLETE (PR #23 merged 2026-05-26)
