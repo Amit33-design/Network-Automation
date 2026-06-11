@@ -658,6 +658,70 @@ fail-soft vs fail-hard endpoints.
 
 ---
 
+## Frontend — `lib/telemetry-gen.ts` (streaming telemetry / observability — Enterprise Upgrade C1)
+
+**Purpose:** Generates collector- and dashboard-side observability configs
+that pair with the gNMI/eAPI telemetry blocks `configgen.ts` already emits
+on-device. Ported from legacy `src/js/telemetry.js` 2026-06-11, rebased onto
+`BOMDevice[]` instead of the legacy `buildDeviceList()`. SNMP/syslog/NetFlow
+collector configs were already covered by `buildGrokPatternsConfig()` /
+`buildNetflowConfig()` (M-51/M-52, in `Step6Deploy.tsx`) — this module adds
+the gNMI/Prometheus/Grafana side.
+
+**Key exports:**
+- `GNMI_SUBS: { name, interval, paths[] }[]` — 5 OpenConfig subscription
+  groups: `interface-state` (10s), `bgp-neighbors` (30s), `platform-cpu`
+  (30s), `platform-memory` (30s), `igp-neighbors` (30s, IS-IS + OSPF
+  adjacency paths).
+- `GNMI_PORT: Record<string, number>` — gNMI port per NOS:
+  `ios-xe:9339, nxos:50051, eos:6030, junos:32767, sonic:8080`.
+- `TelemetryTarget { name, hostname, mgmtIp, port, os, role }` and
+  `buildTelemetryTargets(devices: BOMDevice[]): TelemetryTarget[]` —
+  expands each `BOMDevice` into up to 4 numbered instances
+  (`${hostname}-01..04`), skips `subLayer === 'firewall'`, derives `os` from
+  vendor+subLayer (Cisco spine/leaf → `nxos`, other Cisco → `ios-xe`,
+  Arista → `eos`, Juniper → `junos`, Dell EMC/NVIDIA → `sonic`, else `eos`),
+  and assigns sequential `10.0.0.11`, `.12`, ... management IPs.
+- `genGNMICCollectorConfig(devices, orgName = ''): string` — `gnmic.yml`:
+  per-target `targets:` entries (address:port, `${DEVICE_PASSWORD}`,
+  `insecure: false` only for `ios-xe`), `subscriptions:` block from
+  `GNMI_SUBS`, Prometheus output on `:9804` + file-debug output, `add-labels`
+  processor, file-based target `loader`. Empty device list → `targets: {}`
+  placeholder comment.
+- `genTelegrafGNMIConfig(devices, orgName = ''): string` —
+  `telegraf-gnmi.conf`: `[agent]` + `[[outputs.prometheus_client]]` (`:9804`),
+  one `[[inputs.gnmi]]` block per NOS group (addresses from
+  `buildTelemetryTargets`, TLS verify on for `ios-xe` only) with
+  `interface`/`interface_state`/`bgp`/`cpu`/`memory` subscriptions.
+- `genPrometheusAlertRules(devices, useCase = ''): string` —
+  `prometheus-alerts.yml`: `device-reachability` (`DeviceUnreachable`),
+  `bgp-sessions` (`BGPSessionDown`, `BGPPrefixCountDropped`),
+  `interface-health` (`InterfaceErrorRateHigh`, `InterfaceOperDown`),
+  `system-resources` (`HighCPUUtilization`, `HighMemoryUtilization`); when
+  `useCase === 'gpu'` adds a `gpu-fabric` group (`PFCWatchdogTriggered`,
+  `RoCEv2CNPRateHigh`) — matches the alert groups listed in CLAUDE.md §19.
+- `genGrafanaDashboardJSON(devices, orgName = '', useCase = ''): string` —
+  `grafana-dashboard.json`: importable Grafana dashboard model
+  (`schemaVersion: 39`, `${DS_PROMETHEUS}` datasource template var) with
+  panels for Devices Reporting, Fleet Avg CPU/Memory gauges, BGP Sessions
+  Established, Interface Error Rate + Throughput timeseries, and a Device
+  Inventory table; adds a "GPU Fabric — PFC Priority-3 Drops (RoCEv2)" panel
+  when `useCase === 'gpu'`.
+
+**UI:** Step 6 → Monitoring tab → "Observability Downloads" card
+(`Step6Deploy.tsx`) — buttons for `gnmic.yml`, `telegraf-gnmi.conf`,
+`prometheus-alerts.yml`, `grafana-dashboard.json`, alongside the existing
+Grok/NetFlow downloads. All four use `storeDevices`/`orgName`/`storeUseCase`
+from `useAppStore`.
+
+**Tests:** `src/test/telemetry-gen.test.ts` — 17 tests covering target
+expansion/capping/IP assignment/OS+port mapping, gnmic/Telegraf config
+content (placeholders, per-OS grouping, TLS flags, subscriptions), Prometheus
+alert groups (core vs. GPU-only), and Grafana dashboard JSON validity/panels
+(core vs. GPU).
+
+---
+
 ## Frontend — `store/useAppStore.ts`
 
 ### `store/useAppStore.ts`
@@ -1001,7 +1065,7 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 ##### Tab: Monitoring (`monitor`, lines ~2547-2810)
 - **State:** `monitorData: MonitoringResult|null`, `usePollMonitoring()` → `poll`/`pollPending`, `useMetricsSummary()` → `liveMetrics`, `monitorTick`, `demoMetrics: MetricsSummary|null`, `sparkRef` (last 8 throughput samples per device)
-- **UI:** header (live/demo status dot, tick counter, Grafana link if live, Poll/Simulate Degraded/Clear buttons); live-mode summary cards + device table; demo-mode dashboard — fleet Avg CPU/Mem `ArcGauge`s + total BGP sessions + interface errors, per-device cards (BGP peers/prefixes, CPU/Mem gauges, throughput `Sparkline`, error/PFC badges, red border if `cpu_util>80`, purple if `pfc_drops>100`), BGP Session Summary table; Alert Ticker (devices with `cpu_util>75 || pfc_drops>150 || interface_errors_in>5`); Observability Downloads (Grok Patterns, NetFlow Config)
+- **UI:** header (live/demo status dot, tick counter, Grafana link if live, Poll/Simulate Degraded/Clear buttons); live-mode summary cards + device table; demo-mode dashboard — fleet Avg CPU/Mem `ArcGauge`s + total BGP sessions + interface errors, per-device cards (BGP peers/prefixes, CPU/Mem gauges, throughput `Sparkline`, error/PFC badges, red border if `cpu_util>80`, purple if `pfc_drops>100`), BGP Session Summary table; Alert Ticker (devices with `cpu_util>75 || pfc_drops>150 || interface_errors_in>5`); Observability Downloads (Grok Patterns, NetFlow Config, gnmic.yml, Telegraf gNMI Config, Prometheus Alert Rules, Grafana Dashboard — Enterprise upgrade C1, see `lib/telemetry-gen.ts`)
 - **`handlePoll(failDevices?)`** — calls `poll()` mutation, toasts health summary
 - **`simulateMonitoringMetrics(devList, tick): MetricsSummary`** — per device, deterministic seed via `_seed(name)`/`_pseudoRandom`. Base CPU by role (GPU=62, spine=42, fw=28, else=22); computes `cpu_util, mem_util, interface_errors_in/out, bgp_sessions_up` (0 for access/vedge, else 2-6), `bgp_prefixes_received`, `pfc_drops` (GPU only, up to 300), `throughput_mbps` (spine base 8000, others 2000, scaled 0.4-1.0)
 

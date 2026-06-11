@@ -12,6 +12,7 @@ import { useBackendMode } from '@/components/BackendToggle'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
+import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON } from '@/lib/telemetry-gen'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -1261,6 +1262,7 @@ export function Step6Deploy() {
   const netboxDevices      = useAppStore(s => s.netboxDevices)
   const storeSiteCode      = useAppStore(s => s.siteCode)
   const storeUseCase       = useAppStore(s => s.useCase)
+  const orgName            = useAppStore(s => s.orgName)
   const customPolicyRules  = useAppStore(s => s.customPolicyRules)
   const { isLive } = useBackendMode()
   const { showToast } = useToast()
@@ -2824,12 +2826,13 @@ export function Step6Deploy() {
             </Card>
           )}
 
-          {/* ── Observability Downloads (M-51 M-52) ───────────────────────── */}
+          {/* ── Observability Downloads (M-51 M-52, C1) ─────────────────────── */}
           <Card>
             <CardHeader><CardTitle>Observability Downloads</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
-              Logstash Grok patterns for syslog parsing and NetFlow/sFlow exporter config snippets.
-              Grafana dashboards are auto-provisioned when running with docker-compose.
+              Logstash Grok patterns for syslog parsing, NetFlow/sFlow exporter config snippets,
+              gNMI streaming-telemetry collector configs, Prometheus alert rules, and a Grafana
+              dashboard — all derived from your BOM device list.
             </p>
             <div className="flex flex-wrap gap-3">
               <Button variant="secondary" size="sm"
@@ -2839,6 +2842,22 @@ export function Step6Deploy() {
               <Button variant="secondary" size="sm"
                 onClick={() => { downloadBlob('netflow-config.txt', buildNetflowConfig()); showToast('netflow-config.txt downloaded', 'success') }}>
                 ↓ NetFlow Config
+              </Button>
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadBlob('gnmic.yml', genGNMICCollectorConfig(storeDevices, orgName)); showToast('gnmic.yml downloaded', 'success') }}>
+                ↓ gnmic.yml
+              </Button>
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadBlob('telegraf-gnmi.conf', genTelegrafGNMIConfig(storeDevices, orgName)); showToast('telegraf-gnmi.conf downloaded', 'success') }}>
+                ↓ Telegraf gNMI Config
+              </Button>
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadBlob('prometheus-alerts.yml', genPrometheusAlertRules(storeDevices, storeUseCase)); showToast('prometheus-alerts.yml downloaded', 'success') }}>
+                ↓ Prometheus Alert Rules
+              </Button>
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadBlob('grafana-dashboard.json', genGrafanaDashboardJSON(storeDevices, orgName, storeUseCase)); showToast('grafana-dashboard.json downloaded', 'success') }}>
+                ↓ Grafana Dashboard
               </Button>
             </div>
           </Card>
