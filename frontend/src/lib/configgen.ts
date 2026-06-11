@@ -117,10 +117,11 @@ line vty 0 15
 
 // ── NX-OS Spine ───────────────────────────────────────────────────────────────
 
-function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
+function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = []): string {
   const spineAsn = 65000
   const routerId = `10.255.1.${idx + 1}`
   const isisNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
+  const fabricLinks = renderNxosFabricLinks('spine', dev, allDevices)
 
   // GPU fabric: ECN + DCQCN + PFC lossless queuing.
   // Non-GPU: standard 4-class DSCP queuing.
@@ -238,16 +239,8 @@ router bgp ${spineAsn}
   ! Add one neighbor entry per leaf:
   ! neighbor 10.255.2.1 inherit peer LEAF-RR-CLIENT
 !
-! ── SPINE FABRIC INTERFACES (adjust per cabling matrix) ─────────────────────
-! interface Ethernet1/1
-!   description DOWNLINK: <CHANGE-ME-leaf-hostname> Eth49/1
-!   no switchport
-!   mtu 9216
-!   ip address <CHANGE-ME-p2p-ip>/31
-!   ip router isis 1
-!   isis network point-to-point
-!   isis metric 10
-!   no shutdown
+! ── SPINE FABRIC INTERFACES (topology-driven from BOM port-math) ────────────
+${fabricLinks}
 !
 ${qosBlock}
 !
@@ -292,14 +285,112 @@ function haPairInfo(dev: BOMDevice, idx: number): { pairId: number; isPrimary: b
   return { pairId, isPrimary, peerHostname, domainId }
 }
 
+// ── CLOS fabric link plan (Enterprise upgrade A5) ──────────────────────────────
+// Derives real spine↔leaf P2P links from buildDeviceList() port-math
+// (dev.uplinks / dev.ports) instead of a single static "replicate per cabling
+// matrix" comment. Each leaf's uplink ports are distributed round-robin across
+// the spines; spine configs derive the matching reverse links so both ends of
+// every link agree on the /31 subnet without manual cabling notes.
+interface FabricLink {
+  /** 0-based index among this device's fabric-facing ports */
+  ifIndex: number
+  peerHostname: string
+  /** human-readable peer description, e.g. "spine 1" or "leaf 3" */
+  peerLabel: string
+  /** 0-based parallel-link number between this device and its peer */
+  linkNum: number
+  /** local-side P2P /31 address, e.g. "10.99.3.17/31" */
+  localIp: string
+}
+
+function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): FabricLink[] {
+  const spines = allDevices.filter(d => d.subLayer === 'spine')
+  const leaves = allDevices.filter(d => d.subLayer === 'leaf')
+  const spineCount = spines.length || 2
+  const leafCount = leaves.length || 1
+  const leafUplinks = leaves[0]?.uplinks || dev.uplinks || 2
+
+  const links: FabricLink[] = []
+
+  if (role === 'leaf') {
+    const leafIdx = Math.max(0, leaves.findIndex(d => d.id === dev.id))
+    const leafNum = leafIdx + 1
+    for (let i = 0; i < leafUplinks; i++) {
+      const spineIdx = i % spineCount
+      const linkNum = Math.floor(i / spineCount)
+      const spineNum = spineIdx + 1
+      const octet = (spineNum - 1) * 16 + linkNum * 2
+      links.push({
+        ifIndex: i,
+        peerHostname: spines[spineIdx]?.hostname || `SPINE-${spineNum}`,
+        peerLabel: `spine ${spineNum}`,
+        linkNum,
+        localIp: `10.99.${leafNum}.${octet + 1}/31`,
+      })
+    }
+  } else {
+    const spineIdx = Math.max(0, spines.findIndex(d => d.id === dev.id))
+    const spineNum = spineIdx + 1
+    let ifIndex = 0
+    for (let leafNum = 1; leafNum <= leafCount; leafNum++) {
+      for (let i = 0; i < leafUplinks; i++) {
+        if (i % spineCount !== spineIdx) continue
+        const linkNum = Math.floor(i / spineCount)
+        const octet = (spineNum - 1) * 16 + linkNum * 2
+        links.push({
+          ifIndex: ifIndex++,
+          peerHostname: leaves[leafNum - 1]?.hostname || `LEAF-${leafNum}`,
+          peerLabel: `leaf ${leafNum}`,
+          linkNum,
+          localIp: `10.99.${leafNum}.${octet}/31`,
+        })
+      }
+    }
+  }
+  return links
+}
+
+/** Renders CLOS fabric links as NX-OS (IS-IS, `Ethernet1/N`) interface stanzas. */
+function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): string {
+  const links = closFabricLinks(role, dev, allDevices)
+  const portBase = role === 'leaf' ? Math.max(0, (dev.ports || 48) - (dev.uplinks || 0)) : 0
+  const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
+  return links.map(link => `interface Ethernet1/${portBase + link.ifIndex + 1}
+  description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
+  no switchport
+  mtu 9216
+  ip address ${link.localIp}
+  ip router isis 1
+  isis network point-to-point
+  isis metric 10
+  no shutdown`).join('\n!\n')
+}
+
+/** Renders CLOS fabric links as Arista EOS (IS-IS, `EthernetN`) interface stanzas. */
+function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): string {
+  const links = closFabricLinks(role, dev, allDevices)
+  const portBase = role === 'leaf' ? Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)) : 0
+  const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
+  return links.map(link => `interface Ethernet${portBase + link.ifIndex + 1}
+  description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
+  no switchport
+  mtu 9214
+  ip address ${link.localIp}
+  isis enable UNDERLAY
+  isis network point-to-point
+  isis metric 10
+  no shutdown`).join('\n!\n')
+}
+
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 
-function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
+function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = []): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
   const isisNet  = `49.0001.0102.5501.${String(idx + 1).padStart(4, '0')}.00`
   const qosBlock = isGpu ? nxosGpuQoS() : nxosStdQoS()
+  const fabricLinks = renderNxosFabricLinks('leaf', dev, allDevices)
   const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
   const vpcRolePriority = isPrimary ? 8192 : 16384
 
@@ -415,16 +506,8 @@ interface nve1
   member vni 50000
     ingress-replication protocol bgp
 !
-! ── UPLINKS (adjust per cabling matrix) ──────────────────────────────────────
-! interface Ethernet49/1
-!   description UPLINK: <CHANGE-ME-spine1-hostname> Eth1/N
-!   no switchport
-!   mtu 9216
-!   ip address <CHANGE-ME-p2p-ip>/31
-!   ip router isis 1
-!   isis network point-to-point
-!   isis metric 10
-!   no shutdown
+! ── UPLINKS (topology-driven from BOM port-math) ─────────────────────────────
+${fabricLinks}
 !
 ${qosBlock}
 !
@@ -630,11 +713,12 @@ hardware profile forwarding-mode fabricpath
 
 // ── Arista EOS ────────────────────────────────────────────────────────────────
 
-function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
+function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = []): string {
   const asn      = 65000
   const routerId = `10.255.1.${idx + 1}`
   const isisNet  = `0101.0255.000${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
+  const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices)
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -697,16 +781,8 @@ interface Loopback0
   isis enable UNDERLAY
   isis passive
 !
-! ── UPLINK INTERFACES (template — replicate per cabling matrix) ──────────────
-! interface EthernetN
-!   description DOWNLINK: <leaf-hostname>
-!   no switchport
-!   ip address <CHANGE-ME-p2p-ip>/31
-!   isis enable UNDERLAY
-!   isis network point-to-point
-!   isis metric 10
-!   mtu 9214
-!   no shutdown
+! ── DOWNLINK INTERFACES (topology-driven from BOM port-math) ────────────────
+${fabricLinks}
 !
 ! ── BGP / EVPN OVERLAY ───────────────────────────────────────────────────────
 router bgp ${asn}
@@ -745,12 +821,13 @@ EOF
 `
 }
 
-function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
+function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = []): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
   const isisNet  = `0101.0255.000${idx + 101}`
   const qos      = isGpu ? aristaGpuQoS() : ''
+  const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices)
   const { pairId, peerHostname, domainId } = haPairInfo(dev, idx)
 
   return `! ═══════════════════════════════════════════════════════════════
@@ -795,14 +872,8 @@ interface Loopback1
   isis enable UNDERLAY
   isis passive
 !
-! ── UPLINKS to spines ────────────────────────────────────────────────────────
-! interface EthernetN
-!   no switchport
-!   ip address <CHANGE-ME-p2p-ip>/31
-!   isis enable UNDERLAY
-!   isis network point-to-point
-!   mtu 9214
-!   no shutdown
+! ── UPLINKS to spines (topology-driven from BOM port-math) ──────────────────
+${fabricLinks}
 !
 ! ── BGP / EVPN ───────────────────────────────────────────────────────────────
 router bgp ${leafAsn}
@@ -2048,7 +2119,7 @@ ${mgmtBlock(dev.hostname, 10)}
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '' = '', appTypes: AppType[] = []): string {
+export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '' = '', appTypes: AppType[] = [], allDevices: BOMDevice[] = []): string {
   const isGpu = useCase === 'gpu'
   const v = dev.vendor
   const l = dev.subLayer
@@ -2059,11 +2130,11 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'firewall')                         return ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
-  if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce)
-  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce)
+  if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices)
+  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices)
   if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes)
-  if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce)
-  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce)
+  if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices)
+  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices)
   if (v === 'Juniper'   && (l === 'leaf' || l === 'spine'))          return juniperLeafConfig(dev, idx)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)
@@ -2081,7 +2152,7 @@ export function generateAllConfigs(
 ): Record<string, string> {
   return Object.fromEntries(
     devices.map((dev, i) => {
-      const base = generateConfig(dev, i, useCase, appTypes)
+      const base = generateConfig(dev, i, useCase, appTypes, devices)
       const withPolicies = policyBlocks.length
         ? applyPolicies(base, dev, useCase, policyBlocks)
         : base

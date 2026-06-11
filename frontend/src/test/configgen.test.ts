@@ -341,6 +341,64 @@ describe('Arista gNMI/eAPI telemetry block (Enterprise upgrade A4)', () => {
   })
 })
 
+// ── Enterprise upgrade A5: topology-driven uplink/downlink interfaces ─────────
+describe('CLOS fabric link plan from BOM port-math (Enterprise upgrade A5)', () => {
+  it('NX-OS leaf without a full device list still generates real (non-comment) uplink interfaces', () => {
+    const dev = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('interface Ethernet1/43')
+    expect(cfg).toContain('ip address 10.99.1.1/31')
+    expect(cfg).not.toMatch(/!\s*interface Ethernet1\/43/)
+  })
+
+  it('NX-OS spine downlink and leaf uplink agree on the same /31 subnet', () => {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 'sp1', hostname: 'IAD-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', ports: 36, uplinks: 0 }),
+      makeDevice({ id: 'sp2', hostname: 'IAD-SPINE-A02', vendor: 'Cisco', subLayer: 'spine', ports: 36, uplinks: 0 }),
+      makeDevice({ id: 'lf1', hostname: 'IAD-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 }),
+      makeDevice({ id: 'lf2', hostname: 'IAD-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 }),
+    ]
+    const configs = generateAllConfigs(devices, 'dc')
+
+    // Leaf 1's first uplink (Ethernet1/43) goes to spine 1 on 10.99.1.1/31
+    expect(configs['lf1']).toContain('interface Ethernet1/43')
+    expect(configs['lf1']).toContain('ip address 10.99.1.1/31')
+    expect(configs['lf1']).toContain('description UPLINK: IAD-SPINE-A01')
+
+    // Spine 1's matching downlink to leaf 1 (link 1) is 10.99.1.0/31 — same /31
+    expect(configs['sp1']).toContain('ip address 10.99.1.0/31')
+    expect(configs['sp1']).toContain('description DOWNLINK: IAD-LEAF-A01')
+  })
+
+  it('Arista spine downlink and leaf uplink agree on the same /31 subnet', () => {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 'sp1', hostname: 'IAD-SPINE-A01', vendor: 'Arista', subLayer: 'spine', ports: 48, uplinks: 0 }),
+      makeDevice({ id: 'sp2', hostname: 'IAD-SPINE-A02', vendor: 'Arista', subLayer: 'spine', ports: 48, uplinks: 0 }),
+      makeDevice({ id: 'lf1', hostname: 'IAD-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', ports: 32, uplinks: 2 }),
+      makeDevice({ id: 'lf2', hostname: 'IAD-LEAF-A02', vendor: 'Arista', subLayer: 'leaf', ports: 32, uplinks: 2 }),
+    ]
+    const configs = generateAllConfigs(devices, 'dc')
+
+    // Leaf 1's first uplink (Ethernet31) goes to spine 1 on 10.99.1.1/31
+    expect(configs['lf1']).toContain('interface Ethernet31')
+    expect(configs['lf1']).toContain('ip address 10.99.1.1/31')
+
+    // Spine 1's matching downlink to leaf 1 is 10.99.1.0/31 — same /31
+    expect(configs['sp1']).toContain('ip address 10.99.1.0/31')
+    expect(configs['sp1']).toContain('description DOWNLINK: IAD-LEAF-A01')
+  })
+
+  it('leaf uplink count scales with the SKU uplinks field from buildDeviceList()', () => {
+    const dev2 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', ports: 32, uplinks: 2 })
+    const dev6 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 })
+    const cfg2 = generateConfig(dev2, 0)
+    const cfg6 = generateConfig(dev6, 0)
+    const count = (cfg: string) => (cfg.match(/^interface Ethernet1\/\d+$/gm) ?? []).length
+    expect(count(cfg2)).toBe(2)
+    expect(count(cfg6)).toBe(6)
+  })
+})
+
 // ── Enterprise upgrade A3: Campus distribution/access — FHRP, STP, IGMP ───────
 describe('Campus distribution/access config (Enterprise upgrade A3)', () => {
   it('Cisco campus distribution uses OSPF, not IS-IS', () => {
