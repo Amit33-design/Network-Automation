@@ -103,3 +103,50 @@ describe('HEALTH_COLOR / HEALTH_LABEL', () => {
     }
   })
 })
+
+// ── Computed topology — vPC/MLAG pairs, FHRP VIPs, DCI (D1) ────────────────────
+describe('HLDTopologyDiagram — computed topology (D1)', () => {
+  it('DC leaves are paired into vPC/MLAG pairs with peer labels', () => {
+    render(<HLDTopologyDiagram devices={[]} useCase="dc" />)
+    fireEvent.click(screen.getByText('LEAF-001'))
+    expect(screen.getByText('Fabric Pairing')).toBeInTheDocument()
+    expect(screen.getByText(/vPC\/MLAG Pair #1.*peer: LEAF-002/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('✕'))
+    fireEvent.click(screen.getByText('LEAF-002'))
+    expect(screen.getByText(/vPC\/MLAG Pair #1.*peer: LEAF-001/)).toBeInTheDocument()
+  })
+
+  it('DC leaf pairs render a vPC/MLAG peer-link in connected links', () => {
+    render(<HLDTopologyDiagram devices={[]} useCase="dc" />)
+    fireEvent.click(screen.getByText('LEAF-001'))
+    expect(screen.getAllByText('vPC/MLAG Peer-Link').length).toBeGreaterThan(0)
+  })
+
+  it('multisite leaves include EVPN DCI route-target features', () => {
+    render(<HLDTopologyDiagram devices={[]} useCase="multisite" />)
+    fireEvent.click(screen.getByText('LEAF-001'))
+    expect(screen.getByText(/EVPN DCI Type-5 · RT 65100:10010 \(L2\) \/ 65100:50000 \(L3\)/)).toBeInTheDocument()
+  })
+
+  it('GPU ToR leaves are paired into vPC/MLAG pairs', () => {
+    render(<HLDTopologyDiagram devices={[]} useCase="gpu" />)
+    fireEvent.click(screen.getByText('GPU-LEAF-01'))
+    expect(screen.getByText(/vPC\/MLAG Pair #1.*peer: GPU-LEAF-02/)).toBeInTheDocument()
+  })
+
+  it('campus distribution switches are paired with an HSRP FHRP gateway', () => {
+    render(<HLDTopologyDiagram devices={[]} useCase="campus" underlayProtocol="ospf" />)
+    fireEvent.click(screen.getByText('DIST-SW-01'))
+    expect(screen.getByText('Fabric Pairing')).toBeInTheDocument()
+    expect(screen.getByText(/vPC\/MLAG Pair #1.*peer: DIST-SW-02/)).toBeInTheDocument()
+    expect(screen.getByText('FHRP Gateway')).toBeInTheDocument()
+    expect(screen.getByText(/HSRP VIP \(Vlan10\/DATA\): 10\.10\.0\.1/)).toBeInTheDocument()
+  })
+
+  it('campus access switches annotate their MEC uplink to a distribution vPC pair', () => {
+    render(<HLDTopologyDiagram devices={[]} useCase="campus" underlayProtocol="ospf" />)
+    fireEvent.click(screen.getByText('ACC-SW-001'))
+    expect(screen.getByText(/MEC uplink: Port-channel1 → DIST-SW-01 \(vPC pair #1\)/)).toBeInTheDocument()
+  })
+})

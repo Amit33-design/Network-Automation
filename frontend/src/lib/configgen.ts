@@ -279,7 +279,7 @@ ip prefix-list LOOPBACKS seq 5 permit 10.255.0.0/16 ge 32
 // 2&3 share pair 2, etc. (matches generateHostnames() in bom.ts, which assigns
 // rack letters per pair and alternates the trailing 01/02 unit number within a
 // pair). isPrimary (even idx) is the active/root member of the pair.
-function haPairInfo(dev: BOMDevice, idx: number): { pairId: number; isPrimary: boolean; peerHostname: string; domainId: string } {
+export function haPairInfo(dev: BOMDevice, idx: number): { pairId: number; isPrimary: boolean; peerHostname: string; domainId: string } {
   const pairId = Math.floor(idx / 2) + 1
   const isPrimary = idx % 2 === 0
   const peerHostname = dev.hostname.replace(/0([12])$/, (_m, n) => (n === '1' ? '02' : '01'))
@@ -432,7 +432,7 @@ function aristaIsisIpv6AddressFamily(ipv6Enabled: boolean): string {
 // routes keep `auto` RTs (scoped to each site's ASN); VNIs that must be
 // extended over the DCI additionally import/export `${DCI_RT_ASN}:<vni>`,
 // which is identical on every site — so cross-site leaking is opt-in per VNI.
-const DCI_RT_ASN = 65100
+export const DCI_RT_ASN = 65100
 
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 

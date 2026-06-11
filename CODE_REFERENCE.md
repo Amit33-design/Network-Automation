@@ -233,9 +233,9 @@ npm test` after ANY change here):
   by `ciscoFirewallConfig`, `iosxeWanConfig`, `iosxeCampusConfig`,
   `genericConfig`.
 - **`haPairInfo(dev, idx): { pairId, isPrimary, peerHostname, domainId }`**
-  *(added 2026-06-11, Enterprise Upgrade A1)* — derives HA-pair metadata
-  purely from `idx` and `dev.hostname`, matching `generateHostnames()`'s
-  pairing convention:
+  *(added 2026-06-11, Enterprise Upgrade A1; exported for D1)* — derives
+  HA-pair metadata purely from `idx` and `dev.hostname`, matching
+  `generateHostnames()`'s pairing convention:
   - `pairId = Math.floor(idx/2) + 1` — shared by idx 0&1, 2&3, ...
   - `isPrimary = idx % 2 === 0` — even idx = primary/active/root.
   - `peerHostname` — flips the trailing `01`↔`02` on `dev.hostname` (e.g.
@@ -244,6 +244,10 @@ npm test` after ANY change here):
     `IAD-LEAF-A`) — a stable ID shared by both pair members, used for vPC
     domain numbers / MLAG domain-id / STP comments.
   - Used by `nxosLeafConfig`, `aristaLeafConfig`, and `iosxeCampusConfig`.
+  - Exported (Enterprise Upgrade D1, 2026-06-11) and re-used by
+    `Step4NetworkDesign.tsx`'s `genComputedTopology()` to derive the same
+    vPC/MLAG pairing + FHRP gateway summary from real BOM devices, so the
+    design summary/HLD agree with the generated configs.
 - **`closFabricLinks(role, dev, allDevices): FabricLink[]`** *(added
   2026-06-11, Enterprise Upgrade A5)* — derives the spine↔leaf CLOS link
   plan from BOM port-math instead of a static comment block:
@@ -310,6 +314,10 @@ npm test` after ANY change here):
   site-local RTs (`auto` on NX-OS, fabric-ASN `65000:<vni>` on Arista) — so
   cross-site EVPN leaking is opt-in per VNI and identical on every site.
   Spine RRs need no change (`retain route-target all` already present).
+  Exported (Enterprise Upgrade D1, 2026-06-11) and re-used by
+  `Step4NetworkDesign.tsx`'s `genComputedTopology()` and by
+  `HLDTopologyDiagram.tsx`'s multisite leaf feature annotations
+  (`EVPN DCI Type-5 · RT ${DCI_RT_ASN}:10010 (L2) / ${DCI_RT_ASN}:50000 (L3)`).
 
 ### NX-OS (Cisco) — DC/GPU spine-leaf
 - **`nxosSpineConfig(dev, idx, isGpu, allDevices = [], protoFeatures = []):
@@ -997,13 +1005,31 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
   - **refdesigns** (M-24) — static `REF_DESIGNS` map (campus/dc/gpu/wan/multisite/multicloud) with `VENDOR_BADGE_COLORS`, active use case sorted first
 - Shared types: `RefDesign, IPBlock, IPRow, VLANRow, VNIRow, BGPRow, ProtoRow, OSPFRow, CableRow, ReachabilityEntry, RoutePropRow`
 - Export helpers: `exportLLDCSV()` (multi-section CSV: IP plan + VLAN + BGP + device list), `handleExportSVG()` (XMLSerializer on the HLD `<svg>`)
+- **Computed topology (Enterprise Upgrade D1, 2026-06-11)** — exported types
+  `MlagPairSummary` (`{pairId, primary, secondary, domainId}`),
+  `FhrpVipSummary` (`{pairId, vlan, name, vip, primary, secondary}`),
+  `DciSummary` (`{rtAsn, l2Rt, l3Rt, leaves: string[]}`), `ComputedTopology`
+  (`{mlagPairs, fhrpVips, dci}`), and `genComputedTopology(useCase, devices,
+  appTypes): ComputedTopology`:
+  - For `dc|multisite|gpu|multicloud|aviatrix`: pairs `subLayer==='leaf'`
+    devices two-at-a-time via `haPairInfo(dev, idx)` into `mlagPairs`
+    (`pairId`/`domainId` from `haPairInfo`, `primary`/`secondary` =
+    hostnames). For `multisite` with ≥1 leaf, also returns `dci` using
+    `DCI_RT_ASN` (`l2Rt = "${DCI_RT_ASN}:10010"`, `l3Rt =
+    "${DCI_RT_ASN}:50000"`, `leaves` = all leaf hostnames).
+  - For `campus`: pairs `subLayer==='distribution'` devices the same way
+    into `mlagPairs`, plus a `fhrpVips` entry per pair (`Vlan10/DATA`, VIP
+    `10.10.${pairId-1}.1`); if `appTypes.includes('voice')`, an additional
+    `Vlan20/VOICE` VIP (`10.20.${pairId-1}.1`) per pair.
+  - `computedTopology` is computed via `useMemo(() => genComputedTopology(useCase, generatedDevices, appTypes), ...)` and threaded into both `buildSummaryText()` (new "── COMPUTED TOPOLOGY (D1) ──" text section) and a new "Computed Topology" `Card` in the **summary** tab (vPC/MLAG pair table, FHRP gateway table, DCI route-target info) — rendered only when `mlagPairs.length > 0 || dci`.
+  - Tested by `frontend/src/test/Step4NetworkDesign.test.ts` (pure-function tests, no rendering).
 
 **Notes:**
-- Reads from `useAppStore`: `useCase, scale, siteCode, numSites, underlayProtocol, overlayProtocols, protoFeatures, redundancyModel, totalEndpoints, bandwidthPerServer, oversubscription, trafficPattern, firewallModel, compliance, vendorPrefs, devices, nextStep, prevStep`. Writes `setDevices(generatedDevices)`.
+- Reads from `useAppStore`: `useCase, scale, siteCode, numSites, underlayProtocol, overlayProtocols, protoFeatures, redundancyModel, totalEndpoints, bandwidthPerServer, oversubscription, trafficPattern, firewallModel, compliance, vendorPrefs, appTypes, devices, nextStep, prevStep`. Writes `setDevices(generatedDevices)`.
 - Same `useMemo`-as-side-effect pattern as `Step2Design.tsx` to sync `generatedDevices` from `buildBOM()` into the store.
 - `simulateFailure()` HA logic: spine failure with ≥2 spines remaining only reduces ECMP paths; firewall failure → 2000ms convergence; presence of a spare device of same `subLayer` caps convergence at 300ms.
 - IS-IS vs OSPF vs eBGP underlay branching in `genRoutingData()` mirrors CLAUDE.md §6 Rule 4 (IS-IS/eBGP for DC, OSPF for campus/WAN) but only affects this page's tables, not `configgen.ts`.
-- Per CLAUDE.md G-A2/D1: HLD diagram functionally complete; topology-aware computed data (MLAG pairs, FHRP VIPs, DCI links from configgen items A1–A3) is the still-open D1 item.
+- Per CLAUDE.md G-A2/D1: D1 complete (2026-06-11) — see "Computed topology" above; HLD diagram + design summary now both reflect `haPairInfo`-derived MLAG pairs, FHRP VIPs, and multisite DCI route-targets from `configgen.ts` items A1–A3/A7.
 
 ---
 
@@ -1129,15 +1155,46 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 **Key exports / structure:**
 - Single export: `export function HLDTopologyDiagram({ devices, useCase, underlayProtocol, overlayProtocols, siteCode })`
 - `Props` (file-local): `{ devices: BOMDevice[]; useCase?: string (default 'dc'); underlayProtocol?: string (default 'isis'); overlayProtocols?: string[] (default ['vxlan_evpn']); siteCode?: string (default '') }`
-- Internal types: `HLDNode` (id, label, model, layer, vendor, loopback, mgmtIp, asn?, role, x/y/w/h, isCloud?, haRole?: 'active'|'standby'|'none', features[], color/border/textColor), `HLDLink` (id, from, to, speed, protocol, fromPort, toPort, linkSubnet, isHaSync?, isOob?), `SecurityZone` (id, label, sublabel, yStart/yEnd, fill, stroke, icon), `PacketFlow` (id, icon, label, desc, nodeSeq: string[], color, animDur), `Topo` (nodes, links, zones, flows, title, subtitle, svgH)
+- Internal types: `HLDNode` (id, label, model, layer, vendor, loopback, mgmtIp, asn?, role, x/y/w/h, isCloud?, haRole?: 'active'|'standby'|'none', features[], color/border/textColor, plus D1 fields `mlagPairId?: number`, `mlagPeerLabel?: string`, `fhrpVip?: string`), `HLDLink` (id, from, to, speed, protocol, fromPort, toPort, linkSubnet, isHaSync?, isOob?), `SecurityZone` (id, label, sublabel, yStart/yEnd, fill, stroke, icon), `PacketFlow` (id, icon, label, desc, nodeSeq: string[], color, animDur), `Topo` (nodes, links, zones, flows, title, subtitle, svgH)
 - Layout constants: `SVG_W=1280`, `LEFT_W=148`, `RIGHT_PAD=16`, `CONTENT_W = SVG_W - LEFT_W - RIGHT_PAD`, `NW=136`, `NH=66`; `svgH` per-topology (760-920) drives `viewBox`
 - `LAYER_STYLE` maps layer names (internet, wan-edge, corp-fw, edge-fw, spine, core, distribution, leaf, access, host, gpu, storage, oob, cloud-gw) → `{ color, border, textColor }`
 - Helpers: `style(layer)`, `xCentered(count, gap)`, `mkLink(...)`, `mkNode(...)`, `linkPath(n1, n2, isHa?)` (bezier paths; HA-sync = horizontal dashed)
-- **Per-use-case topology builders** (each returns `Topo`): `buildDCTopology(devices, underlay, overlay, sc)` (used for `dc`, `multisite`, `multicloud`, `aviatrix`), `buildCampusTopology(devices, underlay, sc)`, `buildGPUTopology(devices, sc)`, `buildWANTopology(devices, underlay, sc)` — dispatched via `buildTopology(devices, useCase, underlay, overlay, sc)`
+- **`pairInfo(i, count): { pairId, isPrimary, peerIdx } | null`** *(Enterprise
+  Upgrade D1, 2026-06-11)* — mirrors `configgen.ts`'s `haPairInfo()`
+  `pairId`/`isPrimary` formula (`Math.floor(i/2)+1`, `i%2===0`) for the
+  synthetic, sequentially-numbered HLD node arrays (which don't fit
+  `haPairInfo`'s `01`/`02`-hostname-suffix regex). Returns `null` when
+  `peerIdx` falls outside `[0, count)` (odd one out). Callers resolve
+  `peerIdx` to a peer label by indexing into the same node array *after* it's
+  fully built (`array[pair.peerIdx].label`) — label formats vary by layer
+  (3-digit `LEAF-001`/`ACC-SW-001` vs 2-digit `DIST-SW-01`/`GPU-LEAF-01`), so
+  no string formula is assumed.
+- **Per-use-case topology builders** (each returns `Topo`): `buildDCTopology(devices, underlay, overlay, sc, useCase='dc')` (used for `dc`, `multisite`, `multicloud`, `aviatrix`), `buildCampusTopology(devices, underlay, sc)`, `buildGPUTopology(devices, sc)`, `buildWANTopology(devices, underlay, sc)` — dispatched via `buildTopology(devices, useCase, underlay, overlay, sc)`
+- **D1 computed-topology annotations** (2026-06-11), all derived in-builder via `pairInfo()`:
+  - DC/multisite/multicloud/aviatrix leaves (`buildDCTopology`) and GPU ToR
+    leaves (`buildGPUTopology`): adjacent leaf pairs get `mlagPairId` +
+    `mlagPeerLabel` + a `vPC/MLAG Pair #N` feature chip; a dashed
+    `vPC/MLAG Peer-Link` (`isHaSync: true`) is added between each pair's two
+    nodes. Multisite leaves additionally get an `EVPN DCI Type-5 · RT
+    ${DCI_RT_ASN}:10010 (L2) / ${DCI_RT_ASN}:50000 (L3)` feature chip.
+  - Campus distribution switches (`buildCampusTopology`): adjacent dist pairs
+    get `mlagPairId` + `mlagPeerLabel` + a `vPC/MLAG Pair #N` feature chip, a
+    dashed `vPC/MLAG Peer-Link`, and an `fhrpVip` (`10.10.${pairId-1}.1`,
+    HSRP VIP for Vlan10/DATA).
+  - Campus access switches: each gets a `MEC uplink: Port-channel${i+1} →
+    DIST-SW-0${di+1} (vPC pair #${distPairId})` feature chip, computed from
+    the access switch's index within its `perDist`-sized slice of the
+    distribution array.
 - Each builder defines fixed `Y` per-layer y-centers, `zones[]` (colored bands w/ left-column labels/icons), `nodes` via `xCentered()`, `links` (full-mesh spine↔leaf, HA-sync pairs, OOB)
 - **Packet-flow scenarios:** `Topo.flows: PacketFlow[]` — DC has 6 (N-S inbound/egress, E-W VXLAN, HA failover, GPU RDMA, OOB mgmt); Campus has 6 (N-S inbound/egress, intra-campus, voice, HA failover, 802.1X); GPU has 4 (GPU↔GPU RDMA, NVMe-oF read, AllReduce, OOB mgmt); WAN has 4 (HQ→branch, local breakout, PE failover, branch-to-branch)
 - **Flow selection/highlighting:** `activeFlow` state (defaults to `topo.flows[0]?.id`), pill buttons in "Packet Flow" bar; `flowLinkIds`/`flowNodeIds` (Sets from `nodeSeq`, bidirectional `from--to`/`to--from`); `flowPath` chains `linkPath()` segments into one combined SVG path for `<animateMotion>`
 - **Device-inspect panel:** clicking a node `<g>` (or background to deselect) sets `selectedNode`; panel shows label, model, HA badge, layer, vendor, loopback, mgmt IP, ASN, feature/protocol chips, "Connected Links" list (peer/ports/speed/protocol/subnet from `topo.links`)
+  - **D1 (2026-06-11):** when `selectedNodeObj.mlagPairId !== undefined`, a
+    "Fabric Pairing" section shows `vPC/MLAG Pair #${mlagPairId}` plus `—
+    peer: ${mlagPeerLabel}` if set; when `selectedNodeObj.fhrpVip` is set, an
+    "FHRP Gateway" section shows `HSRP VIP (Vlan10/DATA): ${fhrpVip}` (the VIP
+    is intentionally *not* duplicated in the feature-chip list, to avoid
+    `getByText` ambiguity / visual repetition).
 - **"Primary Path Only" toggle:** pill button (visible only when `activeFlow` set) flips `primaryPathOnly`; when true, both `topo.links` and `topo.nodes` filtered to only `flowLinkIds`/`flowNodeIds` (non-flow elements fully hidden, not dimmed)
 - **Cloud overlays:** `isCloud` flag on `HLDNode` renders `<ellipse>` + 🌐 emoji (used for `internet`/`isp` nodes); multicloud/multisite/aviatrix reuse `buildDCTopology` — no dedicated cloud builder
 - **Animation:** (1) ambient background packets on every non-OOB, non-active-flow link via per-link `<circle>` + `<animateMotion>` riding `<mpath>` (staggered dur/begin by link index); (2) active-flow packets — glowing trail (`<path opacity=0.25>`) + 3 staggered `<circle>` packets along `#flow-path` at offsets 0%/40%/70% of `animDur`
@@ -1150,7 +1207,11 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 **Notes:**
 - Used by `Step2Design.tsx` and `Step4NetworkDesign.tsx` (both pass `devices, useCase, underlayProtocol, overlayProtocols, siteCode`).
 - Responsive SVG: no fixed `width`/`height`, `style={{ width:'100%', height:'auto', display:'block' }}`, `viewBox="0 0 SVG_W svgH"` (per CLAUDE.md §16).
-- Per CLAUDE.md G-A2/D1: functionally complete; topology-aware computed data (MLAG pairs, FHRP VIPs, DCI links from configgen A1-A3) is the open D1 follow-up — node/link generation is still template-driven from device counts.
+- Per CLAUDE.md G-A2/D1: D1 complete (2026-06-11) — vPC/MLAG pairs, FHRP VIPs,
+  and multisite DCI route-targets are now reflected as node annotations,
+  peer-links, and inspect-panel sections (see "D1 computed-topology
+  annotations" above). Node/link *positions* remain template-driven from
+  device counts (port-math-driven layout is a possible future refinement).
 - No external graph libraries (pure SVG/JSX) — per Implementation Rule 9.
 - `multisite`, `multicloud`, `aviatrix` all fall through to `buildDCTopology` (no dedicated builders yet).
 
