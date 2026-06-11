@@ -959,7 +959,7 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 - Shared UI helper components: `ArcGauge({value,max,color,label,size})` (SVG circular gauge), `Sparkline({values,color})` (SVG mini line chart, returns `null` if <2 points)
 - Deterministic pseudo-random helpers: `_seed(name)` (char-code sum), `_pseudoRandom(seed,offset)` (Math.sin-based PRNG) — used by monitoring simulation
 - Script/config generators (module-level, lines ~757-1253): `buildPreCheckScript()`, `buildPostCheckScript()`, `buildPushConfigsScript()`, `buildGrokPatternsConfig()`, `buildNetflowConfig()`, `buildAnsiblePlaybook(logLines, deviceNames)`, `buildNetconfScript()`, `buildNetconfXMLForOp(op, datastore, vendor)`, `buildNetconfMockResponse(op)`, `buildAnsibleInventory(deviceNames)`, `buildTerraformMain(provider, deviceNames)`, `buildTerraformVars(deviceNames)`, `buildTerraformPlanOutput(deviceNames)`, `downloadBlob`/`downloadText`
-- `simDevices` (useMemo): flattens store `devices` (capped at 4 per model, suffixed `-01..04`) into `{name, role}[]`, falling back to `useTopologyDevices()`
+- `simDevices` (useMemo): when `deviceSource === 'netbox'` and the store's `netboxDevices` (B1 import) is non-empty, maps the imported inventory to `{name, role}[]` (Enterprise Upgrade B2); otherwise flattens store `devices` (capped at 4 per model, suffixed `-01..04`), falling back to `useTopologyDevices()`
 - Background `useEffect`: when `tab === 'monitor' && !isLive`, runs `simulateMonitoringMetrics` immediately then every 15s
 
 ##### Tab: Deploy Pipeline (`deploy`)
@@ -980,8 +980,8 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 - **M-41 Rollback Modal** (lines ~3132-3202, rendered after Batfish tab content): radio choice `rollbackScope: 'stage'|'full'`, Cancel/Confirm → toast `Rollback initiated (${rollbackScope})`.
 
 ##### Tab: ZTP Provisioning (`ztp`)
-- **State:** `failDevice`, `failAt` (default `CONFIG_APPLYING`), `ztpEvents: ZTPEvent[]`, `ztpSummary`; `useRunZTP()` → `runZTP`, `ztpPending`
-- **UI:** topology summary cards (`useTopologySummary()`), `<TopologyDiagram devices={bomDevices}/>`, Fault Injection card (Fail Device select from `simDevices.slice(0,20)`, Fail At Stage select from `ZTP_SIM_STAGES`, Run/Reset), summary cards (Events/Online/Failed), per-device State Machine strip (8-stage icons: done/failed/pending), Events table
+- **State:** `failDevice`, `failAt` (default `CONFIG_APPLYING`), `ztpEvents: ZTPEvent[]`, `ztpSummary`, `deviceSource: 'design' | 'netbox'` (B2, default `'design'`); `useRunZTP()` → `runZTP`, `ztpPending`
+- **UI:** topology summary cards (`useTopologySummary()`), `<TopologyDiagram devices={bomDevices}/>`, **Device Source card** (B2 — only rendered when `netboxDevices.length > 0`; chip toggle between "BOM design (N devices)" and "NetBox import (N devices)"; switching resets `failDevice`; the choice flows through `simDevices` so it also drives the checks and monitoring demo lists), Fault Injection card (Fail Device select from `simDevices.slice(0,20)`, Fail At Stage select from `ZTP_SIM_STAGES`, Run/Reset), summary cards (Events/Online/Failed), per-device State Machine strip (8-stage icons: done/failed/pending), Events table
 - **`handleRunZTP()`** — if `!isLive`, calls `simulateZTPResult()` directly; if live, calls `runZTP({fail_device, fail_at})` with simulation fallback `onError`
 - **`simulateZTPResult(devList: {name,role}[], failDevice, failAt): ZTPResult`** — iterates each device through `ZTP_SIM_STAGES` (8 stages: REGISTERED→POWERED_ON→DHCP_ACK→SCRIPT_DOWNLOADED→CONFIG_APPLYING→CALLBACK_RECEIVED→VERIFIED→ONLINE), emitting success events via `ZTP_STAGE_MSGS`; if `dev.name === failDevice` and stage matches `failAt`, emits `[FAULT INJECTED]` failure and stops. Returns `{ results: Record<name,'ONLINE'|'FAILED'>, events: ZTPEvent[], summary: {total_events, online, failed} }`.
 

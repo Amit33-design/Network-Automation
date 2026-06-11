@@ -1258,6 +1258,7 @@ export function Step6Deploy() {
   const activeDeployTab    = useAppStore(s => s.activeDeployTab)
   const setActiveDeployTab = useAppStore(s => s.setActiveDeployTab)
   const storeDevices       = useAppStore(s => s.devices)
+  const netboxDevices      = useAppStore(s => s.netboxDevices)
   const storeSiteCode      = useAppStore(s => s.siteCode)
   const storeUseCase       = useAppStore(s => s.useCase)
   const customPolicyRules  = useAppStore(s => s.customPolicyRules)
@@ -1413,6 +1414,8 @@ export function Step6Deploy() {
   // ── ZTP state ─────────────────────────────────────────────────────────────
   const [failDevice, setFailDevice] = useState('')
   const [failAt, setFailAt] = useState(ZTP_SIM_STAGES[4].id) // CONFIG_APPLYING
+  // B2 — device source: BOM design vs NetBox-imported inventory (Step 1 panel)
+  const [deviceSource, setDeviceSource] = useState<'design' | 'netbox'>('design')
   const [ztpEvents, setZtpEvents] = useState<ZTPEvent[]>([])
   const [ztpSummary, setZtpSummary] = useState<{ total_events: number; online: number; failed: number } | null>(null)
   const { mutate: runZTP, isPending: ztpPending } = useRunZTP()
@@ -1614,7 +1617,12 @@ export function Step6Deploy() {
   }
 
   // ── Derived: device list for ZTP / checks selectors ───────────────────────
+  // B2: when the user selects the NetBox source (Step 1 import panel), the
+  // imported inventory replaces the BOM-derived list.
   const simDevices = useMemo(() => {
+    if (deviceSource === 'netbox' && netboxDevices.length > 0) {
+      return netboxDevices.map(d => ({ name: d.name, role: d.role || 'device' }))
+    }
     if (storeDevices.length > 0) {
       const flat: Array<{name: string; role: string}> = []
       for (const d of storeDevices) {
@@ -1626,7 +1634,7 @@ export function Step6Deploy() {
       return flat
     }
     return allDevices.map(d => ({ name: d.name, role: d.role }))
-  }, [storeDevices, allDevices])
+  }, [deviceSource, netboxDevices, storeDevices, allDevices])
 
   // Auto-tick demo metrics every 15 s when on monitor tab and backend offline
   useEffect(() => {
@@ -2253,6 +2261,34 @@ export function Step6Deploy() {
             <Card>
               <CardHeader><CardTitle>Lab Topology</CardTitle></CardHeader>
               <div className="mt-2"><TopologyDiagram devices={bomDevices} /></div>
+            </Card>
+          )}
+
+          {netboxDevices.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Device Source</CardTitle></CardHeader>
+              <div className="flex flex-wrap gap-2 items-center">
+                {([
+                  { id: 'design' as const, label: `BOM design (${storeDevices.reduce((n, d) => n + Math.min(d.count, 4), 0)} devices)` },
+                  { id: 'netbox' as const, label: `NetBox import (${netboxDevices.length} devices)` },
+                ]).map(src => (
+                  <button
+                    key={src.id}
+                    onClick={() => { setDeviceSource(src.id); setFailDevice('') }}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer',
+                      deviceSource === src.id
+                        ? 'bg-blue-600/30 border-blue-500 text-blue-300'
+                        : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30',
+                    )}
+                  >
+                    {src.label}
+                  </button>
+                ))}
+                <span className="text-xs text-gray-500 ml-1">
+                  Imported via Step 1 → NetBox/Nautobot panel. Applies to ZTP, checks, and monitoring demo device lists.
+                </span>
+              </div>
             </Card>
           )}
 
