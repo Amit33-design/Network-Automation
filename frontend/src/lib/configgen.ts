@@ -117,11 +117,13 @@ line vty 0 15
 
 // ── NX-OS Spine ───────────────────────────────────────────────────────────────
 
-function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = []): string {
+function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const spineAsn = 65000
   const routerId = `10.255.1.${idx + 1}`
   const isisNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
-  const fabricLinks = renderNxosFabricLinks('spine', dev, allDevices)
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:1::${idx + 1}`
+  const fabricLinks = renderNxosFabricLinks('spine', dev, allDevices, ipv6Underlay)
 
   // GPU fabric: ECN + DCQCN + PFC lossless queuing.
   // Non-GPU: standard 4-class DSCP queuing.
@@ -200,7 +202,7 @@ interface mgmt0
 interface loopback0
   description ROUTER-ID / BGP / IS-IS SOURCE
   ip address ${routerId}/32
-  ip router isis 1
+  ip router isis 1${nxosIpv6LoopbackLines(routerIdV6, ipv6Underlay)}
   no shutdown
 !
 ! ── UNDERLAY: IS-IS (single protocol — not combined with OSPF) ───────────────
@@ -212,7 +214,7 @@ router isis 1
   address-family ipv4 unicast
     maximum-paths 64
     redistribute direct route-map CONNECTED-TO-ISIS
-  log-adjacency-changes
+${nxosIsisIpv6AddressFamily(ipv6Underlay, true)}  log-adjacency-changes
   metric-style transition
 !
 ! ── BGP / EVPN OVERLAY ───────────────────────────────────────────────────────
@@ -301,6 +303,8 @@ interface FabricLink {
   linkNum: number
   /** local-side P2P /31 address, e.g. "10.99.3.17/31" */
   localIp: string
+  /** local-side P2P IPv6 /127 address (Enterprise upgrade A6), e.g. "fd00:99:3::11/127" */
+  localIpv6: string
 }
 
 function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): FabricLink[] {
@@ -326,6 +330,7 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
         peerLabel: `spine ${spineNum}`,
         linkNum,
         localIp: `10.99.${leafNum}.${octet + 1}/31`,
+        localIpv6: `fd00:99:${leafNum}::${octet + 1}/127`,
       })
     }
   } else {
@@ -343,6 +348,7 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
           peerLabel: `leaf ${leafNum}`,
           linkNum,
           localIp: `10.99.${leafNum}.${octet}/31`,
+          localIpv6: `fd00:99:${leafNum}::${octet}/127`,
         })
       }
     }
@@ -350,8 +356,12 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
   return links
 }
 
-/** Renders CLOS fabric links as NX-OS (IS-IS, `Ethernet1/N`) interface stanzas. */
-function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): string {
+/**
+ * Renders CLOS fabric links as NX-OS (IS-IS, `Ethernet1/N`) interface stanzas.
+ * `ipv6Enabled` (Enterprise upgrade A6) adds a matching IPv6 /127 address and
+ * `ipv6 router isis 1` for dual-stack underlay.
+ */
+function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[], ipv6Enabled = false): string {
   const links = closFabricLinks(role, dev, allDevices)
   const portBase = role === 'leaf' ? Math.max(0, (dev.ports || 48) - (dev.uplinks || 0)) : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
@@ -360,14 +370,20 @@ function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevice
   no switchport
   mtu 9216
   ip address ${link.localIp}
-  ip router isis 1
+  ip router isis 1${ipv6Enabled ? `
+  ipv6 address ${link.localIpv6}
+  ipv6 router isis 1` : ''}
   isis network point-to-point
   isis metric 10
   no shutdown`).join('\n!\n')
 }
 
-/** Renders CLOS fabric links as Arista EOS (IS-IS, `EthernetN`) interface stanzas. */
-function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): string {
+/**
+ * Renders CLOS fabric links as Arista EOS (IS-IS, `EthernetN`) interface stanzas.
+ * `ipv6Enabled` (Enterprise upgrade A6) adds a matching IPv6 /127 address —
+ * `isis enable UNDERLAY` already covers both AFs once IS-IS IPv6 AF is active.
+ */
+function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[], ipv6Enabled = false): string {
   const links = closFabricLinks(role, dev, allDevices)
   const portBase = role === 'leaf' ? Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)) : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
@@ -375,22 +391,53 @@ function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevi
   description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
   no switchport
   mtu 9214
-  ip address ${link.localIp}
+  ip address ${link.localIp}${ipv6Enabled ? `
+  ipv6 address ${link.localIpv6}` : ''}
   isis enable UNDERLAY
   isis network point-to-point
   isis metric 10
   no shutdown`).join('\n!\n')
 }
 
+// ── IPv6 dual-stack underlay helpers (Enterprise upgrade A6) ───────────────────
+// Gated by protoFeatures.includes('IPv6 Dual-Stack'); applies to NX-OS + Arista
+// IS-IS spine-leaf underlay only (loopbacks + fabric P2P links). ULA prefix
+// fd00:255:<role>::<idx> mirrors the 10.255.<role>.<idx> router-id scheme.
+function nxosIpv6LoopbackLines(addr: string, ipv6Enabled: boolean): string {
+  return ipv6Enabled ? `
+  ipv6 address ${addr}/128
+  ipv6 router isis 1` : ''
+}
+
+function nxosIsisIpv6AddressFamily(ipv6Enabled: boolean, redistribute = false): string {
+  if (!ipv6Enabled) return ''
+  return `  address-family ipv6 unicast
+    maximum-paths 64
+${redistribute ? '    redistribute direct route-map CONNECTED-TO-ISIS\n' : ''}`
+}
+
+function aristaIpv6LoopbackLines(addr: string, ipv6Enabled: boolean): string {
+  return ipv6Enabled ? `
+  ipv6 address ${addr}/128` : ''
+}
+
+function aristaIsisIpv6AddressFamily(ipv6Enabled: boolean): string {
+  return ipv6Enabled ? `  address-family ipv6 unicast
+    maximum-paths 64
+` : ''
+}
+
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 
-function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = []): string {
+function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
   const isisNet  = `49.0001.0102.5501.${String(idx + 1).padStart(4, '0')}.00`
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:2::${idx + 1}`
   const qosBlock = isGpu ? nxosGpuQoS() : nxosStdQoS()
-  const fabricLinks = renderNxosFabricLinks('leaf', dev, allDevices)
+  const fabricLinks = renderNxosFabricLinks('leaf', dev, allDevices, ipv6Underlay)
   const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
   const vpcRolePriority = isPrimary ? 8192 : 16384
 
@@ -457,7 +504,7 @@ vlan 10
 interface loopback0
   description ROUTER-ID / BGP SOURCE
   ip address ${routerId}/32
-  ip router isis 1
+  ip router isis 1${nxosIpv6LoopbackLines(routerIdV6, ipv6Underlay)}
   no shutdown
 !
 interface loopback1
@@ -472,7 +519,7 @@ router isis 1
   is-type level-2-only
   address-family ipv4 unicast
     maximum-paths 64
-  log-adjacency-changes
+${nxosIsisIpv6AddressFamily(ipv6Underlay)}  log-adjacency-changes
   metric-style transition
 !
 ! ── BGP / EVPN ───────────────────────────────────────────────────────────────
@@ -713,12 +760,14 @@ hardware profile forwarding-mode fabricpath
 
 // ── Arista EOS ────────────────────────────────────────────────────────────────
 
-function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = []): string {
+function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const asn      = 65000
   const routerId = `10.255.1.${idx + 1}`
   const isisNet  = `0101.0255.000${idx + 1}`
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:1::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
-  const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices)
+  const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -773,11 +822,11 @@ router isis UNDERLAY
   address-family ipv4 unicast
     maximum-paths 64
     fast-reroute ti-lfa
-!
+${aristaIsisIpv6AddressFamily(ipv6Underlay)}!
 ! ── LOOPBACK ────────────────────────────────────────────────────────────────
 interface Loopback0
   description ROUTER-ID / BGP SOURCE
-  ip address ${routerId}/32
+  ip address ${routerId}/32${aristaIpv6LoopbackLines(routerIdV6, ipv6Underlay)}
   isis enable UNDERLAY
   isis passive
 !
@@ -821,13 +870,15 @@ EOF
 `
 }
 
-function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = []): string {
+function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
   const isisNet  = `0101.0255.000${idx + 101}`
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:2::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
-  const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices)
+  const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices, ipv6Underlay)
   const { pairId, peerHostname, domainId } = haPairInfo(dev, idx)
 
   return `! ═══════════════════════════════════════════════════════════════
@@ -860,9 +911,9 @@ router isis UNDERLAY
   is-type level-2
   address-family ipv4 unicast
     maximum-paths 64
-!
+${aristaIsisIpv6AddressFamily(ipv6Underlay)}!
 interface Loopback0
-  ip address ${routerId}/32
+  ip address ${routerId}/32${aristaIpv6LoopbackLines(routerIdV6, ipv6Underlay)}
   isis enable UNDERLAY
   isis passive
 !
@@ -2119,7 +2170,7 @@ ${mgmtBlock(dev.hostname, 10)}
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '' = '', appTypes: AppType[] = [], allDevices: BOMDevice[] = []): string {
+export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '' = '', appTypes: AppType[] = [], allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const isGpu = useCase === 'gpu'
   const v = dev.vendor
   const l = dev.subLayer
@@ -2130,11 +2181,11 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'firewall')                         return ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
-  if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices)
-  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices)
+  if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
+  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures)
   if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes)
-  if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices)
-  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices)
+  if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
+  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures)
   if (v === 'Juniper'   && (l === 'leaf' || l === 'spine'))          return juniperLeafConfig(dev, idx)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)
@@ -2149,10 +2200,11 @@ export function generateAllConfigs(
   useCase: UseCase | '' = '',
   policyBlocks: string[] = [],
   appTypes: AppType[] = [],
+  protoFeatures: string[] = [],
 ): Record<string, string> {
   return Object.fromEntries(
     devices.map((dev, i) => {
-      const base = generateConfig(dev, i, useCase, appTypes, devices)
+      const base = generateConfig(dev, i, useCase, appTypes, devices, protoFeatures)
       const withPolicies = policyBlocks.length
         ? applyPolicies(base, dev, useCase, policyBlocks)
         : base

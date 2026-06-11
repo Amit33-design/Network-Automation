@@ -399,6 +399,65 @@ describe('CLOS fabric link plan from BOM port-math (Enterprise upgrade A5)', () 
   })
 })
 
+// ── Enterprise upgrade A6: IPv6 dual-stack underlay ───────────────────────────
+describe('IPv6 dual-stack underlay (Enterprise upgrade A6)', () => {
+  const ipv6Feature = ['IPv6 Dual-Stack']
+
+  it('is OFF by default — no IPv6 lines on NX-OS spine/leaf', () => {
+    const dev = makeDevice({ hostname: 'TST-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', ports: 36, uplinks: 0 })
+    const cfg = generateConfig(dev, 0, 'dc')
+    expect(cfg).not.toContain('ipv6 address')
+    expect(cfg).not.toContain('address-family ipv6 unicast')
+  })
+
+  it('NX-OS spine: enables dual-stack IS-IS and IPv6 loopback', () => {
+    const dev = makeDevice({ hostname: 'TST-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', ports: 36, uplinks: 0 })
+    const cfg = generateConfig(dev, 0, 'dc', [], [], ipv6Feature)
+    expect(cfg).toContain('ipv6 address fd00:255:1::1/128')
+    expect(cfg).toContain('ipv6 router isis 1')
+    expect(cfg).toContain('address-family ipv6 unicast')
+  })
+
+  it('NX-OS leaf: enables dual-stack IS-IS and IPv6 loopback', () => {
+    const dev = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 })
+    const cfg = generateConfig(dev, 0, 'dc', [], [], ipv6Feature)
+    expect(cfg).toContain('ipv6 address fd00:255:2::1/128')
+    expect(cfg).toContain('address-family ipv6 unicast')
+  })
+
+  it('NX-OS spine/leaf fabric P2P links get matching IPv6 /127 addresses', () => {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 'sp1', hostname: 'IAD-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', ports: 36, uplinks: 0 }),
+      makeDevice({ id: 'sp2', hostname: 'IAD-SPINE-A02', vendor: 'Cisco', subLayer: 'spine', ports: 36, uplinks: 0 }),
+      makeDevice({ id: 'lf1', hostname: 'IAD-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 }),
+      makeDevice({ id: 'lf2', hostname: 'IAD-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 }),
+    ]
+    const configs = generateAllConfigs(devices, 'dc', [], [], ipv6Feature)
+
+    expect(configs['lf1']).toContain('ipv6 address fd00:99:1::1/127')
+    expect(configs['sp1']).toContain('ipv6 address fd00:99:1::0/127')
+  })
+
+  it('Arista spine/leaf: enables dual-stack IS-IS, IPv6 loopback, and matching fabric IPv6', () => {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 'sp1', hostname: 'IAD-SPINE-A01', vendor: 'Arista', subLayer: 'spine', ports: 48, uplinks: 0 }),
+      makeDevice({ id: 'sp2', hostname: 'IAD-SPINE-A02', vendor: 'Arista', subLayer: 'spine', ports: 48, uplinks: 0 }),
+      makeDevice({ id: 'lf1', hostname: 'IAD-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', ports: 32, uplinks: 2 }),
+      makeDevice({ id: 'lf2', hostname: 'IAD-LEAF-A02', vendor: 'Arista', subLayer: 'leaf', ports: 32, uplinks: 2 }),
+    ]
+    const configs = generateAllConfigs(devices, 'dc', [], [], ipv6Feature)
+
+    // lf1 is at global devices[] index 2, so its loopback router-id is
+    // 10.255.2.3 / fd00:255:2::3 (router-id numbering follows global index,
+    // unlike the fabric-link leafNum which follows position among leaves).
+    expect(configs['sp1']).toContain('ipv6 address fd00:255:1::1/128')
+    expect(configs['lf1']).toContain('ipv6 address fd00:255:2::3/128')
+    expect(configs['sp1']).toContain('address-family ipv6 unicast')
+    expect(configs['lf1']).toContain('ipv6 address fd00:99:1::1/127')
+    expect(configs['sp1']).toContain('ipv6 address fd00:99:1::0/127')
+  })
+})
+
 // ── Enterprise upgrade A3: Campus distribution/access — FHRP, STP, IGMP ───────
 describe('Campus distribution/access config (Enterprise upgrade A3)', () => {
   it('Cisco campus distribution uses OSPF, not IS-IS', () => {

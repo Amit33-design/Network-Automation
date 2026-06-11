@@ -265,10 +265,11 @@ npm test` after ANY change here):
     computed as `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2 [+1 for
     leaf]}` so the spine and leaf side of each link always agree on the same
     subnet without manual cabling notes.
-- **`renderNxosFabricLinks(role, dev, allDevices): string`** /
-  **`renderAristaFabricLinks(role, dev, allDevices): string`** *(added
-  2026-06-11, Enterprise Upgrade A5)* — render `closFabricLinks()` output as
-  real (uncommented) interface stanzas:
+- **`renderNxosFabricLinks(role, dev, allDevices, ipv6Enabled = false): string`**
+  / **`renderAristaFabricLinks(role, dev, allDevices, ipv6Enabled = false):
+  string`** *(added 2026-06-11, Enterprise Upgrade A5; `ipv6Enabled` param
+  added same day, Enterprise Upgrade A6)* — render `closFabricLinks()` output
+  as real (uncommented) interface stanzas:
   - NX-OS: `interface Ethernet1/${portBase + ifIndex + 1}` with `ip router
     isis 1`, `isis network point-to-point`, `isis metric 10`, `mtu 9216`.
   - Arista: `interface Ethernet${portBase + ifIndex + 1}` with `isis enable
@@ -276,55 +277,98 @@ npm test` after ANY change here):
   - `portBase = (dev.ports - dev.uplinks)` for leaves (uplinks start after
     the downlink ports), `0` for spines (all ports face leaves).
   - `dirLabel` = `"UPLINK"` for leaves, `"DOWNLINK"` for spines.
+  - When `ipv6Enabled`, each stanza also gets `ipv6 address ${link.localIpv6}`
+    (a `/127` mirroring the IPv4 `/31`, e.g. `fd00:99:1::1/127` for
+    `10.99.1.1/31`); NX-OS additionally gets `ipv6 router isis 1`.
+- **IPv6 dual-stack underlay helpers (Enterprise Upgrade A6, 2026-06-11)** —
+  gated by `protoFeatures.includes('IPv6 Dual-Stack')` (the existing
+  `'IPv6 Dual-Stack'` chip in Step 2's Protocol Features list, previously
+  unused by configgen). Applies to NX-OS + Arista IS-IS DC/GPU spine-leaf
+  only (loopbacks + fabric P2P links); OSPFv3 for campus/WAN is a possible
+  follow-up.
+  - `FabricLink.localIpv6` — `/127` ULA address on each fabric link, computed
+    by `closFabricLinks()` as `fd00:99:${leafNum}::${octet[+1]}/127` (same
+    `octet` formula as the IPv4 `/31`).
+  - `nxosIpv6LoopbackLines(addr, ipv6Enabled)` /
+    `aristaIpv6LoopbackLines(addr, ipv6Enabled)` — append `ipv6 address
+    ${addr}/128` (NX-OS also adds `ipv6 router isis 1`) to a loopback
+    interface when enabled, else `''`.
+  - `nxosIsisIpv6AddressFamily(ipv6Enabled, redistribute = false)` /
+    `aristaIsisIpv6AddressFamily(ipv6Enabled)` — render `address-family ipv6
+    unicast` (with `maximum-paths 64`, plus `redistribute direct route-map
+    CONNECTED-TO-ISIS` when `redistribute` is true — used for spines, mirrors
+    the IPv4 AF) under `router isis`/`router isis UNDERLAY`, else `''`.
+  - Router-ID loopback IPv6 addresses follow `fd00:255:1::${idx+1}` (spine)
+    and `fd00:255:2::${idx+1}` (leaf), mirroring `10.255.1.${idx+1}` /
+    `10.255.2.${idx+1}`. The VTEP loopback (`loopback1`/`Loopback1`) stays
+    IPv4-only — VXLAN underlay transport is unchanged by this flag.
 
 ### NX-OS (Cisco) — DC/GPU spine-leaf
-- **`nxosSpineConfig(dev, idx, isGpu, allDevices = []): string`**
-  *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5)* —
+- **`nxosSpineConfig(dev, idx, isGpu, allDevices = [], protoFeatures = []):
+  string`** *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5;
+  `protoFeatures` param added same day, Enterprise Upgrade A6)* —
   `spineAsn = 65000` (constant), `routerId = 10.255.1.${idx+1}`, `isisNet =
   49.0001.0102.5500.${pad(idx+1,4)}.00`. IS-IS L2-only underlay, BGP EVPN
   with route-reflector `template peer LEAF-RR-CLIENT`, **SPINE FABRIC
   INTERFACES** generated via `renderNxosFabricLinks('spine', dev,
-  allDevices)` (replaces the old static comment template), NX-API gRPC
-  telemetry block (`destination-group`/`sensor-group`/`subscription`), QoS
-  via `nxosGpuQoS()` or `nxosStdQoS()`.
-- **`nxosLeafConfig(dev, idx, isGpu, allDevices = []): string`**
-  *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5)* —
+  allDevices, ipv6Underlay)` (replaces the old static comment template),
+  NX-API gRPC telemetry block (`destination-group`/`sensor-group`/
+  `subscription`), QoS via `nxosGpuQoS()` or `nxosStdQoS()`. When
+  `protoFeatures.includes('IPv6 Dual-Stack')`, also adds `ipv6 address
+  fd00:255:1::${idx+1}/128` + `ipv6 router isis 1` to `loopback0` and
+  `address-family ipv6 unicast` (with redistribute) under `router isis 1`
+  (Enterprise Upgrade A6).
+- **`nxosLeafConfig(dev, idx, isGpu, allDevices = [], protoFeatures = []):
+  string`** *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5;
+  `protoFeatures` param added same day, Enterprise Upgrade A6)* —
   `leafAsn = 65001+idx`, `routerId = 10.255.2.${idx+1}`, `vtepIp =
   10.254.0.${idx+1}`, `isisNet = 49.0001.0102.5501.${pad(idx+1,4)}.00`. IS-IS
   underlay, BGP EVPN `template peer SPINE-RR`, VXLAN `interface nve1` (VNI
   10010 + L3VNI 50000), **UPLINKS** generated via `renderNxosFabricLinks('leaf',
-  dev, allDevices)`, NX-API telemetry. **vPC block** (post Enterprise Upgrade
-  A1): `vpc domain ${pairId}` (shared by the HA pair), `role priority` 8192
-  (primary)/16384 (secondary), `peer-switch`, `peer-keepalive destination
-  <CHANGE-ME-${peerHostname}-mgmt-ip> ...`, `peer-gateway`, `ip arp
-  synchronize`, `auto-recovery`.
+  dev, allDevices, ipv6Underlay)`, NX-API telemetry. **vPC block** (post
+  Enterprise Upgrade A1): `vpc domain ${pairId}` (shared by the HA pair),
+  `role priority` 8192 (primary)/16384 (secondary), `peer-switch`,
+  `peer-keepalive destination <CHANGE-ME-${peerHostname}-mgmt-ip> ...`,
+  `peer-gateway`, `ip arp synchronize`, `auto-recovery`. IPv6 dual-stack
+  (A6) adds `ipv6 address fd00:255:2::${idx+1}/128` + `ipv6 router isis 1`
+  to `loopback0` and `address-family ipv6 unicast` under `router isis 1`
+  when `protoFeatures.includes('IPv6 Dual-Stack')`.
 - **`nxosStdQoS(): string`** / **`nxosGpuQoS(): string`** — standard 4-class
   DSCP QoS vs full RoCEv2 QoS (PFC priority-3 lossless `pause no-drop`,
   RDMA class `bandwidth percent 60`, ECN `congestion-control ecn` +
   `random-detect` on lossy queues, `hardware qos pfc-watchdog on`, DCQCN).
 
 ### Arista EOS — DC/GPU spine-leaf
-- **`aristaSpineConfig(dev, idx, isGpu, allDevices = []): string`**
-  *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5)* —
+- **`aristaSpineConfig(dev, idx, isGpu, allDevices = [], protoFeatures = []):
+  string`** *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5;
+  `protoFeatures` param added same day, Enterprise Upgrade A6)* —
   `asn = 65000`, `routerId = 10.255.1.${idx+1}`, `isisNet =
   0101.0255.000${idx+1}`. `service routing protocols model multi-agent`,
   `router isis UNDERLAY` (level-2, `fast-reroute ti-lfa`), BGP EVPN
   `peer-group LEAF-RR-CLIENTS` (route-reflector-client, `bfd`),
   **DOWNLINK INTERFACES** generated via `renderAristaFabricLinks('spine',
-  dev, allDevices)`, QoS via `aristaGpuQoS()` if GPU, plus
-  `aristaTelemetryBlock()` (gNMI/eAPI/TerminAttr — see below).
-- **`aristaLeafConfig(dev, idx, isGpu, allDevices = []): string`**
-  *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5)* —
+  dev, allDevices, ipv6Underlay)`, QoS via `aristaGpuQoS()` if GPU, plus
+  `aristaTelemetryBlock()` (gNMI/eAPI/TerminAttr — see below). When
+  `protoFeatures.includes('IPv6 Dual-Stack')`, also adds `address-family
+  ipv6 unicast` under `router isis UNDERLAY` and `ipv6 address
+  fd00:255:1::${idx+1}/128` to `Loopback0` (Enterprise Upgrade A6).
+- **`aristaLeafConfig(dev, idx, isGpu, allDevices = [], protoFeatures = []):
+  string`** *(`allDevices` param added 2026-06-11, Enterprise Upgrade A5;
+  `protoFeatures` param added same day, Enterprise Upgrade A6)* —
   `leafAsn = 65001+idx`, `routerId = 10.255.2.${idx+1}`, `vtepIp =
   10.254.0.${idx+1}`, `isisNet = 0101.0255.000${idx+101}`. BGP
   `peer-group SPINE-RR` with `bfd`, VXLAN `interface Vxlan1` (`vxlan vlan 10
   vni 10010`), **UPLINKS to spines** generated via
-  `renderAristaFabricLinks('leaf', dev, allDevices)`. **MLAG block** (post
-  Enterprise Upgrade A2, previously absent): `vlan 4094`/`interface Vlan4094`
-  for peer L3 peering, `interface Port-Channel${pairId}00` peer-link,
-  `mlag configuration` with `domain-id ${domainId}MLAG${pairId}`,
-  `peer-address <CHANGE-ME-${peerHostname}-mlag-peer-ip>`, `peer-link
-  Port-Channel${pairId}00`, plus `aristaTelemetryBlock()`.
+  `renderAristaFabricLinks('leaf', dev, allDevices, ipv6Underlay)`. **MLAG
+  block** (post Enterprise Upgrade A2, previously absent): `vlan
+  4094`/`interface Vlan4094` for peer L3 peering, `interface
+  Port-Channel${pairId}00` peer-link, `mlag configuration` with `domain-id
+  ${domainId}MLAG${pairId}`, `peer-address
+  <CHANGE-ME-${peerHostname}-mlag-peer-ip>`, `peer-link
+  Port-Channel${pairId}00`, plus `aristaTelemetryBlock()`. IPv6 dual-stack
+  (A6) adds `address-family ipv6 unicast` under `router isis UNDERLAY` and
+  `ipv6 address fd00:255:2::${idx+1}/128` to `Loopback0` when
+  `protoFeatures.includes('IPv6 Dual-Stack')`.
 - **`aristaGpuQoS(): string`** — PFC priority 3 RoCEv2 (`pfc enable`, `pfc
   priority 3 no-drop`), ECN on lossy queues.
 - **`aristaTelemetryBlock(): string`** *(added 2026-06-11, Enterprise Upgrade
@@ -404,24 +448,28 @@ npm test` after ANY change here):
 
 ### Dispatch
 - **`generateConfig(dev: BOMDevice, idx: number, useCase: UseCase|'' = '',
-  appTypes: AppType[] = [], allDevices: BOMDevice[] = []): string`**
-  *(signature extended 2026-06-11 to add `appTypes`, then again for
-  `allDevices` — Enterprise Upgrade A5)* — the big if/else dispatcher by
+  appTypes: AppType[] = [], allDevices: BOMDevice[] = [], protoFeatures:
+  string[] = []): string`** *(signature extended 2026-06-11 to add
+  `appTypes`, then `allDevices` — Enterprise Upgrade A5 — then
+  `protoFeatures` — Enterprise Upgrade A6)* — the big if/else dispatcher by
   `(dev.vendor, dev.subLayer)`. `needsRoce = isGpu ||
   ((vendor==='Dell EMC'||vendor==='NVIDIA') && useCase==='dc')` — Dell/NVIDIA
   DC fabrics always get lossless QoS; Cisco/Arista only when
   `useCase==='gpu'`. Cisco `distribution`/`access` →
   `iosxeCampusConfig(dev, idx, appTypes)`. The Cisco/Arista spine and leaf
   branches (`nxosSpineConfig`, `nxosLeafConfig`, `aristaSpineConfig`,
-  `aristaLeafConfig`) now receive `allDevices` as their final argument so
-  they can compute topology-driven CLOS fabric links via
-  `closFabricLinks()`/`renderNxosFabricLinks()`/`renderAristaFabricLinks()`.
+  `aristaLeafConfig`) receive `allDevices` so they can compute
+  topology-driven CLOS fabric links via
+  `closFabricLinks()`/`renderNxosFabricLinks()`/`renderAristaFabricLinks()`,
+  and `protoFeatures` so they can enable the IPv6 dual-stack underlay (A6)
+  when `protoFeatures.includes('IPv6 Dual-Stack')`.
 - **`generateAllConfigs(devices, useCase = '', policyBlocks = [], appTypes =
-  [])`** *(signature extended 2026-06-11; A5 — now threads `allDevices`)* —
-  maps `generateConfig(dev, i, useCase, appTypes, devices)` over all devices
-  (passing the full `devices` array as `allDevices` to every call), then runs
+  [], protoFeatures = [])`** *(signature extended 2026-06-11; A5 — threads
+  `allDevices`; A6 — threads `protoFeatures`)* — maps `generateConfig(dev, i,
+  useCase, appTypes, devices, protoFeatures)` over all devices (passing the
+  full `devices` array as `allDevices` to every call), then runs
   `applyPolicies()` (from `lib/policies.ts`) if `policyBlocks.length`. Called
-  from `Step3Config.tsx` with `appTypes` from the store.
+  from `Step3Config.tsx` with `appTypes` and `protoFeatures` from the store.
 
 ---
 
