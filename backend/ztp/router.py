@@ -14,6 +14,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, Optional
@@ -25,6 +26,39 @@ from .server import ztp_server, ZTPDevice, ZTPState
 
 log = logging.getLogger(__name__)
 ztp_router = APIRouter(prefix="/ztp", tags=["ZTP"])
+
+# ── NetBox sync (Enterprise upgrade B3) ──────────────────────────────────
+# The ZTP endpoints are unauthenticated (devices boot anonymously), so the
+# org whose NetBox integration config is used comes from the environment.
+# All sync calls are fire-and-forget — ZTP must never block on NetBox.
+_NETBOX_ORG = os.getenv("ZTP_NETBOX_ORG", "")
+
+
+def _netbox_fire_and_forget(coro) -> None:
+    if not _NETBOX_ORG:
+        coro.close()
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(coro)
+        task.add_done_callback(lambda t: t.exception())  # swallow, already logged
+    except RuntimeError:
+        coro.close()
+
+
+def _netbox_sync_state(dev: ZTPDevice) -> None:
+    from integrations.netbox import sync_ztp_status
+    _netbox_fire_and_forget(
+        sync_ztp_status(_NETBOX_ORG, dev.hostname, dev.state.value)
+    )
+
+
+def _netbox_reserve_dhcp(dev: ZTPDevice) -> None:
+    from integrations.netbox import create_dhcp_reservation
+    _netbox_fire_and_forget(
+        create_dhcp_reservation(
+            _NETBOX_ORG, dev.hostname, dev.mgmt_ip, str(dev.extra.get("mac", "")),
+        )
+    )
 
 # Server base URL — used for generating script URLs
 def _server_url(request: Request) -> str:
@@ -126,6 +160,7 @@ async def checkin(serial: str, body: CheckinRequest):
         # Unknown serial — register as unknown
         log.warning("ZTP checkin from unknown serial: %s", serial)
         return {"status": "unknown", "serial": serial}
+    _netbox_sync_state(dev)  # B3 — reflect provisioned/failed into NetBox
     return {
         "status":  dev.state.value,
         "serial":  serial,
@@ -154,6 +189,8 @@ async def register_device(body: DeviceRegisterRequest):
         extra         = body.extra,
     )
     ztp_server.register(dev)
+    _netbox_reserve_dhcp(dev)   # B3 — DHCP reservation in NetBox IPAM
+    _netbox_sync_state(dev)     # B3 — device status → planned
     return _dev_to_response(dev)
 
 
@@ -162,6 +199,9 @@ async def register_bulk(body: BulkRegisterRequest):
     """Bulk pre-register devices."""
     devices = [d.model_dump() for d in body.devices]
     registered = ztp_server.register_bulk(devices)
+    for dev in registered:  # B3 — best-effort NetBox sync per device
+        _netbox_reserve_dhcp(dev)
+        _netbox_sync_state(dev)
     return {
         "registered": len(registered),
         "devices": [_dev_to_response(d) for d in registered],

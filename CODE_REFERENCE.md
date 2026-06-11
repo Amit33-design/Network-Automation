@@ -2142,10 +2142,37 @@ tenant_id  — default tenant ID assigned to allocated prefixes (optional)
 - `async def push_device_config(org_id: str, hostname: str, config: str, platform: str) -> dict`
   Higher-level wrapper around `push_config_context`. Returns `{success, hostname, url, error?}` where `url` is a deep link to the NetBox config-context list filtered by name.
 
+- **ZTP → NetBox sync (Enterprise Upgrade B3, 2026-06-11):**
+  - `ZTP_STATE_TO_NETBOX_STATUS: dict[str, str]` — maps `ztp/server.py`
+    `ZTPState` values to NetBox device-status choices: `waiting→planned`,
+    `contacted/provisioning→staged`, `provisioned→active`, `failed→failed`
+    (`unknown` intentionally unmapped → no-op).
+  - `async def sync_ztp_status(org_id, hostname, ztp_state) -> bool` —
+    looks the device up by name and PATCHes its `status` (+ a `comments`
+    audit line). Soft-fails (`False`) on missing config, unknown state,
+    device not found, or any HTTP error — ZTP must never block on NetBox.
+  - `async def create_dhcp_reservation(org_id, hostname, mgmt_ip, mac="")
+    -> dict | None` — upserts an IPAM ip-address with `status="dhcp"`
+    (NetBox's native DHCP status), `dns_name=hostname`, MAC in description;
+    appends `/32` if `mgmt_ip` has no mask, honors `cfg.tenant_id`. Search
+    by address → PATCH if found else POST.
+  - **Router wiring** (`ztp/router.py`): `_NETBOX_ORG = os.getenv(
+    "ZTP_NETBOX_ORG", "")` — ZTP endpoints are unauthenticated, so the org
+    comes from the environment; when unset all sync is a no-op.
+    `_netbox_fire_and_forget(coro)` schedules on the running loop (closes
+    the coroutine when no org/loop); `_netbox_sync_state(dev)` /
+    `_netbox_reserve_dhcp(dev)` are called from `/ztp/register` (reservation
+    + status `planned`), `/ztp/register/bulk` (per device), and
+    `/ztp/checkin` (status `provisioned`/`failed`). MAC is read from
+    `dev.extra["mac"]` when supplied at registration.
+  - Tests: `backend/tests/test_netbox_ztp.py` — 12 tests with a fake
+    httpx client + patched `_get_config` (state-map coverage, PATCH/POST
+    upsert paths, soft-fail paths, router no-op guards).
+
 **Notes:**
 - All functions call private `_get_config(org_id)` which queries `IntegrationConfig` table (`provider="netbox", enabled=True`) via `db._SessionLocal`. If DB not configured or row missing/disabled, all functions degrade gracefully (return `None`/empty/`False`).
 - `_client(cfg)` builds an `httpx.AsyncClient` with `Authorization: Token <token>` header, 10s timeout.
-- **For the "ZTP + NetBox" feature**: there is currently **no function that reads device inventory FROM NetBox** (no `fetch_inventory`/`get_devices` call) and **no IP allocation specifically for ZTP mgmt IPs** — `get_available_prefix` + `allocate_prefix` are generic IPAM helpers usable for that purpose, but ZTP (`ztp/server.py`, `ztp/router.py`) does not currently call into `integrations/netbox.py` at all (see ZTP section below — this is the integration gap to close).
+- Reading device inventory **from** NetBox is implemented client-side in `frontend/src/lib/netbox.ts` (B1) — the backend module remains write/sync-oriented.
 
 ---
 
