@@ -668,7 +668,107 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
+
+### Purpose
+
+This section turns CLAUDE.md into a **self-driving work order**. The
+standing goal: make NetDesign AI the best intent-driven network design +
+automation platform — covering and exceeding what NetBox (DCIM/IPAM),
+Nautobot, Itential, and Forward Networks do individually, combined into one
+browser-native tool. The user should be able to open a fresh session, type a
+short trigger phrase, and have Claude pick up the next highest-value backlog
+item, implement it end-to-end, and leave the repo in a working, committed
+state — with zero per-session re-explanation.
+
+### Trigger phrases
+
+If the user's message is (or clearly amounts to) one of: `start improving` ·
+`keep improving` · `continue improving` · `work on the backlog` ·
+`resume autonomous work` · `next item` · `do the next thing` — treat it as
+**"run the loop below without asking clarifying questions"**. Do not ask the
+user which item to do — pick it yourself per the priority order below.
+
+### The loop
+
+1. **Orient** — read this file (`CLAUDE.md`) and `CODE_REFERENCE.md`. Confirm
+   you're on `claude/network-automation-enterprise-lifybd` (create it from
+   latest `main` if it doesn't exist locally; `git pull origin
+   claude/network-automation-enterprise-lifybd` if it does).
+2. **Pick the next item**, in this priority order:
+   - Section 22 (Enterprise Upgrade Tracker), table A → B → C → D, top to
+     bottom: the first row with status `[ ]`.
+   - If §22 has only `[x]`/stretch items left: Section 20 (Known Gaps),
+     lowest-numbered open `P1` gap, then `P2`.
+   - If both are exhausted: see "Sourcing new work" below.
+   - Before starting, mark the chosen row `[~]` (in-progress) so a parallel
+     session doesn't duplicate it; if you find a row already `[~]`, check
+     `git log`/branches — if it looks stale/abandoned, take it over.
+3. **Implement** the item completely — code + tests. Follow all existing
+   rules in this file: §6 config-gen rules, §7 constraints, §8 BOM formulas,
+   §21 implementation rules (TanStack Query for server state, new types in
+   `types/index.ts`, `<CHANGE-ME-*>` secrets only, no new UI/graph libraries,
+   `activeDeployTab` deep-linking, etc.).
+4. **Verify**:
+   - Any change under `frontend/src/lib/configgen.ts` (or other `lib/`
+     files with existing test coverage) → `cd frontend && npm test` — all
+     tests must pass; add new tests for new behavior.
+   - Any non-trivial `frontend/` change → `npx tsc --noEmit -p
+     tsconfig.app.json` (and `npm run build` if it touches build config or
+     many files).
+   - Any `backend/` change → run the relevant suite under `backend/tests/`
+     with `pytest` if present.
+5. **Update `CODE_REFERENCE.md`** if you added/renamed/removed exported
+   functions, types, files, or major UI sections — keep it accurate; it
+   exists specifically so future sessions don't have to re-read source.
+6. **Commit + push**: conventional commit (`feat:`/`fix:`/`docs:`/`test:`)
+   referencing the item ID, e.g. `feat: A4 — Arista gNMI/eAPI telemetry
+   block`. `git push -u origin claude/network-automation-enterprise-lifybd`.
+7. **Flip the tracker row** to `[x] (commitHash)` — can be the same commit as
+   step 6 or a small follow-up `docs:` commit.
+8. **Continue or stop**:
+   - If there's clearly enough context budget left, loop back to step 2 for
+     the next item.
+   - If context is getting tight, or you hit a decision that needs the
+     user's input (architecture choice, new dependency, pricing/billing, or
+     anything touching `licensing/`), STOP and leave a short status note:
+     what finished (with commit hashes), what's next, and any blocking
+     question. Never leave a tracker row stuck at `[~]` — finish it (`[x]`)
+     or revert it to `[ ]` before stopping.
+
+### Sourcing new work (when §20 + §22 are exhausted)
+
+Re-derive the backlog from first principles, in priority order:
+1. **Dead code / consistency cleanup** flagged in `CODE_REFERENCE.md` (e.g.
+   components/pages marked "LEGACY/UNUSED") — wire them up properly or
+   remove them.
+2. **NetBox/Nautobot parity gaps**: full DCIM (racks/power/cable plant beyond
+   G-A14), IPAM beyond `lib/bom.ts`'s IP planning, source-of-truth sync
+   (extends B1–B3), webhook/event-driven automation.
+3. **Closed-loop automation**: drift detection → auto-remediation (extends
+   G-A4/G-A16/C1–C3), scheduled compliance scans, auto-rollback on
+   post-check regression.
+4. **AI differentiation**: intent NLP (G-A1/G-A15), richer RCA, predictive
+   capacity planning from `useMonitoring()` history.
+
+Append new items to §22 (new letter group or extend an existing one) or §20
+(`G-A17`, `G-A18`, ...) with status `[ ]` *before* implementing them, so the
+tracker stays the single source of truth.
+
+### Guardrails (apply always, including in autonomous mode)
+
+- Never push to `main` or open a PR unless the user explicitly asks.
+- Never modify `licensing/` pricing/entitlement logic, billing, or auth
+  secrets without stopping to ask first.
+- Never use `--no-verify`, force-push, or `git reset --hard`.
+- If a chosen item turns out much larger than its tracker description
+  implies, implement a focused first slice, commit it, re-scope the rest
+  into new sub-rows (status `[ ]`), and stop for user review.
+
+---
+
 *Last updated: 2026-05-29. Step 6 enterprise-grade overhaul complete.*
 *HLD topology diagram complete (G-A2 ✅). Sidebar deep-nav complete. ZTP/Checks demo simulation complete. NETCONF interactive complete. Config Automation (Ansible Tower + Terraform + Manual) complete. Policy Gate complete.*
 *Mark resolved gaps with ✅ and date. Add new gaps as G-A17, G-A18, etc.*
 *Section 22 (Enterprise Upgrade Tracker) added 2026-06-11 — see it for current in-flight work.*
+*Section 23 (Autonomous "Start Improving" Mode) added 2026-06-11 — say "start improving" in any new session to resume the backlog without re-prompting.*
