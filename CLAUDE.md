@@ -648,7 +648,7 @@ config-gen tests must keep passing; add new tests alongside).
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| B1 | NetBox/Nautobot inventory import panel (Step 1) — port `src/js/netbox.js` to React/TS | [ ] | new `frontend/src/lib/netbox.ts` + UI panel |
+| B1 | NetBox/Nautobot inventory import panel (Step 1) — port `src/js/netbox.js` to React/TS | [x] (`5ef5d88`) | `lib/netbox.ts` + `NetBoxImportPanel.tsx` in Step 1; imported devices in new `netboxDevices` store field for B2 |
 | B2 | Wire ZTP device list (Step 6 ZTP tab) to optional NetBox-imported inventory | [ ] | `Step6Deploy.tsx` |
 | B3 | Backend: ZTP→NetBox status sync + DHCP reservations via `backend/integrations/netbox.py` (stretch) | [ ] | |
 
