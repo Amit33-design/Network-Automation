@@ -309,6 +309,71 @@ describe('vPC / MLAG HA-pair config (Enterprise upgrade A1/A2)', () => {
   })
 })
 
+// ── Enterprise upgrade A3: Campus distribution/access — FHRP, STP, IGMP ───────
+describe('Campus distribution/access config (Enterprise upgrade A3)', () => {
+  it('Cisco campus distribution uses OSPF, not IS-IS', () => {
+    const dev = makeDevice({ hostname: 'TST-DIST-A01', vendor: 'Cisco', subLayer: 'distribution' })
+    const cfg = generateConfig(dev, 0, 'campus')
+    expect(cfg).toContain('router ospf')
+    expect(cfg).not.toContain('router isis')
+  })
+
+  it('Cisco campus distribution primary (idx 0) is STP root with HSRP active priority', () => {
+    const dev = makeDevice({ hostname: 'TST-DIST-A01', vendor: 'Cisco', subLayer: 'distribution' })
+    const cfg = generateConfig(dev, 0, 'campus')
+    expect(cfg).toContain('spanning-tree vlan 1-4094 priority 4096')
+    expect(cfg).toContain('standby 10 priority 110')
+  })
+
+  it('Cisco campus distribution secondary (idx 1) is STP secondary-root with HSRP standby priority', () => {
+    const dev = makeDevice({ hostname: 'TST-DIST-A02', vendor: 'Cisco', subLayer: 'distribution' })
+    const cfg = generateConfig(dev, 1, 'campus')
+    expect(cfg).toContain('spanning-tree vlan 1-4094 priority 8192')
+    expect(cfg).toContain('standby 10 priority 90')
+  })
+
+  it('Cisco campus access switch is never STP root and has PortFast/BPDU Guard', () => {
+    const dev = makeDevice({ hostname: 'TST-ACC-A01', vendor: 'Cisco', subLayer: 'access', ports: 48 })
+    const cfg = generateConfig(dev, 0, 'campus')
+    expect(cfg).toContain('spanning-tree vlan 1-4094 priority 32768')
+    expect(cfg).toContain('spanning-tree portfast')
+    expect(cfg).toContain('spanning-tree bpduguard enable')
+  })
+
+  it('Cisco campus access uplinks form a port-channel shared with the HA-paired switch', () => {
+    const dev0 = makeDevice({ hostname: 'TST-ACC-A01', vendor: 'Cisco', subLayer: 'access', ports: 48 })
+    const dev1 = makeDevice({ hostname: 'TST-ACC-A02', vendor: 'Cisco', subLayer: 'access', ports: 48 })
+    const cfg0 = generateConfig(dev0, 0, 'campus')
+    const cfg1 = generateConfig(dev1, 1, 'campus')
+    expect(cfg0).toContain('interface Port-channel1')
+    expect(cfg1).toContain('interface Port-channel1')
+  })
+
+  it('IGMP snooping/querier added on distribution only when voice app type present', () => {
+    const dev = makeDevice({ hostname: 'TST-DIST-A01', vendor: 'Cisco', subLayer: 'distribution' })
+    const cfgNoVoice = generateConfig(dev, 0, 'campus', [])
+    const cfgVoice = generateConfig(dev, 0, 'campus', ['voice'])
+    expect(cfgNoVoice).not.toContain('ip igmp snooping')
+    expect(cfgVoice).toContain('ip igmp snooping querier')
+    expect(cfgVoice).toContain('vlan 20')
+  })
+
+  it('Cisco campus access has exactly one aaa new-model (no duplicate mgmt blocks)', () => {
+    const dev = makeDevice({ hostname: 'TST-ACC-A01', vendor: 'Cisco', subLayer: 'access', ports: 48 })
+    const cfg = generateConfig(dev, 0, 'campus')
+    const matches = (cfg.match(/aaa new-model/g) ?? []).length
+    expect(matches).toBe(1)
+  })
+
+  it('generateAllConfigs threads appTypes through to campus distribution IGMP querier', () => {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 'dist-1', hostname: 'TST-DIST-A01', vendor: 'Cisco', subLayer: 'distribution' }),
+    ]
+    const configs = generateAllConfigs(devices, 'campus', [], ['voice', 'video'])
+    expect(configs['dist-1']).toContain('ip igmp snooping querier')
+  })
+})
+
 describe('generateAllConfigs', () => {
   it('returns one config per device keyed by id', () => {
     const devices: BOMDevice[] = [
