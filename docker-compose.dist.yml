@@ -38,8 +38,10 @@ services:
       DEVICE_DEFAULT_USER: ${DEVICE_DEFAULT_USER:-admin}
       DEVICE_DEFAULT_PASS: ${DEVICE_DEFAULT_PASS:-}
       AUTO_CREATE_TABLES: "true"
+      ZTP_FILES_DIR:      /app/ztp_files
     volumes:
       - backups:/app/backups
+      - ztp_files:/app/ztp_files
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,6 +55,30 @@ services:
     deploy:
       resources:
         limits: { memory: 2g, cpus: "2" }
+
+  # ── ZTP file server (G-A6) — HTTP static mirror of ZTP_FILES_DIR ───────────────
+  ztp-files:
+    image: nginx:1.27-alpine
+    container_name: netdesign-ztp-files
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8069:80"
+    volumes:
+      - ztp_files:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+
+  # ── ZTP TFTP server (G-A6) — for devices that boot via plain TFTP ──────────────
+  ztp-tftp:
+    image: atmoz/tftpd:latest
+    container_name: netdesign-ztp-tftp
+    restart: unless-stopped
+    ports:
+      - "69:69/udp"
+    volumes:
+      - ztp_files:/var/tftpboot:ro
+    depends_on:
+      - api
 
   # ── MCP SSE server ────────────────────────────────────────────────────────────
   mcp:
@@ -187,3 +213,4 @@ volumes:
   redisdata:
   grafanadata:
   backups:
+  ztp_files:

@@ -24,9 +24,11 @@ services:
       - DEVICE_DEFAULT_USER=${DEVICE_DEFAULT_USER:-admin}
       - DEVICE_DEFAULT_PASS=${DEVICE_DEFAULT_PASS:-}
       - DEMO_MODE=true
+      - ZTP_FILES_DIR=/app/ztp_files
     volumes:
       - ./playbooks/inventory:/app/../playbooks/inventory:ro
       - backups:/app/backups
+      - ztp_files:/app/ztp_files
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +45,30 @@ services:
         limits:
           memory: 2g
           cpus: "2"
+
+  # ── ZTP file server (G-A6) — HTTP static mirror of ZTP_FILES_DIR ───────────────
+  ztp-files:
+    image: nginx:1.27-alpine
+    container_name: netdesign-ztp-files
+    ports:
+      - "8069:80"
+    volumes:
+      - ztp_files:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ── ZTP TFTP server (G-A6) — for devices that boot via plain TFTP ──────────────
+  ztp-tftp:
+    image: atmoz/tftpd:latest
+    container_name: netdesign-ztp-tftp
+    ports:
+      - "69:69/udp"
+    volumes:
+      - ztp_files:/var/tftpboot:ro
+    depends_on:
+      - api
+    restart: unless-stopped
 
   # ── NetDesign AI — MCP SSE server ──────────────────────────────────────────
   mcp:
@@ -213,3 +239,4 @@ volumes:
   grafana_data:
   prometheus_data:
   backups:
+  ztp_files:

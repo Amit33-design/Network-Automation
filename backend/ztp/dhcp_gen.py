@@ -22,7 +22,19 @@ from typing import Any
 # Platform → boot filename mapping
 # ---------------------------------------------------------------------------
 
-def _boot_filename(platform: str, hostname: str) -> str:
+# G-A6: filenames relative to the ztp-tftp / ztp-files static file root
+# (ZTP_FILES_DIR, exported via POST /ztp/export-files)
+_TFTP_MAP = {
+    "nxos":   "scripts/nxos_poap.py",
+    "nxos9k": "scripts/nxos_poap.py",
+    "eos":    "scripts/eos_ztp.py",
+    "ios-xe": "scripts/ios_xe_pnp.py",
+    "iosxe":  "scripts/ios_xe_pnp.py",
+    "ios_xe": "scripts/ios_xe_pnp.py",
+}
+
+
+def _boot_filename(platform: str, hostname: str, tftp: bool = False) -> str:
     """
     Return the DHCP bootfile-name value for the given platform.
 
@@ -37,8 +49,16 @@ def _boot_filename(platform: str, hostname: str) -> str:
         sonic       — SONiC JSON ZTP descriptor
 
     For unknown platforms the generic bootstrap endpoint is used.
+
+    If `tftp` is True (G-A6), return a path relative to the ztp-tftp /
+    ztp-files static file root instead of the HTTP API path — for legacy
+    devices that fetch their boot file over plain TFTP (DHCP `next-server`
+    + `filename`) rather than calling the FastAPI ZTP endpoints directly.
     """
     platform = platform.lower().strip()
+
+    if tftp:
+        return _TFTP_MAP.get(platform, f"configs/{hostname}.cfg")
 
     _MAP = {
         "nxos":   "ztp/script/nxos",
@@ -66,6 +86,7 @@ def generate_dhcp_config(
     subnet_mask: str = "",
     domain_name: str = "netdesign.local",
     lease_time: int = 600,
+    tftp: bool = False,
 ) -> str:
     """
     Generate an ISC DHCP server config fragment for ZTP onboarding.
@@ -81,6 +102,10 @@ def generate_dhcp_config(
         subnet_mask:   Subnet mask (e.g. 255.255.255.0).
         domain_name:   Domain name option (default: netdesign.local).
         lease_time:    DHCP lease time in seconds (default: 600).
+        tftp:          (G-A6) When True, `filename` directives point at the
+                       ztp-tftp / ztp-files static file root (`scripts/...`,
+                       `configs/{hostname}.cfg`) instead of the FastAPI HTTP
+                       ZTP endpoints — for devices that boot via plain TFTP.
 
     Returns:
         A dhcpd.conf fragment as a string ready to append/include into
@@ -94,8 +119,10 @@ def generate_dhcp_config(
         f"# ZTP Server: {ztp_server_ip}",
         f"# Gateway:    {gateway}",
         f"# DNS:        {dns}",
-        "",
     ]
+    if tftp:
+        lines.append("# Mode:       TFTP (G-A6 ztp-tftp file server)")
+    lines.append("")
 
     # Optional subnet declaration
     if subnet and subnet_mask:
@@ -129,7 +156,7 @@ def generate_dhcp_config(
             lines.append(f"# Skipped {hostname} — mgmt_ip not set")
             continue
 
-        boot_file = _boot_filename(platform, hostname)
+        boot_file = _boot_filename(platform, hostname, tftp=tftp)
         safe_name = hostname.replace(".", "-").replace("_", "-")
 
         lines.append(f"# ── {hostname} ({platform}) ────────────────────────────────")
@@ -144,8 +171,8 @@ def generate_dhcp_config(
         lines.append(f"  next-server {ztp_server_ip};")
         lines.append(f"  filename \"{boot_file}\";")
 
-        # IOS-XE PnP: add option 43 redirect in addition to filename
-        if platform.lower() in ("ios-xe", "iosxe", "ios_xe"):
+        # IOS-XE PnP: add option 43 redirect in addition to filename (HTTP mode only)
+        if not tftp and platform.lower() in ("ios-xe", "iosxe", "ios_xe"):
             pnp_option = (
                 f"5A;K4;B2;I{ztp_server_ip};J80"
             )
