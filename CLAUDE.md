@@ -586,7 +586,7 @@ Use gap IDs in commit messages and conversations.
 | G-A1 | ✅ 2026-06-11 Intent NLP parser — free-text → Step 1 form fields (Claude API) | P1 |
 | G-A2 | ✅ 2026-05-29 Professional HLD diagram — all layers interlinked, packet-flow scenarios, device-inspect panel | P1 |
 | G-A3 | ✅ 2026-05-29 Batfish/pyATS dry-run validation placeholder tab (Batfish Validate in Step 6) | P1 |
-| G-A4 | Config drift detection (running vs intended diff) | P1 |
+| G-A4 | ✅ 2026-06-12 Config drift detection (running vs intended config text diff) — `POST /api/drift/config` (`backend/config_drift.py`) + Day-2 Ops "Config Drift Detection" UI; v1 slice — inline remediation tracked separately as G-A16 | P1 |
 | G-A5 | ✅ 2026-05-29 Canary deployment (1 device first, confirm gate) — canary mode in Deploy Pipeline | P1 |
 | G-A6 | ZTP file server (nginx + TFTP in docker-compose) | P1 |
 | G-A7 | Embedded monitoring stack (VictoriaMetrics + Grafana auto-provision) | P1 |

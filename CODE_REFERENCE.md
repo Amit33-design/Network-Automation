@@ -83,6 +83,10 @@ coloProvider, dcEdgeVendor, bgpAsn, orgCidr, aviatrixOptions`), and
 **Intent NLP parser (G-A1)**
 - `IntentParseResult` — `{ use_case, app_types[], scale, redundancy, compliance[], org_name, org_size, budget_tier, vendor_prefs[], industry, primary_contact, confidence, notes, source: 'ai'|'heuristic' }`. Mirrors `backend/intent_ai.RESPONSE_SCHEMA` + `source`.
 
+**Config drift detection (G-A4)**
+- `ConfigDriftDevice` — `{ hostname, has_drift, added: string[], removed: string[], unified_diff, no_baseline }`. Mirrors `backend.main.ConfigDriftDevice`.
+- `ConfigDriftResponse` — `{ devices: ConfigDriftDevice[], drift_count, device_count }`. Mirrors `backend.main.ConfigDriftResponse`.
+
 **Deploy pipeline**
 - `DeployStage` = `'queued'|'connecting'|'pre_checks'|'pushing_config'|'post_checks'|'done'|'failed'`
 - `DeployEvent` — one WS message from `/ws/deploy/{id}` (`stage, device?, message, progress, timestamp`).
@@ -791,6 +795,7 @@ alert groups (core vs. GPU-only), and Grafana dashboard JSON validity/panels
 - `fetchAlerts(): Promise<Alert[]>` — GET `/api/alerts`
 - `runRca(symptom, affectedDevices, designId?): Promise<RcaHypothesis[]>` — POST `/api/rca/analyze` with `{symptom, affected_devices, design_id}`
 - `parseIntent(description: string): Promise<IntentParseResult>` — POST `/api/intent/parse` with `{description}` (G-A1)
+- `checkConfigDrift(configs: Record<string,string>, deploymentId?: string): Promise<ConfigDriftResponse>` — POST `/api/drift/config` with `{configs, deployment_id}` (G-A4)
 - `generateConfigs(state: DesignState): Promise<{configs, generated_at}>` — POST `/api/generate-configs`
 - `runPreChecks(req: DeployRequest): Promise<CheckResponse>` — POST `/api/pre-checks`
 - `runPostChecks(req: DeployRequest): Promise<CheckResponse>` — POST `/api/post-checks`
@@ -828,6 +833,10 @@ alert groups (core vs. GPU-only), and Grafana dashboard JSON validity/panels
 
 #### `hooks/useIntentParse.ts` (G-A1)
 - `useIntentParse()` — `useMutation<IntentParseResult, Error, string>`; `mutationFn` calls `parseIntent(description)` from `api/client.ts` → POST `/api/intent/parse`. Returns `IntentParseResult` (`source: 'ai'|'heuristic'`). Consumed by `Step1UseCase.tsx`'s free-text "Describe Your Network" card. No client-side simulation — requires a live backend (`useBackendMode().isLive`); the Parse button is disabled otherwise.
+
+#### `hooks/useConfigDrift.ts` (G-A4)
+- `useConfigDrift()` — `useMutation<ConfigDriftResponse, Error, { configs: Record<string,string>; deploymentId?: string }>`; `mutationFn` calls `checkConfigDrift(configs, deploymentId)` from `api/client.ts` → POST `/api/drift/config`. Returns `ConfigDriftResponse`.
+- **Fallback:** `Step6Deploy.tsx` Day-2 Ops tab calls `useConfigDrift().mutate` when `isLive`; in demo mode (`!isLive`) calls local `simulateConfigDrift(configs, faultDeviceId?)` (exported from `Step6Deploy.tsx`) which marks all devices `has_drift: false` unless `faultDeviceId` is given, in which case that device gets a synthetic `unified_diff` (one added/removed line from `DRIFT_FAULT_LINES`).
 
 #### `hooks/useTopology.ts`
 - `useTopologySummary()` — `useQuery<TopologySummary>({ queryKey: ['topology','summary'], queryFn: GET '/api/topology', staleTime: 30_000 })`
@@ -1103,9 +1112,9 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 - **`handlePoll(failDevices?)`** — calls `poll()` mutation, toasts health summary
 - **`simulateMonitoringMetrics(devList, tick): MetricsSummary`** — per device, deterministic seed via `_seed(name)`/`_pseudoRandom`. Base CPU by role (GPU=62, spine=42, fw=28, else=22); computes `cpu_util, mem_util, interface_errors_in/out, bgp_sessions_up` (0 for access/vedge, else 2-6), `bgp_prefixes_received`, `pfc_drops` (GPU only, up to 300), `throughput_mbps` (spine base 8000, others 2000, scaled 0.4-1.0)
 
-##### Tab: Day-2 Ops (`day2ops`, lines ~2909-3028)
-- **State:** `changeWindow` (`'immediate'|'scheduled'|'emergency'`, default immediate), `driftChecking`, `driftDone`
-- **UI:** Change Window card (scheduled shows "Sun 02:00-04:00 UTC"; emergency shows CAB-approval warning); Config Drift Detection card (static 3-row table: leaf1/BGP AS 65001, spine1/IS-IS NET 49.0001, fw1/Zone-pair inspect — Expected==Actual hardcoded; "Run Drift Check" → `handleDriftCheck()` 2s async sets `driftDone=true`); Compliance Audit card (7 hardcoded "✓ PASS" checks: password complexity, SSHv2, NTP, syslog, SNMP strings, unused interfaces shut, logging buffered)
+##### Tab: Day-2 Ops (`day2ops`, lines ~2909-3050+)
+- **State:** `changeWindow` (`'immediate'|'scheduled'|'emergency'`, default immediate); G-A4: `driftResult: ConfigDriftResponse|null`, `driftFaultDevice` (id of device to simulate drift on, demo mode only), `expandedDriftDevices: Set<string>` (per-device diff expand/collapse), `useConfigDrift()` → `runConfigDrift`/`driftChecking`
+- **UI:** Change Window card (scheduled shows "Sun 02:00-04:00 UTC"; emergency shows CAB-approval warning); **Config Drift Detection card (G-A4)** — reads `configs` from the Zustand store (generated in Step 3); if empty, shows "No generated configs yet" prompt. Otherwise: demo-mode-only "Simulate drift on" device selector, "Run Drift Check" button → `handleDriftCheck()` (live: `runConfigDrift({configs})`→`/api/drift/config`; demo: `simulateConfigDrift(configs, driftFaultDevice)`); results table (Device / Status — "✓ In sync", "⚠ Drift detected", or "— no baseline" / Added count / Removed count / "View diff" toggle) with an expandable colorized unified-diff row (`toggleDriftDevice`); summary line shows `drift_count`/`device_count`. Compliance Audit card (7 hardcoded "✓ PASS" checks: password complexity, SSHv2, NTP, syslog, SNMP strings, unused interfaces shut, logging buffered)
 
 ##### Tab: Batfish Validate (`batfish`, lines ~3030-3130)
 - **State:** `batfishRunning`, `batfishStep` (default -1), `batfishDone`, local `BATFISH_STEPS` (5 labels: Initializing snapshot / Parsing configs / Forwarding analysis / BGP reachability / Validation complete)
@@ -1518,10 +1527,11 @@ FastAPI application entry point (`app = FastAPI(title="NetDesign AI Backend", ve
 | `GET /api/alerts` | Return active alerts from in-process telemetry (`telemetry.alerting.evaluate`); empty list if telemetry disabled; perm `designs:read` |
 | `GET /api/anomalies` | Return rolling z-score anomalies (`telemetry.anomaly.detect_anomalies`, Enterprise Upgrade C3); empty list if telemetry disabled; perm `designs:read` |
 | `POST /api/drift` | Compare intended state vs live gNMI metrics via `telemetry.alerting.evaluate_with_drift`; perm `designs:read` |
+| `POST /api/drift/config` | G-A4: compare intended (Jinja2-generated) configs vs latest running-config backup via `config_drift.check_config_drift()`; perm `designs:read` |
 | `POST /api/rca/analyze` | Hypothesis-based RCA (`rca.engine.RCAEngine`), correlates telemetry + recent deployments (last 2h) + design state; perm `designs:read`; 503 if RCA engine unavailable |
 | `POST /api/intent/parse` | G-A1: free-text → structured Step 1 fields via `intent_ai.parse_intent_ai()` (Claude API, `output_config` json_schema) with `intent_ai.heuristic_fallback()` (wraps `nl_parser.parse_intent`) when `ANTHROPIC_API_KEY` unset or the call fails; perm `designs:read`; 400 if `description` empty |
 
-**Key Pydantic models**: `DesignState` (mirrors frontend STATE — `uc`, `orgName`, `selectedProducts`, `protocols`, `vlans`, `appFlows`, `include_*` flags), `DeployRequest`, `ConfigResponse`, `CheckResult`/`CheckResponse`, `DeployResponse`/`AsyncDeployResponse`, `DhcpConfigRequest`, `TokenRequest`/`TokenResponse`, `AlertResponse`, `AnomalyResponse`, `DriftRequest`, `RCARequest`/`HypothesisResponse`, `IntentParseRequest`/`IntentParseResponse` (G-A1).
+**Key Pydantic models**: `DesignState` (mirrors frontend STATE — `uc`, `orgName`, `selectedProducts`, `protocols`, `vlans`, `appFlows`, `include_*` flags), `DeployRequest`, `ConfigResponse`, `CheckResult`/`CheckResponse`, `DeployResponse`/`AsyncDeployResponse`, `DhcpConfigRequest`, `TokenRequest`/`TokenResponse`, `AlertResponse`, `AnomalyResponse`, `DriftRequest`, `ConfigDriftRequest`/`ConfigDriftDevice`/`ConfigDriftResponse` (G-A4), `RCARequest`/`HypothesisResponse`, `IntentParseRequest`/`IntentParseResponse` (G-A1).
 
 ---
 
@@ -1927,6 +1937,23 @@ MCP (Model Context Protocol) server exposing NetDesign AI as an AI-native toolse
 - Both functions return dicts matching `RESPONSE_SCHEMA`'s required keys exactly (validated by `tests/test_intent_ai.py::TestHeuristicFallback::test_result_matches_response_schema_keys`); the `/api/intent/parse` endpoint adds `source: "ai"|"heuristic"` before returning `IntentParseResponse`.
 - `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` (default `claude-opus-4-8`) read from env — see `.env.example`.
 - Tests (`tests/test_intent_ai.py`) mock `anthropic.Anthropic` and construct real `httpx.Request`/`httpx.Response` objects for `AuthenticationError`/`RateLimitError`/`APIConnectionError`/etc. (MagicMock alone doesn't satisfy `APIStatusError.__init__`'s typed `response` param at runtime cleanly).
+
+---
+
+#### `backend/config_drift.py` (G-A4)
+
+**Purpose:** Config drift detection for `POST /api/drift/config` — text diff between the *intended* device configs (sent by the frontend as `{hostname: config_text}`, generated client-side by `lib/configgen.ts`) and the *running-config* backups written by `nornir_tasks.run_pre_checks()` to `BACKUP_DIR/{deployment_id}/{hostname}.cfg`. This is distinct from `telemetry/drift_detector.py` (intent vs live gNMI **metrics**).
+
+**Key exports:**
+- `BACKUP_DIR: Path` — `os.environ.get("BACKUP_DIR", "/tmp/netdesign_backups")`, same env var as `nornir_tasks.BACKUP_DIR`.
+- `diff_configs(intended: str, running: str) -> dict` — normalizes both texts (`_normalize`: strips trailing whitespace, drops blank lines), then `difflib.unified_diff`. Returns `{has_drift, added: list[str], removed: list[str], unified_diff: str}`; `has_drift=False` and empty lists/`""` if normalized texts are equal.
+- `latest_backup_dir() -> Path | None` — most recently modified (`st_mtime`) subdirectory of `BACKUP_DIR`, or `None` if `BACKUP_DIR` doesn't exist or has no subdirectories.
+- `get_running_config(hostname: str, deployment_id: str | None = None) -> str | None` — reads `BACKUP_DIR/{deployment_id}/{hostname}.cfg`; if `deployment_id` is omitted, uses `latest_backup_dir()`. Returns `None` if the deployment dir or `.cfg` file doesn't exist.
+- `check_config_drift(configs: dict[str,str], deployment_id: str | None = None) -> dict` — for each `(hostname, intended)` in `configs`, looks up the running config and either marks `no_baseline: True` (no backup found) or runs `diff_configs()`. Returns `{devices: [{hostname, has_drift, added, removed, unified_diff, no_baseline}, ...], drift_count, device_count}`.
+
+**Notes:**
+- Tests: `tests/test_config_drift.py` (13 tests) — `diff_configs` (identical/blank-line-normalization/added/removed/changed-line), `get_running_config`/`latest_backup_dir` (missing dir, no deployments, missing host file, explicit `deployment_id`, fallback to latest via `tmp_path` + `monkeypatch.setattr(config_drift, "BACKUP_DIR", ...)`), `check_config_drift` (no-baseline, in-sync, multi-device drift).
+- The `configs` dict keys are whatever the caller uses as "hostname" — the frontend currently sends `dev.id` (e.g. `dev-1`, `lf1`), which does not necessarily match the Nornir inventory hostnames used when `nornir_tasks.run_pre_checks()` writes backups. When keys don't match, those devices come back `no_baseline: True` rather than erroring — a known v1 limitation.
 
 ---
 
