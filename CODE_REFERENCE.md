@@ -2485,6 +2485,7 @@ Note: this is a **simpler 5-state machine** than the frontend's 8-stage demo sim
   - **If `dev.bake_policies == False`** (default): returns the Day-0 minimal template only (mgmt IP, SSH, NTP, syslog — per CLAUDE.md section 11).
   - **If `dev.bake_policies == True`**: builds a `state_for_policy` dict (mapping role→use-case via `_role_to_uc()`, plus per-policy boolean flags from `dev.policy_flags`, default all `True`) and a `device_ctx` dict, then calls `config_gen._append_policies(base, device_ctx, platform_key, state_for_policy)` to append ALL enabled policy blocks (BGP, ACL, 802.1X, QoS, AAA, static routing, VLAN, trunk, wireless) — i.e. full production config on first boot.
 - `_role_to_uc(role: str) -> str` (module-level helper) — maps role substrings (`campus`/`gpu`/`wan|cpe|hub`/`dc|spine|leaf`) to use-case keys, default `"campus"`.
+- `render_config(dev: ZTPDevice) -> str` — public wrapper around `_render_day0(dev)` that does **not** mutate device state (unlike `get_bootstrap_config`). Used by `ztp/file_export.py` (G-A6) to regenerate static files without marking devices `CONTACTED`.
 - `_generic_bootstrap(serial, dev=None) -> str` — fallback minimal config when no template exists.
 - `_nxos_poap_script(server_url) -> str` (static) — full NX-OS POAP Python 2 script (urllib2-based) that fetches `/ztp/bootstrap/{serial}`, applies via `cli.cli(...)`, and POSTs `/ztp/checkin/{serial}`.
 - `_eos_ztp_script(server_url) -> str` (static) — Arista EOS Python 3 script using `FastCli` and `urllib.request`.
@@ -2510,7 +2511,8 @@ Note: this is a **simpler 5-state machine** than the frontend's 8-stage demo sim
 | `GET /ztp/device/{serial}` | Single device status (404 if not registered). |
 | `DELETE /ztp/device/{serial}` | Remove from registry (404 if not found). |
 | `POST /ztp/device/{serial}/reset` | Reset device back to `WAITING` (clears `contacted_at`, `provisioned_at`, `error`). |
-| `GET /ztp/dhcp-options` | Returns ready-to-paste DHCP option 43/67 snippets for ISC-DHCP and Kea, per platform (uses `_server_url(request)` which reads `ZTP_SERVER_URL` env var or falls back to `request.base_url`). |
+| `GET /ztp/dhcp-options` | Returns ready-to-paste DHCP option 43/67 snippets for ISC-DHCP and Kea, per platform (uses `_server_url(request)` which reads `ZTP_SERVER_URL` env var or falls back to `request.base_url`). Also returns a `tftp_file_server` block (G-A6) documenting the `ztp-tftp`/`ztp-files` containers and example TFTP filenames. |
+| `POST /ztp/export-files` | **(G-A6)** Regenerates the static ZTP file tree under `ZTP_FILES_DIR` — calls `file_export.export_all(server_url)`. Returns `{files_dir, exported_configs, exported_scripts}`. |
 
 **Pydantic models:**
 - `DeviceRegisterRequest`: `serial, hostname, platform="ios-xe", role="campus-access", mgmt_ip, mgmt_mask="255.255.255.0", mgmt_gw="", loopback_ip="", bgp_asn=65000, vlans: list[dict]=[], bake_policies: bool=False, policy_flags: dict[str,bool]={}, extra: dict={}`
@@ -2518,7 +2520,25 @@ Note: this is a **simpler 5-state machine** than the frontend's 8-stage demo sim
 - `CheckinRequest`: `{success: bool, detail: str=""}`
 - `DeviceStatusResponse`: `{serial, hostname, platform, role, mgmt_ip, state, bake_policies, registered_at, contacted_at, provisioned_at, last_seen, error}`
 
-**Notes:** This router is mounted directly on the FastAPI app (no `/api` prefix) — devices hit `http://<server>/ztp/...` directly (matches DHCP-served bootfile URLs).
+**Notes:** This router is mounted directly on the FastAPI app (no `/api` prefix) — devices hit `http://<server>/ztp/...` directly (matches DHCP-served bootfile URLs). `register_device`/`register_bulk` now also call `file_export.export_device_config(dev)` (G-A6) so the nginx/TFTP static file tree stays in sync as devices are (re)registered.
+
+---
+
+#### `backend/ztp/file_export.py` (G-A6)
+**Purpose:** Writes rendered Day-0 configs and platform POAP/ZTP scripts to `ZTP_FILES_DIR` (default `/tmp/netdesign_ztp_files`, mapped to `/app/ztp_files` and the shared `ztp_files` Docker volume) — the directory served by the new `ztp-files` (nginx, HTTP :8069) and `ztp-tftp` (`atmoz/tftpd`, UDP :69) containers added to all three docker-compose files. Lets legacy devices fetch their boot config/script via plain TFTP or a plain HTTP file mirror instead of calling the FastAPI `/ztp/bootstrap`/`/ztp/script` endpoints directly.
+
+**Layout under `ZTP_FILES_DIR`:**
+```
+configs/{hostname}.cfg   — per-device Day 0 config (ztp_server.render_config(dev))
+scripts/{platform}.py    — POAP/ZTP scripts: nxos_poap.py, eos_ztp.py, ios_xe_pnp.py
+```
+
+**Key exports:**
+- `ZTP_FILES_DIR: Path` — `Path(os.environ.get("ZTP_FILES_DIR", "/tmp/netdesign_ztp_files"))`.
+- `PLATFORM_SCRIPTS: dict[str, str]` — `{"nxos": "nxos_poap.py", "eos": "eos_ztp.py", "ios-xe": "ios_xe_pnp.py"}`.
+- `export_device_config(dev: ZTPDevice, base_dir: Path | None = None) -> Path` — writes `{base_dir}/configs/{dev.hostname}.cfg` via `ztp_server.render_config(dev)` (no state mutation), returns the path.
+- `export_platform_scripts(server_url: str, base_dir: Path | None = None) -> list[Path]` — writes `{base_dir}/scripts/{filename}` for each entry in `PLATFORM_SCRIPTS` via `ztp_server.get_platform_script(platform, server_url)`.
+- `export_all(server_url: str, base_dir: Path | None = None) -> dict[str, list[str]]` — exports configs for every `ztp_server.all_devices()` plus all platform scripts; returns `{"configs": [...], "scripts": [...]}` (absolute path strings).
 
 ---
 
@@ -2526,9 +2546,11 @@ Note: this is a **simpler 5-state machine** than the frontend's 8-stage demo sim
 **Purpose:** Generates an ISC-DHCP `dhcpd.conf` fragment (host stanzas) for ZTP onboarding — the missing piece between "device registered in NetDesign AI" and "device actually gets the right bootfile-name from DHCP."
 
 **Key exports:**
-- `generate_dhcp_config(devices: list[dict], ztp_server_ip: str, gateway: str, dns: str, subnet: str = "", subnet_mask: str = "", domain_name: str = "netdesign.local", lease_time: int = 600) -> str`
-  For each device dict (`hostname, platform, mgmt_ip`, optional `mac` or `extra.mac`), emits a `host {name} { hardware ethernet ...; fixed-address ...; next-server ...; filename "..."; }` stanza. Optional `subnet {...} {...}` block if `subnet`+`subnet_mask` given. IOS-XE devices additionally get a commented PnP option-43 hint and `vendor-class-identifier "ciscopnp"`.
-- `_boot_filename(platform: str, hostname: str) -> str` (private) — maps platform → `ztp/script/{platform}` path (e.g. `nxos`/`nxos9k` → `ztp/script/nxos`, `ios-xe`/`iosxe`/`ios_xe` → `ztp/script/ios-xe`); unknown platforms fall back to `ztp/bootstrap/{hostname}`.
+- `generate_dhcp_config(devices: list[dict], ztp_server_ip: str, gateway: str, dns: str, subnet: str = "", subnet_mask: str = "", domain_name: str = "netdesign.local", lease_time: int = 600, tftp: bool = False) -> str`
+  For each device dict (`hostname, platform, mgmt_ip`, optional `mac` or `extra.mac`), emits a `host {name} { hardware ethernet ...; fixed-address ...; next-server ...; filename "..."; }` stanza. Optional `subnet {...} {...}` block if `subnet`+`subnet_mask` given. IOS-XE devices in HTTP mode (`tftp=False`) additionally get a commented PnP option-43 hint and `vendor-class-identifier "ciscopnp"`.
+  - **`tftp=False`** (default, unchanged): `filename` = `_boot_filename(platform, hostname)` → HTTP API path (e.g. `ztp/script/nxos`, `ztp/bootstrap/{hostname}`).
+  - **`tftp=True`** (G-A6): `filename` = `_boot_filename(platform, hostname, tftp=True)` → path relative to the `ztp-tftp`/`ztp-files` static file root (e.g. `scripts/nxos_poap.py`, `configs/{hostname}.cfg`); header gets an extra `# Mode: TFTP (G-A6 ztp-tftp file server)` comment; IOS-XE PnP option-43 block is omitted (not applicable to plain TFTP).
+- `_boot_filename(platform: str, hostname: str, tftp: bool = False) -> str` (private) — HTTP mode (default) maps platform → `ztp/script/{platform}` path (e.g. `nxos`/`nxos9k` → `ztp/script/nxos`, `ios-xe`/`iosxe`/`ios_xe` → `ztp/script/ios-xe`); unknown platforms fall back to `ztp/bootstrap/{hostname}`. TFTP mode (`tftp=True`, G-A6) maps platform → `scripts/{name}.py` via `_TFTP_MAP` (matching `file_export.PLATFORM_SCRIPTS`); unknown platforms fall back to `configs/{hostname}.cfg`.
 - `_normalise_mac(mac: str) -> str` (private) — normalizes `00:1A:2B:3C:4D:5E` / `001a.2b3c.4d5e` / `001A2B3C4D5E` → lowercase colon-separated.
 
 **Relation to NetBox IPAM:** Currently **none** — `mgmt_ip` for each device dict comes from whatever caller supplies (e.g. the ZTP registry's `ZTPDevice.mgmt_ip`, set manually at registration time via `/ztp/register`). There is no code path where `dhcp_gen.py` or `ztp/server.py` calls `integrations/netbox.get_available_prefix`/`allocate_prefix` to source mgmt IPs from NetBox IPAM, and `sync_devices()` (NetBox DCIM push) is not invoked from anywhere in `ztp/`. **This is the exact gap the upcoming "ZTP + NetBox" feature needs to bridge** — e.g.: (1) before `/ztp/register`, allocate a mgmt IP from a NetBox prefix via `allocate_prefix`; (2) after `checkin` → `PROVISIONED`, call `sync_devices`/`push_device_config` to record the device + its rendered config in NetBox.

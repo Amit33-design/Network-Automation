@@ -588,7 +588,7 @@ Use gap IDs in commit messages and conversations.
 | G-A3 | ✅ 2026-05-29 Batfish/pyATS dry-run validation placeholder tab (Batfish Validate in Step 6) | P1 |
 | G-A4 | ✅ 2026-06-12 Config drift detection (running vs intended config text diff) — `POST /api/drift/config` (`backend/config_drift.py`) + Day-2 Ops "Config Drift Detection" UI; v1 slice — inline remediation tracked separately as G-A16 | P1 |
 | G-A5 | ✅ 2026-05-29 Canary deployment (1 device first, confirm gate) — canary mode in Deploy Pipeline | P1 |
-| G-A6 | ZTP file server (nginx + TFTP in docker-compose) | P1 |
+| G-A6 | ✅ 2026-06-12 ZTP file server (nginx + TFTP in docker-compose) — `ztp-files` (nginx, HTTP :8069) + `ztp-tftp` (`atmoz/tftpd`, UDP :69) services on a shared `ztp_files` volume; `backend/ztp/file_export.py` writes Day-0 configs/scripts, `POST /ztp/export-files` regenerates the tree, `generate_dhcp_config(..., tftp=True)` emits TFTP-relative filenames | P1 |
 | G-A7 | Embedded monitoring stack (VictoriaMetrics + Grafana auto-provision) | P1 |
 | G-A8 | gNMI / streaming telemetry (currently SNMP polling only) | P2 |
 | G-A9 | IOS-XR platform support (SP/WAN — SR-MPLS, L3VPN) | P2 |
