@@ -289,6 +289,23 @@ export interface IntentParseResult {
   source: 'ai' | 'heuristic'
 }
 
+// ── Config drift detection (G-A4) ──────────────────────────────────────────────
+
+export interface ConfigDriftDevice {
+  hostname: string
+  has_drift: boolean
+  added: string[]
+  removed: string[]
+  unified_diff: string
+  no_baseline: boolean
+}
+
+export interface ConfigDriftResponse {
+  devices: ConfigDriftDevice[]
+  drift_count: number
+  device_count: number
+}
+
 // ── Deploy pipeline ───────────────────────────────────────────────────────────
 
 export type DeployStage =

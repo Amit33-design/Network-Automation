@@ -92,6 +92,13 @@ import type { IntentParseResult } from '@/types'
 export const parseIntent = (description: string) =>
   post<IntentParseResult>('/api/intent/parse', { description })
 
+// ── Config drift detection (G-A4) ───────────────────────────────────────────────
+
+import type { ConfigDriftResponse } from '@/types'
+
+export const checkConfigDrift = (configs: Record<string, string>, deploymentId?: string) =>
+  post<ConfigDriftResponse>('/api/drift/config', { configs, deployment_id: deploymentId })
+
 // ── Config generation ─────────────────────────────────────────────────────────
 
 import type { DesignState } from '@/types'

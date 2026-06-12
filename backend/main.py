@@ -921,6 +921,48 @@ async def api_drift(
 
 
 # ---------------------------------------------------------------------------
+# G-A4: Config drift detection (intended config vs running-config backup)
+# ---------------------------------------------------------------------------
+
+class ConfigDriftRequest(BaseModel):
+    configs: dict[str, str]
+    deployment_id: str | None = None
+
+
+class ConfigDriftDevice(BaseModel):
+    hostname: str
+    has_drift: bool
+    added: list[str]
+    removed: list[str]
+    unified_diff: str
+    no_baseline: bool
+
+
+class ConfigDriftResponse(BaseModel):
+    devices: list[ConfigDriftDevice]
+    drift_count: int
+    device_count: int
+
+
+@app.post("/api/drift/config", response_model=ConfigDriftResponse)
+async def api_config_drift(
+    body: ConfigDriftRequest,
+    user: dict = Depends(require_permission("designs:read")),
+):
+    """
+    Compare intended (Jinja2-generated) configs against the latest
+    pre-deployment running-config backups (G-A4).
+    """
+    try:
+        from config_drift import check_config_drift
+        result = check_config_drift(body.configs, body.deployment_id)
+        return ConfigDriftResponse(**result)
+    except Exception as exc:
+        log.exception("Config drift detection failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Phase 4: RCA analysis
 # ---------------------------------------------------------------------------
 

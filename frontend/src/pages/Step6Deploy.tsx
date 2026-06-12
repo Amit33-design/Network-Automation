@@ -3,6 +3,7 @@ import { useTopologySummary, useTopologyDevices } from '@/hooks/useTopology'
 import { useRunZTP } from '@/hooks/useZTP'
 import { useRunChecks } from '@/hooks/useChecks'
 import { usePollMonitoring, useMetricsSummary } from '@/hooks/useMonitoring'
+import { useConfigDrift } from '@/hooks/useConfigDrift'
 import { useToast } from '@/components/ui/Toast'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -13,7 +14,7 @@ import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON } from '@/lib/telemetry-gen'
-import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary } from '@/types'
+import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
   healthy: 'pass', degraded: 'warn', down: 'fail', unknown: 'neutral',
@@ -1059,6 +1060,43 @@ function simulateChecksResult(
   return { phase, results }
 }
 
+// ── Config drift simulation (G-A4 demo mode) ──────────────────────────────────
+
+const DRIFT_FAULT_LINES: Array<{ removed?: string; added?: string }> = [
+  { removed: '  no shutdown', added: '  shutdown' },
+  { removed: '  logging console', added: '  no logging console' },
+  { added: '  ip access-group TEMP-BLOCK in' },
+  { removed: '  ntp server 10.0.0.1' },
+]
+
+export function simulateConfigDrift(
+  configs: Record<string, string>,
+  faultDeviceId?: string,
+): ConfigDriftResponse {
+  const entries = Object.entries(configs)
+  const devices: ConfigDriftDevice[] = entries.map(([id], i) => {
+    if (id === faultDeviceId) {
+      const fault = DRIFT_FAULT_LINES[i % DRIFT_FAULT_LINES.length]
+      const added   = fault.added   ? [fault.added]   : []
+      const removed = fault.removed ? [fault.removed] : []
+      const unifiedDiff = [
+        '--- intended',
+        '+++ running',
+        ...removed.map(l => `-${l}`),
+        ...added.map(l => `+${l}`),
+      ].join('\n')
+      return { hostname: id, has_drift: true, added, removed, unified_diff: unifiedDiff, no_baseline: false }
+    }
+    return { hostname: id, has_drift: false, added: [], removed: [], unified_diff: '', no_baseline: false }
+  })
+
+  return {
+    devices,
+    drift_count: devices.filter(d => d.has_drift).length,
+    device_count: devices.length,
+  }
+}
+
 // ── NETCONF XML helpers ───────────────────────────────────────────────────────
 
 function buildNetconfXMLForOp(op: string, datastore: string, vendor: string): string {
@@ -1259,6 +1297,7 @@ export function Step6Deploy() {
   const activeDeployTab    = useAppStore(s => s.activeDeployTab)
   const setActiveDeployTab = useAppStore(s => s.setActiveDeployTab)
   const storeDevices       = useAppStore(s => s.devices)
+  const storeConfigs       = useAppStore(s => s.configs)
   const netboxDevices      = useAppStore(s => s.netboxDevices)
   const storeSiteCode      = useAppStore(s => s.siteCode)
   const storeUseCase       = useAppStore(s => s.useCase)
@@ -1510,15 +1549,32 @@ export function Step6Deploy() {
 
   // ── Day-2 Ops state (M-67) ────────────────────────────────────────────────
   const [changeWindow, setChangeWindow] = useState('immediate')
-  const [driftChecking, setDriftChecking] = useState(false)
-  const [driftDone, setDriftDone] = useState(false)
 
-  async function handleDriftCheck() {
-    setDriftChecking(true)
-    setDriftDone(false)
-    await new Promise(r => setTimeout(r, 2000))
-    setDriftChecking(false)
-    setDriftDone(true)
+  // G-A4: Config drift detection (intended config vs running-config backup)
+  const [driftResult, setDriftResult] = useState<ConfigDriftResponse | null>(null)
+  const [driftFaultDevice, setDriftFaultDevice] = useState('')
+  const [expandedDriftDevices, setExpandedDriftDevices] = useState<Set<string>>(new Set())
+  const { mutate: runConfigDrift, isPending: driftChecking } = useConfigDrift()
+
+  function handleDriftCheck() {
+    setExpandedDriftDevices(new Set())
+    if (!isLive) {
+      setDriftResult(simulateConfigDrift(storeConfigs, driftFaultDevice))
+      return
+    }
+    runConfigDrift({ configs: storeConfigs }, {
+      onSuccess: setDriftResult,
+      onError(e) { showToast('Drift check failed: ' + e.message, 'error') },
+    })
+  }
+
+  function toggleDriftDevice(hostname: string) {
+    setExpandedDriftDevices(prev => {
+      const next = new Set(prev)
+      if (next.has(hostname)) next.delete(hostname)
+      else next.add(hostname)
+      return next
+    })
   }
 
   // ── Batfish state (M-68) ──────────────────────────────────────────────────
@@ -1588,6 +1644,12 @@ export function Step6Deploy() {
     if (storeDevices.length > 0) return storeDevices.map(d => d.hostname || d.id)
     return allDevices.map(d => d.name)
   }, [storeDevices, allDevices])
+
+  // G-A4: map config-store keys (device.id) to friendly hostnames for display
+  const configIdToHostname = useMemo(
+    () => Object.fromEntries(storeDevices.map(d => [d.id, d.hostname || d.id])),
+    [storeDevices],
+  )
 
   const towerExtraVars = JSON.stringify({
     site_code: storeSiteCode || 'SITE01',
@@ -2998,56 +3060,124 @@ export function Step6Deploy() {
             </div>
           </Card>
 
-          {/* Config Drift Detection */}
+          {/* Config Drift Detection (G-A4) */}
           <Card>
             <CardHeader><CardTitle>Config Drift Detection</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
-              Compare running configuration against the intended (golden) config to detect unauthorized changes.
+              Compare the intended (generated) configuration against the latest
+              running-config backup to detect unauthorized changes.
             </p>
-            <div className="overflow-x-auto rounded-lg border border-white/10 mb-4">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 bg-white/5">
-                    {['Device', 'Expected', 'Actual', 'Drift'].map(h => (
-                      <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    { device: 'leaf1', expected: 'BGP AS 65001', actual: 'BGP AS 65001', drift: false },
-                    { device: 'spine1', expected: 'IS-IS NET 49.0001', actual: 'IS-IS NET 49.0001', drift: false },
-                    { device: 'fw1', expected: 'Zone-pair inspect', actual: 'Zone-pair inspect', drift: false },
-                  ].map(row => (
-                    <tr key={row.device} className="border-b border-white/5 hover:bg-white/[0.02]">
-                      <td className="px-4 py-2 font-mono text-xs font-semibold text-gray-200">{row.device}</td>
-                      <td className="px-4 py-2 text-xs text-gray-400">{row.expected}</td>
-                      <td className="px-4 py-2 text-xs text-gray-400">{row.actual}</td>
-                      <td className="px-4 py-2">
-                        {driftDone ? (
-                          <span className="text-xs text-green-400 font-semibold">✓ In sync</span>
-                        ) : (
-                          <span className="text-xs text-gray-600">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Button
-              onClick={handleDriftCheck}
-              disabled={driftChecking}
-            >
-              {driftChecking ? (
-                <span className="flex items-center gap-2">
-                  <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Checking…
-                </span>
-              ) : '⟳ Run Drift Check'}
-            </Button>
-            {driftDone && (
-              <p className="text-sm text-green-400 mt-3 font-medium">✓ All devices in sync</p>
+
+            {Object.keys(storeConfigs).length === 0 ? (
+              <p className="text-sm text-gray-500">
+                No generated configs yet — visit Step 3 (Config Generation) to generate device configs first.
+              </p>
+            ) : (
+              <>
+                {!isLive && (
+                  <div className="flex flex-wrap gap-3 items-end mb-4">
+                    <div>
+                      <label className="text-xs text-gray-400 block mb-1">Simulate drift on (optional)</label>
+                      <select value={driftFaultDevice} onChange={e => setDriftFaultDevice(e.target.value)}
+                        className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                        <option value="">&mdash; none (all in sync) &mdash;</option>
+                        {Object.keys(storeConfigs).map(id => (
+                          <option key={id} value={id}>{configIdToHostname[id] ?? id}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                <Button onClick={handleDriftCheck} disabled={driftChecking}>
+                  {driftChecking ? (
+                    <span className="flex items-center gap-2">
+                      <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Checking…
+                    </span>
+                  ) : '⟳ Run Drift Check'}
+                </Button>
+
+                {driftResult && (
+                  <div className="mt-4">
+                    <p className={cn(
+                      'text-sm font-medium mb-3',
+                      driftResult.drift_count > 0 ? 'text-yellow-400' : 'text-green-400',
+                    )}>
+                      {driftResult.drift_count > 0
+                        ? `⚠ Drift detected on ${driftResult.drift_count} of ${driftResult.device_count} device(s)`
+                        : `✓ All ${driftResult.device_count} device(s) in sync`}
+                    </p>
+                    <div className="overflow-x-auto rounded-lg border border-white/10">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10 bg-white/5">
+                            {['Device', 'Status', 'Added', 'Removed', ''].map(h => (
+                              <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {driftResult.devices.map(d => (
+                            <React.Fragment key={d.hostname}>
+                              <tr className="border-b border-white/5 hover:bg-white/[0.02]">
+                                <td className="px-4 py-2 font-mono text-xs font-semibold text-gray-200">
+                                  {configIdToHostname[d.hostname] ?? d.hostname}
+                                </td>
+                                <td className="px-4 py-2">
+                                  {d.no_baseline ? (
+                                    <span className="text-xs text-gray-500">— no baseline</span>
+                                  ) : d.has_drift ? (
+                                    <span className="text-xs text-yellow-400 font-semibold">⚠ Drift detected</span>
+                                  ) : (
+                                    <span className="text-xs text-green-400 font-semibold">✓ In sync</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2 text-xs text-green-400">
+                                  {d.added.length ? `+${d.added.length}` : '—'}
+                                </td>
+                                <td className="px-4 py-2 text-xs text-red-400">
+                                  {d.removed.length ? `-${d.removed.length}` : '—'}
+                                </td>
+                                <td className="px-4 py-2 text-right">
+                                  {d.has_drift && (
+                                    <button
+                                      onClick={() => toggleDriftDevice(d.hostname)}
+                                      className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
+                                    >
+                                      {expandedDriftDevices.has(d.hostname) ? 'Hide diff' : 'View diff'}
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                              {d.has_drift && expandedDriftDevices.has(d.hostname) && (
+                                <tr className="border-b border-white/5 bg-black/30">
+                                  <td colSpan={5} className="px-4 py-3">
+                                    <pre className="text-xs font-mono whitespace-pre-wrap overflow-x-auto">
+                                      {d.unified_diff.split('\n').map((line, i) => (
+                                        <div
+                                          key={i}
+                                          className={
+                                            line.startsWith('+') && !line.startsWith('+++') ? 'text-green-400'
+                                              : line.startsWith('-') && !line.startsWith('---') ? 'text-red-400'
+                                                : 'text-gray-500'
+                                          }
+                                        >
+                                          {line}
+                                        </div>
+                                      ))}
+                                    </pre>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </Card>
 
