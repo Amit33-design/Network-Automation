@@ -2,6 +2,10 @@ global:
   scrape_interval:     15s
   evaluation_interval: 15s
 
+# G-A7: long-term storage in VictoriaMetrics (observability profile).
+remote_write:
+  - url: http://victoriametrics:8428/api/v1/write
+
 scrape_configs:
   - job_name: netdesign-api
     static_configs:

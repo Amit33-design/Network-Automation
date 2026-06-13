@@ -205,7 +205,29 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=7d"
       - "--web.enable-lifecycle"
+    depends_on:
+      - victoriametrics
     restart: unless-stopped
+
+  # ── VictoriaMetrics — long-term TSDB (G-A7) ────────────────────────────────
+  # Prometheus remote-writes here; Grafana queries it via the Prometheus API.
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.97.1
+    container_name: netdesign-victoriametrics
+    ports:
+      - "8428:8428"
+    volumes:
+      - vmdata:/storage
+    command:
+      - "--storageDataPath=/storage"
+      - "--retentionPeriod=12"   # months
+      - "--httpListenAddr=:8428"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8428/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # ── Grafana — auto-provisioned dashboards ──────────────────────────────────
   grafana:
@@ -226,6 +248,7 @@ services:
       - ./backend/grafana/dashboards:/etc/grafana/dashboards:ro
     depends_on:
       - prometheus
+      - victoriametrics
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
@@ -238,5 +261,6 @@ volumes:
   redisdata:
   grafana_data:
   prometheus_data:
+  vmdata:
   backups:
   ztp_files:

@@ -4,6 +4,11 @@ global:
   external_labels:
     monitor: 'netdesign-ai'
 
+# G-A7: ship scraped samples to VictoriaMetrics for long-term retention.
+# VictoriaMetrics speaks the Prometheus remote-write protocol natively.
+remote_write:
+  - url: http://victoriametrics:8428/api/v1/write
+
 scrape_configs:
   - job_name: 'netdesign-api'
     static_configs:

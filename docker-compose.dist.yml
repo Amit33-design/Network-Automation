@@ -183,7 +183,23 @@ services:
     ports:
       - "127.0.0.1:8200:8200"
 
-  # ── Prometheus + Grafana (opt-in) ─────────────────────────────────────────────
+  # ── VictoriaMetrics + Prometheus + Grafana (opt-in) ───────────────────────────
+  # G-A7: VictoriaMetrics is the long-term TSDB; Prometheus remote-writes to it
+  # and Grafana queries it via the Prometheus-compatible query API.
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.97.1
+    container_name: netdesign-victoriametrics
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8428:8428"
+    volumes:
+      - vmdata:/storage
+    command:
+      - "--storageDataPath=/storage"
+      - "--retentionPeriod=12"
+      - "--httpListenAddr=:8428"
+    profiles: [observability]
+
   prometheus:
     image: prom/prometheus:v2.52.0
     container_name: netdesign-prometheus
@@ -192,6 +208,7 @@ services:
       - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "127.0.0.1:9090:9090"
+    depends_on: [victoriametrics]
     profiles: [observability]
 
   grafana:
@@ -204,13 +221,15 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-netdesign}
     volumes:
       - grafanadata:/var/lib/grafana
+      - ./ops/grafana/datasources:/etc/grafana/provisioning/datasources:ro
       - ./ops/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-    depends_on: [prometheus]
+    depends_on: [prometheus, victoriametrics]
     profiles: [observability]
 
 volumes:
   pgdata:
   redisdata:
   grafanadata:
+  vmdata:
   backups:
   ztp_files:

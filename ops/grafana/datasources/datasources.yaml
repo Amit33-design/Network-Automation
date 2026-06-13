@@ -1,5 +1,7 @@
 apiVersion: 1
 
+# G-A7: auto-provisioned datasources for the production (dist) Grafana.
+# Mounted into the observability-profile grafana service.
 datasources:
   - name: NetDesign Prometheus
     type: prometheus
@@ -12,7 +14,7 @@ datasources:
       timeInterval: "15s"
       httpMethod: POST
 
-  # G-A7: VictoriaMetrics — long-term TSDB, Prometheus query-API compatible.
+  # VictoriaMetrics — long-term TSDB, Prometheus query-API compatible.
   - name: NetDesign VictoriaMetrics
     type: prometheus
     uid: netdesign-victoriametrics
