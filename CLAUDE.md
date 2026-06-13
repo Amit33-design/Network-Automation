@@ -597,8 +597,8 @@ Use gap IDs in commit messages and conversations.
 | G-A12 | SD-WAN design (vEdge/vSmart/vBond architecture) | P2 |
 | G-A13 | TCO / 3-year cost model in BOM | P2 |
 | G-A14 | Rack layout and cable schedule in BOM | P2 |
-| G-A15 | Intent NLP: free-text → structured wizard fields via Claude API | P1 |
-| G-A16 | Config drift detection: running vs intended diff with inline remediation | P1 |
+| G-A15 | ✅ 2026-06-13 Intent NLP: free-text → structured wizard fields via Claude API — **duplicate of G-A1** (implemented 2026-06-11: `parseIntent`/`IntentParseResult` + `POST /api/intent/parse`) | P1 |
+| G-A16 | ✅ 2026-06-13 Config drift detection: running vs intended diff with inline remediation — `POST /api/drift/remediate` (`config_drift.generate_remediation`/`build_remediation`, platform-aware Cisco `no`/Junos `set`+`delete`, restore-then-prune) + Day-2 Ops "Inline remediation" UI (per-device command blocks, copy/download); generation-only, no auto-push | P1 |
 | G-A17 | SNMP exporter for the embedded monitoring stack (`prom/snmp-exporter` + generated `snmp.yml`/if_mib modules + Prometheus scrape job) — follow-up split from G-A7 | P2 |
 
 ---
