@@ -589,7 +589,7 @@ Use gap IDs in commit messages and conversations.
 | G-A4 | ✅ 2026-06-12 Config drift detection (running vs intended config text diff) — `POST /api/drift/config` (`backend/config_drift.py`) + Day-2 Ops "Config Drift Detection" UI; v1 slice — inline remediation tracked separately as G-A16 | P1 |
 | G-A5 | ✅ 2026-05-29 Canary deployment (1 device first, confirm gate) — canary mode in Deploy Pipeline | P1 |
 | G-A6 | ✅ 2026-06-12 ZTP file server (nginx + TFTP in docker-compose) — `ztp-files` (nginx, HTTP :8069) + `ztp-tftp` (`atmoz/tftpd`, UDP :69) services on a shared `ztp_files` volume; `backend/ztp/file_export.py` writes Day-0 configs/scripts, `POST /ztp/export-files` regenerates the tree, `generate_dhcp_config(..., tftp=True)` emits TFTP-relative filenames | P1 |
-| G-A7 | Embedded monitoring stack (VictoriaMetrics + Grafana auto-provision) | P1 |
+| G-A7 | ✅ 2026-06-13 Embedded monitoring stack (VictoriaMetrics + Grafana auto-provision) — `victoriametrics` service (long-term TSDB, `--retentionPeriod=12`, `vmdata` volume) in `docker-compose.yml` (always-on) + `docker-compose.dist.yml` (observability profile); Prometheus `remote_write`→VM in both `backend/prometheus/prometheus.yml` & `ops/prometheus.yml`; VM auto-provisioned as a 2nd Grafana datasource (`backend/grafana/.../datasources/prometheus.yml` + new `ops/grafana/datasources/datasources.yaml`); snmp-exporter split out as G-A18 | P1 |
 | G-A8 | gNMI / streaming telemetry (currently SNMP polling only) | P2 |
 | G-A9 | IOS-XR platform support (SP/WAN — SR-MPLS, L3VPN) | P2 |
 | G-A10 | Private 5G / O-RAN use case (eCPRI, PTP timing) | P2 |
@@ -599,6 +599,7 @@ Use gap IDs in commit messages and conversations.
 | G-A14 | Rack layout and cable schedule in BOM | P2 |
 | G-A15 | Intent NLP: free-text → structured wizard fields via Claude API | P1 |
 | G-A16 | Config drift detection: running vs intended diff with inline remediation | P1 |
+| G-A17 | SNMP exporter for the embedded monitoring stack (`prom/snmp-exporter` + generated `snmp.yml`/if_mib modules + Prometheus scrape job) — follow-up split from G-A7 | P2 |
 
 ---
 

@@ -2652,6 +2652,33 @@ scripts/{platform}.py    — POAP/ZTP scripts: nxos_poap.py, eos_ztp.py, ios_xe_
 
 ---
 
+#### Embedded monitoring stack (docker-compose, G-A7)
+
+**Purpose:** Self-contained observability stack shipped in the compose files — the backend exposes Prometheus metrics at `/metrics` (`prometheus_client.make_asgi_app()`, see `main.py`), Prometheus scrapes them, **VictoriaMetrics** stores them long-term, and Grafana visualizes via auto-provisioned datasources + dashboards. No external/SaaS monitoring needed.
+
+**Topology:**
+```
+api:8000/metrics ──scrape──> prometheus:9090 ──remote_write──> victoriametrics:8428
+                                   │                                   │
+                                   └────────── Grafana queries ────────┘
+                                        (both are Grafana datasources)
+```
+
+**Services (`docker-compose.yml` always-on; `docker-compose.dist.yml` behind the `observability` profile):**
+- `victoriametrics` (`victoriametrics/victoria-metrics:v1.97.1`, :8428) — long-term TSDB, Prometheus remote-write + query-API compatible; `--retentionPeriod=12` (months), data on the `vmdata` volume. (G-A7)
+- `prometheus` (`prom/prometheus:v2.52.0`, :9090) — scrapes `api`/`worker`; now `remote_write`s to `http://victoriametrics:8428/api/v1/write` and `depends_on: [victoriametrics]`.
+- `grafana` (`grafana/grafana:11.0.0`, :3000) — `depends_on: [prometheus, victoriametrics]`.
+
+**Config files:**
+- `backend/prometheus/prometheus.yml` (dev/full) and `ops/prometheus.yml` (dist) — both gained a `remote_write` block targeting VictoriaMetrics.
+- `backend/grafana/provisioning/datasources/prometheus.yml` (dev/full) — now declares **two** datasources: `NetDesign Prometheus` (uid `netdesign-prometheus`, default — existing dashboards stay pinned to it) and `NetDesign VictoriaMetrics` (uid `netdesign-victoriametrics`, for long-term queries).
+- `ops/grafana/datasources/datasources.yaml` (dist) — **new** file (dist Grafana previously had no datasource provisioning); same two datasources, mounted at `/etc/grafana/provisioning/datasources`.
+- Dashboards: `backend/grafana/dashboards/{network-overview,gpu-fabric}.json` (dev), `ops/grafana/dashboards/network_health.json` (dist) — unchanged; pinned to the default Prometheus datasource.
+
+**Note:** `docker-compose.local.yml` (minimal source-build stack) intentionally ships **no** monitoring services. `snmp-exporter` (from CLAUDE.md §19's stack list) is **not** included here — it needs a generated `snmp.yml`/MIB modules and is tracked separately as a follow-up (see CLAUDE.md §20 G-A17).
+
+---
+
 ### 6. Policy Generators (`backend/policies/`)
 
 All generators follow the same pattern: `generate_X(ctx: dict[str, Any], platform: str) -> str`, dispatching to private per-platform functions (`_ios_xe_X`, `_nxos_X`, `_eos_X`, `_junos_X`, `_sonic_X`), returning `""` when not applicable to the device's `layer`/`uc`/platform. They are invoked by `config_gen._append_policies()` via a `_POLICY_REGISTRY` of `(state_flag_key, generator_fn)` pairs, and can also be baked into ZTP Day-0 configs (`ztp/server.py._render_day0`).
