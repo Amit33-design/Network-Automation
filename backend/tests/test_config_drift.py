@@ -5,8 +5,10 @@ import pytest
 
 import config_drift
 from config_drift import (
+    build_remediation,
     check_config_drift,
     diff_configs,
+    generate_remediation,
     get_running_config,
     latest_backup_dir,
 )
@@ -159,3 +161,72 @@ class TestCheckConfigDrift:
         assert by_host["spine1"]["has_drift"] is False
         assert by_host["spine1"]["no_baseline"] is False
         assert by_host["leaf2"]["no_baseline"] is True
+
+
+# ── generate_remediation (G-A16) ────────────────────────────────────────────────
+
+class TestGenerateRemediation:
+    def test_restores_missing_intended_lines_cisco(self):
+        r = generate_remediation("leaf1", "ios-xe", added=[], removed=["  ntp server 10.0.0.1"])
+        assert r["commands"] == ["  ntp server 10.0.0.1"]
+        assert r["command_count"] == 1
+
+    def test_negates_extra_lines_cisco(self):
+        r = generate_remediation("leaf1", "nxos", added=["  ip access-group TEMP in"], removed=[])
+        assert r["commands"] == ["  no ip access-group TEMP in"]
+
+    def test_negation_preserves_indentation(self):
+        r = generate_remediation("sw", "eos", added=["    shutdown"], removed=[])
+        assert r["commands"] == ["    no shutdown"]
+
+    def test_double_negation_re_enables(self):
+        # an extra `no shutdown` on the device → remediation re-enables via `shutdown`
+        r = generate_remediation("sw", "ios-xe", added=["  no shutdown"], removed=[])
+        assert r["commands"] == ["  shutdown"]
+
+    def test_restore_then_prune_order(self):
+        r = generate_remediation(
+            "sw", "ios-xe",
+            added=["  ip access-group TEMP in"],
+            removed=["  ntp server 10.0.0.1"],
+        )
+        # restores (removed) come first, then prunes (added)
+        assert r["commands"] == ["  ntp server 10.0.0.1", "  no ip access-group TEMP in"]
+
+    def test_junos_uses_set_and_delete(self):
+        r = generate_remediation(
+            "mx", "juniper-junos",
+            added=["set system services telnet"],
+            removed=["set system host-name mx01"],
+        )
+        assert "set system host-name mx01" in r["commands"]
+        assert "delete system services telnet" in r["commands"]
+
+    def test_junos_wraps_bare_lines(self):
+        r = generate_remediation("mx", "junos", added=["system services ftp"], removed=["system host-name a"])
+        assert "set system host-name a" in r["commands"]
+        assert "delete system services ftp" in r["commands"]
+
+    def test_no_drift_yields_no_commands(self):
+        r = generate_remediation("sw", "ios-xe", added=[], removed=[])
+        assert r["commands"] == []
+        assert r["command_count"] == 0
+
+
+# ── build_remediation (G-A16) ────────────────────────────────────────────────────
+
+class TestBuildRemediation:
+    def test_batch_per_device(self):
+        out = build_remediation([
+            {"hostname": "leaf1", "platform": "nxos", "added": ["  x"], "removed": []},
+            {"hostname": "mx1", "platform": "junos", "added": [], "removed": ["set a b"]},
+        ])
+        assert len(out["devices"]) == 2
+        by_host = {d["hostname"]: d for d in out["devices"]}
+        assert by_host["leaf1"]["commands"] == ["  no x"]
+        assert by_host["mx1"]["commands"] == ["set a b"]
+
+    def test_defaults_platform_when_missing(self):
+        out = build_remediation([{"hostname": "sw", "added": ["  y"], "removed": []}])
+        assert out["devices"][0]["platform"] == "ios-xe"
+        assert out["devices"][0]["commands"] == ["  no y"]

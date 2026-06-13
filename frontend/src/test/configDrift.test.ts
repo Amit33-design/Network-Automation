@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { simulateConfigDrift } from '@/pages/Step6Deploy'
+import { simulateConfigDrift, simulateRemediation } from '@/pages/Step6Deploy'
 
 const CONFIGS: Record<string, string> = {
   'dev-1': 'hostname leaf1\ninterface Eth1\n  no shutdown\n',
@@ -54,5 +54,37 @@ describe('simulateConfigDrift (G-A4 demo mode)', () => {
     for (const line of dev.removed) {
       expect(dev.unified_diff).toContain(`-${line}`)
     }
+  })
+})
+
+describe('simulateRemediation (G-A16 demo mode)', () => {
+  it('restores missing intended lines and negates extra cisco lines', () => {
+    const res = simulateRemediation([
+      { hostname: 'dev-1', platform: 'ios-xe', added: ['  ip access-group TEMP in'], removed: ['  ntp server 10.0.0.1'] },
+    ])
+    const dev = res.devices[0]
+    // restores (removed) first, then prunes (added)
+    expect(dev.commands).toEqual(['  ntp server 10.0.0.1', '  no ip access-group TEMP in'])
+    expect(dev.command_count).toBe(2)
+  })
+
+  it('re-enables an extra `no shutdown` and preserves indentation', () => {
+    const res = simulateRemediation([
+      { hostname: 'sw', platform: 'eos', added: ['    no shutdown'], removed: [] },
+    ])
+    expect(res.devices[0].commands).toEqual(['    shutdown'])
+  })
+
+  it('uses set/delete syntax for junos', () => {
+    const res = simulateRemediation([
+      { hostname: 'mx', platform: 'juniper-junos', added: ['set system services telnet'], removed: ['set system host-name mx01'] },
+    ])
+    expect(res.devices[0].commands).toContain('set system host-name mx01')
+    expect(res.devices[0].commands).toContain('delete system services telnet')
+  })
+
+  it('returns no commands when there is no drift', () => {
+    const res = simulateRemediation([{ hostname: 'sw', platform: 'ios-xe', added: [], removed: [] }])
+    expect(res.devices[0].commands).toEqual([])
   })
 })

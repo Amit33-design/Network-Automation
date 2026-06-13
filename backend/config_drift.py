@@ -148,3 +148,105 @@ def check_config_drift(
         "drift_count": drift_count,
         "device_count": len(devices),
     }
+
+
+# ---------------------------------------------------------------------------
+# G-A16: inline remediation — turn a detected drift into the CLI commands that
+# bring the *running* config back in line with the *intended* config.
+#
+# Drift semantics (see diff_configs):
+#   removed = lines in INTENDED but missing from RUNNING → re-apply them
+#   added   = lines in RUNNING but absent from INTENDED  → negate/remove them
+#
+# This generates a reviewable command block per device; it does NOT push to any
+# device. Applying remediation to live equipment stays a deliberate, separate
+# human action.
+# ---------------------------------------------------------------------------
+
+
+def _is_junos(platform: str) -> bool:
+    return "jun" in platform.lower()
+
+
+def _negate_cisco(line: str) -> str:
+    """Negate a Cisco/Arista-style config line, preserving indentation."""
+    stripped = line.lstrip()
+    indent = line[: len(line) - len(stripped)]
+    if stripped.startswith("no "):
+        return f"{indent}{stripped[3:]}"   # already a negation → re-enable
+    return f"{indent}no {stripped}"
+
+
+def _restore_junos(line: str) -> str:
+    """Re-apply an intended Junos line as a `set` statement."""
+    s = line.strip()
+    if s.startswith("set "):
+        return s
+    if s.startswith("delete "):
+        return "set " + s[len("delete "):]
+    return f"set {s}"
+
+
+def _negate_junos(line: str) -> str:
+    """Remove an extra Junos line via a `delete` statement."""
+    s = line.strip()
+    if s.startswith("set "):
+        return "delete " + s[len("set "):]
+    if s.startswith("delete "):
+        return s
+    return f"delete {s}"
+
+
+def generate_remediation(
+    hostname: str,
+    platform: str,
+    added: list[str],
+    removed: list[str],
+) -> dict[str, Any]:
+    """
+    Build the remediation command list for a single device's drift.
+
+    Returns:
+        {
+          "hostname": str,
+          "platform": str,
+          "commands": list[str],   # ordered: restore missing, then prune extra
+          "command_count": int,
+        }
+    """
+    junos = _is_junos(platform)
+    commands: list[str] = []
+
+    # 1. Restore intended lines that are missing from the running config.
+    for line in removed:
+        commands.append(_restore_junos(line) if junos else line)
+
+    # 2. Remove extra lines that are on the device but not intended.
+    for line in added:
+        commands.append(_negate_junos(line) if junos else _negate_cisco(line))
+
+    return {
+        "hostname": hostname,
+        "platform": platform,
+        "commands": commands,
+        "command_count": len(commands),
+    }
+
+
+def build_remediation(devices: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Build remediation for a batch of drifted devices.
+
+    Each device dict: {hostname, platform, added: list[str], removed: list[str]}.
+    Returns: {"devices": [generate_remediation(...), ...]}.
+    """
+    out = [
+        generate_remediation(
+            d.get("hostname", ""),
+            d.get("platform", "ios-xe"),
+            d.get("added", []),
+            d.get("removed", []),
+        )
+        for d in devices
+    ]
+    return {"devices": out}

@@ -306,6 +306,26 @@ export interface ConfigDriftResponse {
   device_count: number
 }
 
+// ── Config drift remediation (G-A16) ───────────────────────────────────────────
+
+export interface RemediationDeviceInput {
+  hostname: string
+  platform: string
+  added: string[]
+  removed: string[]
+}
+
+export interface RemediationDevice {
+  hostname: string
+  platform: string
+  commands: string[]
+  command_count: number
+}
+
+export interface ConfigRemediationResponse {
+  devices: RemediationDevice[]
+}
+
 // ── Deploy pipeline ───────────────────────────────────────────────────────────
 
 export type DeployStage =

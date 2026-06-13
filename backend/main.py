@@ -963,6 +963,50 @@ async def api_config_drift(
 
 
 # ---------------------------------------------------------------------------
+# G-A16: config drift remediation (drift → reviewable remediation commands)
+# ---------------------------------------------------------------------------
+
+class RemediationDeviceInput(BaseModel):
+    hostname: str
+    platform: str = "ios-xe"
+    added: list[str] = []
+    removed: list[str] = []
+
+
+class ConfigRemediationRequest(BaseModel):
+    devices: list[RemediationDeviceInput]
+
+
+class RemediationDevice(BaseModel):
+    hostname: str
+    platform: str
+    commands: list[str]
+    command_count: int
+
+
+class ConfigRemediationResponse(BaseModel):
+    devices: list[RemediationDevice]
+
+
+@app.post("/api/drift/remediate", response_model=ConfigRemediationResponse)
+async def api_config_remediate(
+    body: ConfigRemediationRequest,
+    user: dict = Depends(require_permission("configs:generate")),
+):
+    """
+    Turn detected config drift into reviewable, platform-aware remediation
+    commands (G-A16). Does not push to any device — generation only.
+    """
+    try:
+        from config_drift import build_remediation
+        result = build_remediation([d.model_dump() for d in body.devices])
+        return ConfigRemediationResponse(**result)
+    except Exception as exc:
+        log.exception("Config remediation generation failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Phase 4: RCA analysis
 # ---------------------------------------------------------------------------
 

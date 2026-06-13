@@ -3,7 +3,7 @@ import { useTopologySummary, useTopologyDevices } from '@/hooks/useTopology'
 import { useRunZTP } from '@/hooks/useZTP'
 import { useRunChecks } from '@/hooks/useChecks'
 import { usePollMonitoring, useMetricsSummary } from '@/hooks/useMonitoring'
-import { useConfigDrift } from '@/hooks/useConfigDrift'
+import { useConfigDrift, useConfigRemediation } from '@/hooks/useConfigDrift'
 import { useToast } from '@/components/ui/Toast'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -14,7 +14,7 @@ import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON } from '@/lib/telemetry-gen'
-import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice } from '@/types'
+import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
   healthy: 'pass', degraded: 'warn', down: 'fail', unknown: 'neutral',
@@ -1097,6 +1097,45 @@ export function simulateConfigDrift(
   }
 }
 
+// ── Config remediation simulation (G-A16 demo mode) ───────────────────────────
+// Mirrors backend/config_drift.py generate_remediation(): restore intended
+// lines that drifted away, then negate/remove lines that appeared on-device.
+
+function isJunosPlatform(platform: string): boolean {
+  return /jun/i.test(platform)
+}
+
+function negateCiscoLine(line: string): string {
+  const stripped = line.replace(/^\s+/, '')
+  const indent = line.slice(0, line.length - stripped.length)
+  if (stripped.startsWith('no ')) return `${indent}${stripped.slice(3)}`
+  return `${indent}no ${stripped}`
+}
+
+function remediateJunos(line: string, remove: boolean): string {
+  const s = line.trim()
+  if (remove) {
+    if (s.startsWith('set ')) return `delete ${s.slice(4)}`
+    if (s.startsWith('delete ')) return s
+    return `delete ${s}`
+  }
+  if (s.startsWith('set ')) return s
+  if (s.startsWith('delete ')) return `set ${s.slice(7)}`
+  return `set ${s}`
+}
+
+export function simulateRemediation(devices: RemediationDeviceInput[]): ConfigRemediationResponse {
+  return {
+    devices: devices.map(({ hostname, platform, added, removed }) => {
+      const junos = isJunosPlatform(platform)
+      const commands: string[] = []
+      for (const line of removed) commands.push(junos ? remediateJunos(line, false) : line)
+      for (const line of added) commands.push(junos ? remediateJunos(line, true) : negateCiscoLine(line))
+      return { hostname, platform, commands, command_count: commands.length }
+    }),
+  }
+}
+
 // ── NETCONF XML helpers ───────────────────────────────────────────────────────
 
 function buildNetconfXMLForOp(op: string, datastore: string, vendor: string): string {
@@ -1577,6 +1616,49 @@ export function Step6Deploy() {
     })
   }
 
+  // G-A16: inline remediation — drift → reviewable, platform-aware commands
+  const [remediationResult, setRemediationResult] = useState<ConfigRemediationResponse | null>(null)
+  const { mutate: runRemediation, isPending: remediationPending } = useConfigRemediation()
+
+  function buildRemediationInputs(): RemediationDeviceInput[] {
+    if (!driftResult) return []
+    return driftResult.devices
+      .filter(d => d.has_drift)
+      .map(d => ({
+        hostname: d.hostname,
+        platform: configIdToPlatform[d.hostname] ?? 'ios-xe',
+        added: d.added,
+        removed: d.removed,
+      }))
+  }
+
+  function handleGenerateRemediation() {
+    const inputs = buildRemediationInputs()
+    if (inputs.length === 0) return
+    if (!isLive) {
+      setRemediationResult(simulateRemediation(inputs))
+      return
+    }
+    runRemediation(inputs, {
+      onSuccess: setRemediationResult,
+      onError(e) { showToast('Remediation generation failed: ' + e.message, 'error') },
+    })
+  }
+
+  function remediationScriptText(): string {
+    if (!remediationResult) return ''
+    return remediationResult.devices
+      .map(d => [
+        `! ${configIdToHostname[d.hostname] ?? d.hostname} (${d.platform}) — ${d.command_count} command(s)`,
+        ...d.commands,
+        '',
+      ].join('\n'))
+      .join('\n')
+  }
+
+  // Clear stale remediation whenever a fresh drift check runs
+  useEffect(() => { setRemediationResult(null) }, [driftResult])
+
   // ── Batfish state (M-68) ──────────────────────────────────────────────────
   const [batfishRunning, setBatfishRunning] = useState(false)
   const [batfishStep, setBatfishStep] = useState(-1)
@@ -1648,6 +1730,13 @@ export function Step6Deploy() {
   // G-A4: map config-store keys (device.id) to friendly hostnames for display
   const configIdToHostname = useMemo(
     () => Object.fromEntries(storeDevices.map(d => [d.id, d.hostname || d.id])),
+    [storeDevices],
+  )
+
+  // G-A16: map config-store keys (device.id) to vendor for remediation syntax
+  // (vendor 'juniper' → set/delete; anything else → Cisco-style `no` negation)
+  const configIdToPlatform = useMemo(
+    () => Object.fromEntries(storeDevices.map(d => [d.id, d.vendor || 'ios-xe'])),
     [storeDevices],
   )
 
@@ -3175,6 +3264,59 @@ export function Step6Deploy() {
                         </tbody>
                       </table>
                     </div>
+
+                    {/* G-A16: inline remediation */}
+                    {driftResult.drift_count > 0 && (
+                      <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.02] p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                          <span className="text-sm font-medium text-gray-200">Inline remediation</span>
+                          <Button onClick={handleGenerateRemediation} disabled={remediationPending}>
+                            {remediationPending ? 'Generating…' : '🛠 Generate Remediation'}
+                          </Button>
+                        </div>
+                        <p className="text-xs text-gray-500 mb-3">
+                          Platform-aware commands to bring drifted devices back to the intended
+                          config — restores missing lines, then removes unauthorized ones. Review
+                          before applying; nothing is pushed to any device.
+                        </p>
+
+                        {remediationResult && (
+                          <div className="space-y-3">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard?.writeText(remediationScriptText())
+                                  showToast('Remediation copied to clipboard', 'success')
+                                }}
+                                className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
+                              >
+                                ⧉ Copy all
+                              </button>
+                              <button
+                                onClick={() => {
+                                  downloadBlob('remediation.txt', remediationScriptText())
+                                  showToast('remediation.txt downloaded', 'success')
+                                }}
+                                className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
+                              >
+                                ↓ Download
+                              </button>
+                            </div>
+                            {remediationResult.devices.map(d => (
+                              <div key={d.hostname}>
+                                <div className="text-xs font-semibold text-gray-300 mb-1">
+                                  {configIdToHostname[d.hostname] ?? d.hostname}
+                                  <span className="text-gray-500 font-normal"> · {d.platform} · {d.command_count} cmd</span>
+                                </div>
+                                <pre className="text-xs font-mono whitespace-pre-wrap overflow-x-auto rounded bg-black/30 p-3 text-amber-300">
+                                  {d.commands.join('\n')}
+                                </pre>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </>

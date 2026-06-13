@@ -94,10 +94,15 @@ export const parseIntent = (description: string) =>
 
 // ── Config drift detection (G-A4) ───────────────────────────────────────────────
 
-import type { ConfigDriftResponse } from '@/types'
+import type { ConfigDriftResponse, ConfigRemediationResponse, RemediationDeviceInput } from '@/types'
 
 export const checkConfigDrift = (configs: Record<string, string>, deploymentId?: string) =>
   post<ConfigDriftResponse>('/api/drift/config', { configs, deployment_id: deploymentId })
+
+// ── Config drift remediation (G-A16) ─────────────────────────────────────────────
+
+export const generateRemediation = (devices: RemediationDeviceInput[]) =>
+  post<ConfigRemediationResponse>('/api/drift/remediate', { devices })
 
 // ── Config generation ─────────────────────────────────────────────────────────
 
