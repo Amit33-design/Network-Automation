@@ -176,6 +176,8 @@ export interface AppState {
   demoTopologyId: string
   // NetBox/Nautobot imported inventory (Enterprise upgrade B1)
   netboxDevices: NetBoxImportedDevice[]
+  // Persist staleness detection — epoch ms when state was last saved
+  _savedAt: number
 }
 
 // ── Lab Demo API types ────────────────────────────────────────────────────────
