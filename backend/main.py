@@ -77,11 +77,13 @@ try:
     from prometheus_client import make_asgi_app as _make_metrics_app
     from telemetry.gnmi_collector import TelemetryCollector, DeviceTarget
     from telemetry.alerting import evaluate as _evaluate_alerts
+    from telemetry.anomaly import detect_anomalies as _detect_anomalies
     _TELEMETRY_AVAILABLE = True
 except ImportError:
     _make_metrics_app = None
     TelemetryCollector = None
     _evaluate_alerts = None
+    _detect_anomalies = None
     _TELEMETRY_AVAILABLE = False
 
 try:
@@ -860,6 +862,39 @@ def api_alerts(user: dict = Depends(require_permission("designs:read"))):
 
 
 # ---------------------------------------------------------------------------
+# C3: Anomaly detection (rolling z-score baselines)
+# ---------------------------------------------------------------------------
+
+class AnomalyResponse(BaseModel):
+    hostname:        str
+    metric:          str
+    labels:          dict[str, str]
+    value:           float
+    baseline_mean:   float
+    baseline_stddev: float
+    z_score:         float
+    detected_at:     float
+
+
+@app.get("/api/anomalies", response_model=list[AnomalyResponse])
+def api_anomalies(user: dict = Depends(require_permission("designs:read"))):
+    """
+    Return metrics whose latest value deviates >= 3 standard deviations from
+    its rolling baseline (telemetry.anomaly.AnomalyDetector). Complements the
+    static thresholds in /api/alerts. Returns an empty list when
+    ENABLE_TELEMETRY is not set (no error).
+    """
+    if not _TELEMETRY_AVAILABLE or _detect_anomalies is None:
+        return []
+    try:
+        anomalies = _detect_anomalies()
+        return [AnomalyResponse(**a.to_dict()) for a in anomalies]
+    except Exception as exc:
+        log.exception("Anomaly detection failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Phase 4: Drift Detection
 # ---------------------------------------------------------------------------
 
@@ -882,6 +917,92 @@ async def api_drift(
         return result
     except Exception as exc:
         log.exception("Drift detection failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# G-A4: Config drift detection (intended config vs running-config backup)
+# ---------------------------------------------------------------------------
+
+class ConfigDriftRequest(BaseModel):
+    configs: dict[str, str]
+    deployment_id: str | None = None
+
+
+class ConfigDriftDevice(BaseModel):
+    hostname: str
+    has_drift: bool
+    added: list[str]
+    removed: list[str]
+    unified_diff: str
+    no_baseline: bool
+
+
+class ConfigDriftResponse(BaseModel):
+    devices: list[ConfigDriftDevice]
+    drift_count: int
+    device_count: int
+
+
+@app.post("/api/drift/config", response_model=ConfigDriftResponse)
+async def api_config_drift(
+    body: ConfigDriftRequest,
+    user: dict = Depends(require_permission("designs:read")),
+):
+    """
+    Compare intended (Jinja2-generated) configs against the latest
+    pre-deployment running-config backups (G-A4).
+    """
+    try:
+        from config_drift import check_config_drift
+        result = check_config_drift(body.configs, body.deployment_id)
+        return ConfigDriftResponse(**result)
+    except Exception as exc:
+        log.exception("Config drift detection failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# G-A16: config drift remediation (drift → reviewable remediation commands)
+# ---------------------------------------------------------------------------
+
+class RemediationDeviceInput(BaseModel):
+    hostname: str
+    platform: str = "ios-xe"
+    added: list[str] = []
+    removed: list[str] = []
+
+
+class ConfigRemediationRequest(BaseModel):
+    devices: list[RemediationDeviceInput]
+
+
+class RemediationDevice(BaseModel):
+    hostname: str
+    platform: str
+    commands: list[str]
+    command_count: int
+
+
+class ConfigRemediationResponse(BaseModel):
+    devices: list[RemediationDevice]
+
+
+@app.post("/api/drift/remediate", response_model=ConfigRemediationResponse)
+async def api_config_remediate(
+    body: ConfigRemediationRequest,
+    user: dict = Depends(require_permission("configs:generate")),
+):
+    """
+    Turn detected config drift into reviewable, platform-aware remediation
+    commands (G-A16). Does not push to any device — generation only.
+    """
+    try:
+        from config_drift import build_remediation
+        result = build_remediation([d.model_dump() for d in body.devices])
+        return ConfigRemediationResponse(**result)
+    except Exception as exc:
+        log.exception("Config remediation generation failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -959,3 +1080,52 @@ async def api_rca_analyze(
         recent_deploys=recent_deploys,
     )
     return [HypothesisResponse(**h.to_dict()) for h in hypotheses]
+
+
+# ---------------------------------------------------------------------------
+# G-A1: Intent NLP parser — free-text → Step 1 form fields (Claude API)
+# ---------------------------------------------------------------------------
+
+class IntentParseRequest(BaseModel):
+    description: str
+
+
+class IntentParseResponse(BaseModel):
+    use_case:        str
+    app_types:       list[str]
+    scale:           str
+    redundancy:      str
+    compliance:      list[str]
+    org_name:        str
+    org_size:        str
+    budget_tier:     str
+    vendor_prefs:    list[str]
+    industry:        str
+    primary_contact: str
+    confidence:      float
+    notes:           str
+    source:          str   # "ai" | "heuristic"
+
+
+@app.post("/api/intent/parse", response_model=IntentParseResponse)
+async def api_intent_parse(
+    req: IntentParseRequest,
+    user: dict = Depends(require_permission("designs:read")),
+):
+    """
+    Parse a free-text network design description into structured Step 1
+    wizard fields. Uses the Claude API (output_config json_schema) when
+    ANTHROPIC_API_KEY is configured; otherwise falls back to the
+    keyword-based nl_parser heuristics.
+    """
+    if not req.description.strip():
+        raise HTTPException(status_code=400, detail="description must not be empty")
+
+    from intent_ai import parse_intent_ai, heuristic_fallback
+
+    result = parse_intent_ai(req.description)
+    if result is not None:
+        return IntentParseResponse(**result, source="ai")
+
+    result = heuristic_fallback(req.description)
+    return IntentParseResponse(**result, source="heuristic")

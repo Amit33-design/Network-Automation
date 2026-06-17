@@ -1,6 +1,10 @@
+import { useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
+import { useBackendMode } from '@/components/BackendToggle'
+import { useIntentParse } from '@/hooks/useIntentParse'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
+import { NetBoxImportPanel } from '@/components/NetBoxImportPanel'
 import { cn } from '@/lib/utils'
 import type { UseCase, OrgSize, BudgetTier } from '@/types'
 
@@ -37,8 +41,13 @@ export function Step1UseCase({ onBack }: Props) {
   const {
     useCase, orgName, orgSize, budgetTier, vendorPrefs, industry, primaryContact,
     setUseCase, setOrgName, setOrgSize, setBudgetTier, setVendorPrefs, setIndustry, setPrimaryContact,
+    setAppTypes, setScale, setRedundancy, setCompliance,
     nextStep,
   } = useAppStore()
+
+  const { isLive } = useBackendMode()
+  const intentParse = useIntentParse()
+  const [description, setDescription] = useState('')
 
   function toggleVendor(v: string) {
     setVendorPrefs(
@@ -50,12 +59,80 @@ export function Step1UseCase({ onBack }: Props) {
     setIndustry(industry === label ? '' : label)
   }
 
+  function handleParse() {
+    if (!description.trim()) return
+    intentParse.mutate(description, {
+      onSuccess: (result) => {
+        if (result.use_case) setUseCase(result.use_case)
+        if (result.app_types.length) setAppTypes(result.app_types)
+        if (result.scale) setScale(result.scale)
+        if (result.redundancy) setRedundancy(result.redundancy)
+        if (result.compliance.length) setCompliance(result.compliance)
+        if (result.org_name) setOrgName(result.org_name)
+        if (result.org_size) setOrgSize(result.org_size)
+        if (result.budget_tier) setBudgetTier(result.budget_tier)
+        if (result.vendor_prefs.length) setVendorPrefs(result.vendor_prefs)
+        if (result.industry) setIndustry(result.industry)
+        if (result.primary_contact) setPrimaryContact(result.primary_contact)
+      },
+    })
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-gray-100 mb-1">Select Use Case</h2>
         <p className="text-sm text-gray-400">Choose the network topology that matches your deployment</p>
       </div>
+
+      {/* G-A1: Free-text intent parser (AI-assisted) */}
+      <Card>
+        <h3 className="text-sm font-semibold text-gray-300 mb-1">
+          Describe Your Network <span className="text-gray-500 font-normal">(AI-assisted, optional)</span>
+        </h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Paste a free-text description of your network and let AI pre-fill the fields
+          below — use case, scale, redundancy, compliance, vendors, and more.
+        </p>
+        <textarea
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="e.g. We need a redundant data center fabric for Acme Corp, PCI compliant, using Cisco gear for ~500 servers with storage traffic."
+          rows={3}
+          className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                     placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-none"
+        />
+        <div className="flex items-center justify-between mt-3 gap-3">
+          <Button
+            onClick={handleParse}
+            disabled={!description.trim() || intentParse.isPending || !isLive}
+            size="sm"
+          >
+            {intentParse.isPending ? 'Parsing…' : '✨ Parse with AI'}
+          </Button>
+          {!isLive && (
+            <span className="text-xs text-gray-500">Requires live backend (see Backend Mode toggle)</span>
+          )}
+        </div>
+
+        {intentParse.isError && (
+          <p className="text-xs text-red-400 mt-2">{intentParse.error.message}</p>
+        )}
+
+        {intentParse.isSuccess && (
+          <div className="mt-3 p-3 rounded-lg border border-blue-500/30 bg-blue-600/10 text-xs text-gray-300">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="font-semibold text-blue-300">
+                {intentParse.data.source === 'ai' ? '🤖 AI-parsed' : '🔧 Heuristic-parsed'}
+              </span>
+              <span className="text-gray-500">
+                confidence: {Math.round(intentParse.data.confidence * 100)}%
+              </span>
+            </div>
+            {intentParse.data.notes && <p className="text-gray-400">{intentParse.data.notes}</p>}
+          </div>
+        )}
+      </Card>
 
       {/* Use case tiles */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -76,6 +153,9 @@ export function Step1UseCase({ onBack }: Props) {
           </button>
         ))}
       </div>
+
+      {/* NetBox / Nautobot import (B1) */}
+      <NetBoxImportPanel />
 
       {/* Organisation Details */}
       <Card>

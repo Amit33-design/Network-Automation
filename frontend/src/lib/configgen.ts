@@ -11,7 +11,7 @@
  *  5. GPU QoS includes ECN, WRED, PFC priority-3, DCQCN buffer carving.
  */
 
-import type { BOMDevice, UseCase } from '@/types'
+import type { AppType, BOMDevice, UseCase } from '@/types'
 import { applyPolicies } from '@/lib/policies'
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -117,10 +117,13 @@ line vty 0 15
 
 // ── NX-OS Spine ───────────────────────────────────────────────────────────────
 
-function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
+function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const spineAsn = 65000
   const routerId = `10.255.1.${idx + 1}`
   const isisNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:1::${idx + 1}`
+  const fabricLinks = renderNxosFabricLinks('spine', dev, allDevices, ipv6Underlay)
 
   // GPU fabric: ECN + DCQCN + PFC lossless queuing.
   // Non-GPU: standard 4-class DSCP queuing.
@@ -199,7 +202,7 @@ interface mgmt0
 interface loopback0
   description ROUTER-ID / BGP / IS-IS SOURCE
   ip address ${routerId}/32
-  ip router isis 1
+  ip router isis 1${nxosIpv6LoopbackLines(routerIdV6, ipv6Underlay)}
   no shutdown
 !
 ! ── UNDERLAY: IS-IS (single protocol — not combined with OSPF) ───────────────
@@ -211,7 +214,7 @@ router isis 1
   address-family ipv4 unicast
     maximum-paths 64
     redistribute direct route-map CONNECTED-TO-ISIS
-  log-adjacency-changes
+${nxosIsisIpv6AddressFamily(ipv6Underlay, true)}  log-adjacency-changes
   metric-style transition
 !
 ! ── BGP / EVPN OVERLAY ───────────────────────────────────────────────────────
@@ -238,16 +241,8 @@ router bgp ${spineAsn}
   ! Add one neighbor entry per leaf:
   ! neighbor 10.255.2.1 inherit peer LEAF-RR-CLIENT
 !
-! ── SPINE FABRIC INTERFACES (adjust per cabling matrix) ─────────────────────
-! interface Ethernet1/1
-!   description DOWNLINK: <CHANGE-ME-leaf-hostname> Eth49/1
-!   no switchport
-!   mtu 9216
-!   ip address <CHANGE-ME-p2p-ip>/31
-!   ip router isis 1
-!   isis network point-to-point
-!   isis metric 10
-!   no shutdown
+! ── SPINE FABRIC INTERFACES (topology-driven from BOM port-math) ────────────
+${fabricLinks}
 !
 ${qosBlock}
 !
@@ -279,14 +274,189 @@ ip prefix-list LOOPBACKS seq 5 permit 10.255.0.0/16 ge 32
 `
 }
 
+// ── HA-pair helper (vPC / MLAG / HSRP / VRRP / STP root pairing) ───────────────
+// Devices within a layer are deployed as HA pairs: idx 0&1 share pair 1, idx
+// 2&3 share pair 2, etc. (matches generateHostnames() in bom.ts, which assigns
+// rack letters per pair and alternates the trailing 01/02 unit number within a
+// pair). isPrimary (even idx) is the active/root member of the pair.
+export function haPairInfo(dev: BOMDevice, idx: number): { pairId: number; isPrimary: boolean; peerHostname: string; domainId: string } {
+  const pairId = Math.floor(idx / 2) + 1
+  const isPrimary = idx % 2 === 0
+  const peerHostname = dev.hostname.replace(/0([12])$/, (_m, n) => (n === '1' ? '02' : '01'))
+  const domainId = dev.hostname.replace(/0[12]$/, '')
+  return { pairId, isPrimary, peerHostname, domainId }
+}
+
+// ── CLOS fabric link plan (Enterprise upgrade A5) ──────────────────────────────
+// Derives real spine↔leaf P2P links from buildDeviceList() port-math
+// (dev.uplinks / dev.ports) instead of a single static "replicate per cabling
+// matrix" comment. Each leaf's uplink ports are distributed round-robin across
+// the spines; spine configs derive the matching reverse links so both ends of
+// every link agree on the /31 subnet without manual cabling notes.
+interface FabricLink {
+  /** 0-based index among this device's fabric-facing ports */
+  ifIndex: number
+  peerHostname: string
+  /** human-readable peer description, e.g. "spine 1" or "leaf 3" */
+  peerLabel: string
+  /** 0-based parallel-link number between this device and its peer */
+  linkNum: number
+  /** local-side P2P /31 address, e.g. "10.99.3.17/31" */
+  localIp: string
+  /** local-side P2P IPv6 /127 address (Enterprise upgrade A6), e.g. "fd00:99:3::11/127" */
+  localIpv6: string
+}
+
+function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): FabricLink[] {
+  const spines = allDevices.filter(d => d.subLayer === 'spine')
+  const leaves = allDevices.filter(d => d.subLayer === 'leaf')
+  const spineCount = spines.length || 2
+  const leafCount = leaves.length || 1
+  const leafUplinks = leaves[0]?.uplinks || dev.uplinks || 2
+
+  const links: FabricLink[] = []
+
+  if (role === 'leaf') {
+    const leafIdx = Math.max(0, leaves.findIndex(d => d.id === dev.id))
+    const leafNum = leafIdx + 1
+    for (let i = 0; i < leafUplinks; i++) {
+      const spineIdx = i % spineCount
+      const linkNum = Math.floor(i / spineCount)
+      const spineNum = spineIdx + 1
+      const octet = (spineNum - 1) * 16 + linkNum * 2
+      links.push({
+        ifIndex: i,
+        peerHostname: spines[spineIdx]?.hostname || `SPINE-${spineNum}`,
+        peerLabel: `spine ${spineNum}`,
+        linkNum,
+        localIp: `10.99.${leafNum}.${octet + 1}/31`,
+        localIpv6: `fd00:99:${leafNum}::${octet + 1}/127`,
+      })
+    }
+  } else {
+    const spineIdx = Math.max(0, spines.findIndex(d => d.id === dev.id))
+    const spineNum = spineIdx + 1
+    let ifIndex = 0
+    for (let leafNum = 1; leafNum <= leafCount; leafNum++) {
+      for (let i = 0; i < leafUplinks; i++) {
+        if (i % spineCount !== spineIdx) continue
+        const linkNum = Math.floor(i / spineCount)
+        const octet = (spineNum - 1) * 16 + linkNum * 2
+        links.push({
+          ifIndex: ifIndex++,
+          peerHostname: leaves[leafNum - 1]?.hostname || `LEAF-${leafNum}`,
+          peerLabel: `leaf ${leafNum}`,
+          linkNum,
+          localIp: `10.99.${leafNum}.${octet}/31`,
+          localIpv6: `fd00:99:${leafNum}::${octet}/127`,
+        })
+      }
+    }
+  }
+  return links
+}
+
+/**
+ * Renders CLOS fabric links as NX-OS (IS-IS, `Ethernet1/N`) interface stanzas.
+ * `ipv6Enabled` (Enterprise upgrade A6) adds a matching IPv6 /127 address and
+ * `ipv6 router isis 1` for dual-stack underlay.
+ */
+function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[], ipv6Enabled = false): string {
+  const links = closFabricLinks(role, dev, allDevices)
+  const portBase = role === 'leaf' ? Math.max(0, (dev.ports || 48) - (dev.uplinks || 0)) : 0
+  const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
+  return links.map(link => `interface Ethernet1/${portBase + link.ifIndex + 1}
+  description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
+  no switchport
+  mtu 9216
+  ip address ${link.localIp}
+  ip router isis 1${ipv6Enabled ? `
+  ipv6 address ${link.localIpv6}
+  ipv6 router isis 1` : ''}
+  isis network point-to-point
+  isis metric 10
+  no shutdown`).join('\n!\n')
+}
+
+/**
+ * Renders CLOS fabric links as Arista EOS (IS-IS, `EthernetN`) interface stanzas.
+ * `ipv6Enabled` (Enterprise upgrade A6) adds a matching IPv6 /127 address —
+ * `isis enable UNDERLAY` already covers both AFs once IS-IS IPv6 AF is active.
+ */
+function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[], ipv6Enabled = false): string {
+  const links = closFabricLinks(role, dev, allDevices)
+  const portBase = role === 'leaf' ? Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)) : 0
+  const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
+  return links.map(link => `interface Ethernet${portBase + link.ifIndex + 1}
+  description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
+  no switchport
+  mtu 9214
+  ip address ${link.localIp}${ipv6Enabled ? `
+  ipv6 address ${link.localIpv6}` : ''}
+  isis enable UNDERLAY
+  isis network point-to-point
+  isis metric 10
+  no shutdown`).join('\n!\n')
+}
+
+// ── IPv6 dual-stack underlay helpers (Enterprise upgrade A6) ───────────────────
+// Gated by protoFeatures.includes('IPv6 Dual-Stack'); applies to NX-OS + Arista
+// IS-IS spine-leaf underlay only (loopbacks + fabric P2P links). ULA prefix
+// fd00:255:<role>::<idx> mirrors the 10.255.<role>.<idx> router-id scheme.
+function nxosIpv6LoopbackLines(addr: string, ipv6Enabled: boolean): string {
+  return ipv6Enabled ? `
+  ipv6 address ${addr}/128
+  ipv6 router isis 1` : ''
+}
+
+function nxosIsisIpv6AddressFamily(ipv6Enabled: boolean, redistribute = false): string {
+  if (!ipv6Enabled) return ''
+  return `  address-family ipv6 unicast
+    maximum-paths 64
+${redistribute ? '    redistribute direct route-map CONNECTED-TO-ISIS\n' : ''}`
+}
+
+function aristaIpv6LoopbackLines(addr: string, ipv6Enabled: boolean): string {
+  return ipv6Enabled ? `
+  ipv6 address ${addr}/128` : ''
+}
+
+function aristaIsisIpv6AddressFamily(ipv6Enabled: boolean): string {
+  return ipv6Enabled ? `  address-family ipv6 unicast
+    maximum-paths 64
+` : ''
+}
+
+// ── Multisite EVPN DCI route-targets (Enterprise upgrade A7) ───────────────────
+// Shared DCI route-target namespace stretched across all sites. Site-local
+// routes keep `auto` RTs (scoped to each site's ASN); VNIs that must be
+// extended over the DCI additionally import/export `${DCI_RT_ASN}:<vni>`,
+// which is identical on every site — so cross-site leaking is opt-in per VNI.
+export const DCI_RT_ASN = 65100
+
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 
-function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
+function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
   const isisNet  = `49.0001.0102.5501.${String(idx + 1).padStart(4, '0')}.00`
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:2::${idx + 1}`
   const qosBlock = isGpu ? nxosGpuQoS() : nxosStdQoS()
+  const fabricLinks = renderNxosFabricLinks('leaf', dev, allDevices, ipv6Underlay)
+  const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
+  const vpcRolePriority = isPrimary ? 8192 : 16384
+  const dciL3RtLines = isMultisite ? `
+    route-target import ${DCI_RT_ASN}:50000 evpn
+    route-target export ${DCI_RT_ASN}:50000 evpn` : ''
+  const dciL2RtLines = isMultisite ? `
+    route-target import ${DCI_RT_ASN}:10010
+    route-target export ${DCI_RT_ASN}:10010` : ''
+  const dciComment = isMultisite ? `
+! Multisite DCI: site-local routes use auto RTs (per-site ASN scope); the
+! explicit ${DCI_RT_ASN}:<vni> RTs below are the shared DCI namespace stretched
+! across all sites — only VNIs carrying these RTs are leaked over the DCI.` : ''
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -336,12 +506,12 @@ interface mgmt0
   ip address <CHANGE-ME-mgmt-ip>/24
   no shutdown
 !
-! ── TENANT VRF / VNI (example — replicate per tenant) ────────────────────────
+! ── TENANT VRF / VNI (example — replicate per tenant) ────────────────────────${dciComment}
 vrf context TENANT-A
   vni 50000
   rd auto
   address-family ipv4 unicast
-    route-target both auto evpn
+    route-target both auto evpn${dciL3RtLines}
 !
 vlan 10
   name SERVERS
@@ -351,7 +521,7 @@ vlan 10
 interface loopback0
   description ROUTER-ID / BGP SOURCE
   ip address ${routerId}/32
-  ip router isis 1
+  ip router isis 1${nxosIpv6LoopbackLines(routerIdV6, ipv6Underlay)}
   no shutdown
 !
 interface loopback1
@@ -366,7 +536,7 @@ router isis 1
   is-type level-2-only
   address-family ipv4 unicast
     maximum-paths 64
-  log-adjacency-changes
+${nxosIsisIpv6AddressFamily(ipv6Underlay)}  log-adjacency-changes
   metric-style transition
 !
 ! ── BGP / EVPN ───────────────────────────────────────────────────────────────
@@ -396,29 +566,37 @@ interface nve1
   no shutdown
   host-reachability protocol bgp
   source-interface loopback1
-  member vni 10010 associate-vrf
-  member vni 50000
+  member vni 10010
     ingress-replication protocol bgp
+  member vni 50000 associate-vrf
 !
-! ── UPLINKS (adjust per cabling matrix) ──────────────────────────────────────
-! interface Ethernet49/1
-!   description UPLINK: <CHANGE-ME-spine1-hostname> Eth1/N
-!   no switchport
-!   mtu 9216
-!   ip address <CHANGE-ME-p2p-ip>/31
-!   ip router isis 1
-!   isis network point-to-point
-!   isis metric 10
-!   no shutdown
+! ── EVPN MAC-VRF (L2VNI route-targets) ───────────────────────────────────────
+evpn
+  vni 10010 l2
+    rd auto
+    route-target import auto
+    route-target export auto${dciL2RtLines}
+!
+! ── UPLINKS (topology-driven from BOM port-math) ─────────────────────────────
+${fabricLinks}
 !
 ${qosBlock}
 !
-! ── vPC PEER-LINK (if dual-ToR) ──────────────────────────────────────────────
-vpc domain ${idx + 1}
-  peer-keepalive destination <CHANGE-ME-peer-mgmt-ip> source <CHANGE-ME-local-mgmt-ip> vrf management
+! ── vPC PEER-LINK (HA pair with ${peerHostname}) ──────────────────────────────
+vpc domain ${pairId}
+  role priority ${vpcRolePriority}
+  peer-switch
+  peer-keepalive destination <CHANGE-ME-${peerHostname}-mgmt-ip> source <CHANGE-ME-${dev.hostname}-mgmt-ip> vrf management
   peer-gateway
+  ip arp synchronize
   auto-recovery
   delay restore 150
+!
+! interface port-channel${pairId}
+!   description vPC-PEER-LINK to ${peerHostname}
+!   switchport mode trunk
+!   spanning-tree port type network
+!   vpc peer-link
 !
 telemetry
   destination-group 1
@@ -606,11 +784,14 @@ hardware profile forwarding-mode fabricpath
 
 // ── Arista EOS ────────────────────────────────────────────────────────────────
 
-function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
+function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const asn      = 65000
   const routerId = `10.255.1.${idx + 1}`
   const isisNet  = `0101.0255.000${idx + 1}`
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:1::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
+  const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -665,24 +846,16 @@ router isis UNDERLAY
   address-family ipv4 unicast
     maximum-paths 64
     fast-reroute ti-lfa
-!
+${aristaIsisIpv6AddressFamily(ipv6Underlay)}!
 ! ── LOOPBACK ────────────────────────────────────────────────────────────────
 interface Loopback0
   description ROUTER-ID / BGP SOURCE
-  ip address ${routerId}/32
+  ip address ${routerId}/32${aristaIpv6LoopbackLines(routerIdV6, ipv6Underlay)}
   isis enable UNDERLAY
   isis passive
 !
-! ── UPLINK INTERFACES (template — replicate per cabling matrix) ──────────────
-! interface EthernetN
-!   description DOWNLINK: <leaf-hostname>
-!   no switchport
-!   ip address <CHANGE-ME-p2p-ip>/31
-!   isis enable UNDERLAY
-!   isis network point-to-point
-!   isis metric 10
-!   mtu 9214
-!   no shutdown
+! ── DOWNLINK INTERFACES (topology-driven from BOM port-math) ────────────────
+${fabricLinks}
 !
 ! ── BGP / EVPN OVERLAY ───────────────────────────────────────────────────────
 router bgp ${asn}
@@ -710,6 +883,8 @@ router bgp ${asn}
 !
 ${qos}
 !
+${aristaTelemetryBlock()}
+!
 ! ── BANNER ───────────────────────────────────────────────────────────────────
 banner login
 *******************************************************************************
@@ -719,12 +894,21 @@ EOF
 `
 }
 
-function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean): string {
+function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
   const isisNet  = `0101.0255.000${idx + 101}`
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:2::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
+  const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices, ipv6Underlay)
+  // Site-local MAC-VRF RT uses the fabric (spine) ASN so all leaves in the
+  // site share it; the DCI RT is the cross-site stretched namespace (A7).
+  const dciL2RtLines = isMultisite ? `
+    route-target import evpn ${DCI_RT_ASN}:10010
+    route-target export evpn ${DCI_RT_ASN}:10010` : ''
+  const { pairId, peerHostname, domainId } = haPairInfo(dev, idx)
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -756,9 +940,9 @@ router isis UNDERLAY
   is-type level-2
   address-family ipv4 unicast
     maximum-paths 64
-!
+${aristaIsisIpv6AddressFamily(ipv6Underlay)}!
 interface Loopback0
-  ip address ${routerId}/32
+  ip address ${routerId}/32${aristaIpv6LoopbackLines(routerIdV6, ipv6Underlay)}
   isis enable UNDERLAY
   isis passive
 !
@@ -768,14 +952,8 @@ interface Loopback1
   isis enable UNDERLAY
   isis passive
 !
-! ── UPLINKS to spines ────────────────────────────────────────────────────────
-! interface EthernetN
-!   no switchport
-!   ip address <CHANGE-ME-p2p-ip>/31
-!   isis enable UNDERLAY
-!   isis network point-to-point
-!   mtu 9214
-!   no shutdown
+! ── UPLINKS to spines (topology-driven from BOM port-math) ──────────────────
+${fabricLinks}
 !
 ! ── BGP / EVPN ───────────────────────────────────────────────────────────────
 router bgp ${leafAsn}
@@ -799,6 +977,11 @@ router bgp ${leafAsn}
     network ${vtepIp}/32
   address-family evpn
     neighbor SPINE-RR activate
+  !
+  vlan 10
+    rd ${routerId}:10010
+    route-target both 65000:10010${dciL2RtLines}
+    redistribute learned
 !
 ! ── VXLAN ────────────────────────────────────────────────────────────────────
 interface Vxlan1
@@ -808,8 +991,54 @@ interface Vxlan1
   vxlan vlan 10 vni 10010
   vxlan learn-restrict any
 !
+! ── MLAG (HA pair with ${peerHostname}) ─────────────────────────────────────
+vlan 4094
+  name MLAG_PEER
+  trunk group MLAG_PEER
+!
+interface Vlan4094
+  description MLAG_PEER_L3_PEERING
+  no autostate
+  ip address <CHANGE-ME-${dev.hostname}-mlag-peer-ip>/30
+!
+interface Port-Channel${pairId}00
+  description MLAG_PEER_LINK to ${peerHostname}
+  switchport mode trunk
+  switchport trunk group MLAG_PEER
+!
+! interface EthernetN-M  (members of peer-link)
+!   channel-group ${pairId}00 mode active
+!
+mlag configuration
+  domain-id ${domainId}MLAG${pairId}
+  local-interface Vlan4094
+  peer-address <CHANGE-ME-${peerHostname}-mlag-peer-ip>
+  peer-link Port-Channel${pairId}00
+  reload-delay mlag 300
+  reload-delay non-mlag 330
+!
 ${qos}
+!
+${aristaTelemetryBlock()}
 `
+}
+
+function aristaTelemetryBlock(): string {
+  return `! ── TELEMETRY (gNMI streaming + eAPI) ───────────────────────────────────────
+management api gnmi
+  transport grpc default
+    port 6030
+  provider eos-native
+!
+management api http-commands
+  protocol https port 443
+  no shutdown
+  vrf MGMT
+    no shutdown
+!
+daemon TerminAttr
+  exec /usr/bin/TerminAttr -ingestgrpcurl=<CHANGE-ME-telemetry-collector-ip>:9910 -smashexcludes=ale,flexCounter,hardware,kni,pulse,strata -ingestexclude=/Sysdb/cell/1/agent,/Sysdb/cell/2/agent -taillogs
+  no shutdown`
 }
 
 function aristaGpuQoS(): string {
@@ -1269,6 +1498,159 @@ policy-map PM-WAN-SHAPING
 !
 interface GigabitEthernet0/0/0
   service-policy output PM-WAN-SHAPING
+`
+}
+
+// ── Cisco IOS-XE Campus Distribution / Access ──────────────────────────────────
+// STP priority hierarchy: distribution-primary=4096 (root), distribution-
+// secondary=8192 (secondary root), access=32768 (never root) — access ports
+// get PortFast + BPDU Guard. Distribution pair runs HSRPv2 for the SVI default
+// gateways (active/standby). IGMP snooping (+ querier on distribution) is added
+// when voice/video app types are present.
+function iosxeCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[]): string {
+  const isDist = dev.subLayer === 'distribution'
+  const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
+  const hasVoice = appTypes.includes('voice')
+  const hasVideo = appTypes.includes('video')
+  const needsIgmp = hasVoice || hasVideo
+
+  const vlanBlock = `vlan 10
+  name DATA
+${hasVoice ? `vlan 20
+  name VOICE
+` : ''}vlan 99
+  name MGMT-NATIVE`
+
+  if (isDist) {
+    const stpPriority = isPrimary ? 4096 : 8192
+    const hsrpPriority = isPrimary ? 110 : 90
+    const igmpBlock = needsIgmp ? `
+! ── IGMP SNOOPING / QUERIER (voice/video app types present) ──────────────────
+ip igmp snooping
+ip igmp snooping querier
+ip igmp snooping vlan 10 querier address <CHANGE-ME-igmp-querier-ip>
+!` : ''
+    const voiceSvi = hasVoice ? `!
+interface Vlan20
+  description VOICE-GATEWAY
+  ip address <CHANGE-ME-vlan20-ip> <CHANGE-ME-vlan20-mask>
+  ip helper-address <CHANGE-ME-dhcp-server-ip>
+  no ip redirects
+  standby version 2
+  standby 20 ip <CHANGE-ME-vlan20-vip>
+  standby 20 priority ${hsrpPriority}
+  standby 20 preempt delay minimum 60
+  standby 20 track 1 decrement 20
+` : ''
+
+    return `! ═══════════════════════════════════════════════════════════════
+! Device : ${dev.hostname}
+! Role   : Campus Distribution (HA pair with ${peerHostname})
+! OS     : Cisco IOS-XE
+! Model  : ${dev.model}
+! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
+! ═══════════════════════════════════════════════════════════════
+
+${mgmtBlock(dev.hostname, 99)}
+!
+! ── VLANs ─────────────────────────────────────────────────────────────────────
+${vlanBlock}
+!
+! ── SPANNING TREE — distribution is root / secondary-root for HA pair with ${peerHostname} ──
+spanning-tree mode rapid-pvst
+spanning-tree extend system-id
+spanning-tree vlan 1-4094 priority ${stpPriority}
+!
+! ── SVIs + HSRPv2 (active/standby pair with ${peerHostname}) ─────────────────
+interface Vlan10
+  description DATA-GATEWAY
+  ip address <CHANGE-ME-vlan10-ip> <CHANGE-ME-vlan10-mask>
+  ip helper-address <CHANGE-ME-dhcp-server-ip>
+  no ip redirects
+  standby version 2
+  standby 10 ip <CHANGE-ME-vlan10-vip>
+  standby 10 priority ${hsrpPriority}
+  standby 10 preempt delay minimum 60
+  standby 10 authentication md5 key-string <CHANGE-ME-hsrp-key>
+  standby 10 track 1 decrement 20
+${voiceSvi}!
+track 1 interface <CHANGE-ME-uplink-to-core> line-protocol
+!
+! ── UNDERLAY: OSPF only (no IS-IS on campus) ─────────────────────────────────
+router ospf 1
+  router-id <CHANGE-ME-router-id>
+  passive-interface default
+  no passive-interface <CHANGE-ME-uplink-to-core>
+  network <CHANGE-ME-vlan10-ip> <CHANGE-ME-wildcard> area 0
+  area 0 authentication message-digest
+!
+! ── PEER LINK to ${peerHostname} (L2 trunk for SVI / HSRP heartbeat) ─────────
+! interface Port-channel${pairId}
+!   description PEER-LINK to ${peerHostname}
+!   switchport mode trunk
+!   switchport trunk allowed vlan 10,20,99
+!
+${igmpBlock}
+`
+  }
+
+  // ── Access switch ──────────────────────────────────────────────────────────
+  const accessPorts = Math.max(1, dev.ports - 2)
+  const igmpBlock = needsIgmp ? `
+! ── IGMP SNOOPING (voice/video app types present) ────────────────────────────
+ip igmp snooping
+ip igmp snooping vlan 10
+${hasVoice ? 'ip igmp snooping vlan 20\n' : ''}!
+` : ''
+
+  return `! ═══════════════════════════════════════════════════════════════
+! Device : ${dev.hostname}
+! Role   : Campus Access (HA-uplink pair with ${peerHostname})
+! OS     : Cisco IOS-XE
+! Model  : ${dev.model}
+! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
+! ═══════════════════════════════════════════════════════════════
+
+${mgmtBlock(dev.hostname, 99)}
+!
+! ── VLANs ─────────────────────────────────────────────────────────────────────
+${vlanBlock}
+!
+! ── SPANNING TREE — access is never root ──────────────────────────────────────
+spanning-tree mode rapid-pvst
+spanning-tree extend system-id
+spanning-tree vlan 1-4094 priority 32768
+spanning-tree portfast bpduguard default
+!
+! ── DHCP SNOOPING / PORT SECURITY ─────────────────────────────────────────────
+ip dhcp snooping
+ip dhcp snooping vlan 10${hasVoice ? ',20' : ''}
+no ip dhcp snooping information option
+!
+! ── ACCESS PORTS (edge — PortFast + BPDU Guard) ───────────────────────────────
+interface range GigabitEthernet1/0/1-${accessPorts}
+  switchport mode access
+  switchport access vlan 10
+${hasVoice ? '  switchport voice vlan 20\n' : ''}  switchport port-security
+  switchport port-security maximum 2
+  switchport port-security violation restrict
+  spanning-tree portfast
+  spanning-tree bpduguard enable
+  ip dhcp snooping limit rate 15
+  storm-control broadcast level 1.00
+  no shutdown
+!
+${igmpBlock}! ── UPLINK to distribution pair (MEC port-channel) ────────────────────────────
+interface range GigabitEthernet1/0/${accessPorts + 1}-${dev.ports}
+  description UPLINK-TO-DISTRIBUTION-PAIR
+  switchport mode trunk
+  switchport trunk allowed vlan 10${hasVoice ? ',20' : ''},99
+  channel-group ${pairId} mode active
+!
+interface Port-channel${pairId}
+  description UPLINK-TO-DISTRIBUTION-PAIR (MEC)
+  switchport mode trunk
+  switchport trunk allowed vlan 10${hasVoice ? ',20' : ''},99
 `
 }
 
@@ -1822,7 +2204,7 @@ ${mgmtBlock(dev.hostname, 10)}
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '' = ''): string {
+export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '' = '', appTypes: AppType[] = [], allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const isGpu = useCase === 'gpu'
   const v = dev.vendor
   const l = dev.subLayer
@@ -1833,11 +2215,11 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'firewall')                         return ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
-  if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce)
-  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce)
-  if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeWanConfig(dev, idx)
-  if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce)
-  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce)
+  if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
+  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite')
+  if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes)
+  if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
+  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite')
   if (v === 'Juniper'   && (l === 'leaf' || l === 'spine'))          return juniperLeafConfig(dev, idx)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)
@@ -1851,10 +2233,12 @@ export function generateAllConfigs(
   devices: BOMDevice[],
   useCase: UseCase | '' = '',
   policyBlocks: string[] = [],
+  appTypes: AppType[] = [],
+  protoFeatures: string[] = [],
 ): Record<string, string> {
   return Object.fromEntries(
     devices.map((dev, i) => {
-      const base = generateConfig(dev, i, useCase)
+      const base = generateConfig(dev, i, useCase, appTypes, devices, protoFeatures)
       const withPolicies = policyBlocks.length
         ? applyPolicies(base, dev, useCase, policyBlocks)
         : base

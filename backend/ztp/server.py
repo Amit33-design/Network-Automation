@@ -195,6 +195,14 @@ class ZTPServer:
         mime   = "text/plain"
         return config, mime
 
+    def render_config(self, dev: ZTPDevice) -> str:
+        """
+        Render a device's Day 0 config without mutating its ZTP state.
+        Used by the static file exporter (G-A6) to (re)generate files for
+        the nginx/TFTP file server without marking the device CONTACTED.
+        """
+        return self._render_day0(dev)
+
     def get_platform_script(self, platform: str, server_url: str) -> str:
         """
         Return a POAP/ZTP script for NX-OS or EOS that will:
@@ -407,7 +415,7 @@ def apply_config(config_text):
 
 def checkin(serial, success):
     url = f"{{ZTP_SERVER}}/ztp/checkin/{{serial}}"
-    data = f'{{"success": {"true" if success else "false"}, "detail": "POAP complete"}}'
+    data = f'{{{{"success": {{"true" if success else "false"}}, "detail": "POAP complete"}}}}'
     try:
         req = urllib2.Request(url, data, {{"Content-Type": "application/json"}})
         urllib2.urlopen(req, timeout=10)

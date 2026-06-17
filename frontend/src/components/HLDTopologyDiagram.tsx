@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react'
 import type { BOMDevice } from '@/types'
+import { formatUptime } from '@/lib/utils'
+import { DCI_RT_ASN } from '@/lib/configgen'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface HLDNode {
+export interface HLDNode {
   id: string
   label: string
   model: string
@@ -19,6 +21,12 @@ interface HLDNode {
   h: number
   isCloud?: boolean
   haRole?: 'active' | 'standby' | 'none'
+  /** vPC/MLAG/MEC pair number (Enterprise Upgrade D1 — mirrors configgen.ts haPairInfo()) */
+  mlagPairId?: number
+  /** Label of this node's vPC/MLAG peer, if any (D1) */
+  mlagPeerLabel?: string
+  /** FHRP (HSRP) virtual-gateway IP for this node's pair, if any (D1) */
+  fhrpVip?: string
   features: string[]
   color: string
   border: string
@@ -69,6 +77,21 @@ interface Topo {
   svgH: number
 }
 
+// ─── Health overlay (C2) ────────────────────────────────────────────────────
+
+export type HealthStatus = 'healthy' | 'degraded' | 'down' | 'unknown'
+
+export interface NodeHealth {
+  status: HealthStatus
+  cpu: number
+  mem: number
+  uptimeSec: number
+  bgpSessionsUp: number
+  ifaceErrors: number
+  pfcDrops: number
+  alerts: string[]
+}
+
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
 const SVG_W    = 1280
@@ -98,6 +121,84 @@ const LAYER_STYLE: Record<string, { color: string; border: string; textColor: st
   'cloud-gw':   { color: '#062D2A', border: '#2DD4BF', textColor: '#99F6E4' },
 }
 
+// ─── Health overlay palette + simulation (C2) ──────────────────────────────
+// Colors mirror MonitoringResult statuses (healthy/degraded/down/unknown) so
+// the HLD overlay is visually consistent with the Step 6 Monitoring tab.
+
+export const HEALTH_COLOR: Record<HealthStatus, string> = {
+  healthy:  '#22C55E',
+  degraded: '#F59E0B',
+  down:     '#EF4444',
+  unknown:  '#6B7280',
+}
+
+export const HEALTH_LABEL: Record<HealthStatus, string> = {
+  healthy: 'Healthy', degraded: 'Degraded', down: 'Down', unknown: 'Unknown',
+}
+
+// Baseline CPU% per layer — GPU/spine/core run hotter than access/OOB.
+const HEALTH_BASELINE_CPU: Record<string, number> = {
+  gpu: 64, spine: 46, core: 46, leaf: 32, distribution: 30,
+  'corp-fw': 28, 'edge-fw': 28, 'wan-edge': 35, access: 20, storage: 24, oob: 12, host: 18,
+}
+
+// Layers that run a routing control-plane (eligible for BGP session metrics).
+const HEALTH_BGP_LAYERS = new Set(['spine', 'core', 'leaf', 'distribution', 'wan-edge'])
+
+function _seed(s: string): number {
+  return s.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+}
+
+function _pseudoRandom(seed: number, offset = 0): number {
+  const x = Math.sin(seed + offset) * 10000
+  return x - Math.floor(x)
+}
+
+// Deterministic per-node "live telemetry" snapshot — keeps the design-time
+// HLD overlay self-contained (no backend dependency) while following the
+// same status thresholds as the Step 6 Monitoring tab / Prometheus alert
+// rules (genPrometheusAlertRules in lib/telemetry-gen.ts).
+export function simulateNodeHealth(node: HLDNode): NodeHealth {
+  const s = _seed(node.id)
+  const baseCpu = HEALTH_BASELINE_CPU[node.layer] ?? 22
+  const r0 = _pseudoRandom(s, 11)
+  const r1 = _pseudoRandom(s, 22)
+  const r2 = _pseudoRandom(s, 33)
+  const r3 = _pseudoRandom(s, 44)
+  const r4 = _pseudoRandom(s, 55)
+
+  const cpu = Math.min(99, Math.max(1, baseCpu + (r0 - 0.5) * baseCpu * 0.7))
+  const mem = Math.min(99, Math.max(5, 50 + (r1 - 0.5) * 36))
+  const ifaceErrors = Math.floor(r2 * 14)
+  const pfcDrops = node.layer === 'gpu' ? Math.floor(r3 * 260) : 0
+  const bgpSessionsUp = HEALTH_BGP_LAYERS.has(node.layer) ? Math.floor(2 + r4 * 4) : 0
+  const uptimeSec = Math.floor(3600 * (4 + r2 * 2000))
+
+  const alerts: string[] = []
+  let status: HealthStatus = 'healthy'
+  if (cpu > 85 || pfcDrops > 200) {
+    status = 'down'
+    if (cpu > 85) alerts.push(`CPU utilization critical: ${cpu.toFixed(0)}%`)
+    if (pfcDrops > 200) alerts.push(`PFC watchdog triggered: ${pfcDrops} drops`)
+  } else if (cpu > 65 || ifaceErrors > 8 || pfcDrops > 100) {
+    status = 'degraded'
+    if (cpu > 65) alerts.push(`CPU utilization elevated: ${cpu.toFixed(0)}%`)
+    if (ifaceErrors > 8) alerts.push(`Interface error rate high: ${ifaceErrors}/min`)
+    if (pfcDrops > 100) alerts.push(`RoCEv2 CNP rate high: ${pfcDrops} drops`)
+  }
+
+  return {
+    status,
+    cpu: Math.round(cpu * 10) / 10,
+    mem: Math.round(mem * 10) / 10,
+    uptimeSec,
+    bgpSessionsUp,
+    ifaceErrors,
+    pfcDrops,
+    alerts,
+  }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function style(layer: string) {
@@ -124,7 +225,10 @@ function mkNode(
   id: string, label: string, model: string, layer: string,
   vendor: string, loopback: string, mgmtIp: string,
   x: number, y: number,
-  opts: { isCloud?: boolean; haRole?: 'active' | 'standby' | 'none'; asn?: string; role?: string; features?: string[] } = {},
+  opts: {
+    isCloud?: boolean; haRole?: 'active' | 'standby' | 'none'; asn?: string; role?: string; features?: string[]
+    mlagPairId?: number; mlagPeerLabel?: string; fhrpVip?: string
+  } = {},
 ): HLDNode {
   const s = style(layer)
   return {
@@ -133,14 +237,33 @@ function mkNode(
     isCloud: opts.isCloud ?? false,
     haRole: opts.haRole ?? 'none',
     asn: opts.asn,
+    mlagPairId: opts.mlagPairId,
+    mlagPeerLabel: opts.mlagPeerLabel,
+    fhrpVip: opts.fhrpVip,
     features: opts.features ?? [],
     ...s,
   }
 }
 
+// ─── vPC / MLAG pairing helper (Enterprise Upgrade D1) ─────────────────────────
+// Mirrors configgen.ts haPairInfo()'s pairId/isPrimary formula
+// (Math.floor(idx/2)+1, idx%2===0) for the synthetic, sequentially-numbered HLD
+// node lists, which don't fit haPairInfo's 01/02-suffix hostname regex.
+// `count` is the total number of nodes in the layer — a node has no peer (and
+// is excluded from pairing) when its computed peer index would fall outside
+// [0, count). Callers resolve `peerIdx` to a label by indexing into the same
+// node array (label formats vary by layer, so no string formula is assumed).
+function pairInfo(i: number, count: number): { pairId: number; isPrimary: boolean; peerIdx: number } | null {
+  const pairId = Math.floor(i / 2) + 1
+  const isPrimary = i % 2 === 0
+  const peerIdx = isPrimary ? i + 1 : i - 1
+  if (peerIdx < 0 || peerIdx >= count) return null
+  return { pairId, isPrimary, peerIdx }
+}
+
 // ─── DC / Multisite topology ──────────────────────────────────────────────────
 
-function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string[], sc: string): Topo {
+function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string[], sc: string, useCase = 'dc'): Topo {
   const spineDevs = devices.filter(d => d.subLayer === 'spine')
   const leafDevs  = devices.filter(d => d.subLayer === 'leaf')
   const nSpines = Math.min(Math.max(spineDevs.length, 2), 4)
@@ -205,11 +328,29 @@ function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string
   // Leaves
   const leafGap = nLeaves <= 4 ? 30 : 16
   const leafXs = xCentered(nLeaves, leafGap)
-  const leaves = leafXs.map((x, i) => mkNode(
-    `lf${i+1}`, `LEAF-0${i+1 < 10 ? '0' : ''}${i+1}`, leafModel, 'leaf', leafDevs[i]?.vendor ?? 'Cisco',
-    `10.255.2.${i+1}`, `10.0.0.${51+i}`, x, Y.leaf,
-    { asn: `65100`, features: ['VXLAN NVE','BGP EVPN','Anycast-GW','BFD'] },
-  ))
+  const leaves = leafXs.map((x, i) => {
+    const pair = pairInfo(i, nLeaves)
+    const features = ['VXLAN NVE','BGP EVPN','Anycast-GW','BFD']
+    if (pair) features.push(`vPC/MLAG Pair #${pair.pairId}`)
+    if (useCase === 'multisite') {
+      features.push(`EVPN DCI Type-5 · RT ${DCI_RT_ASN}:10010 (L2) / ${DCI_RT_ASN}:50000 (L3)`)
+    }
+    return mkNode(
+      `lf${i+1}`, `LEAF-0${i+1 < 10 ? '0' : ''}${i+1}`, leafModel, 'leaf', leafDevs[i]?.vendor ?? 'Cisco',
+      `10.255.2.${i+1}`, `10.0.0.${51+i}`, x, Y.leaf,
+      { asn: `65100`, features, mlagPairId: pair?.pairId },
+    )
+  })
+  leaves.forEach((node, i) => {
+    const pair = pairInfo(i, nLeaves)
+    if (pair) node.mlagPeerLabel = leaves[pair.peerIdx].label
+  })
+
+  // vPC/MLAG peer-links between adjacent leaf pairs
+  const leafPeerLinks: HLDLink[] = []
+  for (let i = 0; i + 1 < nLeaves; i += 2) {
+    leafPeerLinks.push(mkLink(leaves[i].id, leaves[i+1].id, '2x40G LAG', 'vPC/MLAG Peer-Link', 'Po1', 'Po1', '—', { isHaSync: true }))
+  }
 
   // Servers (representative)
   const serverXs = xCentered(Math.min(nLeaves, 6), leafGap)
@@ -263,6 +404,8 @@ function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string
     // Leaf → servers (dual-homed: each server connects to leaf pair)
     ...servers.map((s, i) => mkLink(leaves[Math.min(i, nLeaves-1)].id, s.id, '25G', 'LACP LAG', `e1/49`, `eth0`, `10.200.0.${i*4}/30`)),
     mkLink(leaves[nLeaves > 1 ? nLeaves - 1 : 0].id, 'gpusrv1', '400G RoCEv2', 'PFC P3 lossless', 'e1/49', 'mlx0', '192.168.100.0/30'),
+    // vPC/MLAG peer-links between adjacent leaf pairs (D1)
+    ...leafPeerLinks,
   ]
 
   // ── Packet flow scenarios ────────────────────────────────────────
@@ -362,19 +505,46 @@ function buildCampusTopology(devices: BOMDevice[], underlay: string, sc: string)
 
   const distGap = nDist <= 4 ? 60 : 28
   const distXs = xCentered(nDist, distGap)
-  const dists = distXs.map((x, i) => mkNode(
-    `dist${i+1}`, `DIST-SW-0${i+1}`, distModel, 'distribution', distDevs[i]?.vendor ?? 'Cisco',
-    `10.255.0.${30+i}`, `10.0.0.${31+i}`, x, Y.dist,
-    { features:['MLAG','OSPF Area0','DHCP-Relay','Inter-VLAN'] },
-  ))
+  const dists = distXs.map((x, i) => {
+    const pair = pairInfo(i, nDist)
+    const features = ['MLAG','OSPF Area0','DHCP-Relay','Inter-VLAN']
+    let fhrpVip: string | undefined
+    if (pair) {
+      features.push(`vPC/MLAG Pair #${pair.pairId}`)
+      fhrpVip = `10.10.${pair.pairId - 1}.1`
+    }
+    return mkNode(
+      `dist${i+1}`, `DIST-SW-0${i+1}`, distModel, 'distribution', distDevs[i]?.vendor ?? 'Cisco',
+      `10.255.0.${30+i}`, `10.0.0.${31+i}`, x, Y.dist,
+      { features, mlagPairId: pair?.pairId, fhrpVip },
+    )
+  })
+  dists.forEach((node, i) => {
+    const pair = pairInfo(i, nDist)
+    if (pair) node.mlagPeerLabel = dists[pair.peerIdx].label
+  })
 
+  // vPC/MLAG peer-links between adjacent distribution pairs (D1)
+  const distPeerLinks: HLDLink[] = []
+  for (let i = 0; i + 1 < nDist; i += 2) {
+    distPeerLinks.push(mkLink(dists[i].id, dists[i+1].id, '2x40G LAG', 'vPC/MLAG Peer-Link', 'Po1', 'Po1', '—', { isHaSync: true }))
+  }
+
+  // Each access switch's MEC uplink lands on the dist switch it's wired to
+  // below (perDist-sized slices of `dists`); annotate with that dist's vPC pair.
+  const perDist = Math.ceil(nAccess / nDist)
   const accessGap = nAccess <= 6 ? 28 : 14
   const accessXs = xCentered(nAccess, accessGap)
-  const accesses = accessXs.map((x, i) => mkNode(
-    `acc${i+1}`, `ACC-SW-0${i+1 < 10 ? '0' : ''}${i+1}`, accessModel, 'access', accessDevs[i]?.vendor ?? 'Cisco',
-    `10.255.0.${50+i}`, `10.0.0.${51+i}`, x, Y.access,
-    { features:['802.1X','PoE+','DAI','LLDP','VLAN'] },
-  ))
+  const accesses = accessXs.map((x, i) => {
+    const di = Math.min(Math.floor(i / perDist), nDist - 1)
+    const distPairId = Math.floor(di / 2) + 1
+    const features = ['802.1X','PoE+','DAI','LLDP','VLAN', `MEC uplink: Port-channel${i+1} → DIST-SW-0${di+1} (vPC pair #${distPairId})`]
+    return mkNode(
+      `acc${i+1}`, `ACC-SW-0${i+1 < 10 ? '0' : ''}${i+1}`, accessModel, 'access', accessDevs[i]?.vendor ?? 'Cisco',
+      `10.255.0.${50+i}`, `10.0.0.${51+i}`, x, Y.access,
+      { features },
+    )
+  })
 
   // Host icons (representative)
   const hostXs = xCentered(5, 80)
@@ -398,13 +568,14 @@ function buildCampusTopology(devices: BOMDevice[], underlay: string, sc: string)
     mkLink('core1','core2','40G','VSS / MEC','Te1/0/48','Te1/0/48','—', { isHaSync:true }),
     ...dists.map((d, i) => mkLink('core1', d.id, '40G', `${underlay.toUpperCase()} · MLAG`, `Te1/0/${i+2}`, 'Te1/0/1', `10.0.${1+i*2}.0/31`)),
     ...dists.map((d, i) => mkLink('core2', d.id, '40G', `${underlay.toUpperCase()} · MLAG`, `Te1/0/${i+2}`, 'Te1/0/2', `10.0.${2+i*2}.0/31`)),
-    ...dists.flatMap((dist, di) => {
-      const perDist = Math.ceil(nAccess / nDist)
-      return accesses.slice(di * perDist, (di+1) * perDist).map((acc) =>
+    ...dists.flatMap((dist, di) =>
+      accesses.slice(di * perDist, (di+1) * perDist).map((acc) =>
         mkLink(dist.id, acc.id, '10G', '802.1Q Trunk', 'Te1/0/3', 'Gi0/1', '—')
       )
-    }),
+    ),
     ...hosts.map((h, i) => mkLink(accesses[Math.min(i, nAccess-1)].id, h.id, '1G', '802.1X Access', 'Gi1/0/1', 'eth0', '—')),
+    // vPC/MLAG peer-links between adjacent distribution pairs (D1)
+    ...distPeerLinks,
   ]
 
   const flows: PacketFlow[] = [
@@ -487,11 +658,26 @@ function buildGPUTopology(devices: BOMDevice[], sc: string): Topo {
 
   const leafGap = nLeaves <= 4 ? 30 : 16
   const leafXs = xCentered(nLeaves, leafGap)
-  const leaves = leafXs.map((x, i) => mkNode(
-    `lf${i+1}`, `GPU-LEAF-0${i+1}`, leafModel, 'leaf', 'NVIDIA',
-    `10.255.2.${i+1}`, `10.0.0.${51+i}`, x, Y.leaf,
-    { features:['400G ToR','PFC P3','ECN','VXLAN NVE','BFD'] },
-  ))
+  const leaves = leafXs.map((x, i) => {
+    const pair = pairInfo(i, nLeaves)
+    const features = ['400G ToR','PFC P3','ECN','VXLAN NVE','BFD']
+    if (pair) features.push(`vPC/MLAG Pair #${pair.pairId}`)
+    return mkNode(
+      `lf${i+1}`, `GPU-LEAF-0${i+1}`, leafModel, 'leaf', 'NVIDIA',
+      `10.255.2.${i+1}`, `10.0.0.${51+i}`, x, Y.leaf,
+      { features, mlagPairId: pair?.pairId },
+    )
+  })
+  leaves.forEach((node, i) => {
+    const pair = pairInfo(i, nLeaves)
+    if (pair) node.mlagPeerLabel = leaves[pair.peerIdx].label
+  })
+
+  // vPC/MLAG peer-links between adjacent ToR pairs (D1)
+  const leafPeerLinks: HLDLink[] = []
+  for (let i = 0; i + 1 < nLeaves; i += 2) {
+    leafPeerLinks.push(mkLink(leaves[i].id, leaves[i+1].id, '2x100G LAG', 'vPC/MLAG Peer-Link', 'Po1', 'Po1', '—', { isHaSync: true }))
+  }
 
   const gpuXs = xCentered(nGPU, 16)
   const gpuNodes = gpuXs.map((x, i) => mkNode(
@@ -517,6 +703,8 @@ function buildGPUTopology(devices: BOMDevice[], sc: string): Topo {
     ...gpuNodes.map((g, i) => mkLink(leaves[Math.floor(i / 2)].id, g.id, '400G', 'RoCEv2 PFC lossless', `e1/${20+i}`, 'mmc0', `192.168.100.${i*4}/30`)),
     mkLink(leaves[0].id, 'stor1', '400G', 'NVMe-oF TCP / RDMA', 'e1/40', 'e0a', '192.168.200.0/30'),
     mkLink(leaves[nLeaves > 1 ? 1 : 0].id, 'stor2', '400G', 'NVMe-oF TCP / RDMA', 'e1/40', 'e0a', '192.168.200.4/30'),
+    // vPC/MLAG peer-links between adjacent ToR pairs (D1)
+    ...leafPeerLinks,
   ]
 
   const flows: PacketFlow[] = [
@@ -657,7 +845,7 @@ function buildTopology(devices: BOMDevice[], useCase: string, underlay: string, 
   if (useCase === 'gpu')       return buildGPUTopology(devices, sc)
   if (useCase === 'campus')    return buildCampusTopology(devices, underlay, sc)
   if (useCase === 'wan')       return buildWANTopology(devices, underlay, sc)
-  return buildDCTopology(devices, underlay, overlay, sc)  // dc, multisite, multicloud, aviatrix
+  return buildDCTopology(devices, underlay, overlay, sc, useCase)  // dc, multisite, multicloud, aviatrix
 }
 
 // ─── SVG helpers ──────────────────────────────────────────────────────────────
@@ -690,10 +878,17 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
   const [hoveredLink, setHoveredLink] = useState<string | null>(null)
   const [primaryPathOnly, setPrimaryPathOnly] = useState(false)
+  const [showHealth, setShowHealth] = useState(false)
 
   const topo = useMemo(
     () => buildTopology(devices.length ? devices : [], useCase, underlayProtocol, overlayProtocols, siteCode),
     [devices, useCase, underlayProtocol, overlayProtocols, siteCode],
+  )
+
+  // C2: per-node health overlay — simulated telemetry snapshot, keyed by node id.
+  const healthMap: Record<string, NodeHealth> = useMemo(
+    () => Object.fromEntries(topo.nodes.filter(n => !n.isCloud).map(n => [n.id, simulateNodeHealth(n)])),
+    [topo.nodes],
   )
 
   // Default to first flow scenario so packets are always animated on load
@@ -763,6 +958,17 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
             {activeFlowObj?.desc}
           </span>
         )}
+        <button
+          type="button"
+          onClick={() => setShowHealth(v => !v)}
+          className={`ml-auto px-3 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer ${
+            showHealth
+              ? 'bg-emerald-600/20 border-emerald-400 text-emerald-300'
+              : 'border-white/10 text-gray-400 hover:border-white/20 hover:text-gray-300 bg-white/[0.02]'
+          }`}
+        >
+          {showHealth ? '🩺 Health Overlay: On' : '🩺 Health Overlay: Off'}
+        </button>
         {activeFlow && (
           <button
             type="button"
@@ -993,6 +1199,18 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                 {isSelected && (
                   <rect width={NW} height={NH} rx={6} fill="none" stroke="#FFFFFF" strokeWidth={0.5} opacity={0.5} />
                 )}
+                {/* C2: health status badge (top-left corner) */}
+                {showHealth && healthMap[node.id] && (
+                  <g>
+                    {healthMap[node.id].status === 'down' && (
+                      <circle cx={9} cy={9} r={7} fill="none" stroke={HEALTH_COLOR.down} strokeWidth={1.5}>
+                        <animate attributeName="r" values="7;11;7" dur="1.5s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.8;0;0.8" dur="1.5s" repeatCount="indefinite" />
+                      </circle>
+                    )}
+                    <circle cx={9} cy={9} r={5} fill={HEALTH_COLOR[healthMap[node.id].status]} stroke="#080E1A" strokeWidth={1.5} />
+                  </g>
+                )}
               </g>
             )
           })}
@@ -1049,6 +1267,23 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                 <div className="text-yellow-400 mt-0.5">AS{selectedNodeObj.asn}</div>
               </div>
             )}
+            {/* D1: vPC/MLAG fabric pairing */}
+            {selectedNodeObj.mlagPairId !== undefined && (
+              <div>
+                <div className="text-gray-600 uppercase tracking-wider text-xs">Fabric Pairing</div>
+                <div className="text-cyan-400 mt-0.5">
+                  vPC/MLAG Pair #{selectedNodeObj.mlagPairId}
+                  {selectedNodeObj.mlagPeerLabel && <> — peer: {selectedNodeObj.mlagPeerLabel}</>}
+                </div>
+              </div>
+            )}
+            {/* D1: FHRP (HSRP) virtual gateway */}
+            {selectedNodeObj.fhrpVip && (
+              <div>
+                <div className="text-gray-600 uppercase tracking-wider text-xs">FHRP Gateway</div>
+                <div className="text-cyan-400 mt-0.5">HSRP VIP (Vlan10/DATA): {selectedNodeObj.fhrpVip}</div>
+              </div>
+            )}
           </div>
           {selectedNodeObj.features.length > 0 && (
             <div className="pt-1">
@@ -1060,6 +1295,58 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
               </div>
             </div>
           )}
+          {/* C2: health drill-down */}
+          {showHealth && healthMap[selectedNodeObj.id] && (() => {
+            const h = healthMap[selectedNodeObj.id]
+            return (
+              <div className="pt-1 border-t border-white/5 mt-2">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="text-gray-600 uppercase tracking-wider text-xs">Live Health</div>
+                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold"
+                    style={{ color: HEALTH_COLOR[h.status], backgroundColor: `${HEALTH_COLOR[h.status]}22`, border: `1px solid ${HEALTH_COLOR[h.status]}55` }}>
+                    {HEALTH_LABEL[h.status]}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <div className="text-gray-600 uppercase tracking-wider text-xs">CPU</div>
+                    <div className={`mt-0.5 ${h.cpu > 85 ? 'text-red-400' : h.cpu > 65 ? 'text-yellow-400' : 'text-gray-200'}`}>{h.cpu}%</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600 uppercase tracking-wider text-xs">Memory</div>
+                    <div className="text-gray-200 mt-0.5">{h.mem}%</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600 uppercase tracking-wider text-xs">Uptime</div>
+                    <div className="text-gray-200 mt-0.5">{formatUptime(h.uptimeSec)}</div>
+                  </div>
+                  {h.bgpSessionsUp > 0 && (
+                    <div>
+                      <div className="text-gray-600 uppercase tracking-wider text-xs">BGP Sessions</div>
+                      <div className="text-green-400 mt-0.5">{h.bgpSessionsUp} up</div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-gray-600 uppercase tracking-wider text-xs">Iface Errors</div>
+                    <div className={`mt-0.5 ${h.ifaceErrors > 8 ? 'text-yellow-400' : 'text-gray-200'}`}>{h.ifaceErrors}/min</div>
+                  </div>
+                  {h.pfcDrops > 0 && (
+                    <div>
+                      <div className="text-gray-600 uppercase tracking-wider text-xs">PFC Drops</div>
+                      <div className={`mt-0.5 ${h.pfcDrops > 100 ? 'text-purple-400' : 'text-gray-200'}`}>{h.pfcDrops}</div>
+                    </div>
+                  )}
+                </div>
+                {h.alerts.length > 0 && (
+                  <div className="mt-1.5 space-y-0.5">
+                    {h.alerts.map(a => (
+                      <div key={a} className="text-yellow-400 text-xs">⚠ {a}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
           <div className="pt-1">
             <div className="text-gray-600 uppercase tracking-wider text-xs mb-1.5">Connected Links</div>
             <div className="space-y-0.5">

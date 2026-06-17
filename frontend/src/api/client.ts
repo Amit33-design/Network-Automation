@@ -85,6 +85,25 @@ export const runRca = (
   design_id: designId,
 })
 
+// ── Intent NLP parser (G-A1) ──────────────────────────────────────────────────
+
+import type { IntentParseResult } from '@/types'
+
+export const parseIntent = (description: string) =>
+  post<IntentParseResult>('/api/intent/parse', { description })
+
+// ── Config drift detection (G-A4) ───────────────────────────────────────────────
+
+import type { ConfigDriftResponse, ConfigRemediationResponse, RemediationDeviceInput } from '@/types'
+
+export const checkConfigDrift = (configs: Record<string, string>, deploymentId?: string) =>
+  post<ConfigDriftResponse>('/api/drift/config', { configs, deployment_id: deploymentId })
+
+// ── Config drift remediation (G-A16) ─────────────────────────────────────────────
+
+export const generateRemediation = (devices: RemediationDeviceInput[]) =>
+  post<ConfigRemediationResponse>('/api/drift/remediate', { devices })
+
 // ── Config generation ─────────────────────────────────────────────────────────
 
 import type { DesignState } from '@/types'

@@ -14,6 +14,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, Optional
@@ -21,10 +22,44 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from . import file_export
 from .server import ztp_server, ZTPDevice, ZTPState
 
 log = logging.getLogger(__name__)
 ztp_router = APIRouter(prefix="/ztp", tags=["ZTP"])
+
+# ── NetBox sync (Enterprise upgrade B3) ──────────────────────────────────
+# The ZTP endpoints are unauthenticated (devices boot anonymously), so the
+# org whose NetBox integration config is used comes from the environment.
+# All sync calls are fire-and-forget — ZTP must never block on NetBox.
+_NETBOX_ORG = os.getenv("ZTP_NETBOX_ORG", "")
+
+
+def _netbox_fire_and_forget(coro) -> None:
+    if not _NETBOX_ORG:
+        coro.close()
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(coro)
+        task.add_done_callback(lambda t: t.exception())  # swallow, already logged
+    except RuntimeError:
+        coro.close()
+
+
+def _netbox_sync_state(dev: ZTPDevice) -> None:
+    from integrations.netbox import sync_ztp_status
+    _netbox_fire_and_forget(
+        sync_ztp_status(_NETBOX_ORG, dev.hostname, dev.state.value)
+    )
+
+
+def _netbox_reserve_dhcp(dev: ZTPDevice) -> None:
+    from integrations.netbox import create_dhcp_reservation
+    _netbox_fire_and_forget(
+        create_dhcp_reservation(
+            _NETBOX_ORG, dev.hostname, dev.mgmt_ip, str(dev.extra.get("mac", "")),
+        )
+    )
 
 # Server base URL — used for generating script URLs
 def _server_url(request: Request) -> str:
@@ -126,6 +161,7 @@ async def checkin(serial: str, body: CheckinRequest):
         # Unknown serial — register as unknown
         log.warning("ZTP checkin from unknown serial: %s", serial)
         return {"status": "unknown", "serial": serial}
+    _netbox_sync_state(dev)  # B3 — reflect provisioned/failed into NetBox
     return {
         "status":  dev.state.value,
         "serial":  serial,
@@ -154,6 +190,9 @@ async def register_device(body: DeviceRegisterRequest):
         extra         = body.extra,
     )
     ztp_server.register(dev)
+    file_export.export_device_config(dev)  # G-A6 — keep nginx/TFTP file server in sync
+    _netbox_reserve_dhcp(dev)   # B3 — DHCP reservation in NetBox IPAM
+    _netbox_sync_state(dev)     # B3 — device status → planned
     return _dev_to_response(dev)
 
 
@@ -162,6 +201,11 @@ async def register_bulk(body: BulkRegisterRequest):
     """Bulk pre-register devices."""
     devices = [d.model_dump() for d in body.devices]
     registered = ztp_server.register_bulk(devices)
+    for dev in registered:
+        file_export.export_device_config(dev)  # G-A6 — keep nginx/TFTP file server in sync
+        # B3 — best-effort NetBox sync per device
+        _netbox_reserve_dhcp(dev)
+        _netbox_sync_state(dev)
     return {
         "registered": len(registered),
         "devices": [_dev_to_response(d) for d in registered],
@@ -210,6 +254,22 @@ async def reset_device(serial: str):
     return _dev_to_response(dev)
 
 
+@ztp_router.post("/export-files")
+async def export_files(request: Request):
+    """
+    Regenerate the static ZTP file tree (G-A6) — Day 0 configs for every
+    registered device plus platform POAP/ZTP scripts — served by the
+    `ztp-files` (nginx) and `ztp-tftp` (TFTP) containers.
+    """
+    server_url = _server_url(request)
+    result = file_export.export_all(server_url)
+    return {
+        "files_dir":        str(file_export.ZTP_FILES_DIR),
+        "exported_configs": len(result["configs"]),
+        "exported_scripts": len(result["scripts"]),
+    }
+
+
 @ztp_router.get("/dhcp-options")
 async def dhcp_options(request: Request):
     """
@@ -244,5 +304,23 @@ async def dhcp_options(request: Request):
             "option-data": [
                 {"name": "boot-file-name", "data": f"http://{server_url.split('//')[-1]}/ztp/script/nxos"},
             ]
+        },
+        # G-A6 — legacy devices that boot via plain TFTP instead of the HTTP
+        # ZTP endpoints: point next-server at the ztp-tftp container and
+        # filename at the exported static file tree (POST /ztp/export-files).
+        "tftp_file_server": {
+            "info": (
+                "ztp-tftp serves ZTP_FILES_DIR over TFTP/69 and ztp-files "
+                "(nginx) serves the same tree over HTTP on :8069. Generate "
+                "filenames for TFTP-booting devices with "
+                "generate_dhcp_config(..., tftp=True)."
+            ),
+            "next_server": server_url.split("//")[-1].split(":")[0],
+            "example_filenames": {
+                "nxos": "scripts/nxos_poap.py",
+                "eos": "scripts/eos_ztp.py",
+                "ios-xe": "scripts/ios_xe_pnp.py",
+                "generic": "configs/{hostname}.cfg",
+            },
         },
     }

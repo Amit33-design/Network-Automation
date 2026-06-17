@@ -29,6 +29,27 @@ class TestBootFilename:
         assert isinstance(filename, str)
 
 
+# ── _boot_filename (G-A6 TFTP mode) ─────────────────────────────────────────────
+
+class TestBootFilenameTftp:
+    @pytest.mark.parametrize("platform,expected", [
+        ("nxos",   "scripts/nxos_poap.py"),
+        ("eos",    "scripts/eos_ztp.py"),
+        ("ios-xe", "scripts/ios_xe_pnp.py"),
+    ])
+    def test_known_platform_returns_script_path(self, platform, expected):
+        assert _boot_filename(platform, "sw-01", tftp=True) == expected
+
+    def test_unknown_platform_returns_per_device_config(self):
+        filename = _boot_filename("junos", "leaf-99", tftp=True)
+        assert filename == "configs/leaf-99.cfg"
+
+    def test_tftp_paths_differ_from_http_paths(self):
+        http_path = _boot_filename("nxos", "sw-01")
+        tftp_path = _boot_filename("nxos", "sw-01", tftp=True)
+        assert http_path != tftp_path
+
+
 # ── generate_dhcp_config ───────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -108,3 +129,25 @@ class TestGenerateDhcpConfig:
         dhcp_kwargs["lease_time"] = 3600
         config = generate_dhcp_config(devices=devices, **dhcp_kwargs)
         assert "3600" in config
+
+
+# ── generate_dhcp_config (G-A6 TFTP mode) ───────────────────────────────────────
+
+class TestGenerateDhcpConfigTftp:
+    def test_tftp_mode_uses_static_file_paths(self, devices, dhcp_kwargs):
+        config = generate_dhcp_config(devices=devices, tftp=True, **dhcp_kwargs)
+        assert "scripts/nxos_poap.py" in config
+        assert "scripts/eos_ztp.py" in config
+
+    def test_tftp_mode_notes_mode_in_header(self, devices, dhcp_kwargs):
+        config = generate_dhcp_config(devices=devices, tftp=True, **dhcp_kwargs)
+        assert "TFTP" in config
+
+    def test_tftp_mode_omits_pnp_option_43(self, devices, dhcp_kwargs):
+        config = generate_dhcp_config(devices=devices, tftp=True, **dhcp_kwargs)
+        assert "ciscopnp" not in config
+
+    def test_http_mode_unaffected(self, devices, dhcp_kwargs):
+        config = generate_dhcp_config(devices=devices, **dhcp_kwargs)
+        assert "ztp/script/nxos" in config
+        assert "scripts/nxos_poap.py" not in config

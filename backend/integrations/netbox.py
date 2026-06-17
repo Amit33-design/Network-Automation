@@ -191,6 +191,119 @@ async def sync_devices(org_id: str, devices: list[dict]) -> list[str]:
     return errors
 
 
+# ── ZTP → NetBox sync (Enterprise upgrade B3) ────────────────────────────────
+# Maps the ZTP state machine (ztp/server.py ZTPState) onto NetBox device
+# status choices so the source of truth reflects live provisioning progress.
+ZTP_STATE_TO_NETBOX_STATUS: dict[str, str] = {
+    "waiting":      "planned",
+    "contacted":    "staged",
+    "provisioning": "staged",
+    "provisioned":  "active",
+    "failed":       "failed",
+}
+
+
+async def sync_ztp_status(org_id: str, hostname: str, ztp_state: str) -> bool:
+    """
+    Reflect a device's ZTP state into NetBox (PATCH dcim device status).
+
+    Args:
+        org_id:    Organisation ID used to look up the NetBox integration config.
+        hostname:  Device hostname (NetBox device name).
+        ztp_state: ZTPState value ("waiting"/"contacted"/"provisioning"/
+                   "provisioned"/"failed").
+
+    Returns:
+        True on success, False on any failure (always soft — ZTP flow must
+        never block on NetBox availability).
+    """
+    status = ZTP_STATE_TO_NETBOX_STATUS.get(ztp_state)
+    if not status:
+        return False
+    cfg = await _get_config(org_id)
+    if not cfg:
+        return False
+    try:
+        async with _client(cfg) as client:
+            search = await client.get(
+                "/api/dcim/devices/", params={"name": hostname, "limit": 1}
+            )
+            search.raise_for_status()
+            results = search.json().get("results", [])
+            if not results:
+                log.warning("sync_ztp_status: device %s not found in NetBox", hostname)
+                return False
+            dev_id = results[0]["id"]
+            resp = await client.patch(
+                f"/api/dcim/devices/{dev_id}/",
+                json={
+                    "status": status,
+                    "comments": f"ZTP state: {ztp_state} — synced by NetDesign AI "
+                                f"{datetime.utcnow().isoformat()}",
+                },
+            )
+            resp.raise_for_status()
+            log.info("NetBox device %s status → %s (ztp=%s)", hostname, status, ztp_state)
+            return True
+    except Exception as exc:
+        log.warning("sync_ztp_status failed for %s: %s", hostname, exc)
+        return False
+
+
+async def create_dhcp_reservation(
+    org_id:   str,
+    hostname: str,
+    mgmt_ip:  str,
+    mac:      str = "",
+) -> dict | None:
+    """
+    Upsert a DHCP reservation for a ZTP device as a NetBox IPAM ip-address
+    with status="dhcp" (NetBox's native DHCP status), dns_name=hostname, and
+    the MAC recorded in the description for DHCP-server export tooling.
+
+    Returns the created/updated ip-address object, or None on failure (soft).
+    """
+    if not mgmt_ip:
+        return None
+    cfg = await _get_config(org_id)
+    if not cfg:
+        return None
+    address = mgmt_ip if "/" in mgmt_ip else f"{mgmt_ip}/32"
+    payload: dict[str, Any] = {
+        "address":     address,
+        "status":      "dhcp",
+        "dns_name":    hostname,
+        "description": f"ZTP DHCP reservation for {hostname}"
+                       + (f" (MAC {mac})" if mac else "")
+                       + " — NetDesign AI",
+    }
+    if cfg.get("tenant_id"):
+        payload["tenant"] = int(cfg["tenant_id"])
+    try:
+        async with _client(cfg) as client:
+            search = await client.get(
+                "/api/ipam/ip-addresses/", params={"address": address, "limit": 1}
+            )
+            search.raise_for_status()
+            results = search.json().get("results", [])
+            if results:
+                resp = await client.patch(
+                    f"/api/ipam/ip-addresses/{results[0]['id']}/", json=payload
+                )
+            else:
+                resp = await client.post("/api/ipam/ip-addresses/", json=payload)
+            resp.raise_for_status()
+            result = resp.json()
+            log.info(
+                "NetBox DHCP reservation %s: %s → %s (id=%s)",
+                "updated" if results else "created", hostname, address, result.get("id"),
+            )
+            return result
+    except Exception as exc:
+        log.warning("create_dhcp_reservation failed for %s: %s", hostname, exc)
+        return None
+
+
 async def push_config_context(
     org_id:   str,
     hostname: str,

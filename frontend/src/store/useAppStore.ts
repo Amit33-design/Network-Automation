@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import type {
   AppState, UseCase, AppType, Scale, Redundancy, Compliance, BOMDevice, CableLink, OpticsEntry,
   OrgSize, BudgetTier, TrafficPattern, BandwidthPerServer, UnderlayProtocol, FirewallModel, RedundancyModel,
-  VpnType, DcTopology, DemoTopology,
+  VpnType, DcTopology, DemoTopology, NetBoxImportedDevice,
 } from '@/types'
 
 interface AppStore extends AppState {
@@ -27,6 +27,8 @@ interface AppStore extends AppState {
   setVendorPrefs: (prefs: string[]) => void
   setIndustry: (industry: string) => void
   setPrimaryContact: (contact: string) => void
+  // B1 — NetBox/Nautobot imported inventory
+  setNetboxDevices: (devices: NetBoxImportedDevice[]) => void
   // M-55
   setCustomPolicyRules: (rules: string) => void
   setActiveDeployTab: (tab: string) => void
@@ -137,6 +139,8 @@ const DEFAULT_STATE: AppState = {
   orgCidr: '',
   aviatrixOptions: [],
   demoTopologyId: '',
+  netboxDevices: [],
+  _savedAt: Date.now(),
 }
 
 export const useAppStore = create<AppStore>()(
@@ -165,6 +169,7 @@ export const useAppStore = create<AppStore>()(
       setVendorPrefs: vendorPrefs => set({ vendorPrefs, configs: {} }),
       setIndustry: industry => set({ industry }),
       setPrimaryContact: primaryContact => set({ primaryContact }),
+      setNetboxDevices: netboxDevices => set({ netboxDevices }),
       setCustomPolicyRules: customPolicyRules => set({ customPolicyRules }),
       setActiveDeployTab: activeDeployTab => set({ activeDeployTab }),
       setTheme: theme => set({ theme }),
@@ -221,8 +226,62 @@ export const useAppStore = create<AppStore>()(
         step: 3,
       }),
 
-      reset: () => set(DEFAULT_STATE),
+      reset: () => set({ ...DEFAULT_STATE, _savedAt: Date.now() }),
     }),
-    { name: 'netdesign-app-state' }
+    {
+      name: 'netdesign-app-state',
+      version: 2,
+      migrate: () => ({ ...DEFAULT_STATE, _savedAt: Date.now() }) as never,
+      partialize: (state) => ({
+        useCase: state.useCase,
+        appTypes: state.appTypes,
+        siteName: state.siteName,
+        siteCode: state.siteCode,
+        scale: state.scale,
+        redundancy: state.redundancy,
+        linkDistances: state.linkDistances,
+        compliance: state.compliance,
+        step: state.step,
+        orgName: state.orgName,
+        orgSize: state.orgSize,
+        budgetTier: state.budgetTier,
+        vendorPrefs: state.vendorPrefs,
+        industry: state.industry,
+        primaryContact: state.primaryContact,
+        customPolicyRules: state.customPolicyRules,
+        activeDeployTab: state.activeDeployTab,
+        theme: state.theme,
+        trafficPattern: state.trafficPattern,
+        totalEndpoints: state.totalEndpoints,
+        bandwidthPerServer: state.bandwidthPerServer,
+        oversubscription: state.oversubscription,
+        underlayProtocol: state.underlayProtocol,
+        overlayProtocols: state.overlayProtocols,
+        protoFeatures: state.protoFeatures,
+        firewallModel: state.firewallModel,
+        redundancyModel: state.redundancyModel,
+        numSites: state.numSites,
+        vpnType: state.vpnType,
+        nacOptions: state.nacOptions,
+        additionalNotes: state.additionalNotes,
+        policyBlocks: state.policyBlocks,
+        cloudProviders: state.cloudProviders,
+        dcTopology: state.dcTopology,
+        coloProvider: state.coloProvider,
+        dcEdgeVendor: state.dcEdgeVendor,
+        bgpAsn: state.bgpAsn,
+        orgCidr: state.orgCidr,
+        aviatrixOptions: state.aviatrixOptions,
+        demoTopologyId: state.demoTopologyId,
+        netboxDevices: state.netboxDevices,
+        _savedAt: Date.now(),
+      }) as never,
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        if (state._savedAt && Date.now() - state._savedAt > 7 * 24 * 60 * 60 * 1000) {
+          state.reset()
+        }
+      },
+    }
   )
 )

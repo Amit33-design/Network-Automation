@@ -100,6 +100,19 @@ export interface LinkDistances {
   [key: string]: number
 }
 
+// ── NetBox/Nautobot import (Enterprise upgrade B1) ───────────────────────────
+// Normalized device row imported from /api/dcim/devices/, consumed by Step 1
+// prefill and the Step 6 ZTP tab (B2).
+
+export interface NetBoxImportedDevice {
+  name: string
+  vendor: string
+  model: string
+  role: string
+  site: string
+  primaryIp: string
+}
+
 // ── App-wide state ────────────────────────────────────────────────────────────
 
 export interface AppState {
@@ -161,6 +174,10 @@ export interface AppState {
   aviatrixOptions: string[]
   // Demo topology tracking
   demoTopologyId: string
+  // NetBox/Nautobot imported inventory (Enterprise upgrade B1)
+  netboxDevices: NetBoxImportedDevice[]
+  // Persist staleness detection — epoch ms when state was last saved
+  _savedAt: number
 }
 
 // ── Lab Demo API types ────────────────────────────────────────────────────────
@@ -253,6 +270,62 @@ export interface RcaHypothesis {
   confidence: number
   evidence: string[]
   remediation: string
+}
+
+// ── Intent NLP parser (G-A1) ────────────────────────────────────────────────────
+
+export interface IntentParseResult {
+  use_case: UseCase | ''
+  app_types: AppType[]
+  scale: Scale
+  redundancy: Redundancy
+  compliance: Compliance[]
+  org_name: string
+  org_size: OrgSize
+  budget_tier: BudgetTier
+  vendor_prefs: string[]
+  industry: string
+  primary_contact: string
+  confidence: number
+  notes: string
+  source: 'ai' | 'heuristic'
+}
+
+// ── Config drift detection (G-A4) ──────────────────────────────────────────────
+
+export interface ConfigDriftDevice {
+  hostname: string
+  has_drift: boolean
+  added: string[]
+  removed: string[]
+  unified_diff: string
+  no_baseline: boolean
+}
+
+export interface ConfigDriftResponse {
+  devices: ConfigDriftDevice[]
+  drift_count: number
+  device_count: number
+}
+
+// ── Config drift remediation (G-A16) ───────────────────────────────────────────
+
+export interface RemediationDeviceInput {
+  hostname: string
+  platform: string
+  added: string[]
+  removed: string[]
+}
+
+export interface RemediationDevice {
+  hostname: string
+  platform: string
+  commands: string[]
+  command_count: number
+}
+
+export interface ConfigRemediationResponse {
+  devices: RemediationDevice[]
 }
 
 // ── Deploy pipeline ───────────────────────────────────────────────────────────

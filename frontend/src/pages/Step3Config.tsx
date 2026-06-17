@@ -93,7 +93,7 @@ function parseSections(configText: string): ConfigSection[] {
 }
 
 export function Step3Config() {
-  const { devices, configs, setConfigs, useCase, policyBlocks, nextStep, prevStep } = useAppStore()
+  const { devices, configs, setConfigs, useCase, policyBlocks, appTypes, protoFeatures, nextStep, prevStep } = useAppStore()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [layerFilter, setLayerFilter] = useState<LayerFilter>('All')
   const editorRef = useRef<HTMLDivElement>(null)
@@ -114,11 +114,11 @@ export function Step3Config() {
     if (!devices.length) return
     const needsRegen = devices.some(d => !configs[d.id])
     if (needsRegen || prevPolicySig.current !== policySig) {
-      setConfigs(generateAllConfigs(devices, useCase, policyBlocks))
+      setConfigs(generateAllConfigs(devices, useCase, policyBlocks, appTypes, protoFeatures))
       prevPolicySig.current = policySig
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devices, useCase, policySig])
+  }, [devices, useCase, policySig, appTypes, protoFeatures])
 
   // Filtered device list (M-35)
   const filteredDevices = useMemo(

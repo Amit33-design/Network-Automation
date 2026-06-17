@@ -4,14 +4,17 @@ import { buildBOM } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
+import { LLDTopologyDiagram } from '@/components/LLDTopologyDiagram'
 import { formatUSD, cn } from '@/lib/utils'
-import type { BOMDevice } from '@/types'
+import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
+import type { BOMDevice, AppType } from '@/types'
 
 // ── Tab types ────────────────────────────────────────────────────
-type DesignTab = 'hld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
+type DesignTab = 'hld' | 'lld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
 
 const TAB_LABELS: Array<{ id: DesignTab; label: string }> = [
   { id: 'hld',        label: '📐 High Level Design' },
+  { id: 'lld',        label: '📋 Low Level Design' },
   { id: 'ipplan',     label: '🌐 IP Plan' },
   { id: 'vlan',       label: '🏷 VLAN Design' },
   { id: 'routing',    label: '🔀 Routing & Protocols' },
@@ -264,6 +267,65 @@ function genRoutingData(useCase: string, underlayProtocol: string, overlayProtoc
   }
 
   return { bgpRows, protoRows, ospfRows }
+}
+
+// ── Computed topology (Enterprise Upgrade D1) ────────────────────
+// Reflects the vPC/MLAG pairing (haPairInfo, A1-A3), FHRP gateways, and
+// multisite DCI route-targets (A7) that configgen.ts now derives from the
+// real BOM device list, so the design summary matches the generated configs.
+export interface MlagPairSummary { pairId: number; primary: string; secondary: string; domainId: string }
+export interface FhrpVipSummary  { pairId: number; vlan: string; name: string; vip: string; primary: string; secondary: string }
+export interface DciSummary      { rtAsn: number; l2Rt: string; l3Rt: string; leaves: string[] }
+export interface ComputedTopology {
+  mlagPairs: MlagPairSummary[]
+  fhrpVips: FhrpVipSummary[]
+  dci: DciSummary | null
+}
+
+export function genComputedTopology(useCase: string, devices: BOMDevice[], appTypes: AppType[]): ComputedTopology {
+  const isFabric = useCase === 'dc' || useCase === 'multisite' || useCase === 'gpu' || useCase === 'multicloud' || useCase === 'aviatrix'
+  const isCampus = useCase === 'campus'
+
+  const mlagPairs: MlagPairSummary[] = []
+  const fhrpVips: FhrpVipSummary[] = []
+  let dci: DciSummary | null = null
+
+  if (isFabric) {
+    const leaves = devices.filter(d => d.subLayer === 'leaf')
+    leaves.forEach((dev, idx) => {
+      if (idx % 2 !== 0) return
+      const peer = leaves[idx + 1]
+      if (!peer) return
+      const { pairId, domainId } = haPairInfo(dev, idx)
+      mlagPairs.push({ pairId, primary: dev.hostname, secondary: peer.hostname, domainId })
+    })
+    if (useCase === 'multisite' && leaves.length > 0) {
+      dci = {
+        rtAsn: DCI_RT_ASN,
+        l2Rt: `${DCI_RT_ASN}:10010`,
+        l3Rt: `${DCI_RT_ASN}:50000`,
+        leaves: leaves.map(l => l.hostname),
+      }
+    }
+  }
+
+  if (isCampus) {
+    const dists = devices.filter(d => d.subLayer === 'distribution')
+    const hasVoice = appTypes.includes('voice')
+    dists.forEach((dev, idx) => {
+      if (idx % 2 !== 0) return
+      const peer = dists[idx + 1]
+      if (!peer) return
+      const { pairId, domainId } = haPairInfo(dev, idx)
+      mlagPairs.push({ pairId, primary: dev.hostname, secondary: peer.hostname, domainId })
+      fhrpVips.push({ pairId, vlan: '10', name: 'DATA', vip: `10.10.${pairId - 1}.1`, primary: dev.hostname, secondary: peer.hostname })
+      if (hasVoice) {
+        fhrpVips.push({ pairId, vlan: '20', name: 'VOICE', vip: `10.20.${pairId - 1}.1`, primary: dev.hostname, secondary: peer.hostname })
+      }
+    })
+  }
+
+  return { mlagPairs, fhrpVips, dci }
 }
 
 // ── CSV export helpers ───────────────────────────────────────────
@@ -664,7 +726,8 @@ function genRoutePropagation(devices: BOMDevice[], useCase: string, underlayProt
 function buildSummaryText(
   useCase: string, scale: string, siteCode: string, numSites: number,
   totalEndpoints: number, underlayProtocol: string, overlayProtocols: string[],
-  protoFeatures: string[], compliance: string[], devices: BOMDevice[], grandTotal: number
+  protoFeatures: string[], compliance: string[], devices: BOMDevice[], grandTotal: number,
+  computedTopology: ComputedTopology
 ): string {
   const label = USE_CASE_LABELS[useCase] || useCase || '—'
   const devLines = Object.values(
@@ -698,6 +761,16 @@ function buildSummaryText(
     `  ${'TOTAL DEVICES'.padEnd(16)}: ${devices.reduce((s, d) => s + d.count, 0)}`,
     `  Est. Cost       : $${grandTotal.toLocaleString()}`,
     '',
+    ...(computedTopology.mlagPairs.length > 0 || computedTopology.dci ? [
+      '── COMPUTED TOPOLOGY (D1) ──',
+      ...computedTopology.mlagPairs.map(p => `  vPC/MLAG Pair #${p.pairId}  : ${p.primary} <-> ${p.secondary} (domain ${p.domainId})`),
+      ...computedTopology.fhrpVips.map(v => `  HSRP Vlan${v.vlan}/${v.name} VIP : ${v.vip}  (pair #${v.pairId}: ${v.primary}/${v.secondary})`),
+      ...(computedTopology.dci ? [
+        `  EVPN DCI RTs (ASN ${computedTopology.dci.rtAsn}) : L2 ${computedTopology.dci.l2Rt} · L3 ${computedTopology.dci.l3Rt}`,
+        `  DCI-stretched leaves : ${computedTopology.dci.leaves.join(', ')}`,
+      ] : []),
+      '',
+    ] : []),
     '── COMPLIANCE ──',
     compliance.length ? compliance.map(c => `  ✓ ${c}`).join('\n') : '  None selected',
     '',
@@ -711,7 +784,7 @@ export function Step4NetworkDesign() {
     useCase, scale, siteCode, numSites,
     underlayProtocol, overlayProtocols, protoFeatures, redundancyModel,
     totalEndpoints, bandwidthPerServer, oversubscription,
-    trafficPattern, firewallModel, compliance, vendorPrefs,
+    trafficPattern, firewallModel, compliance, vendorPrefs, appTypes,
     devices, setDevices, nextStep, prevStep,
   } = useAppStore()
 
@@ -756,10 +829,16 @@ export function Step4NetworkDesign() {
   const reachMatrix = useMemo(() => genReachabilityMatrix(topDevices, failedDeviceId), [topDevices, failedDeviceId])
   const routeProp   = useMemo(() => genRoutePropagation(generatedDevices, useCase, underlayProtocol), [generatedDevices, useCase, underlayProtocol])
 
+  // D1: Computed topology — vPC/MLAG pairs, FHRP gateways, multisite DCI route-targets
+  const computedTopology = useMemo(
+    () => genComputedTopology(useCase, generatedDevices, appTypes),
+    [useCase, generatedDevices, appTypes]
+  )
+
   // M-27: Summary
   const summaryText = useMemo(
-    () => buildSummaryText(useCase, scale, siteCode, numSites, totalEndpoints, underlayProtocol, overlayProtocols, protoFeatures, compliance, generatedDevices, grandTotal),
-    [useCase, scale, siteCode, numSites, totalEndpoints, underlayProtocol, overlayProtocols, protoFeatures, compliance, generatedDevices, grandTotal]
+    () => buildSummaryText(useCase, scale, siteCode, numSites, totalEndpoints, underlayProtocol, overlayProtocols, protoFeatures, compliance, generatedDevices, grandTotal, computedTopology),
+    [useCase, scale, siteCode, numSites, totalEndpoints, underlayProtocol, overlayProtocols, protoFeatures, compliance, generatedDevices, grandTotal, computedTopology]
   )
 
   function handleExportSVG() {
@@ -871,6 +950,23 @@ export function Step4NetworkDesign() {
               siteCode={siteCode}
             />
           </div>
+        </Card>
+      )}
+
+      {/* ── LLD tab ────────────────────────────────────────────────── */}
+      {activeTab === 'lld' && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-purple-300">Low Level Design — Port-level detail</h3>
+              <p className="text-xs text-gray-500 mt-1">IP addresses, interface mappings, VLANs, config snippets, and physical cabling matrix</p>
+            </div>
+          </div>
+          <LLDTopologyDiagram
+            devices={generatedDevices}
+            useCase={useCase}
+            siteCode={siteCode}
+          />
         </Card>
       )}
 
@@ -1416,6 +1512,68 @@ export function Step4NetworkDesign() {
                 </table>
               </div>
             </div>
+
+            {/* D1: Computed Topology — vPC/MLAG pairs, FHRP gateways, DCI route-targets */}
+            {(computedTopology.mlagPairs.length > 0 || computedTopology.dci) && (
+              <div className="mb-6">
+                <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3">Computed Topology</div>
+                {computedTopology.mlagPairs.length > 0 && (
+                  <div className="overflow-x-auto mb-3">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-white/10 bg-white/5">
+                          {['vPC/MLAG Pair', 'Primary', 'Secondary', 'Domain ID'].map(h => (
+                            <th key={h} className={thCls}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {computedTopology.mlagPairs.map(p => (
+                          <tr key={p.pairId} className="border-b border-white/5">
+                            <td className={`${tdCls} font-bold text-orange-400`}>#{p.pairId}</td>
+                            <td className={`${tdCls} font-mono text-xs text-gray-200`}>{p.primary}</td>
+                            <td className={`${tdCls} font-mono text-xs text-gray-200`}>{p.secondary}</td>
+                            <td className={`${tdCls} font-mono text-xs text-gray-500`}>{p.domainId}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {computedTopology.fhrpVips.length > 0 && (
+                  <div className="overflow-x-auto mb-3">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-white/10 bg-white/5">
+                          {['FHRP Gateway', 'Pair', 'VIP', 'Active', 'Standby'].map(h => (
+                            <th key={h} className={thCls}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {computedTopology.fhrpVips.map(v => (
+                          <tr key={`${v.pairId}-${v.vlan}`} className="border-b border-white/5">
+                            <td className={`${tdCls} font-semibold text-gray-100`}>HSRP Vlan{v.vlan}/{v.name}</td>
+                            <td className={`${tdCls} font-bold text-orange-400`}>#{v.pairId}</td>
+                            <td className={`${tdCls} font-mono text-xs text-blue-400`}>{v.vip}</td>
+                            <td className={`${tdCls} font-mono text-xs text-gray-200`}>{v.primary}</td>
+                            <td className={`${tdCls} font-mono text-xs text-gray-500`}>{v.secondary}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {computedTopology.dci && (
+                  <div className="text-sm space-y-1">
+                    <div className="flex justify-between"><span className="text-gray-500">EVPN DCI Route-Targets (ASN {computedTopology.dci.rtAsn})</span></div>
+                    <div className="flex justify-between"><span className="text-gray-500">L2 (Type-5 host routes)</span><span className="text-gray-200 font-mono text-xs">{computedTopology.dci.l2Rt}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-500">L3 (IP-VRF prefix routes)</span><span className="text-gray-200 font-mono text-xs">{computedTopology.dci.l3Rt}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-500">Stretched leaves</span><span className="text-gray-200 font-mono text-xs">{computedTopology.dci.leaves.join(', ')}</span></div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Compliance */}
             <div>
