@@ -4,15 +4,17 @@ import { buildBOM } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
+import { LLDTopologyDiagram } from '@/components/LLDTopologyDiagram'
 import { formatUSD, cn } from '@/lib/utils'
 import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import type { BOMDevice, AppType } from '@/types'
 
 // ── Tab types ────────────────────────────────────────────────────
-type DesignTab = 'hld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
+type DesignTab = 'hld' | 'lld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
 
 const TAB_LABELS: Array<{ id: DesignTab; label: string }> = [
   { id: 'hld',        label: '📐 High Level Design' },
+  { id: 'lld',        label: '📋 Low Level Design' },
   { id: 'ipplan',     label: '🌐 IP Plan' },
   { id: 'vlan',       label: '🏷 VLAN Design' },
   { id: 'routing',    label: '🔀 Routing & Protocols' },
@@ -948,6 +950,23 @@ export function Step4NetworkDesign() {
               siteCode={siteCode}
             />
           </div>
+        </Card>
+      )}
+
+      {/* ── LLD tab ────────────────────────────────────────────────── */}
+      {activeTab === 'lld' && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-purple-300">Low Level Design — Port-level detail</h3>
+              <p className="text-xs text-gray-500 mt-1">IP addresses, interface mappings, VLANs, config snippets, and physical cabling matrix</p>
+            </div>
+          </div>
+          <LLDTopologyDiagram
+            devices={generatedDevices}
+            useCase={useCase}
+            siteCode={siteCode}
+          />
         </Card>
       )}
 

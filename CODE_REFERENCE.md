@@ -27,7 +27,7 @@ is NOT documented here.
 7. [Frontend — `api/client.ts` / hooks](#frontend--apiclientts--hooks)
 8. [Frontend — `data/demoTopologies.ts` / `BackendToggle.tsx`](#frontend--datademotopologiests--backendtoggletsx)
 9. [Frontend — Pages (Step1–Step6)](#frontend--pages-step1step6)
-10. [Frontend — Components (`HLDTopologyDiagram`, Sidebar, panels)](#frontend--components)
+10. [Frontend — Components (`HLDTopologyDiagram`, `LLDTopologyDiagram`, Sidebar, panels)](#frontend--components)
 11. [Backend — app entry, routers, core engines](#backend--app-entry-routers-core-engines)
 12. [Backend — integrations, telemetry, ZTP, policies, export](#backend--integrations-telemetry-ztp-policies-export)
 
@@ -1016,9 +1016,10 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 **Key exports / structure:**
 - `export function Step4NetworkDesign()` (~1500 lines: ~700 lines helpers/data + ~790 lines JSX)
-- `type DesignTab = 'hld'|'ipplan'|'vlan'|'routing'|'physical'|'mermaid'|'simulate'|'summary'|'refdesigns'` + `TAB_LABELS`
+- `type DesignTab = 'hld'|'lld'|'ipplan'|'vlan'|'routing'|'physical'|'mermaid'|'simulate'|'summary'|'refdesigns'` + `TAB_LABELS`
 - Tabs:
   - **hld** — `<HLDTopologyDiagram>` inside a `ref`'d div (for SVG export); "Regenerate" re-syncs `setDevices(generatedDevices)`
+  - **lld** — `<LLDTopologyDiagram>` with per-device IP addresses, interface mappings, config snippets, and physical cabling matrix; 7 use-case-specific detailed topologies
   - **ipplan** — IP block cards (`genIPBlocks`) + per-device IP table (`genIPRows`)
   - **vlan** — VLAN table (`genVLANs`) + (DC only) VNI/EVPN table (`genVNIs`)
   - **routing** — BGP peer table, protocol summary, OSPF area table from `genRoutingData()`
@@ -1238,6 +1239,36 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
   device counts (port-math-driven layout is a possible future refinement).
 - No external graph libraries (pure SVG/JSX) — per Implementation Rule 9.
 - `multisite`, `multicloud`, `aviatrix` all fall through to `buildDCTopology` (no dedicated builders yet).
+
+---
+
+#### `frontend/src/components/LLDTopologyDiagram.tsx`
+**Purpose:** Renders pure-SVG, use-case-aware Low-Level Design (LLD) topology diagrams with per-device IP addresses, interface mappings, VLANs, config snippets, port-to-port link labels, and a companion Physical Cabling Matrix table. Provides deeper implementation detail than the HLD diagram.
+
+**Key exports / structure:**
+- Single export: `export function LLDTopologyDiagram({ devices, useCase, siteCode })`
+- `Props`: `{ devices: BOMDevice[]; useCase?: string (default 'dc'); siteCode?: string (default '') }`
+- Internal types: `LLDInterface` (name, ip, vlan?, mac?, speed?), `LLDNode` (id, hostname, model, tier, vendor, interfaces[], configLines[], services[], specs, haRole?, x/y/w/h, color/border/textColor, icon), `LLDLink` (id, from, to, fromPort, toPort, speed, vlan?, subnet?, protocol, isDashed?), `LLDZone` (id, label, sublabel, yStart/yEnd, fill, stroke), `CablingEntry` (server, serverPort, ipv4, switchPort, mgmtPort, vlan), `LLDTopo` (nodes, links, zones, cabling, title, subtitle, svgH)
+- Layout constants: `SVG_W=1400`, `LEFT_W=160`, `RIGHT_PAD=16`, `CONTENT_W = SVG_W - LEFT_W - RIGHT_PAD`
+- `TIER_STYLE` maps tier names (internet, dmz, internal, loadbalancer, server, application, database, wan, core, distribution, access, endpoint, spine, leaf, gpu, storage, oob, cloud, transit, spoke, branch) → `{ color, border, textColor }`
+- Helpers: `sty(tier)`, `xCenter(count, gap, nodeW)`, `mkNode(...)`, `mkLink(...)`, `lldLinkPath(n1, n2, isDashed?)`
+- **7 per-use-case topology builders** (each returns `LLDTopo`):
+  - `buildDCLLD` — Internet → Firewall HA (PA-5450) → Core/Edge routers → F5 LB cluster → 3× Web Servers → API GW + App Server + Database; mirrors the reference datacenter LLD image
+  - `buildCampusLLD` — WAN Edge (ASR pair) → Core VSS (C9500 HSRP) → 4× Distribution MLAG → 4× Access 802.1X/PoE+ → 5× Endpoints (PC, Phone, AP, Printer, Server)
+  - `buildGPULLD` — OOB MGMT → 2× GPU Spine (SN4800) → 4× GPU Leaf/ToR (SN4600C MLAG) → 4× DGX A100 servers → 2× NVMe-oF storage; PFC P3, ECN, DCQCN detail
+  - `buildWANLLD` — SP Backbone → HQ PE pair (BGP RR, MPLS, SR-MPLS) → 3× WAN CPE → 3× Branch routers → 3× Branch endpoints; QoS DSCP 6-class, L3VPN, SD-WAN
+  - `buildMultisiteLLD` — Site A + Site B with DCI GW pair, EVPN Type-5 stretched RT 65100, per-site spine/leaf/server with vPC domains
+  - `buildMulticloudLLD` — On-prem spine pair → AWS DirectConnect + Azure ExpressRoute + GCP Cloud Interconnect → VPCs/VNets → Cloud workloads (EC2/AKS/GKE)
+  - `buildAviatrixLLD` — DC Edge pair → Aviatrix Transit GWs (AWS/Azure/GCP) with multi-cloud peering → Spoke GWs with network segmentation → Cloud workloads
+  - Dispatched via `buildLLDTopology(devices, useCase, sc)`
+- **SVG rendering:** zone bands with left-column labels, larger device nodes (w=160-260, h=70-140) with interface IPs, config lines, port indicator dots, HA badges. Links show port labels at endpoints on hover with speed/protocol/VLAN/subnet
+- **Device-inspect panel:** clicking a node shows full interface table (name/IP/speed/VLAN/MAC), config snippet (green monospace), services/protocols chips, connected links list, specs
+- **Physical Cabling Matrix:** HTML table below the SVG showing server→port→IPv4→switch-port→management→VLAN for all devices
+
+**Notes:**
+- Used by `Step4NetworkDesign.tsx` (LLD tab, added alongside HLD).
+- No external graph libraries (pure SVG/JSX) — per Implementation Rule 9.
+- Complements the HLD diagram: HLD shows network-wide topology flow; LLD shows per-device implementation detail.
 
 ---
 
