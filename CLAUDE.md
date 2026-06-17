@@ -58,6 +58,28 @@ npm run dev                         # dev server :5173, proxies /api → :8000
 `feat:`, `fix:`, `chore:`, `docs:`, `test:` — conventional commits
 Always work on `main` (not `master` — that is a separate project)
 
+### Branch & merge policy (REQUIRED)
+**Everything must end up on `main`.** All work — features, fixes, docs,
+autonomous backlog items — is expected to land on the `main` branch and be
+deployed from there (netdesignai.com runs from `main`). The standing
+expectation:
+
+1. Develop on a short-lived feature branch (e.g.
+   `claude/<topic>`), commit + push as you go.
+2. When the work is complete and verified (tests + tsc + build green),
+   **open a PR to `main` and merge it** — do not leave finished work
+   stranded on a feature branch.
+3. If a session is handed a specific feature branch in its task setup,
+   still merge that branch into `main` once the work is done (squash or
+   merge commit), unless the user explicitly says to hold off.
+4. After merge, the feature branch may be deleted; `main` is the single
+   source of truth that gets deployed.
+
+Rationale: prior sessions left enterprise work (LLD diagrams, config-gen,
+NetBox/ZTP, monitoring, drift remediation) on
+`claude/network-automation-enterprise-lifybd`, so the live site kept
+showing old behavior. Merging to `main` is now part of "done."
+
 ---
 
 ## 1. Project Identity
@@ -725,10 +747,15 @@ user which item to do — pick it yourself per the priority order below.
    exists specifically so future sessions don't have to re-read source.
 6. **Commit + push**: conventional commit (`feat:`/`fix:`/`docs:`/`test:`)
    referencing the item ID, e.g. `feat: A4 — Arista gNMI/eAPI telemetry
-   block`. `git push -u origin claude/network-automation-enterprise-lifybd`.
+   block`. Push the feature branch
+   (`git push -u origin claude/network-automation-enterprise-lifybd`).
 7. **Flip the tracker row** to `[x] (commitHash)` — can be the same commit as
    step 6 or a small follow-up `docs:` commit.
-8. **Continue or stop**:
+8. **Merge to `main`**: per the Branch & merge policy in §0, open a PR to
+   `main` and merge it once the item is complete and green (tests + tsc +
+   build). Finished work must not be left stranded on the feature branch —
+   `main` is what gets deployed to netdesignai.com.
+9. **Continue or stop**:
    - If there's clearly enough context budget left, loop back to step 2 for
      the next item.
    - If context is getting tight, or you hit a decision that needs the
@@ -759,7 +786,10 @@ tracker stays the single source of truth.
 
 ### Guardrails (apply always, including in autonomous mode)
 
-- Never push to `main` or open a PR unless the user explicitly asks.
+- **Merge finished work to `main`** (see §0 Branch & merge policy): develop
+  on a feature branch, then open a PR and merge to `main` once green.
+  Everything is expected to land on `main` — that is the deployed branch.
+  (Earlier guidance to never touch `main` is superseded by this policy.)
 - Never modify `licensing/` pricing/entitlement logic, billing, or auth
   secrets without stopping to ask first.
 - Never use `--no-verify`, force-push, or `git reset --hard`.
