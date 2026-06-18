@@ -458,6 +458,42 @@ npm test` after ANY change here):
   PL-OUT/PL-IN`, commented-out IPSec/DMVPN stub, QoS shaping `policy-map
   PM-WAN-SHAPING`. Calls `mgmtBlock(dev.hostname, 10)`.
 
+### Cisco Catalyst SD-WAN (cEdge / vEdge / Controllers) — *added 2026-06-18, gap G-A12*
+- **`isSdWanEdge(dev): boolean`** — dispatch discriminator: true when device
+  has `subLayer === 'wan-edge'` AND `features` includes `'SD-WAN'` AND NOT
+  `'IOS-XR'`. Ensures IOS-XR platforms (ASR 9xxx) are not misrouted.
+- **`sdwanEdgeConfig(dev, idx): string`** — Cisco Catalyst SD-WAN cEdge/vEdge
+  configuration in SD-WAN CLI syntax (NOT traditional IOS-XE):
+  `system` block (`system-ip`, `site-id`, `organization-name`, `vbond`),
+  `vpn 0` transport (dual WAN — INET `color biz-internet` + MPLS `color mpls`,
+  `tunnel-interface` with `encapsulation ipsec`),
+  `vpn 512` management (OOB),
+  `vpn 1` service (CORPORATE-LAN) + `vpn 2` (GUEST-IOT),
+  `omp` (graceful-restart, advertise connected/static/ospf),
+  zone-based firewall (EDGE-FW policy, zone-pair LAN→WAN, default-action drop),
+  `app-route-policy` (VOICE-VIDEO → SLA `preferred-color mpls`, SAAS-APPS →
+  `preferred-color biz-internet`), SLA classes (VOICE-SLA: latency 150 /
+  loss 1 / jitter 30), `qos-map` (4 queues: LLQ voice, WRR
+  interactive-video / critical-data / best-effort). Unique `site-id` per
+  device index (100 + idx). Secrets `<CHANGE-ME-*>`.
+- **`sdwanControllerConfig(dev, idx): string`** — SD-WAN controller config
+  generator for vManage, vSmart, and vBond. Detects role from `dev.model`:
+  - **vSmart**: OMP route reflector (`send-path-limit 4`, `ecmp-limit 4`,
+    `send-backup-paths`), VPN 0 transport.
+  - **vBond**: `vbond … local` directive, `ge0/0` WAN-facing interface,
+    VPN 0 transport with IPSec.
+  - **vManage**: VPN 0 transport + VPN 512 OOB management.
+  All controllers use `site-id 1000`. Secrets `<CHANGE-ME-*>`.
+- **Dispatch order** in `generateConfig`: SD-WAN controller → `sdwanControllerConfig`;
+  SD-WAN edge → `sdwanEdgeConfig`; IOS-XR → `iosxrPeConfig`; else → `iosxeWanConfig`.
+- **BOM integration**: `buildDeviceList` accepts optional `overlayProtocols`.
+  When overlay includes 'SD-WAN' and use case is wan/multisite/multicloud:
+  injects vManage (1) + vSmart (2 HA) + vBond (2 HA) as `sdwan-controller`
+  subLayer; swaps non-AppQoE WAN edges to Catalyst 8300 cEdge.
+- **Products**: `sdwan-vmanage`, `sdwan-vsmart`, `sdwan-vbond` (subLayer
+  `sdwan-controller`), `cat8300-edge` (subLayer `wan-edge`).
+- **Tests**: 28 tests in `test/sdwan.test.ts`.
+
 ### Cisco IOS-XR SP/WAN (PE/P) — *added 2026-06-18, gap G-A9*
 - **`iosxrPeConfig(dev, idx): string`** — full IOS-XR PE/P generator emitting
   true IOS-XR syntax (NOT IOS-XE): `GigabitEthernet0/0/0/0`/`Loopback0`/
@@ -625,7 +661,9 @@ interface Product {
 - Spine/Core: Cisco Nexus 9336C-FX2 / 9364C-GX, Arista 7800R3, Juniper QFX10002-72Q, Dell Z9332F, Aruba CX 10000, NVIDIA Spectrum SN5600, Extreme 8720
 - Leaf/ToR: Cisco Nexus 93180YC-FX / 9332C, Arista 7050CX3-32S, Juniper QFX5120-48Y, Dell S5248F, NVIDIA Spectrum SN4600C, Extreme 8520
 - Distribution/Access (campus): Catalyst 9500-48Y4C, 9300L-48T-4G, 9200-48P, FortiSwitch T1024E/148F-POE, Aruba CX 6400/6300M, Extreme 5720/5420
-- WAN/Edge: ASR 1002-HX, Catalyst SD-WAN vEdge 2000
+- WAN/Edge: ASR 1002-HX, Catalyst SD-WAN vEdge 2000, Catalyst 8300 Edge (cEdge)
+- SD-WAN Controllers: vManage, vSmart Controller, vBond Orchestrator
+- IOS-XR SP/WAN: ASR 9904, NCS 540
 - Aviatrix cloud gateways: Aviatrix Gateway (c5.xlarge), Aviatrix Transit GW (c5.2xlarge)
 - Firewalls: Firepower 4145 NGFW, PA-5260 NGFW, FortiGate 2600F
 

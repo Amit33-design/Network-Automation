@@ -109,15 +109,16 @@ function resolvePrefs(useCase: UseCase, vendorPrefs: string[]): Record<string, s
 // ── Role codes for hostnames ─────────────────────────────────────────────────
 
 const ROLE_CODE: Record<string, string> = {
-  spine:          'SPINE',
-  leaf:           'LEAF',
-  distribution:   'DIST',
-  access:         'ACC',
-  'wan-edge':     'WAN',
-  firewall:       'FW',
-  'cloud-gw':     'CGW',
-  'cloud-transit':'CTGW',
-  core:           'CORE',
+  spine:              'SPINE',
+  leaf:               'LEAF',
+  distribution:       'DIST',
+  access:             'ACC',
+  'wan-edge':         'WAN',
+  'sdwan-controller': 'SDCTL',
+  firewall:           'FW',
+  'cloud-gw':         'CGW',
+  'cloud-transit':    'CTGW',
+  core:               'CORE',
 }
 
 function rackLabel(idx: number): string {
@@ -147,6 +148,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
   vendorPrefs?: string[]
   trafficPattern?: string
   firewallModel?: string
+  overlayProtocols?: string[]
 }): BOMDevice[] {
   const useCase = (state.useCase || 'dc') as UseCase
   const scale = (state.scale || 'small') as Scale
@@ -249,6 +251,61 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
     }
   }
 
+  // SD-WAN controller injection: when overlay includes SD-WAN and use case is
+  // WAN / multisite / multicloud, add vManage (1) + vSmart (2 HA) + vBond (2 HA)
+  const hasSdWan = (state.overlayProtocols ?? []).some(
+    o => o.toLowerCase().includes('sd-wan') || o.toLowerCase().includes('sdwan'),
+  )
+  if (hasSdWan && (useCase === 'wan' || useCase === 'multisite' || useCase === 'multicloud')) {
+    const ctrlDefs: Array<{ id: string; qty: number }> = [
+      { id: 'sdwan-vmanage', qty: 1 },
+      { id: 'sdwan-vsmart',  qty: 2 },
+      { id: 'sdwan-vbond',   qty: 2 },
+    ]
+    for (const def of ctrlDefs) {
+      const product = PRODUCTS.find(p => p.id === def.id)
+      if (!product) continue
+      for (let i = 0; i < def.qty; i++) {
+        devices.push({
+          id: `${product.id}-${++globalIdx}`,
+          hostname: '',
+          role: 'sdwan-controller',
+          subLayer: product.subLayer,
+          model: product.model,
+          vendor: product.vendor,
+          count: 1,
+          unitPrice: product.priceUSD,
+          totalPrice: product.priceUSD,
+          speed: product.speed,
+          ports: product.ports,
+          uplinks: product.uplinks,
+          features: product.features,
+        })
+      }
+    }
+    // Swap traditional WAN edges to Catalyst 8300 cEdge for SD-WAN.
+    // Purpose-built SD-WAN edges have AppQoE/DPI; traditional routers (ASR 1002-HX)
+    // may list "SD-WAN" as a supported mode but are not native cEdge/vEdge platforms.
+    const cat8300 = PRODUCTS.find(p => p.id === 'cat8300-edge')
+    if (cat8300) {
+      for (let d = 0; d < devices.length; d++) {
+        if (devices[d].subLayer === 'wan-edge' && !devices[d].features.includes('AppQoE')) {
+          devices[d] = {
+            ...devices[d],
+            id: `cat8300-edge-${d + 100}`,
+            model: cat8300.model,
+            unitPrice: cat8300.priceUSD,
+            totalPrice: cat8300.priceUSD,
+            speed: cat8300.speed,
+            ports: cat8300.ports,
+            uplinks: cat8300.uplinks,
+            features: cat8300.features,
+          }
+        }
+      }
+    }
+  }
+
   return generateHostnames(devices, state.siteCode)
 }
 
@@ -275,6 +332,7 @@ export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>
   vendorPrefs?: string[]
   trafficPattern?: string
   firewallModel?: string
+  overlayProtocols?: string[]
 }): {
   devices: BOMDevice[]
   summary: Record<string, BOMSummaryRow>
@@ -350,8 +408,9 @@ const ROLE_DEFAULT_POWER_W: Record<string, number> = {
   distribution: 600,
   access: 400,
   'wan-edge': 300,
+  'sdwan-controller': 300,
   firewall: 800,
-  'cloud-gw': 0, // software / cloud-hosted — no on-prem power
+  'cloud-gw': 0,
   'cloud-transit': 0,
 }
 
@@ -361,7 +420,8 @@ function rackUnitsFor(subLayer: string): number {
     case 'spine':
     case 'core':
     case 'wan-edge':
-      return 2 // chassis / larger aggregation boxes
+    case 'sdwan-controller':
+      return 2
     case 'firewall':
       return 1
     case 'cloud-gw':

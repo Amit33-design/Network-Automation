@@ -795,8 +795,8 @@ export function Step4NetworkDesign() {
   const svgRef = useRef<HTMLDivElement>(null)
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
-    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel }),
-    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel]
+    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols }),
+    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols]
   )
 
   useMemo(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
