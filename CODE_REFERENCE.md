@@ -1274,38 +1274,12 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 ---
 
-#### `frontend/src/pages/Step4ZTP.tsx` (LEGACY/UNUSED)
-**Purpose:** Lab-topology ZTP demo page that runs the ZTP pipeline against demo devices via `useRunZTP`, with fault injection.
-**Key exports / structure:**
-- Exports `Step4ZTP` component
-- Renders topology summary cards, `TopologyDiagram` (lab devices via `useTopologyDevices`), fault-injection form (`failDevice`/`failAt` from `ZTP_STAGES`), result summary cards, events table
-- Uses `useRunZTP`, `useTopologySummary`, `useTopologyDevices`, `useToast`, Zustand `prevStep`/`nextStep`
-
-**Notes:** NOT wired into live `App.tsx` routing — superseded by the `ztp` sub-tab in `Step6Deploy.tsx`. Only referenced by `e2e-features.test.ts`.
-
----
-
-#### `frontend/src/pages/Step5Checks.tsx` (LEGACY/UNUSED)
-**Purpose:** Demo page for running pre-/post-deploy checks against lab devices with optional fault injection.
-**Key exports / structure:**
-- Exports `Step5Checks` component
-- Fault-injection card (fail device + `CHECK_OPTIONS`), Pre-Checks/Post-Checks/Clear via `useRunChecks('pre'|'post')`
-- Summary cards (PASS/FAIL/WARN) + results table with status badges and remediation column
-
-**Notes:** NOT wired into live `App.tsx` routing — superseded by the `checks` sub-tab in `Step6Deploy.tsx`. Only referenced by `e2e-features.test.ts`.
-
----
-
-#### `frontend/src/pages/Step6Monitor.tsx` (LEGACY/UNUSED)
-**Purpose:** Demo monitoring page that polls device health/alerts via `usePollMonitoring` and displays status in a table.
-**Key exports / structure:**
-- Exports `Step6Monitor` component
-- "Poll Now"/"Simulate Degraded"/"Clear" controls; `STATUS_BADGE` map for healthy/degraded/down/unknown
-- Summary cards (total/healthy/degraded/down/alerts), per-device health table (CPU, uptime via `formatUptime`, alerts), active-alerts panel
-
-**Notes:** NOT wired into live `App.tsx` routing — superseded by the `monitor` sub-tab in `Step6Deploy.tsx`. Only referenced by `e2e-features.test.ts`.
-
----
+> **Note (E1, 2026-06-18):** the legacy demo pages `Step4ZTP.tsx`,
+> `Step5Checks.tsx`, and `Step6Monitor.tsx` were **removed** — their
+> functionality is provided by the `ztp` / `checks` / `monitor` sub-tabs in
+> `Step6Deploy.tsx`. The live wizard pages are Step1UseCase,
+> Step2Requirements, Step2Design, Step4NetworkDesign, Step3Config,
+> Step6Deploy (see `App.tsx` routing).
 
 ---
 
@@ -1468,12 +1442,6 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 ---
 
-#### `frontend/src/components/wizard/WizardNav.tsx` (LEGACY/UNUSED)
-**Purpose:** Horizontal step-nav bar (steps 1-6, click-to-jump via `setStep`).
-**Key exports / structure:** `export function WizardNav()`; `STEPS` array of 6 labels (Use Case, Requirements, Products & BOM, Network Design, Config Gen, Deploy & Validate); active/done/pending styling.
-**Notes:** NOT rendered by `App.tsx` (Sidebar handles nav). Only referenced by `e2e-features.test.ts`.
-
----
 
 #### `frontend/src/components/LiveProgressFeed.tsx`
 **Purpose:** WebSocket-driven live deploy event log with progress bar and stage badge.
