@@ -566,6 +566,105 @@ describe('Campus distribution/access config (Enterprise upgrade A3)', () => {
   })
 })
 
+// ── Gap G-A9: IOS-XR SP/WAN PE support (SR-MPLS + L3VPN) ──────────────────────
+describe('Cisco IOS-XR SP/WAN PE config (Gap G-A9)', () => {
+  const xrDevice = (overrides: Partial<BOMDevice> = {}) =>
+    makeDevice({
+      hostname: 'IAD-PE-A01',
+      vendor: 'Cisco',
+      subLayer: 'wan-edge',
+      model: 'ASR 9904',
+      features: ['IOS-XR', 'BGP', 'MPLS', 'SR-MPLS', 'L3VPN', 'IS-IS'],
+      ...overrides,
+    })
+
+  it('ASR 9000 wan-edge dispatches to the IOS-XR generator (not IOS-XE)', () => {
+    const cfg = generateConfig(xrDevice(), 0, 'wan')
+    expect(cfg).toContain('OS     : Cisco IOS-XR')
+    expect(cfg).toContain('hostname IAD-PE-A01')
+    // IOS-XR interface naming, not IOS-XE GigabitEthernet0/0/0
+    expect(cfg).toContain('GigabitEthernet0/0/0/0')
+    expect(cfg).toContain('interface Loopback0')
+  })
+
+  it('NCS and explicit IOS-XR feature also select IOS-XR; ASR 1002-HX stays IOS-XE', () => {
+    const ncs = generateConfig(xrDevice({ model: 'NCS 540', features: ['BGP'] }), 0, 'wan')
+    expect(ncs).toContain('OS     : Cisco IOS-XR')
+
+    const featOnly = generateConfig(
+      xrDevice({ model: 'Mystery-Router', features: ['IOS-XR'] }), 0, 'wan')
+    expect(featOnly).toContain('OS     : Cisco IOS-XR')
+
+    // ASR 1002-HX is IOS-XE — must NOT route to IOS-XR
+    const iosxe = generateConfig(
+      makeDevice({ vendor: 'Cisco', subLayer: 'wan-edge', model: 'ASR 1002-HX',
+        features: ['BGP', 'MPLS', 'OSPF'] }), 0, 'wan')
+    expect(iosxe).toContain('OS     : Cisco IOS-XE')
+    expect(iosxe).not.toContain('Cisco IOS-XR')
+  })
+
+  it('emits L3VPN VPNv4 BGP overlay with route-targets and a VRF', () => {
+    const cfg = generateConfig(xrDevice(), 0, 'wan')
+    expect(cfg).toContain('router bgp 65000')
+    expect(cfg).toContain('address-family vpnv4 unicast')
+    expect(cfg).toContain('vrf CUST-A')
+    expect(cfg).toContain('import route-target')
+    expect(cfg).toContain('export route-target')
+    expect(cfg).toContain('rd 65000:100')
+  })
+
+  it('emits SR-MPLS underlay with prefix-SID on Loopback0', () => {
+    const cfg = generateConfig(xrDevice(), 0, 'wan')
+    expect(cfg).toContain('segment-routing')
+    expect(cfg).toContain('segment-routing mpls')
+    expect(cfg).toContain('prefix-sid index')
+    expect(cfg).toContain('global-block 16000 23999')
+  })
+
+  it('uses route-policy (IOS-XR), not route-map (IOS-XE)', () => {
+    const cfg = generateConfig(xrDevice(), 0, 'wan')
+    expect(cfg).toContain('route-policy PASS-ALL')
+    expect(cfg).toContain('end-policy')
+    expect(cfg).not.toContain('route-map ')
+  })
+
+  it('uses a single IGP — IS-IS, never OSPF as well', () => {
+    const cfg = generateConfig(xrDevice(), 0, 'wan')
+    expect(cfg).toContain('router isis CORE')
+    expect(cfg).not.toContain('router ospf')
+  })
+
+  it('uses <CHANGE-ME-*> placeholders and no plaintext secrets', () => {
+    const cfg = generateConfig(xrDevice(), 0, 'wan')
+    expect(cfg).toMatch(/<CHANGE-ME-/)
+    expect(cfg).not.toMatch(/password\s+\w{8,}/)
+    expect(cfg).toContain('<CHANGE-ME-admin-password>')
+    expect(cfg).toContain('<CHANGE-ME-tacacs-key>')
+  })
+
+  it('IOS-XR config is internally consistent (no duplicate hostname/bgp blocks)', () => {
+    const cfg = generateConfig(xrDevice(), 0, 'wan')
+    expect((cfg.match(/^hostname /gm) ?? []).length).toBe(1)
+    expect((cfg.match(/^router bgp /gm) ?? []).length).toBe(1)
+    expect((cfg.match(/^router isis /gm) ?? []).length).toBe(1)
+  })
+
+  it('per-device prefix-sid index follows the device index', () => {
+    const cfg0 = generateConfig(xrDevice({ hostname: 'IAD-PE-A01' }), 0, 'wan')
+    const cfg1 = generateConfig(xrDevice({ hostname: 'IAD-PE-A02' }), 1, 'wan')
+    expect(cfg0).toContain('prefix-sid index 1')
+    expect(cfg1).toContain('prefix-sid index 2')
+    expect(cfg0).toContain('ipv4 address 10.255.10.1 255.255.255.255')
+    expect(cfg1).toContain('ipv4 address 10.255.10.2 255.255.255.255')
+  })
+
+  it('streams model-driven telemetry to a placeholder collector', () => {
+    const cfg = generateConfig(xrDevice(), 0, 'wan')
+    expect(cfg).toContain('telemetry model-driven')
+    expect(cfg).toContain('<CHANGE-ME-telemetry-collector-ip>')
+  })
+})
+
 describe('generateAllConfigs', () => {
   it('returns one config per device keyed by id', () => {
     const devices: BOMDevice[] = [
