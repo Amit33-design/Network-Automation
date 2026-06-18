@@ -233,14 +233,17 @@ describe('Utility functions', () => {
 // ── App structure sanity ──────────────────────────────────────────────────────
 
 describe('App structure', () => {
-  it('all 6 page components export named functions', async () => {
+  it('all 6 live wizard page components export named functions', async () => {
+    // Mirrors App.tsx routing (steps 1-6); legacy demo pages (Step4ZTP,
+    // Step5Checks, Step6Monitor) were removed — superseded by Step6Deploy
+    // sub-tabs (E1).
     const pages = [
-      ['@/pages/Step1UseCase', 'Step1UseCase'],
-      ['@/pages/Step2Design',  'Step2Design'],
-      ['@/pages/Step3Config',  'Step3Config'],
-      ['@/pages/Step4ZTP',     'Step4ZTP'],
-      ['@/pages/Step5Checks',  'Step5Checks'],
-      ['@/pages/Step6Monitor', 'Step6Monitor'],
+      ['@/pages/Step1UseCase',      'Step1UseCase'],
+      ['@/pages/Step2Requirements', 'Step2Requirements'],
+      ['@/pages/Step2Design',       'Step2Design'],
+      ['@/pages/Step4NetworkDesign','Step4NetworkDesign'],
+      ['@/pages/Step3Config',       'Step3Config'],
+      ['@/pages/Step6Deploy',       'Step6Deploy'],
     ]
     for (const [mod, name] of pages) {
       const m = await import(mod)
@@ -257,7 +260,6 @@ describe('App structure', () => {
       ['@/components/AlertsPanel',      'AlertsPanel'],
       ['@/components/RcaPanel',         'RcaPanel'],
       ['@/components/LiveProgressFeed', 'LiveProgressFeed'],
-      ['@/components/wizard/WizardNav', 'WizardNav'],
     ]
     for (const [mod, name] of components) {
       const m = await import(mod)
