@@ -85,6 +85,13 @@ export const runRca = (
   design_id: designId,
 })
 
+// ── Troubleshooting Tooling Engine (G-A19) ────────────────────────────────────
+
+import type { TroubleshootResult } from '@/types'
+
+export const runTroubleshoot = (symptom: string, affectedDevices: string[], platform: string) =>
+  post<TroubleshootResult>('/api/troubleshoot', { symptom, affected_devices: affectedDevices, platform })
+
 // ── Intent NLP parser (G-A1) ──────────────────────────────────────────────────
 
 import type { IntentParseResult } from '@/types'

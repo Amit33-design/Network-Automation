@@ -1083,6 +1083,55 @@ async def api_rca_analyze(
 
 
 # ---------------------------------------------------------------------------
+# G-A19: Troubleshooting Tooling Engine
+# ---------------------------------------------------------------------------
+
+class TroubleshootRequest(BaseModel):
+    symptom:          str
+    affected_devices: list[str] = []
+    platform:         str = "nxos"
+
+
+class DiagnosticStepModel(BaseModel):
+    order:       int
+    description: str
+    command:     str
+    look_for:    str
+
+
+class LikelyCauseModel(BaseModel):
+    cause:      str
+    confidence: float
+    indicators: list[str]
+
+
+class TroubleshootResponse(BaseModel):
+    symptom:          str
+    category:         str
+    summary:          str
+    diagnostic_steps: list[DiagnosticStepModel]
+    likely_causes:    list[LikelyCauseModel]
+    remediation:      list[str]
+
+
+@app.post("/api/troubleshoot", response_model=TroubleshootResponse)
+async def api_troubleshoot(
+    req: TroubleshootRequest,
+    user: dict = Depends(require_permission("designs:read")),
+):
+    """
+    Return a structured, platform-aware troubleshooting playbook for a symptom.
+    Unknown symptoms fall back to a generic triage workflow.
+    """
+    from troubleshoot import build_troubleshooting
+    return TroubleshootResponse(**build_troubleshooting(
+        symptom=req.symptom,
+        affected_devices=req.affected_devices,
+        platform=req.platform,
+    ))
+
+
+# ---------------------------------------------------------------------------
 # G-A1: Intent NLP parser — free-text → Step 1 form fields (Claude API)
 # ---------------------------------------------------------------------------
 

@@ -272,6 +272,15 @@ export interface RcaHypothesis {
   remediation: string
 }
 
+// ── Troubleshooting Tooling Engine (G-A19) ──────────────────────────────────────
+
+export interface DiagnosticStep { order: number; description: string; command: string; look_for: string }
+export interface LikelyCause { cause: string; confidence: number; indicators: string[] }
+export interface TroubleshootResult {
+  symptom: string; category: string; summary: string
+  diagnostic_steps: DiagnosticStep[]; likely_causes: LikelyCause[]; remediation: string[]
+}
+
 // ── Intent NLP parser (G-A1) ────────────────────────────────────────────────────
 
 export interface IntentParseResult {

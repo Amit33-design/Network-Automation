@@ -14,13 +14,14 @@ import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON } from '@/lib/telemetry-gen'
-import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput } from '@/types'
+import { useTroubleshoot } from '@/hooks/useTroubleshoot'
+import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
   healthy: 'pass', degraded: 'warn', down: 'fail', unknown: 'neutral',
 }
 
-type Tab = 'deploy' | 'ztp' | 'checks' | 'monitor' | 'netconf' | 'day2ops' | 'batfish'
+type Tab = 'deploy' | 'ztp' | 'checks' | 'monitor' | 'netconf' | 'day2ops' | 'troubleshoot' | 'batfish'
 
 type PipelineStage = 'precheck' | 'backup' | 'push' | 'verify' | 'postcheck'
 type StageStatus = 'pending' | 'running' | 'done' | 'failed'
@@ -1136,6 +1137,378 @@ export function simulateRemediation(devices: RemediationDeviceInput[]): ConfigRe
   }
 }
 
+// ── Troubleshooting Tooling Engine (G-A19 demo mode) ──────────────────────────
+// Mirrors the backend POST /api/troubleshoot playbooks: per-symptom diagnostic
+// steps, ranked likely causes, and remediation, with platform-specific CLI.
+// Platforms: nxos | iosxe | eos | junos.
+
+type TPlat = 'nxos' | 'iosxe' | 'eos' | 'junos'
+
+function normTPlat(platform: string): TPlat {
+  const p = platform.toLowerCase()
+  if (/jun/.test(p)) return 'junos'
+  if (/eos|arista/.test(p)) return 'eos'
+  if (/nx|nexus/.test(p)) return 'nxos'
+  return 'iosxe'
+}
+
+// Pick a platform-specific command from a per-platform map.
+function tcmd(platform: string, map: Record<TPlat, string>): string {
+  return map[normTPlat(platform)]
+}
+
+// Human-readable labels for the 8 supported symptom keys (drives the <select>).
+const TROUBLESHOOT_SYMPTOMS: Array<{ key: string; label: string }> = [
+  { key: 'bgp_down',        label: 'BGP session down' },
+  { key: 'ospf_adjacency',  label: 'OSPF adjacency stuck' },
+  { key: 'interface_flap',  label: 'Interface flapping' },
+  { key: 'high_latency',    label: 'High latency' },
+  { key: 'packet_loss',     label: 'Packet loss' },
+  { key: 'high_cpu',        label: 'High CPU' },
+  { key: 'vxlan_evpn',      label: 'VXLAN / EVPN reachability' },
+  { key: 'pfc_rocev2',      label: 'PFC / RoCEv2 (GPU fabric)' },
+]
+
+interface TPlaybook {
+  category: string
+  summary: string
+  steps: (p: string) => DiagnosticStep[]
+  causes: LikelyCause[]
+  remediation: string[]
+}
+
+// (DiagnosticStep / LikelyCause come from @/types via the file-level import.)
+type DiagnosticStep = TroubleshootResult['diagnostic_steps'][number]
+type LikelyCause = TroubleshootResult['likely_causes'][number]
+
+const TROUBLESHOOT_PLAYBOOKS: Record<string, TPlaybook> = {
+  bgp_down: {
+    category: 'Routing',
+    summary: 'A BGP session is stuck in Idle/Active/Connect and not reaching Established. Verify reachability, the TCP/179 session, and that AS numbers, timers, and MTU agree on both ends.',
+    steps: (p) => [
+      { order: 1, description: 'Check the BGP neighbor summary and session state',
+        command: tcmd(p, { nxos: 'show ip bgp summary', iosxe: 'show ip bgp summary', eos: 'show ip bgp summary', junos: 'show bgp summary' }),
+        look_for: 'Neighbor stuck in Idle/Active/Connect rather than Established; check the State/PfxRcd column' },
+      { order: 2, description: 'Verify L3 reachability to the neighbor address',
+        command: tcmd(p, { nxos: 'ping <neighbor-ip>', iosxe: 'ping <neighbor-ip>', eos: 'ping <neighbor-ip>', junos: 'ping <neighbor-ip>' }),
+        look_for: 'Packet loss or unreachable — a routing/underlay problem prevents the TCP session' },
+      { order: 3, description: 'Inspect detailed neighbor state, configured vs received AS, and timers',
+        command: tcmd(p, { nxos: 'show ip bgp neighbors <neighbor-ip>', iosxe: 'show ip bgp neighbors <neighbor-ip>', eos: 'show ip bgp neighbors <neighbor-ip>', junos: 'show bgp neighbor <neighbor-ip>' }),
+        look_for: 'AS mismatch ("remote AS" vs configured), hold-time mismatch, or "Connection refused"' },
+      { order: 4, description: 'Check for MTU / path-MTU issues that break large BGP updates',
+        command: tcmd(p, { nxos: 'ping <neighbor-ip> df-bit packet-size 8972', iosxe: 'ping <neighbor-ip> df-bit size 8972', eos: 'ping <neighbor-ip> df-bit size 8972', junos: 'ping <neighbor-ip> do-not-fragment size 8972' }),
+        look_for: 'Fragmentation-needed / drops — an MTU mismatch can wedge the session in OpenSent/OpenConfirm' },
+    ],
+    causes: [
+      { cause: 'TCP/179 session never forms — underlay/L3 unreachability', confidence: 0.85,
+        indicators: ['Neighbor stuck in Active/Connect', 'Ping to neighbor fails', 'No route to neighbor in RIB'] },
+      { cause: 'AS number mismatch (remote-as misconfigured)', confidence: 0.7,
+        indicators: ['"remote AS x, configured AS y"', 'Session flaps in OpenSent', 'Notification: Bad Peer AS'] },
+      { cause: 'MTU / path-MTU mismatch wedging large updates', confidence: 0.5,
+        indicators: ['Session reaches OpenConfirm then drops', 'df-bit ping fails at 9000', 'Inconsistent on jumbo links'] },
+      { cause: 'BFD session down tearing BGP down', confidence: 0.4,
+        indicators: ['BFD admin-down/Down', 'BGP flaps in lockstep with BFD', 'Recent link errors'] },
+    ],
+    remediation: [
+      'Restore L3 reachability to the neighbor (fix underlay route / interface)',
+      'Align remote-as on both peers and confirm router-id uniqueness',
+      'Match MTU on the path and enable path-MTU discovery where supported',
+      'If BFD is enabled, confirm BFD timers/echo are consistent before clearing the session',
+      'As a last resort, soft-clear the neighbor (clear ip bgp <ip> soft) rather than a hard reset',
+    ],
+  },
+
+  ospf_adjacency: {
+    category: 'Routing',
+    summary: 'OSPF neighbors are not reaching FULL (often stuck in INIT/EXSTART/2-WAY). Mismatched timers, area IDs, network types, or MTU are the usual culprits.',
+    steps: (p) => [
+      { order: 1, description: 'Check OSPF neighbor adjacency state',
+        command: tcmd(p, { nxos: 'show ip ospf neighbor', iosxe: 'show ip ospf neighbor', eos: 'show ip ospf neighbor', junos: 'show ospf neighbor' }),
+        look_for: 'State stuck in INIT (no hellos back), 2-WAY (DR/BDR), or EXSTART (MTU mismatch)' },
+      { order: 2, description: 'Compare interface OSPF parameters (hello/dead, area, network type)',
+        command: tcmd(p, { nxos: 'show ip ospf interface <intf>', iosxe: 'show ip ospf interface <intf>', eos: 'show ip ospf interface <intf>', junos: 'show ospf interface <intf> detail' }),
+        look_for: 'Hello/Dead timer mismatch, area ID mismatch, or network-type mismatch (p2p vs broadcast)' },
+      { order: 3, description: 'Verify interface MTU on both ends',
+        command: tcmd(p, { nxos: 'show interface <intf>', iosxe: 'show ip interface <intf>', eos: 'show interfaces <intf>', junos: 'show interfaces <intf>' }),
+        look_for: 'MTU mismatch — adjacency stuck in EXSTART/EXCHANGE is the classic symptom' },
+      { order: 4, description: 'Confirm OSPF authentication matches',
+        command: tcmd(p, { nxos: 'show ip ospf interface <intf>', iosxe: 'show ip ospf interface <intf>', eos: 'show ip ospf interface <intf>', junos: 'show ospf interface <intf> detail' }),
+        look_for: 'Authentication type/key mismatch — hellos are silently dropped' },
+    ],
+    causes: [
+      { cause: 'Hello/Dead timer or area-ID mismatch', confidence: 0.8,
+        indicators: ['Neighbor stuck in INIT', 'Timers differ on the two ends', 'Area mismatch logged'] },
+      { cause: 'MTU mismatch (adjacency hangs in EXSTART/EXCHANGE)', confidence: 0.7,
+        indicators: ['EXSTART/EXCHANGE state', 'Different MTU on the link', 'DBD retransmits'] },
+      { cause: 'OSPF authentication mismatch', confidence: 0.5,
+        indicators: ['No neighbor at all', 'Auth-type/key differs', '%OSPF auth mismatch logs'] },
+      { cause: 'Network-type mismatch (broadcast vs point-to-point)', confidence: 0.4,
+        indicators: ['Stuck in 2-WAY', 'No DR/BDR election expected on p2p', 'Mismatched ip ospf network'] },
+    ],
+    remediation: [
+      'Align hello/dead intervals and area IDs on both interfaces',
+      'Set identical MTU (or use "ip ospf mtu-ignore" only as a temporary workaround)',
+      'Match OSPF authentication type and key',
+      'Set a consistent OSPF network type on both ends',
+    ],
+  },
+
+  interface_flap: {
+    category: 'Physical',
+    summary: 'An interface is repeatedly going up/down. Inspect error counters, optics/light levels, speed/duplex, and cabling before suspecting protocol issues.',
+    steps: (p) => [
+      { order: 1, description: 'Check interface status and last flap time',
+        command: tcmd(p, { nxos: 'show interface <intf>', iosxe: 'show interfaces <intf>', eos: 'show interfaces <intf>', junos: 'show interfaces <intf> extensive' }),
+        look_for: '"last link flapped" timestamp, line-protocol bouncing, reset counts' },
+      { order: 2, description: 'Examine error counters (CRC, input errors, runts)',
+        command: tcmd(p, { nxos: 'show interface <intf> counters errors', iosxe: 'show interfaces <intf> | include error|CRC', eos: 'show interfaces <intf> counters errors', junos: 'show interfaces <intf> extensive | match error' }),
+        look_for: 'Rising CRC / input errors / runts — points to a bad cable, dirty fiber, or duplex mismatch' },
+      { order: 3, description: 'Verify speed/duplex negotiation',
+        command: tcmd(p, { nxos: 'show interface <intf> status', iosxe: 'show interfaces <intf> status', eos: 'show interfaces <intf> status', junos: 'show interfaces <intf> media' }),
+        look_for: 'Half-duplex on one side / speed mismatch — a frequent late-collision and flap source' },
+      { order: 4, description: 'Read optical transceiver light levels (for fiber)',
+        command: tcmd(p, { nxos: 'show interface <intf> transceiver details', iosxe: 'show interfaces <intf> transceiver detail', eos: 'show interfaces <intf> transceiver', junos: 'show interfaces diagnostics optics <intf>' }),
+        look_for: 'Rx/Tx power outside the optic\'s range, or low light — dirty/failing optic or fiber' },
+    ],
+    causes: [
+      { cause: 'Bad cable / dirty or failing optic (CRC errors)', confidence: 0.8,
+        indicators: ['Rising CRC and input errors', 'Rx power out of range', 'Flaps stop when cable swapped'] },
+      { cause: 'Speed/duplex mismatch', confidence: 0.6,
+        indicators: ['Half-duplex on one end', 'Late collisions', 'Auto-neg disagreement'] },
+      { cause: 'Failing transceiver / SFP not fully seated', confidence: 0.5,
+        indicators: ['Tx power abnormal', 'Errors only on one optic', 'DOM thresholds exceeded'] },
+      { cause: 'STP topology change / port-security shut', confidence: 0.35,
+        indicators: ['err-disabled state', 'STP TCN bursts', 'Recovers after err-disable timeout'] },
+    ],
+    remediation: [
+      'Replace the cable or clean/replace the optic and re-seat the SFP',
+      'Hard-set matching speed/duplex on both ends if auto-neg is unreliable',
+      'Confirm transceiver DOM levels are within spec; swap suspect optics',
+      'If err-disabled, fix the trigger (BPDU/port-security) then re-enable',
+    ],
+  },
+
+  high_latency: {
+    category: 'Performance',
+    summary: 'End-to-end latency is elevated. Localize the hop adding delay, then check for congestion/queuing, suboptimal routing, or a control-plane-punted path.',
+    steps: (p) => [
+      { order: 1, description: 'Trace the path hop-by-hop to localize the latency',
+        command: tcmd(p, { nxos: 'traceroute <dest>', iosxe: 'traceroute <dest>', eos: 'traceroute <dest>', junos: 'traceroute <dest>' }),
+        look_for: 'The hop where RTT jumps — that device/link is the contributor' },
+      { order: 2, description: 'Check interface utilization and output drops/queue depth',
+        command: tcmd(p, { nxos: 'show interface <intf> | include rate|drop', iosxe: 'show interfaces <intf> | include rate|drops', eos: 'show interfaces <intf> | include rate|drops', junos: 'show interfaces <intf> extensive | match "rate|drop"' }),
+        look_for: 'High utilization with output drops / deep queues — congestion adds queuing delay' },
+      { order: 3, description: 'Verify the forwarding path is optimal (no scenic route)',
+        command: tcmd(p, { nxos: 'show ip route <dest>', iosxe: 'show ip cef <dest>', eos: 'show ip route <dest>', junos: 'show route <dest>' }),
+        look_for: 'Suboptimal next-hop / asymmetric path adding extra hops' },
+      { order: 4, description: 'Rule out control-plane punting (process-switched path)',
+        command: tcmd(p, { nxos: 'show processes cpu sort', iosxe: 'show processes cpu sorted', eos: 'show processes top once', junos: 'show chassis routing-engine' }),
+        look_for: 'High CPU correlating with latency — traffic punted to CPU instead of hardware' },
+    ],
+    causes: [
+      { cause: 'Link congestion / queuing delay on a hot interface', confidence: 0.75,
+        indicators: ['High utilization', 'Output drops/queue depth rising', 'Latency tracks load'] },
+      { cause: 'Suboptimal or asymmetric routing path', confidence: 0.55,
+        indicators: ['Traceroute takes extra hops', 'Recent route change', 'Asymmetric RTT'] },
+      { cause: 'Control-plane punting (process-switched traffic)', confidence: 0.45,
+        indicators: ['High CPU', 'Latency only for certain flows', 'CoPP / punt path active'] },
+      { cause: 'Buffer/QoS misconfiguration', confidence: 0.35,
+        indicators: ['Tail drops in priority queue', 'Microbursts', 'Shaper too aggressive'] },
+    ],
+    remediation: [
+      'Relieve congestion: add capacity/ECMP or tune QoS on the hot link',
+      'Correct routing metrics/policy to restore the optimal path',
+      'Ensure traffic is hardware-switched (fix CoPP/punt cause)',
+      'Right-size buffers and queue thresholds for the traffic profile',
+    ],
+  },
+
+  packet_loss: {
+    category: 'Performance',
+    summary: 'Traffic is experiencing drops. Distinguish interface errors (physical) from output drops (congestion/microbursts) and policy drops (ACL/QoS).',
+    steps: (p) => [
+      { order: 1, description: 'Check interface drop and error counters',
+        command: tcmd(p, { nxos: 'show interface <intf> counters errors', iosxe: 'show interfaces <intf> | include drops|errors', eos: 'show interfaces <intf> counters errors', junos: 'show interfaces <intf> extensive | match "drop|error"' }),
+        look_for: 'Output drops (congestion) vs input errors/CRC (physical) vs no-buffer drops' },
+      { order: 2, description: 'Look for queue drops / microburst tail-drops',
+        command: tcmd(p, { nxos: 'show queuing interface <intf>', iosxe: 'show policy-map interface <intf>', eos: 'show interfaces <intf> counters queue', junos: 'show interfaces queue <intf>' }),
+        look_for: 'Tail-drops on a specific queue — microbursts overrun shallow buffers' },
+      { order: 3, description: 'Verify no ACL / policy is dropping the flow',
+        command: tcmd(p, { nxos: 'show access-lists', iosxe: 'show access-lists', eos: 'show ip access-lists', junos: 'show firewall' }),
+        look_for: 'ACL deny hit-counts incrementing for the affected flow' },
+      { order: 4, description: 'Test reachability and loss rate to the destination',
+        command: tcmd(p, { nxos: 'ping <dest> count 100', iosxe: 'ping <dest> repeat 100', eos: 'ping <dest> repeat 100', junos: 'ping <dest> count 100' }),
+        look_for: 'Consistent loss % to quantify and confirm the drop point' },
+    ],
+    causes: [
+      { cause: 'Microbursts overrunning buffers (output/tail drops)', confidence: 0.7,
+        indicators: ['Output/queue tail-drops', 'Low average but bursty load', 'Drops on shallow-buffer ports'] },
+      { cause: 'Physical-layer errors (CRC/input errors)', confidence: 0.6,
+        indicators: ['Rising CRC/input errors', 'Bad cable/optic', 'Errors localized to one port'] },
+      { cause: 'ACL / QoS policy dropping the flow', confidence: 0.45,
+        indicators: ['ACL deny hits incrementing', 'Policer/exceed drops', 'Loss only for specific 5-tuple'] },
+      { cause: 'Oversubscription / sustained congestion', confidence: 0.4,
+        indicators: ['Link at 100%', 'WRED drops', 'Loss tracks peak hours'] },
+    ],
+    remediation: [
+      'Increase buffer allocation or enable WRED/ECN to absorb microbursts',
+      'Fix the physical layer (cable/optic) if CRC/input errors are present',
+      'Adjust or remove the ACL/QoS policy dropping legitimate traffic',
+      'Add capacity / ECMP to relieve sustained oversubscription',
+    ],
+  },
+
+  high_cpu: {
+    category: 'Device Health',
+    summary: 'Control-plane CPU is high. Identify the top process, check whether traffic is being punted to the CPU, and verify CoPP is protecting the control plane.',
+    steps: (p) => [
+      { order: 1, description: 'Identify the top CPU process',
+        command: tcmd(p, { nxos: 'show processes cpu sort', iosxe: 'show processes cpu sorted', eos: 'show processes top once', junos: 'show system processes extensive' }),
+        look_for: 'A single process dominating, or high interrupt/IP-input (punted traffic)' },
+      { order: 2, description: 'Check the CoPP / control-plane policy for drops',
+        command: tcmd(p, { nxos: 'show policy-map interface control-plane', iosxe: 'show policy-map control-plane', eos: 'show policy-map interface control-plane', junos: 'show ddos-protection statistics' }),
+        look_for: 'CoPP class exceed/drop counters climbing — control plane under attack/overload' },
+      { order: 3, description: 'Look for traffic punted to CPU (software-switched)',
+        command: tcmd(p, { nxos: 'show hardware rate-limiter', iosxe: 'show platform punt-statistics', eos: 'show cpu counters queue', junos: 'show pfe statistics traffic' }),
+        look_for: 'High punt rate — TTL-expiry, ARP storms, or no-route punts hammering the CPU' },
+      { order: 4, description: 'Check for routing/protocol churn driving CPU',
+        command: tcmd(p, { nxos: 'show ip bgp summary', iosxe: 'show ip route summary', eos: 'show ip route summary', junos: 'show route summary' }),
+        look_for: 'Route/SPF churn or constant BGP updates keeping the CPU busy' },
+    ],
+    causes: [
+      { cause: 'Traffic punted to CPU (process-switched / no CoPP protection)', confidence: 0.75,
+        indicators: ['High IP-input / interrupt CPU', 'Punt-statistics climbing', 'CoPP exceed drops'] },
+      { cause: 'Control-plane storm (ARP/BPDU/protocol flood)', confidence: 0.6,
+        indicators: ['One CoPP class saturated', 'Broadcast storm', 'CPU tracks a noisy port'] },
+      { cause: 'Routing/SPF churn from instability', confidence: 0.5,
+        indicators: ['Flapping routes', 'Constant BGP updates', 'OSPF SPF runs frequent'] },
+      { cause: 'Runaway / buggy process', confidence: 0.35,
+        indicators: ['Single process pinned high', 'Resolves after process restart', 'Known bug / memory leak'] },
+    ],
+    remediation: [
+      'Apply or tighten CoPP to rate-limit control-plane traffic',
+      'Identify and stop the punt source (TTL-expiry, ARP storm, missing route)',
+      'Stabilize routing (dampening, fix flapping link) to stop churn',
+      'If a process is buggy, restart it and check for a software fix/upgrade',
+    ],
+  },
+
+  vxlan_evpn: {
+    category: 'Overlay',
+    summary: 'VXLAN/EVPN endpoints cannot reach each other across the fabric. Check the NVE peer state, EVPN route exchange, and that route-targets / VNI-to-VLAN mappings agree.',
+    steps: (p) => [
+      { order: 1, description: 'Check NVE interface and VTEP peer state',
+        command: tcmd(p, { nxos: 'show nve peers', iosxe: 'show nve peers', eos: 'show vxlan vtep', junos: 'show interfaces vtep' }),
+        look_for: 'Expected remote VTEPs present and Up; missing peer = no overlay path' },
+      { order: 2, description: 'Verify L2VPN EVPN routes are being learned',
+        command: tcmd(p, { nxos: 'show bgp l2vpn evpn summary', iosxe: 'show bgp l2vpn evpn summary', eos: 'show bgp evpn summary', junos: 'show bgp summary' }),
+        look_for: 'EVPN address-family Established and prefixes received (>0)' },
+      { order: 3, description: 'Confirm Type-2 (MAC/IP) routes for the host',
+        command: tcmd(p, { nxos: 'show bgp l2vpn evpn', iosxe: 'show bgp l2vpn evpn', eos: 'show bgp evpn route-type mac-ip', junos: 'show route table bgp.evpn.0' }),
+        look_for: 'Missing Type-2 routes for the affected MAC/IP — host not advertised or RT-filtered' },
+      { order: 4, description: 'Check VNI status and VLAN-to-VNI mapping',
+        command: tcmd(p, { nxos: 'show nve vni', iosxe: 'show nve vni', eos: 'show vxlan vni', junos: 'show ethernet-switching vxlan-tunnel-end-point remote' }),
+        look_for: 'VNI Up and mapped to the correct VLAN; route-target import/export mismatch' },
+    ],
+    causes: [
+      { cause: 'Route-target import/export mismatch (routes not imported)', confidence: 0.8,
+        indicators: ['EVPN routes present in BGP but not in the VRF/MAC-VRF', 'RT differs between leaves', 'Type-2 not imported'] },
+      { cause: 'VTEP/NVE peer not established (underlay or source-loopback issue)', confidence: 0.65,
+        indicators: ['Remote VTEP missing from "show nve peers"', 'Source loopback not advertised', 'Underlay route missing'] },
+      { cause: 'VLAN-to-VNI mapping inconsistent between leaves', confidence: 0.55,
+        indicators: ['Same VLAN maps to different VNIs', 'VNI down', 'L2VNI vs L3VNI confusion'] },
+      { cause: 'EVPN address-family not negotiated with spines', confidence: 0.45,
+        indicators: ['l2vpn evpn AF Idle', 'send-community extended missing', 'No EVPN prefixes received'] },
+    ],
+    remediation: [
+      'Align route-target import/export (use "route-target both auto" consistently)',
+      'Restore VTEP reachability: advertise the source loopback in the underlay',
+      'Make VLAN-to-VNI mappings identical on all leaves in the segment',
+      'Enable the l2vpn evpn address-family with extended communities to the spines',
+    ],
+  },
+
+  pfc_rocev2: {
+    category: 'GPU Fabric',
+    summary: 'RoCEv2 traffic is suffering drops/poor RDMA performance. Verify PFC is enabled no-drop on the correct priority end-to-end and that ECN/DCQCN are marking, not dropping.',
+    steps: (p) => [
+      { order: 1, description: 'Verify PFC is enabled and watch for PFC pause frames',
+        command: tcmd(p, { nxos: 'show interface priority-flow-control', iosxe: 'show interface <intf> priority-flow-control', eos: 'show priority-flow-control', junos: 'show interfaces <intf> extensive | match pfc' }),
+        look_for: 'PFC On for the RoCE priority and Rx/Tx pause counters incrementing as expected' },
+      { order: 2, description: 'Confirm the no-drop class maps to the correct CoS/priority',
+        command: tcmd(p, { nxos: 'show queuing interface <intf>', iosxe: 'show policy-map interface <intf>', eos: 'show qos interface <intf>', junos: 'show class-of-service interface <intf>' }),
+        look_for: 'RoCE priority (typically 3) in a no-drop queue; mismatched priority = drops' },
+      { order: 3, description: 'Check ECN marking and DCQCN behavior',
+        command: tcmd(p, { nxos: 'show queuing interface <intf> | include ECN|WRED', iosxe: 'show policy-map interface <intf> | include ECN|wred', eos: 'show qos interface <intf> | include ecn', junos: 'show class-of-service interface <intf> detail | match ecn' }),
+        look_for: 'ECN marking (not tail-drop) on the lossy threshold; CNP generation present' },
+      { order: 4, description: 'Look for PFC watchdog / deadlock events',
+        command: tcmd(p, { nxos: 'show interface priority-flow-control watchdog', iosxe: 'show interface <intf> priority-flow-control', eos: 'show priority-flow-control watchdog', junos: 'show interfaces <intf> extensive | match watchdog' }),
+        look_for: 'PFC watchdog shutting queues — PFC storm / deadlock on the no-drop class' },
+    ],
+    causes: [
+      { cause: 'PFC not enabled (or on the wrong priority) end-to-end', confidence: 0.8,
+        indicators: ['PFC Off on a transit hop', 'RoCE priority not no-drop', 'Drops on priority 3 queue'] },
+      { cause: 'CoS/DSCP-to-priority mapping mismatch across hops', confidence: 0.65,
+        indicators: ['Pause frames absent where expected', 'Traffic lands in drop queue', 'Inconsistent qos-group mapping'] },
+      { cause: 'ECN/DCQCN misconfigured (tail-drop instead of mark)', confidence: 0.55,
+        indicators: ['No CNP generation', 'WRED min/max wrong', 'High retransmits despite no-drop'] },
+      { cause: 'PFC watchdog / deadlock disabling queues', confidence: 0.4,
+        indicators: ['PFC watchdog events', 'Queue auto-shut/restored', 'Pause storm on one priority'] },
+    ],
+    remediation: [
+      'Enable PFC no-drop on the RoCE priority (e.g. priority 3) on every hop',
+      'Ensure consistent DSCP/CoS-to-qos-group mapping across the fabric',
+      'Tune ECN/WRED thresholds to mark (not drop) and confirm DCQCN/CNP generation',
+      'Enable PFC watchdog to break deadlocks and investigate the pause-storm source',
+    ],
+  },
+}
+
+const TROUBLESHOOT_FALLBACK: TPlaybook = {
+  category: 'General',
+  summary: 'No specific playbook matched this symptom. Start with a top-down health check: physical/interface state, IP reachability, protocol adjacencies, then control-plane health.',
+  steps: (p) => [
+    { order: 1, description: 'Check overall interface status',
+      command: tcmd(p, { nxos: 'show interface status', iosxe: 'show ip interface brief', eos: 'show interfaces status', junos: 'show interfaces terse' }),
+      look_for: 'Down/err-disabled interfaces or unexpected state changes' },
+    { order: 2, description: 'Verify basic reachability to the affected destination',
+      command: tcmd(p, { nxos: 'ping <dest>', iosxe: 'ping <dest>', eos: 'ping <dest>', junos: 'ping <dest>' }),
+      look_for: 'Loss or unreachable indicating where to focus next' },
+    { order: 3, description: 'Review the system log for recent errors',
+      command: tcmd(p, { nxos: 'show logging last 100', iosxe: 'show logging | last 100', eos: 'show logging last 100', junos: 'show log messages | last 100' }),
+      look_for: 'Recent error/warning events correlating with the problem time' },
+    { order: 4, description: 'Check device CPU and memory health',
+      command: tcmd(p, { nxos: 'show system resources', iosxe: 'show processes cpu sorted', eos: 'show processes top once', junos: 'show chassis routing-engine' }),
+      look_for: 'Resource exhaustion that could explain broad symptoms' },
+  ],
+  causes: [
+    { cause: 'Physical / interface-level issue', confidence: 0.5,
+      indicators: ['Interface down/err-disabled', 'Error counters rising', 'Recent flap'] },
+    { cause: 'Reachability / routing problem', confidence: 0.4,
+      indicators: ['Ping fails', 'Missing route', 'Asymmetric path'] },
+    { cause: 'Control-plane / resource pressure', confidence: 0.3,
+      indicators: ['High CPU/memory', 'Process churn', 'Log warnings'] },
+  ],
+  remediation: [
+    'Triage from the bottom up: physical → IP → protocol → control plane',
+    'Correlate the system log timestamps with when the issue began',
+    'Isolate to a single device/link, then drill in with a targeted command set',
+  ],
+}
+
+export function simulateTroubleshoot(symptom: string, platform: string): TroubleshootResult {
+  const pb = TROUBLESHOOT_PLAYBOOKS[symptom] ?? TROUBLESHOOT_FALLBACK
+  const causes = [...pb.causes].sort((a, b) => b.confidence - a.confidence)
+  return {
+    symptom,
+    category: pb.category,
+    summary: pb.summary,
+    diagnostic_steps: pb.steps(platform),
+    likely_causes: causes,
+    remediation: [...pb.remediation],
+  }
+}
+
 // ── NETCONF XML helpers ───────────────────────────────────────────────────────
 
 function buildNetconfXMLForOp(op: string, datastore: string, vendor: string): string {
@@ -1683,6 +2056,25 @@ export function Step6Deploy() {
     }
     setBatfishRunning(false)
     setBatfishDone(true)
+  }
+
+  // ── Troubleshooting Tooling Engine state (G-A19) ──────────────────────────
+  const [tsSymptom, setTsSymptom] = useState('bgp_down')
+  const [tsPlatform, setTsPlatform] = useState('nxos')
+  const [tsDevicesNote, setTsDevicesNote] = useState('')
+  const [tsResult, setTsResult] = useState<TroubleshootResult | null>(null)
+  const { mutate: runTs, isPending: tsRunning } = useTroubleshoot()
+
+  function handleRunTroubleshoot() {
+    const devices = tsDevicesNote.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+    if (!isLive) {
+      setTsResult(simulateTroubleshoot(tsSymptom, tsPlatform))
+      return
+    }
+    runTs({ symptom: tsSymptom, devices, platform: tsPlatform }, {
+      onSuccess: setTsResult,
+      onError(e) { showToast('Diagnostics failed: ' + e.message, 'error') },
+    })
   }
 
   // ── Policy Gate state ─────────────────────────────────────────────────────
@@ -3351,6 +3743,167 @@ export function Step6Deploy() {
               ))}
             </div>
           </Card>
+        </div>
+      )}
+
+      {/* ── Troubleshooting Tooling Engine tab (G-A19) ─────────────────── */}
+      {tab === 'troubleshoot' && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader><CardTitle>Troubleshooting Tooling Engine</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              Pick a symptom and a target platform to get a guided diagnostic
+              playbook — ordered show/ping commands with what to look for, ranked
+              likely causes, and a remediation checklist. Nothing is pushed to any
+              device.
+            </p>
+
+            <div className="flex flex-wrap gap-4 items-end">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Symptom</label>
+                <select
+                  value={tsSymptom}
+                  onChange={e => setTsSymptom(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                             focus:outline-none focus:border-blue-500"
+                >
+                  {TROUBLESHOOT_SYMPTOMS.map(s => (
+                    <option key={s.key} value={s.key}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Platform</label>
+                <select
+                  value={tsPlatform}
+                  onChange={e => setTsPlatform(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                             focus:outline-none focus:border-blue-500"
+                >
+                  <option value="nxos">NX-OS</option>
+                  <option value="iosxe">IOS-XE</option>
+                  <option value="eos">Arista EOS</option>
+                  <option value="junos">Juniper JunOS</option>
+                </select>
+              </div>
+              <div className="flex-1 min-w-[180px]">
+                <label className="text-xs text-gray-400 block mb-1">Affected devices (optional)</label>
+                <input
+                  value={tsDevicesNote}
+                  onChange={e => setTsDevicesNote(e.target.value)}
+                  placeholder="e.g. leaf-1, spine-2"
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
+                             focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <Button onClick={handleRunTroubleshoot} disabled={tsRunning}>
+                {tsRunning ? (
+                  <span className="flex items-center gap-2">
+                    <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Running…
+                  </span>
+                ) : '🩺 Run Diagnostics'}
+              </Button>
+            </div>
+          </Card>
+
+          {tsResult && (
+            <>
+              {/* Summary banner */}
+              <Card>
+                <div className="flex items-start gap-3">
+                  <Badge variant="neutral" className="text-xs shrink-0">{tsResult.category}</Badge>
+                  <div>
+                    <div className="text-sm font-semibold text-gray-200 mb-1">
+                      {TROUBLESHOOT_SYMPTOMS.find(s => s.key === tsResult.symptom)?.label ?? tsResult.symptom}
+                    </div>
+                    <p className="text-sm text-gray-400">{tsResult.summary}</p>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Diagnostic steps */}
+              <Card>
+                <CardHeader><CardTitle>Diagnostic Steps</CardTitle></CardHeader>
+                <div className="space-y-3">
+                  {tsResult.diagnostic_steps.map(step => (
+                    <div key={step.order} className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+                      <div className="flex items-start gap-3">
+                        <span className="shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-blue-300 text-xs
+                                         font-semibold flex items-center justify-center">
+                          {step.order}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-gray-200 mb-2">{step.description}</div>
+                          <pre className="text-xs font-mono whitespace-pre-wrap overflow-x-auto rounded bg-black/40
+                                          border border-white/10 px-3 py-2 text-green-300">
+                            {step.command}
+                          </pre>
+                          <div className="mt-2 text-xs text-gray-400">
+                            <span className="text-yellow-400 font-semibold">look for: </span>
+                            {step.look_for}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              {/* Likely causes (ranked, confidence bar) */}
+              <Card>
+                <CardHeader><CardTitle>Likely Causes</CardTitle></CardHeader>
+                <div className="space-y-3">
+                  {tsResult.likely_causes.map((c, i) => {
+                    const pct = Math.round(c.confidence * 100)
+                    const color = pct >= 75 ? 'bg-red-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-blue-500'
+                    return (
+                      <div key={i} className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Badge variant="neutral" className="text-xs shrink-0">#{i + 1}</Badge>
+                            <span className="text-sm font-semibold text-gray-200">{c.cause}</span>
+                          </div>
+                          <div className="flex items-center gap-2 w-32 shrink-0">
+                            <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                              <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="text-xs text-gray-400 w-8 text-right">{pct}%</span>
+                          </div>
+                        </div>
+                        {c.indicators.length > 0 && (
+                          <ul className="space-y-1">
+                            {c.indicators.map((ind, j) => (
+                              <li key={j} className="text-xs text-gray-400 flex items-start gap-1.5">
+                                <span className="text-gray-600 shrink-0">·</span>
+                                {ind}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </Card>
+
+              {/* Remediation checklist */}
+              <Card>
+                <CardHeader><CardTitle>Remediation</CardTitle></CardHeader>
+                <div className="space-y-2">
+                  {tsResult.remediation.map((r, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-2 px-4 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+                    >
+                      <span className="text-green-400 shrink-0 mt-0.5">☐</span>
+                      <span className="text-sm text-gray-300">{r}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </>
+          )}
         </div>
       )}
 

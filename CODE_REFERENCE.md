@@ -2002,6 +2002,23 @@ MCP (Model Context Protocol) server exposing NetDesign AI as an AI-native toolse
 
 ---
 
+#### `backend/troubleshoot.py` (G-A19)
+
+**Purpose:** Symptom-driven troubleshooting playbook engine for `POST /api/troubleshoot`. Given a symptom + affected devices + platform, returns an ordered diagnostic playbook (platform-specific show commands), ranked likely causes with confidence, and remediation steps. Pure-Python, no external deps. Distinct from `rca/engine.py` (telemetry-driven hypotheses) and `monitor_engine` (symptom-text fault tree) — this is a guided, vendor-aware diagnostic runbook generator.
+
+**Key exports:**
+- `PLAYBOOKS: dict` — keyed by symptom: `bgp_down`, `ospf_adjacency`, `interface_flap`, `high_latency`, `packet_loss`, `high_cpu`, `vxlan_evpn`, `pfc_rocev2`. Each playbook defines a `category` label, `summary`, ordered `steps` (description + per-platform command + `look_for`), ranked `causes` (confidence 0–1), and `remediation`.
+- `GENERIC_PLAYBOOK` — fallback (category "General") for unknown symptoms.
+- `_cmd(...)` — per-platform command resolver (nxos/iosxe/eos/junos; unknown → nxos).
+- `build_troubleshooting(symptom, affected_devices, platform="nxos") -> dict` — normalizes symptom (lowercase, `-`/space → `_`) + platform, resolves the playbook, assigns sequential step `order`, rounds + sorts causes by confidence desc, echoes affected devices into the summary. Returns `{symptom, category, summary, diagnostic_steps, likely_causes, remediation}`.
+
+**Notes:**
+- Endpoint in `main.py`: `@app.post("/api/troubleshoot", response_model=TroubleshootResponse)` guarded by `require_permission("designs:read")`; Pydantic models `TroubleshootRequest`/`DiagnosticStepModel`/`LikelyCauseModel`/`TroubleshootResponse`.
+- Tests: `tests/test_troubleshoot.py` (57 tests) — contract shape, non-empty sections, cause ranking, category labels, platform-specific command divergence (junos vs nxos), unknown-platform default, unknown/empty-symptom fallback, symptom normalization, affected-device echoing.
+- Frontend mirror: `simulateTroubleshoot(symptom, platform)` exported from `Step6Deploy.tsx` (demo mode), `useTroubleshoot()` hook (live mode → `runTroubleshoot` in `api/client.ts`), and the "🩺 Troubleshoot" Step 6 sub-tab (added to `Sidebar.tsx` `DEPLOY_SUB_ITEMS` + `Step6Deploy.tsx` `Tab` union). Types `DiagnosticStep`/`LikelyCause`/`TroubleshootResult` in `types/index.ts`. Frontend tests: `frontend/src/test/troubleshoot.test.ts` (7 tests).
+
+---
+
 #### `backend/models.py`
 
 **Purpose:** SQLAlchemy 2.0 ORM models (multi-tenant schema) + Pydantic request/response schemas for the FastAPI app.
