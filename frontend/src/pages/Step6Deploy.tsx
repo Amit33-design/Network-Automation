@@ -15,6 +15,8 @@ import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON, genSNMPExporterConfig, genSNMPPrometheusJob } from '@/lib/telemetry-gen'
 import { useTroubleshoot } from '@/hooks/useTroubleshoot'
+import { runComplianceScan, exportComplianceReport } from '@/lib/compliance-scan'
+import type { ComplianceScanResult } from '@/lib/compliance-scan'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -1715,6 +1717,7 @@ export function Step6Deploy() {
   const storeUseCase       = useAppStore(s => s.useCase)
   const orgName            = useAppStore(s => s.orgName)
   const customPolicyRules  = useAppStore(s => s.customPolicyRules)
+  const compliance         = useAppStore(s => s.compliance)
   const { isLive } = useBackendMode()
   const { showToast } = useToast()
 
@@ -1961,6 +1964,7 @@ export function Step6Deploy() {
 
   // ── Day-2 Ops state (M-67) ────────────────────────────────────────────────
   const [changeWindow, setChangeWindow] = useState('immediate')
+  const [complianceScanResult, setComplianceScanResult] = useState<ComplianceScanResult | null>(null)
 
   // G-A4: Config drift detection (intended config vs running-config backup)
   const [driftResult, setDriftResult] = useState<ConfigDriftResponse | null>(null)
@@ -3722,33 +3726,94 @@ export function Step6Deploy() {
             )}
           </Card>
 
-          {/* Compliance Audit */}
+          {/* Compliance Scanner */}
           <Card>
-            <CardHeader><CardTitle>Compliance Audit</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Compliance Scanner</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
-              Automated compliance checks against network security baseline.
+              Scan the current design and generated configs against selected compliance
+              frameworks ({compliance.length > 0 ? compliance.join(', ') : 'PCI, SOC2 (default)'}).
             </p>
-            <div className="space-y-2">
-              {[
-                'Password complexity',
-                'SSH v2 only',
-                'NTP configured',
-                'Syslog configured',
-                'SNMP community strings changed',
-                'Unused interfaces shut down',
-                'Logging buffered enabled',
-              ].map(check => (
-                <div
-                  key={check}
-                  className="flex items-center justify-between px-4 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+            <div className="flex gap-3 mb-4">
+              <Button onClick={() => setComplianceScanResult(runComplianceScan(useAppStore.getState()))}>
+                Run Compliance Scan
+              </Button>
+              {complianceScanResult && (
+                <button
+                  onClick={() => {
+                    const md = exportComplianceReport(complianceScanResult)
+                    const blob = new Blob([md], { type: 'text/markdown' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `compliance-report-${new Date().toISOString().slice(0, 10)}.md`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer"
                 >
-                  <span className="text-sm text-gray-300">{check}</span>
-                  <span className="text-xs text-green-400 font-semibold bg-green-500/10 border border-green-500/20 rounded px-2 py-0.5">
-                    ✓ PASS
-                  </span>
-                </div>
-              ))}
+                  Export Report
+                </button>
+              )}
             </div>
+
+            {complianceScanResult && (
+              <div className="space-y-4">
+                {/* Score badge */}
+                <div className="flex items-center gap-4">
+                  <div className={cn(
+                    'text-3xl font-bold',
+                    complianceScanResult.score >= 80 ? 'text-green-400' : complianceScanResult.score >= 60 ? 'text-yellow-400' : 'text-red-400'
+                  )}>
+                    {complianceScanResult.score}%
+                  </div>
+                  <div className="flex gap-3 text-xs">
+                    <span className="text-green-400">{complianceScanResult.summary.pass} PASS</span>
+                    <span className="text-red-400">{complianceScanResult.summary.fail} FAIL</span>
+                    <span className="text-yellow-400">{complianceScanResult.summary.warn} WARN</span>
+                    {complianceScanResult.summary.na > 0 && (
+                      <span className="text-gray-500">{complianceScanResult.summary.na} N/A</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Controls list grouped by framework */}
+                {complianceScanResult.frameworks.map(fw => {
+                  const fwControls = complianceScanResult.controls.filter(c => c.framework === fw)
+                  if (fwControls.length === 0) return null
+                  return (
+                    <div key={fw}>
+                      <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">{fw}</div>
+                      <div className="space-y-1.5">
+                        {fwControls.map(c => (
+                          <div
+                            key={c.id}
+                            className="flex items-start justify-between gap-3 px-4 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-mono text-gray-500">{c.id}</span>
+                                <span className="text-xs text-gray-500">({c.category})</span>
+                              </div>
+                              <div className="text-sm text-gray-300 mt-0.5">{c.requirement}</div>
+                              <div className="text-xs text-gray-500 mt-0.5">{c.detail}</div>
+                            </div>
+                            <span className={cn(
+                              'text-xs font-semibold rounded px-2 py-0.5 shrink-0',
+                              c.status === 'pass' ? 'text-green-400 bg-green-500/10 border border-green-500/20'
+                                : c.status === 'fail' ? 'text-red-400 bg-red-500/10 border border-red-500/20'
+                                : c.status === 'warn' ? 'text-yellow-400 bg-yellow-500/10 border border-yellow-500/20'
+                                : 'text-gray-400 bg-gray-500/10 border border-gray-500/20',
+                            )}>
+                              {c.status === 'pass' ? '✓ PASS' : c.status === 'fail' ? '✕ FAIL' : c.status === 'warn' ? '⚠ WARN' : '— N/A'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </Card>
         </div>
       )}

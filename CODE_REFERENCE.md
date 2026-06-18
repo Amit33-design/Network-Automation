@@ -807,6 +807,36 @@ generate a Markdown design report for change management/documentation.
   Import Design (file picker with validation status feedback).
 - **Tests**: 18 in `test/design-export.test.ts`.
 
+## Frontend — `lib/compliance-scan.ts` (Compliance Scanner — H2)
+
+**Purpose:** Framework-aware compliance validation engine that checks the
+current design state and generated configs against real compliance framework
+controls. Replaces the static "Compliance Audit" placeholder in Day-2 Ops.
+
+**Key exports:**
+- Types: `ComplianceStatus`, `ComplianceControl`, `ComplianceScanResult`.
+- `runComplianceScan(state: AppState): ComplianceScanResult` — evaluate all
+  controls for selected compliance frameworks (defaults to PCI + SOC2 if none
+  selected); returns per-control pass/fail/warn/na, summary counts, and
+  percentage score.
+- `exportComplianceReport(result): string` — Markdown report with summary
+  table and per-control details.
+- **Frameworks** (6): PCI-DSS (8 controls: firewall, credentials, SSH,
+  syslog, AAA, NTP, NAC, segmentation), HIPAA (6: encryption, integrity,
+  auth, audit, physical, segmentation), SOC2 (5: access, boundary,
+  monitoring, change mgmt, availability), FedRAMP (6: FIPS, remote access,
+  config baselines, monitoring, audit, boundary), ISO 27001 (5: access,
+  logging, network security, crypto, continuity), NIST CSF (6: identify,
+  protect-AC, protect-DS, detect, respond, recover). QoS is type-valid but
+  has no controls.
+- Config-aware: controls that check `configs` use `hasInConfigs` /
+  `allConfigsHave` regex matchers; return `na` status when no configs
+  generated yet.
+- **UI**: Day-2 Ops tab "Compliance Scanner" card with "Run Compliance Scan"
+  button, score badge (green ≥80 / yellow ≥60 / red), framework-grouped
+  control list with status pills, and "Export Report" button.
+- **Tests**: 22 in `test/compliance-scan.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance
