@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef } from 'react'
 import { useAppStore } from '@/store/useAppStore'
-import { buildBOM } from '@/lib/bom'
+import { buildBOM, computeTCO } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
@@ -835,6 +835,9 @@ export function Step4NetworkDesign() {
     [useCase, generatedDevices, appTypes]
   )
 
+  // G-A13: 3-year TCO model (capex + power + support + rack/colo)
+  const tco = useMemo(() => computeTCO(generatedDevices), [generatedDevices])
+
   // M-27: Summary
   const summaryText = useMemo(
     () => buildSummaryText(useCase, scale, siteCode, numSites, totalEndpoints, underlayProtocol, overlayProtocols, protoFeatures, compliance, generatedDevices, grandTotal, computedTopology),
@@ -1511,6 +1514,55 @@ export function Step4NetworkDesign() {
                   </tbody>
                 </table>
               </div>
+            </div>
+
+            {/* G-A13: 3-Year TCO model */}
+            <div className="mb-6">
+              <div className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-3">3-Year Total Cost of Ownership</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/5">
+                      {['Category', 'Basis', '3-Year Cost'].map(h => (
+                        <th key={h} className={thCls}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-white/5">
+                      <td className={`${tdCls} font-semibold text-gray-100`}>Capex — Hardware</td>
+                      <td className={`${tdCls} text-xs text-gray-500`}>{generatedDevices.length} devices, one-time</td>
+                      <td className={`${tdCls} font-mono text-xs text-gray-200`}>{formatUSD(tco.capex)}</td>
+                    </tr>
+                    <tr className="border-b border-white/5">
+                      <td className={`${tdCls} font-semibold text-gray-100`}>Opex — Power &amp; Cooling</td>
+                      <td className={`${tdCls} text-xs text-gray-500`}>{(tco.totalPowerW / 1000).toFixed(1)} kW · PUE {tco.rates.pue} · ${tco.rates.energyCostPerKwh}/kWh</td>
+                      <td className={`${tdCls} font-mono text-xs text-gray-200`}>{formatUSD(tco.power)}</td>
+                    </tr>
+                    <tr className="border-b border-white/5">
+                      <td className={`${tdCls} font-semibold text-gray-100`}>Opex — Support / Maintenance</td>
+                      <td className={`${tdCls} text-xs text-gray-500`}>{(tco.rates.supportRatePerYear * 100).toFixed(0)}%/yr of capex</td>
+                      <td className={`${tdCls} font-mono text-xs text-gray-200`}>{formatUSD(tco.support)}</td>
+                    </tr>
+                    <tr className="border-b border-white/5">
+                      <td className={`${tdCls} font-semibold text-gray-100`}>Opex — Rack / Colo</td>
+                      <td className={`${tdCls} text-xs text-gray-500`}>{tco.totalRackUnits} RU · ${tco.rates.rackCostPerRuMonth}/RU/mo</td>
+                      <td className={`${tdCls} font-mono text-xs text-gray-200`}>{formatUSD(tco.rackspace)}</td>
+                    </tr>
+                    <tr className="border-t border-white/20 bg-white/5">
+                      <td className={`${tdCls} font-bold text-gray-200`}>3-Year TCO</td>
+                      <td className={tdCls}></td>
+                      <td className={`${tdCls} font-bold text-amber-300 font-mono`}>{formatUSD(tco.total)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[11px] text-gray-600 mt-2 leading-relaxed">
+                Assumptions: PUE {tco.rates.pue} (cooling/power overhead) · ${tco.rates.energyCostPerKwh}/kWh blended energy ·
+                {' '}{(tco.rates.supportRatePerYear * 100).toFixed(0)}%/yr vendor support (SmartNet/TAC-style) ·
+                {' '}${tco.rates.rackCostPerRuMonth}/RU/month colo. Capex is one-time; opex shown is summed over {tco.rates.years} years.
+                Power looked up per model from the product catalog.
+              </p>
             </div>
 
             {/* D1: Computed Topology — vPC/MLAG pairs, FHRP gateways, DCI route-targets */}

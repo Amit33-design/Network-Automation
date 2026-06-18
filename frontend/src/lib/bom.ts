@@ -310,6 +310,165 @@ export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>
 
 export { SCALE_DEFS }
 
+// ── 3-Year TCO model (G-A13) ───────────────────────────────────────────────────
+// Layers a Total-Cost-of-Ownership model on top of the existing BOM (capex).
+// Purely additive — does NOT change device-count or capex math. Capex equals
+// the same `grandTotal` the BOM already computes (sum of device prices).
+
+/** Configurable TCO rates. Each default documents the assumption behind it. */
+export interface TCOOpts {
+  /** Blended utility electricity price. Default $0.12/kWh — US commercial avg. */
+  energyCostPerKwh: number
+  /** Power Usage Effectiveness — facility power ÷ IT power. Default 1.5
+   *  (typical enterprise DC cooling/distribution overhead; hyperscale ≈1.1). */
+  pue: number
+  /** Annual support/maintenance contract as a fraction of hardware capex.
+   *  Default 0.15 (15%/yr — SmartNet/TAC/eos-style vendor support). */
+  supportRatePerYear: number
+  /** Colocation / rack-space rent per rack-unit per month. Default $150/RU/mo. */
+  rackCostPerRuMonth: number
+  /** Number of years to model. Default 3. */
+  years: number
+  /** Fallback power draw (W) when a device model is not found in PRODUCTS. */
+  defaultPowerW: number
+}
+
+export const DEFAULT_TCO_OPTS: TCOOpts = {
+  energyCostPerKwh: 0.12,
+  pue: 1.5,
+  supportRatePerYear: 0.15,
+  rackCostPerRuMonth: 150,
+  years: 3,
+  defaultPowerW: 400,
+}
+
+/** Per-role fallback power draw (W) when a model has no powerW in PRODUCTS. */
+const ROLE_DEFAULT_POWER_W: Record<string, number> = {
+  spine: 800,
+  core: 800,
+  leaf: 480,
+  distribution: 600,
+  access: 400,
+  'wan-edge': 300,
+  firewall: 800,
+  'cloud-gw': 0, // software / cloud-hosted — no on-prem power
+  'cloud-transit': 0,
+}
+
+/** Rack units consumed by a device, derived from its sub-layer role. */
+function rackUnitsFor(subLayer: string): number {
+  switch (subLayer) {
+    case 'spine':
+    case 'core':
+    case 'wan-edge':
+      return 2 // chassis / larger aggregation boxes
+    case 'firewall':
+      return 1
+    case 'cloud-gw':
+    case 'cloud-transit':
+      return 0 // cloud-native — no physical RU
+    default:
+      return 1 // leaf / distribution / access — 1RU ToR/fixed
+  }
+}
+
+/** Power draw (W) for a device — look up model in PRODUCTS, else role/global fallback. */
+function devicePowerW(dev: BOMDevice, defaultPowerW: number): number {
+  const product = PRODUCTS.find(p => p.model === dev.model || p.id === dev.id.replace(/-\d+$/, ''))
+  if (product && typeof product.powerW === 'number') return product.powerW
+  return ROLE_DEFAULT_POWER_W[dev.subLayer] ?? defaultPowerW
+}
+
+export interface TCOYear {
+  year: number
+  power: number
+  support: number
+  rackspace: number
+  total: number
+}
+
+export interface TCOModel {
+  /** Hardware capex — sum of device prices (matches BOM grandTotal). */
+  capex: number
+  /** Total power cost over the modeled period. */
+  power: number
+  /** Total support/maintenance cost over the modeled period. */
+  support: number
+  /** Total rack/colo cost over the modeled period. */
+  rackspace: number
+  /** Total opex over the modeled period (power + support + rackspace). */
+  opex: number
+  /** Grand total: capex + opex over the modeled period. */
+  total: number
+  /** Annual opex (single year) — convenience breakdown. */
+  annual: { power: number; support: number; rackspace: number; total: number }
+  /** Year-by-year opex breakdown. */
+  byYear: TCOYear[]
+  /** Derived totals useful for the UI. */
+  totalPowerW: number
+  totalRackUnits: number
+  /** Echo of the resolved rates so the number is defensible. */
+  rates: TCOOpts
+}
+
+/**
+ * Compute a multi-year (default 3-year) TCO breakdown for a device list.
+ * Pure & deterministic; capex equals the sum of device prices.
+ */
+export function computeTCO(devices: BOMDevice[], opts: Partial<TCOOpts> = {}): TCOModel {
+  const rates: TCOOpts = { ...DEFAULT_TCO_OPTS, ...opts }
+  const years = Math.max(0, rates.years)
+
+  // Capex — sum of device prices (same basis as BOM grandTotal).
+  const capex = devices.reduce((s, d) => s + d.totalPrice, 0)
+
+  // Aggregate power draw and rack footprint.
+  const totalPowerW = devices.reduce((s, d) => s + devicePowerW(d, rates.defaultPowerW), 0)
+  const totalRackUnits = devices.reduce((s, d) => s + rackUnitsFor(d.subLayer), 0)
+
+  // Annual power: W → kWh/yr (×24×365÷1000), × PUE (cooling overhead), × $/kWh.
+  const kWhPerYear = (totalPowerW * 24 * 365) / 1000
+  const annualPower = kWhPerYear * rates.pue * rates.energyCostPerKwh
+
+  // Annual support: fixed % of hardware capex.
+  const annualSupport = capex * rates.supportRatePerYear
+
+  // Annual rack/colo: RU × $/RU/month × 12.
+  const annualRackspace = totalRackUnits * rates.rackCostPerRuMonth * 12
+
+  const annualTotal = annualPower + annualSupport + annualRackspace
+
+  const byYear: TCOYear[] = []
+  for (let y = 1; y <= years; y++) {
+    byYear.push({
+      year: y,
+      power: annualPower,
+      support: annualSupport,
+      rackspace: annualRackspace,
+      total: annualTotal,
+    })
+  }
+
+  const power = annualPower * years
+  const support = annualSupport * years
+  const rackspace = annualRackspace * years
+  const opex = power + support + rackspace
+
+  return {
+    capex,
+    power,
+    support,
+    rackspace,
+    opex,
+    total: capex + opex,
+    annual: { power: annualPower, support: annualSupport, rackspace: annualRackspace, total: annualTotal },
+    byYear,
+    totalPowerW,
+    totalRackUnits,
+    rates,
+  }
+}
+
 // ── Cable catalog ─────────────────────────────────────────────────────────────
 
 interface CableSpec {
