@@ -783,6 +783,30 @@ VNI" tabs.
   IP Addresses CSV) via `downloadCsv()` in `Step4NetworkDesign.tsx`.
 - **Tests**: 13 in `test/ipam.test.ts`.
 
+## Frontend — `lib/design-export.ts` (Design export/import — H1)
+
+**Purpose:** Serialize the full wizard state to a portable JSON document and
+generate a Markdown design report for change management/documentation.
+
+**Key exports:**
+- `DesignExport` — interface for the JSON export format (intent, requirements,
+  BOM, configs, versioned with `_magic` + `_version`).
+- `serializeDesign(state: AppState): DesignExport` — extract all design-relevant
+  fields from AppState into a versioned export object.
+- `validateDesignImport(data: unknown): ImportResult` — validate a JSON payload
+  as a valid NetDesign AI export; returns `ok` + optional `error` + `warnings`
+  (e.g. newer version, unknown use case).
+- `applyDesignImport(data: DesignExport): Partial<AppState>` — map an export
+  document back to a state patch suitable for `useAppStore.setState()`.
+- `buildDesignMarkdown(state: AppState): string` — generate a formatted Markdown
+  report with intent, requirements, BOM table, TCO breakdown, compliance,
+  vendor prefs, and additional notes.
+- `downloadDesignJSON(state)` / `downloadDesignMarkdown(state)` — trigger
+  browser downloads.
+- **UI**: Step 4 Summary tab has 3 buttons: Export JSON, Export Report (.md),
+  Import Design (file picker with validation status feedback).
+- **Tests**: 18 in `test/design-export.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance
