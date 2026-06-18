@@ -119,6 +119,14 @@ const LAYER_STYLE: Record<string, { color: string; border: string; textColor: st
   storage:      { color: '#0F0C35', border: '#818CF8', textColor: '#C7D2FE' },
   oob:          { color: '#252219', border: '#78716C', textColor: '#D6D3D1' },
   'cloud-gw':   { color: '#062D2A', border: '#2DD4BF', textColor: '#99F6E4' },
+  // O-RAN / Private 5G layers (G-A10)
+  'oran-core':  { color: '#1E0D50', border: '#A78BFA', textColor: '#DDD6FE' },
+  'oran-cu':    { color: '#0E2B5C', border: '#60A5FA', textColor: '#BAE6FD' },
+  'oran-du':    { color: '#082840', border: '#38BDF8', textColor: '#BAE6FD' },
+  'oran-fronthaul': { color: '#0B3D1E', border: '#4ADE80', textColor: '#BBF7D0' },
+  'oran-midhaul':   { color: '#2A1A05', border: '#F59E0B', textColor: '#FCD34D' },
+  'oran-ru':    { color: '#3D1E08', border: '#FB923C', textColor: '#FDBA74' },
+  'oran-timing': { color: '#3D1010', border: '#F87171', textColor: '#FCA5A5' },
 }
 
 // ─── Health overlay palette + simulation (C2) ──────────────────────────────
@@ -140,6 +148,7 @@ export const HEALTH_LABEL: Record<HealthStatus, string> = {
 const HEALTH_BASELINE_CPU: Record<string, number> = {
   gpu: 64, spine: 46, core: 46, leaf: 32, distribution: 30,
   'corp-fw': 28, 'edge-fw': 28, 'wan-edge': 35, access: 20, storage: 24, oob: 12, host: 18,
+  'oran-core': 55, 'oran-cu': 48, 'oran-du': 58, 'oran-fronthaul': 30, 'oran-midhaul': 35, 'oran-ru': 40, 'oran-timing': 10,
 }
 
 // Layers that run a routing control-plane (eligible for BGP session metrics).
@@ -839,12 +848,128 @@ function buildWANTopology(devices: BOMDevice[], underlay: string, sc: string): T
   }
 }
 
+// ─── O-RAN / Private 5G topology (G-A10) ──────────────────────────────────────
+
+function buildORANTopology(devices: BOMDevice[], sc: string): Topo {
+  const duDevs = devices.filter(d => d.subLayer === 'oran-du')
+  const ruDevs = devices.filter(d => d.subLayer === 'oran-ru')
+  const fhDevs = devices.filter(d => d.subLayer === 'oran-fronthaul')
+  const nDU = Math.min(Math.max(duDevs.length, 2), 4)
+  const nRU = Math.min(Math.max(ruDevs.length, 4), 8)
+  const nFH = Math.min(Math.max(fhDevs.length, 1), 2)
+
+  const Y: Record<string, number> = {
+    timing: 78, core: 78, midhaul: 230, cu: 230, fronthaul: 380, du: 530, ru: 680,
+  }
+
+  const zones: SecurityZone[] = [
+    { id:'z-core', label:'5G CORE + TIMING', sublabel:'UPF (N3/N6) · PTP Grandmaster (G.8275.1) · GNSS-locked PRC',
+      yStart:0, yEnd:170, fill:'rgba(30,13,80,0.18)', stroke:'#3730A3', icon:'🛰' },
+    { id:'z-transport', label:'TRANSPORT (MIDHAUL + CU)', sublabel:'SR-MPLS · PTP boundary-clock · F1/E1 · SyncE',
+      yStart:170, yEnd:460, fill:'rgba(42,26,5,0.15)', stroke:'#92400E', icon:'🔗' },
+    { id:'z-fronthaul', label:'FRONTHAUL (O-RAN 7.2x)', sublabel:'eCPRI Class C7 · PTP transparent-clock · DU↔RU lossless',
+      yStart:460, yEnd:760, fill:'rgba(6,78,59,0.15)', stroke:'#065F46', icon:'📡' },
+  ]
+
+  // ── 5G Core (UPF) + PTP Grandmaster ──
+  const [coreX, gmX] = xCentered(2, 280)
+  const core = mkNode('upf','5GC-UPF-01','5G Core UPF','oran-core','Dell EMC','10.250.0.1','10.250.0.1',coreX,Y.core,
+    { haRole:'active', features:['N3 GTP-U','N6 DN','N4 PFCP','DPDK','SmartNIC'] })
+  const gm = mkNode('ptpgm','PTP-GM-01','Calnex PTP GM','oran-timing','Calnex','10.250.9.1','10.250.9.1',gmX,Y.timing,
+    { features:['GNSS GPS+Galileo','G.8275.1','PRC SyncE','Class A ±100ns'] })
+
+  // ── Midhaul routers + CU ──
+  const [mhX, cuX] = xCentered(2, 280)
+  const mh = mkNode('mh1','5G-MH-RTR-01','ASR 9901','oran-midhaul','Cisco','10.250.1.1','10.250.1.1',mhX,Y.midhaul,
+    { asn:'65200', features:['SR-MPLS','PTP BC','SyncE','FlexE','TI-LFA'] })
+  const cu = mkNode('cu1','O-CU-01','O-CU Server','oran-cu','Dell EMC','10.250.2.1','10.250.2.1',cuX,Y.cu,
+    { features:['CU-CP','CU-UP','F1/E1','NG to AMF','PTP slave'] })
+
+  // ── Fronthaul switches ──
+  const fhXs = xCentered(nFH, 80)
+  const fhSwitches = fhXs.map((x, i) => mkNode(
+    `fh${i+1}`, `5G-FH-SW-0${i+1}`, fhDevs[i]?.model ?? 'N9K-93180YC-FX3', 'oran-fronthaul', 'Cisco',
+    `10.250.3.${i+1}`, `10.250.3.${i+1}`, x, Y.fronthaul,
+    { features:['PTP TC','eCPRI C7','PFC','9216 MTU','25/100G'] },
+  ))
+
+  // ── O-DU servers ──
+  const duXs = xCentered(nDU, 22)
+  const duNodes = duXs.map((x, i) => mkNode(
+    `du${i+1}`, `O-DU-0${i+1}`, duDevs[i]?.model ?? 'O-DU Server', 'oran-du', 'Dell EMC',
+    `10.250.4.${i+1}`, `10.250.4.${i+1}`, x, Y.du,
+    { features:['High-PHY/MAC/RLC','eCPRI 25G','FAPI','L1 FPGA','PTP slave'] },
+  ))
+
+  // ── O-RU radios ──
+  const ruXs = xCentered(nRU, 16)
+  const ruNodes = ruXs.map((x, i) => mkNode(
+    `ru${i+1}`, `O-RU-0${i+1}`, ruDevs[i]?.model ?? 'O-RU Radio', 'oran-ru', 'Fujitsu',
+    '', `10.250.5.${i+1}`, x, Y.ru,
+    { features:['64T64R mMIMO','n78 3.5GHz','Low-PHY/RF','beamforming','PTP slave'] },
+  ))
+
+  const nodes = [core, gm, mh, cu, ...fhSwitches, ...duNodes, ...ruNodes]
+
+  const links: HLDLink[] = [
+    // Timing distribution (PTP) — GM is the root of the timing tree
+    mkLink('ptpgm','mh1','1G','PTP G.8275.1','p1','Gi0/0','—', { isHaSync:false }),
+    mkLink('ptpgm','upf','1G','SyncE / NTP','p3','eth0','—', { isOob:true }),
+    // Core ↔ CU (NG / N3) and CU ↔ midhaul
+    mkLink('upf','mh1','100G','N3 GTP-U','eth1','Te0/1','10.250.10.0/30'),
+    mkLink('mh1','cu1','100G','F1/NG SR-MPLS','Te0/2','eth1','10.250.11.0/30'),
+    // CU ↔ Fronthaul switches (F1)
+    ...fhSwitches.map((fh, i) => mkLink('cu1', fh.id, '100G', 'F1-U/C', `eth${2+i}`, 'e1/49', `10.250.12.${i*4}/30`)),
+    // Midhaul ↔ Fronthaul (timing + transport)
+    ...fhSwitches.map((fh, i) => mkLink('mh1', fh.id, '100G', 'PTP TC / SR', `Te0/${3+i}`, 'e1/50', `10.250.13.${i*4}/30`)),
+    // Fronthaul switches ↔ O-DU
+    ...duNodes.map((du, i) => mkLink(fhSwitches[i % nFH].id, du.id, '25G', 'eCPRI fronthaul', `e1/${1+i}`, 'eth0', `10.250.14.${i*4}/30`)),
+    // O-DU ↔ O-RU (eCPRI 7.2x split)
+    ...ruNodes.map((ru, i) => mkLink(duNodes[Math.floor(i / Math.ceil(nRU / nDU))]?.id ?? duNodes[0].id, ru.id, '25G', 'eCPRI 7.2x', `eth${1+i}`, 'sfp0', `10.250.15.${i*4}/30`)),
+  ]
+
+  const flows: PacketFlow[] = [
+    {
+      id:'uplink-ue', icon:'📱', label:'UE Uplink',
+      desc:'User equipment uplink: O-RU → O-DU → O-CU → UPF → data network (N6)',
+      nodeSeq:['ru1','du1','fh1','cu1','mh1','upf'],
+      color:'#34D399', animDur: 1.1,
+    },
+    {
+      id:'downlink-ue', icon:'📶', label:'UE Downlink',
+      desc:'Downlink user-plane: UPF (N3 GTP-U) → CU → DU → RU → air interface',
+      nodeSeq:['upf','mh1','cu1','fh1','du1','ru1'],
+      color:'#60A5FA', animDur: 1.1,
+    },
+    {
+      id:'ptp-sync', icon:'🛰', label:'PTP Timing',
+      desc:'IEEE 1588 PTP timing distribution: GNSS grandmaster → boundary/transparent clocks → DU/RU (±65ns fronthaul budget)',
+      nodeSeq:['ptpgm','mh1','fh1','du1','ru1'],
+      color:'#F87171', animDur: 2.4,
+    },
+    {
+      id:'ecpri-fh', icon:'📡', label:'eCPRI Fronthaul',
+      desc:'O-RAN 7.2x split eCPRI IQ-data between O-DU (high-PHY) and O-RU (low-PHY/RF)',
+      nodeSeq:['du1','fh1','ru1'],
+      color:'#FB923C', animDur: 0.9,
+    },
+  ]
+
+  return {
+    nodes, links, zones, flows,
+    title: `Private 5G / O-RAN HLD${sc ? ` — ${sc}` : ''}`,
+    subtitle: `5GC UPF · 1 O-CU · ${nDU} O-DU · ${nRU} O-RU · eCPRI 7.2x fronthaul · PTP G.8275.1 timing`,
+    svgH: 800,
+  }
+}
+
 // ─── Topology dispatcher ──────────────────────────────────────────────────────
 
 function buildTopology(devices: BOMDevice[], useCase: string, underlay: string, overlay: string[], sc: string): Topo {
   if (useCase === 'gpu')       return buildGPUTopology(devices, sc)
   if (useCase === 'campus')    return buildCampusTopology(devices, underlay, sc)
   if (useCase === 'wan')       return buildWANTopology(devices, underlay, sc)
+  if (useCase === 'oran')      return buildORANTopology(devices, sc)
   return buildDCTopology(devices, underlay, overlay, sc, useCase)  // dc, multisite, multicloud, aviatrix
 }
 

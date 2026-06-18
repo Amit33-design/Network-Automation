@@ -14,6 +14,7 @@ const SCALE_DEFS: Record<Scale, Record<UseCase, RoleCounts>> = {
     multisite:  { spine: 2, leaf: 4, 'wan-edge': 2 },
     multicloud: { 'cloud-transit': 1, 'cloud-gw': 2 },
     aviatrix:   { 'cloud-transit': 1, 'cloud-gw': 2 },
+    oran:       { 'oran-cu': 1, 'oran-du': 2, 'oran-ru': 4, 'oran-fronthaul': 1, 'oran-midhaul': 1, 'oran-core': 1, 'oran-timing': 1 },
   },
   medium: {
     dc:         { spine: 4, leaf: 8, firewall: 2 },
@@ -23,6 +24,7 @@ const SCALE_DEFS: Record<Scale, Record<UseCase, RoleCounts>> = {
     multisite:  { spine: 4, leaf: 8, 'wan-edge': 4, firewall: 2 },
     multicloud: { 'cloud-transit': 2, 'cloud-gw': 4 },
     aviatrix:   { 'cloud-transit': 2, 'cloud-gw': 4 },
+    oran:       { 'oran-cu': 2, 'oran-du': 4, 'oran-ru': 12, 'oran-fronthaul': 2, 'oran-midhaul': 2, 'oran-core': 2, 'oran-timing': 1 },
   },
   large: {
     dc:         { spine: 8, leaf: 24, firewall: 4 },
@@ -32,6 +34,7 @@ const SCALE_DEFS: Record<Scale, Record<UseCase, RoleCounts>> = {
     multisite:  { spine: 8, leaf: 24, 'wan-edge': 8, firewall: 4 },
     multicloud: { 'cloud-transit': 4, 'cloud-gw': 8 },
     aviatrix:   { 'cloud-transit': 4, 'cloud-gw': 8 },
+    oran:       { 'oran-cu': 4, 'oran-du': 8, 'oran-ru': 32, 'oran-fronthaul': 4, 'oran-midhaul': 4, 'oran-core': 4, 'oran-timing': 2 },
   },
 }
 
@@ -43,6 +46,7 @@ const PREFERRED_PRODUCTS: Record<UseCase, Record<string, string>> = {
   multisite:  { spine: 'nxos-9336c',   leaf: 'nxos-93180yc', 'wan-edge': 'viptela-vedge', firewall: 'ftd4145' },
   multicloud: { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
   aviatrix:   { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
+  oran:       { 'oran-cu': 'oran-cu', 'oran-du': 'oran-du', 'oran-ru': 'oran-ru', 'oran-fronthaul': 'oran-fronthaul-sw', 'oran-midhaul': 'oran-midhaul-rtr', 'oran-core': 'oran-core-upf', 'oran-timing': 'ptp-grandmaster' },
 }
 
 // Maps vendor → use-case → role → product ID
@@ -119,6 +123,13 @@ const ROLE_CODE: Record<string, string> = {
   'cloud-gw':         'CGW',
   'cloud-transit':    'CTGW',
   core:               'CORE',
+  'oran-cu':          'OCU',
+  'oran-du':          'ODU',
+  'oran-ru':          'ORU',
+  'oran-fronthaul':   'OFH',
+  'oran-midhaul':     'OMH',
+  'oran-core':        'OC5G',
+  'oran-timing':      'OPTM',
 }
 
 function rackLabel(idx: number): string {
@@ -412,6 +423,13 @@ const ROLE_DEFAULT_POWER_W: Record<string, number> = {
   firewall: 800,
   'cloud-gw': 0,
   'cloud-transit': 0,
+  'oran-cu': 800,
+  'oran-du': 600,
+  'oran-ru': 350,
+  'oran-fronthaul': 480,
+  'oran-midhaul': 600,
+  'oran-core': 1000,
+  'oran-timing': 50,
 }
 
 /** Rack units consumed by a device, derived from its sub-layer role. */
@@ -427,6 +445,15 @@ function rackUnitsFor(subLayer: string): number {
     case 'cloud-gw':
     case 'cloud-transit':
       return 0 // cloud-native — no physical RU
+    case 'oran-cu':
+    case 'oran-du':
+    case 'oran-core':
+      return 2 // COTS servers — 2RU
+    case 'oran-ru':
+    case 'oran-timing':
+      return 0 // field-mounted — no rack RU
+    case 'oran-midhaul':
+      return 2
     default:
       return 1 // leaf / distribution / access — 1RU ToR/fixed
   }

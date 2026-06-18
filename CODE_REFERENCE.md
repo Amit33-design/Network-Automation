@@ -531,6 +531,43 @@ npm test` after ANY change here):
 - **Tests**: 19 tests in `test/storage.test.ts` covering NX-OS and Arista
   with/without storage appType, co-existence with GPU QoS.
 
+### Private 5G / O-RAN (`oran` use case) — *added 2026-06-18, gap G-A10*
+- **New `UseCase` value** `'oran'` (`types/index.ts`) wired end-to-end:
+  Step 1 use-case tile (📡 Private 5G), `SCALE_DEFS`/`PREFERRED_PRODUCTS`/
+  `ROLE_CODE`/`ROLE_DEFAULT_POWER_W`/`rackUnitsFor`/`LAYER_PAIRS` entries.
+- **7 products** (`products.ts`, all `useCases: ['oran']`): `oran-cu`
+  (O-CU server), `oran-du` (O-DU server), `oran-ru` (O-RU radio),
+  `oran-fronthaul-sw` (PTP-TC fronthaul switch), `oran-midhaul-rtr`
+  (ASR 9901 PTP-BC), `oran-core-upf` (5GC UPF), `ptp-grandmaster`
+  (GNSS PTP GM). Sub-layers: `oran-cu/du/ru/fronthaul/midhaul/core/timing`.
+- **Config generators** (`configgen.ts`) — `oranConfig(dev, idx)` dispatches
+  by sub-layer via `isOranSubLayer(l)` (matches `oran-*`), routed first in
+  `generateConfig` (before firewall checks):
+  - `oranCuConfig` — F1-C/U + E1 + NG (SCTP 38472/38462/38412), GTP-U, PTP
+    G.8275.1, 5QI QoS, O1 VES.
+  - `oranDuConfig` — eCPRI 7.2x split (block-floating-point compression),
+    n78 100MHz TDD cell, FAPI/L1-FPGA offload, F1 to CU, PTP slave.
+  - `oranRuConfig` — eCPRI to DU, 64T64R mMIMO + digital beamforming, PTP
+    slave-only, DHCP option-43 ZTP bootstrap.
+  - `oranFronthaulConfig` — NX-OS PTP **transparent-clock**, eCPRI Class C7
+    QoS (PFC priority 7), jumbo MTU 9216, fronthaul/uplink trunk ports.
+  - `oranMidhaulConfig` — IOS-XR PTP **boundary-clock** + SyncE
+    frequency-sync, IS-IS + segment-routing transport, F1/backhaul, MDT
+    telemetry.
+  - `oranCoreConfig` — 5GC UPF: N3/N6/N9/N4 (PFCP 8805), DPDK + SmartNIC
+    GTP-U decap, 5QI→DSCP enforcement, Prometheus exporter.
+  - `oranTimingConfig` — PTP grandmaster: GNSS (GPS+Galileo+BeiDou),
+    G.8275.1 domain 24 clock-class grandmaster, SyncE PRC, 4 master ports.
+  - All secrets `<CHANGE-ME-*>`.
+- **Diagrams**: `buildORANTopology` (HLD, `HLDTopologyDiagram.tsx`) and
+  `buildORANLLD` (LLD, `LLDTopologyDiagram.tsx`) — vertical 5GC/timing →
+  midhaul/CU → fronthaul → DU → RU layout with UE up/downlink + PTP + eCPRI
+  packet-flow scenarios. New `oran-*` entries in both `LAYER_STYLE`/
+  `TIER_STYLE` + HLD `HEALTH_BASELINE_CPU`. Dispatchers route `oran`.
+- **Tests**: 34 tests in `test/oran.test.ts` (BOM, products, all 7 config
+  generators, e2e no-hardcoded-creds); `bom.test.ts` "every use case"
+  + `SCALE_DEFS` lists extended with `oran`.
+
 ### Cisco IOS-XE Campus (Distribution / Access) — *added 2026-06-11, Enterprise Upgrade A3*
 - **`iosxeCampusConfig(dev, idx, appTypes): string`** — replaces the old
   (incorrect) dispatch to `iosxeWanConfig` for campus

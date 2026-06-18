@@ -43,7 +43,7 @@ describe('buildBOM', () => {
   })
 
   it('works for every use case at small scale', () => {
-    const useCases = ['campus', 'dc', 'gpu', 'wan', 'multisite', 'multicloud', 'aviatrix'] as const
+    const useCases = ['campus', 'dc', 'gpu', 'wan', 'multisite', 'multicloud', 'aviatrix', 'oran'] as const
     for (const uc of useCases) {
       const { devices } = buildBOM({ useCase: uc, scale: 'small', siteCode: 'TST' })
       expect(devices.length).toBeGreaterThan(0)
@@ -71,7 +71,7 @@ describe('generateHostnames', () => {
 describe('SCALE_DEFS', () => {
   it('all scales and use cases are defined', () => {
     const scales = ['small', 'medium', 'large'] as const
-    const useCases = ['campus', 'dc', 'gpu', 'wan', 'multisite', 'multicloud', 'aviatrix'] as const
+    const useCases = ['campus', 'dc', 'gpu', 'wan', 'multisite', 'multicloud', 'aviatrix', 'oran'] as const
     for (const scale of scales) {
       for (const uc of useCases) {
         expect(SCALE_DEFS[scale][uc]).toBeDefined()
