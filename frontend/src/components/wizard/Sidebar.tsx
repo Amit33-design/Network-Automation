@@ -37,6 +37,7 @@ const DEPLOY_SUB_ITEMS = [
   { tab: 'netconf',  icon: '🖧', label: 'NETCONF'          },
   { tab: 'monitor',  icon: '📊', label: 'Monitoring'       },
   { tab: 'day2ops',  icon: '⚙️', label: 'Day-2 Ops'       },
+  { tab: 'troubleshoot', icon: '🩺', label: 'Troubleshoot' },
   { tab: 'batfish',  icon: '🦟', label: 'Batfish Validate' },
 ]
 
