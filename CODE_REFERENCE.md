@@ -742,6 +742,37 @@ interface Product {
 
 ---
 
+## Frontend — `lib/ipam.ts` (IPAM plan + NetBox export — F1)
+
+**Purpose:** Single source of truth for IP / VLAN / prefix / VNI planning,
+plus NetBox/Nautobot-importable CSV export. The `gen*` functions were moved
+here from `Step4NetworkDesign.tsx` (2026-06-18) so the page and the export
+share one implementation; the page imports them for its "IP Plan" / "VLAN &
+VNI" tabs.
+
+**Key exports:**
+- Interfaces: `IPBlock`, `IPRow`, `VLANRow`, `VNIRow`.
+- `genIPBlocks(useCase, totalEndpoints, numSites, devices): IPBlock[]` —
+  aggregate prefix plan (OOB, loopbacks, P2P, corp/voice/server/IoT; +DC
+  underlay/overlay for dc/multisite; +GPU/storage fabric for gpu).
+- `genIPRows(useCase, devices): IPRow[]` — per-device loopback/interface
+  allocations (firewall/spine/leaf/dist/access), with "… +N more" summary
+  rows when a layer exceeds the display cap.
+- `genVLANs(useCase): VLANRow[]` / `genVNIs(): VNIRow[]`.
+- `toNetBoxPrefixCsv(blocks, vlans)` — `ipam.prefix` CSV (`prefix,status,
+  role,vlan_vid,description`); aggregate blocks → `container`, VLAN subnets
+  → `active`; de-duped by CIDR.
+- `toNetBoxVlanCsv(vlans)` — `ipam.vlan` CSV (`vid,name,status,description`).
+- `toNetBoxIpAddressCsv(rows)` — `ipam.ipaddress` CSV (`address,status,
+  dns_name,description`); skips range/summary rows, appends prefix length,
+  uses lowercase hostname as `dns_name`.
+- `buildNetBoxIpamExport(useCase, totalEndpoints, numSites, devices):
+  NetBoxIpamExport` — `{ prefixesCsv, vlansCsv, ipAddressesCsv }`.
+- Internal: RFC-4180 `csvCell`/`csvRow` quoting, `isCidr` validation.
+- **UI**: Step 4 "IP Plan" tab has 3 download buttons (Prefixes / VLANs /
+  IP Addresses CSV) via `downloadCsv()` in `Step4NetworkDesign.tsx`.
+- **Tests**: 13 in `test/ipam.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance
@@ -1146,7 +1177,7 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 **Notes:**
 - CodeMirror 6 (`@codemirror/view`, `@codemirror/state`, `oneDark` theme) mounted/destroyed in a `useEffect` keyed on `[selectedId, configs]`.
-- "Next: ZTP →" button label is stale/legacy text (actual next step is Step 6 Deploy & Validate, not a ZTP-specific step).
+- "Next →" button label reads "Next: Deploy & Validate →" (matches the Step 6 Sidebar label; E2).
 
 ---
 

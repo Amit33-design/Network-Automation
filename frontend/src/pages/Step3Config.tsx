@@ -451,7 +451,7 @@ export function Step3Config() {
 
       <div className="flex justify-between">
         <Button variant="secondary" onClick={prevStep}>&#8592; Back</Button>
-        <Button onClick={nextStep}>Next: ZTP &#8594;</Button>
+        <Button onClick={nextStep}>Next: Deploy &amp; Validate &#8594;</Button>
       </div>
     </div>
   )
