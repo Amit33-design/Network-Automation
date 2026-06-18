@@ -695,7 +695,14 @@ config-gen tests must keep passing; add new tests alongside).
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| E1 | Remove LEGACY/UNUSED wizard pages + nav superseded by Step6Deploy sub-tabs / Sidebar (`Step4ZTP.tsx`, `Step5Checks.tsx`, `Step6Monitor.tsx`, `WizardNav.tsx`) — only referenced by `e2e-features.test.ts`; fix that test to assert the real live page set | [x] | files deleted; `e2e-features.test.ts` "App structure" now lists the 6 live pages (Step1UseCase, Step2Requirements, Step2Design, Step4NetworkDesign, Step3Config, Step6Deploy) + drops WizardNav; CODE_REFERENCE.md LEGACY sections removed; live hooks (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) retained (still used by Step6Deploy) |
+| E1 | Remove LEGACY/UNUSED wizard pages + nav superseded by Step6Deploy sub-tabs / Sidebar (`Step4ZTP.tsx`, `Step5Checks.tsx`, `Step6Monitor.tsx`, `WizardNav.tsx`) — only referenced by `e2e-features.test.ts`; fix that test to assert the real live page set | [x] (`f86ace8`) | files deleted; `e2e-features.test.ts` "App structure" now lists the 6 live pages (Step1UseCase, Step2Requirements, Step2Design, Step4NetworkDesign, Step3Config, Step6Deploy) + drops WizardNav; CODE_REFERENCE.md LEGACY sections removed; live hooks (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) retained (still used by Step6Deploy) |
+| E2 | Fix stale "Next: ZTP →" button label on the Config Gen page (Step3Config, wizard step 5) — actual next step is Step 6 Deploy & Validate | [x] | now "Next: Deploy & Validate →" (matches Sidebar label); CODE_REFERENCE.md note updated |
+
+### F. NetBox / Nautobot parity — IPAM (sourced 2026-06-18)
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| F1 | IPAM source-of-truth export — push the computed IP/VLAN/prefix plan to NetBox/Nautobot as bulk-import CSVs | [x] | new `lib/ipam.ts` (single source of truth): moved `genIPBlocks`/`genIPRows`/`genVLANs`/`genVNIs` out of `Step4NetworkDesign.tsx` + added `toNetBoxPrefixCsv`/`toNetBoxVlanCsv`/`toNetBoxIpAddressCsv`/`buildNetBoxIpamExport` (NetBox 3.x/4.x ipam.prefix/vlan/ipaddress headers, CIDR validation, de-dup, RFC-4180 quoting); 3 export buttons in Step 4 "IP Plan" tab; 13 tests in `test/ipam.test.ts` |
 
 ---
 
