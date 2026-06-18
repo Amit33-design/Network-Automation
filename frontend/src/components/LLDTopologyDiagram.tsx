@@ -105,6 +105,14 @@ const TIER_STYLE: Record<string, { color: string; border: string; textColor: str
   transit:      { color: '#1E3A5F', border: '#38BDF8', textColor: '#BAE6FD' },
   spoke:        { color: '#0B3D1E', border: '#4ADE80', textColor: '#BBF7D0' },
   branch:       { color: '#082840', border: '#38BDF8', textColor: '#BAE6FD' },
+  // O-RAN / Private 5G tiers (G-A10)
+  'oran-core':  { color: '#1E0D50', border: '#A78BFA', textColor: '#DDD6FE' },
+  'oran-cu':    { color: '#0E2B5C', border: '#60A5FA', textColor: '#BAE6FD' },
+  'oran-du':    { color: '#082840', border: '#38BDF8', textColor: '#BAE6FD' },
+  'oran-fronthaul': { color: '#0B3D1E', border: '#4ADE80', textColor: '#BBF7D0' },
+  'oran-midhaul':   { color: '#2A1A05', border: '#F59E0B', textColor: '#FCD34D' },
+  'oran-ru':    { color: '#3D1E08', border: '#FB923C', textColor: '#FDBA74' },
+  'oran-timing': { color: '#3D1010', border: '#F87171', textColor: '#FCA5A5' },
 }
 
 function sty(tier: string) {
@@ -1137,6 +1145,150 @@ function buildAviatrixLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   }
 }
 
+// ─── O-RAN / Private 5G LLD (G-A10) ──────────────────────────────────────────
+
+function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
+  const NW = 200
+  const Y = { core: 50, mid: 200, fh: 360, du: 530, ru: 700 }
+
+  const nDU = Math.min(Math.max(devices.filter(d => d.subLayer === 'oran-du').length, 2), 4)
+  const nRU = Math.min(Math.max(devices.filter(d => d.subLayer === 'oran-ru').length, 4), 6)
+
+  const zones: LLDZone[] = [
+    { id: 'z-core', label: '5G CORE + PTP GRANDMASTER', sublabel: 'UPF N3/N6 · GNSS-locked PTP GM · G.8275.1 PRC',
+      yStart: 0, yEnd: 140, fill: 'rgba(30,13,80,0.10)', stroke: '#3730A3' },
+    { id: 'z-mid', label: 'MIDHAUL + O-CU', sublabel: 'SR-MPLS transport · PTP boundary-clock · F1/E1 · NG to AMF',
+      yStart: 140, yEnd: 300, fill: 'rgba(146,64,14,0.10)', stroke: '#92400E' },
+    { id: 'z-fh', label: 'FRONTHAUL SWITCH', sublabel: 'eCPRI Class C7 · PTP transparent-clock · PFC · 9216 MTU',
+      yStart: 300, yEnd: 470, fill: 'rgba(21,128,61,0.10)', stroke: '#15803D' },
+    { id: 'z-du', label: 'O-DU (DISTRIBUTED UNIT)', sublabel: 'High-PHY/MAC/RLC · FAPI · L1 FPGA offload · eCPRI 25G',
+      yStart: 470, yEnd: 640, fill: 'rgba(8,40,64,0.10)', stroke: '#0E7490' },
+    { id: 'z-ru', label: 'O-RU (RADIO UNIT)', sublabel: 'Low-PHY/RF · 64T64R mMIMO · n78 3.5GHz · beamforming',
+      yStart: 640, yEnd: 810, fill: 'rgba(61,30,8,0.10)', stroke: '#9A3412' },
+  ]
+
+  const [coreX, gmX] = xCenter(2, 260, NW)
+  const upf = mkNode('upf', '5GC-UPF-01', '5G Core UPF', 'oran-core', 'Dell EMC', coreX, Y.core, NW, 110, {
+    haRole: 'active', icon: '🛰',
+    interfaces: [
+      { name: 'N3', ip: '10.250.0.1/30', speed: '100G', vlan: 'GTP-U' },
+      { name: 'N6', ip: '10.250.6.1/24', speed: '100G', vlan: 'Data Network' },
+      { name: 'N4', ip: '10.250.4.1/30', vlan: 'PFCP' },
+    ],
+    configLines: ['N3 GTP-U decap · DPDK', 'N6 → enterprise DNN', 'N4 PFCP to SMF', '5QI→DSCP QoS map'],
+    services: ['UPF', 'GTP-U', 'PFCP', 'DPDK'],
+    specs: 'COTS + SmartNIC offload',
+  })
+  const gm = mkNode('ptpgm', 'PTP-GM-01', 'Calnex PTP GM', 'oran-timing', 'Calnex', gmX, Y.core, NW, 110, {
+    icon: '⏱',
+    interfaces: [
+      { name: 'GNSS', ip: 'GPS+Galileo', vlan: 'Antenna' },
+      { name: 'p1-4', ip: '10.250.9.1/24', speed: '1G', vlan: 'PTP master' },
+    ],
+    configLines: ['G.8275.1 domain 24', 'clock-class GM · ±100ns', 'SyncE PRC · ESMC', 'announce -3 · sync -4'],
+    services: ['PTP', 'GNSS', 'SyncE'],
+    specs: 'Class A grandmaster',
+  })
+
+  const [mhX, cuX] = xCenter(2, 260, NW)
+  const mh = mkNode('mh1', '5G-MH-RTR-01', 'ASR 9901', 'oran-midhaul', 'Cisco', mhX, Y.mid, NW, 120, {
+    haRole: 'active', icon: '🔗',
+    interfaces: [
+      { name: 'Gi0/0/0/0', ip: '10.250.10.1/30', speed: '100G', vlan: 'upstream/core' },
+      { name: 'Gi0/0/0/1', ip: '10.250.11.1/30', speed: '100G', vlan: 'midhaul/DU' },
+      { name: 'Lo0', ip: '10.250.1.1/32' },
+    ],
+    configLines: ['IS-IS + SR-MPLS', 'PTP boundary-clock', 'SyncE freq-sync', 'prefix-sid index 100'],
+    services: ['SR-MPLS', 'IS-IS', 'PTP-BC', 'SyncE'],
+    specs: 'Timing-grade aggregation',
+  })
+  const cu = mkNode('cu1', 'O-CU-01', 'O-CU Server', 'oran-cu', 'Dell EMC', cuX, Y.mid, NW, 120, {
+    icon: '🧠',
+    interfaces: [
+      { name: 'F1-C/U', ip: '10.250.2.1/24', speed: '25G', vlan: 'F1 to DU' },
+      { name: 'E1', ip: '10.250.2.5/30', vlan: 'CU-CP↔CU-UP' },
+      { name: 'NG', ip: '10.250.2.9/30', vlan: 'to AMF/UPF' },
+    ],
+    configLines: ['CU-CP + CU-UP split', 'F1 SCTP 38472', 'E1 SCTP 38462', 'NG to 5GC AMF'],
+    services: ['CU-CP', 'CU-UP', 'F1', 'E1', 'NG'],
+    specs: 'COTS · RT-PHY',
+  })
+
+  const fhW = 220
+  const [fhX] = xCenter(1, 0, fhW)
+  const fh = mkNode('fh1', '5G-FH-SW-01', 'N9K-93180YC-FX3', 'oran-fronthaul', 'Cisco', fhX, Y.fh, fhW, 110, {
+    icon: '📡',
+    interfaces: [
+      { name: 'e1/1-48', ip: '—', speed: '25G', vlan: 'eCPRI fronthaul' },
+      { name: 'e1/49-54', ip: '10.250.3.1/24', speed: '100G', vlan: 'uplink to DU/MH' },
+    ],
+    configLines: ['PTP transparent-clock', 'eCPRI Class C7 QoS', 'PFC priority 7', 'jumbo MTU 9216'],
+    services: ['PTP-TC', 'eCPRI', 'PFC'],
+    specs: '48×25G + 6×100G',
+  })
+
+  const duW = 190
+  const duXs = xCenter(nDU, 24, duW)
+  const dus = duXs.map((x, i) => mkNode(
+    `du${i+1}`, `O-DU-0${i+1}`, 'O-DU Server', 'oran-du', 'Dell EMC', x, Y.du, duW, 120, {
+      icon: '🖥',
+      interfaces: [
+        { name: 'eth0', ip: `10.250.4.${i+1}/24`, speed: '25G', vlan: 'F1 to CU' },
+        { name: 'ecpri', ip: `10.250.14.${i*4}/30`, speed: '25G', vlan: 'eCPRI to RU' },
+      ],
+      configLines: ['High-PHY + MAC + RLC', 'eCPRI 7.2x split', 'FAPI · L1 FPGA offload', 'n78 100MHz · SCS 30kHz'],
+      services: ['DU', 'eCPRI', 'FAPI', 'PTP'],
+      specs: 'x86 + FPGA · DPDK cores 4-11',
+    },
+  ))
+
+  const ruW = 180
+  const ruXs = xCenter(nRU, 16, ruW)
+  const rus = ruXs.map((x, i) => mkNode(
+    `ru${i+1}`, `O-RU-0${i+1}`, 'O-RU Radio', 'oran-ru', 'Fujitsu', x, Y.ru, ruW, 110, {
+      icon: '📶',
+      interfaces: [
+        { name: 'sfp0', ip: `10.250.15.${i*4+1}/30`, speed: '25G', vlan: 'eCPRI to DU' },
+        { name: 'mgmt', ip: `10.250.5.${i+1}/24`, vlan: 'O1/M-plane' },
+      ],
+      configLines: ['Low-PHY + RF', '64T64R mMIMO', 'digital beamforming', 'PTP slave G.8275.1'],
+      services: ['RU', 'eCPRI', 'beamforming', 'PTP'],
+      specs: 'n78 3.5GHz · 64T64R',
+    },
+  ))
+
+  const nodes = [upf, gm, mh, cu, fh, ...dus, ...rus]
+
+  const links: LLDLink[] = [
+    mkLink('ptpgm', 'mh1', 'p1', 'Gi0/0/0/0', '1G', 'PTP G.8275.1', { isDashed: true, vlan: 'timing' }),
+    mkLink('upf', 'mh1', 'N3', 'Gi0/0/0/0', '100G', 'N3 GTP-U', { subnet: '10.250.10.0/30' }),
+    mkLink('mh1', 'cu1', 'Gi0/0/0/1', 'NG', '100G', 'F1/NG SR-MPLS', { subnet: '10.250.11.0/30' }),
+    mkLink('cu1', 'fh1', 'F1-C/U', 'e1/49', '100G', 'F1-U/C', { subnet: '10.250.12.0/30' }),
+    mkLink('mh1', 'fh1', 'Gi0/0/0/1', 'e1/50', '100G', 'PTP TC / SR', { isDashed: true, vlan: 'timing' }),
+    ...dus.map((du, i) => mkLink('fh1', du.id, `e1/${i+1}`, 'eth0', '25G', 'eCPRI fronthaul', { subnet: `10.250.14.${i*4}/30` })),
+    ...rus.map((ru, i) => mkLink(dus[Math.floor(i / Math.ceil(nRU / nDU))]?.id ?? dus[0].id, ru.id, 'ecpri', 'sfp0', '25G', 'eCPRI 7.2x', { subnet: `10.250.15.${i*4}/30` })),
+  ]
+
+  const cabling: CablingEntry[] = [
+    ...rus.map((ru, i) => ({
+      server: ru.hostname, serverPort: 'sfp0', ipv4: `10.250.15.${i*4+1}`,
+      switchPort: `O-DU-0${Math.floor(i / Math.ceil(nRU / nDU)) + 1} ecpri`, mgmtPort: 'O1 M-plane', vlan: 'eCPRI',
+    })),
+    ...dus.map((du, i) => ({
+      server: du.hostname, serverPort: 'eth0', ipv4: `10.250.4.${i+1}`,
+      switchPort: `5G-FH-SW-01 e1/${i+1}`, mgmtPort: 'OOB', vlan: 'F1',
+    })),
+    { server: 'O-CU-01', serverPort: 'F1-C/U', ipv4: '10.250.2.1', switchPort: '5G-FH-SW-01 e1/49', mgmtPort: 'OOB', vlan: 'F1' },
+  ]
+
+  return {
+    nodes, links, zones, cabling,
+    title: `PRIVATE 5G / O-RAN LLD — SPECIFIC IMPLEMENTATION${sc ? ` · ${sc}` : ''}`,
+    subtitle: `5GC UPF · PTP GM · O-CU · ${nDU} O-DU · ${nRU} O-RU · eCPRI 7.2x · G.8275.1 timing`,
+    svgH: 850,
+  }
+}
+
 // ─── Topology dispatcher ─────────────────────────────────────────────────────
 
 function buildLLDTopology(devices: BOMDevice[], useCase: string, sc: string): LLDTopo {
@@ -1147,6 +1299,7 @@ function buildLLDTopology(devices: BOMDevice[], useCase: string, sc: string): LL
     case 'multisite':  return buildMultisiteLLD(devices, sc)
     case 'multicloud': return buildMulticloudLLD(devices, sc)
     case 'aviatrix':   return buildAviatrixLLD(devices, sc)
+    case 'oran':       return buildORANLLD(devices, sc)
     default:           return buildDCLLD(devices, sc)
   }
 }

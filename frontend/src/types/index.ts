@@ -8,6 +8,7 @@ export type UseCase =
   | 'multisite'
   | 'multicloud'
   | 'aviatrix'
+  | 'oran'
 
 export type AppType = 'voice' | 'video' | 'storage' | 'hpc' | 'internet'
 export type Scale = 'small' | 'medium' | 'large'

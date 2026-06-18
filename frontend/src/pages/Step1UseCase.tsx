@@ -16,6 +16,7 @@ const USE_CASES: Array<{ id: UseCase; label: string; icon: string; desc: string 
   { id: 'multisite',  icon: '🔗', label: 'Multi-Site',    desc: 'Spine-leaf with WAN interconnect' },
   { id: 'multicloud', icon: '☁️',  label: 'Multi-Cloud',   desc: 'Cloud transit and spoke gateways' },
   { id: 'aviatrix',   icon: '🚀', label: 'Aviatrix',      desc: 'Cloud-native Aviatrix overlay mesh' },
+  { id: 'oran',       icon: '📡', label: 'Private 5G',    desc: 'O-RAN with eCPRI fronthaul & PTP timing' },
 ]
 
 const VENDORS = ['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Dell EMC', 'HPE Aruba', 'Fortinet', 'Palo Alto', 'Extreme Networks']
