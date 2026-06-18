@@ -1307,6 +1307,28 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 ---
 
+#### `frontend/src/components/RackElevation.tsx` — *added 2026-06-18, gap G-A14*
+**Purpose:** Pure-SVG 42U rack elevation diagram with cable schedule and rack assignment tables.
+
+**Key exports:**
+- `RackElevation({ devices, cabling, siteCode })` — main React component rendering:
+  - SVG rack elevation per rack (auto-splits when >42U), color-coded by subLayer
+  - Power bar (green/yellow/red based on capacity)
+  - Cable schedule table (per-port cable runs with type/speed/length)
+  - Rack assignment schedule table (device → rack position/RU/power/ports)
+  - Role-color legend
+- `computeRackLayout(devices): RackAssignment[]` — assigns devices to racks:
+  - Sorts by role priority (sdwan-controller → firewall → wan-edge → core → spine → dist → leaf → access)
+  - 2U for spine/core/wan-edge/sdwan-controller, 1U for leaf/access/firewall/distribution
+  - 0U for cloud-gw/cloud-transit (excluded from physical rack)
+  - Auto-overflow to next rack when capacity exceeded
+- `buildCableSchedule(devices, cabling): CableRun[]` — expands aggregate CableLink entries
+  into per-device-pair cable runs with hostname/port/type/speed/length
+
+**Types:** `RackSlot`, `RackAssignment`, `CableRun` (locally defined)
+
+**Integration:** Step 4 "Rack & Cabling" tab. Tests: 11 in `test/rack.test.ts`.
+
 #### `frontend/src/components/LLDTopologyDiagram.tsx`
 **Purpose:** Renders pure-SVG, use-case-aware Low-Level Design (LLD) topology diagrams with per-device IP addresses, interface mappings, VLANs, config snippets, port-to-port link labels, and a companion Physical Cabling Matrix table. Provides deeper implementation detail than the HLD diagram.
 

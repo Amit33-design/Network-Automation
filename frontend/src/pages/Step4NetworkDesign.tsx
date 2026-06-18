@@ -1,16 +1,17 @@
 import { useMemo, useState, useRef } from 'react'
 import { useAppStore } from '@/store/useAppStore'
-import { buildBOM, computeTCO } from '@/lib/bom'
+import { buildBOM, buildCabling, computeTCO } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import { LLDTopologyDiagram } from '@/components/LLDTopologyDiagram'
+import { RackElevation } from '@/components/RackElevation'
 import { formatUSD, cn } from '@/lib/utils'
 import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import type { BOMDevice, AppType } from '@/types'
 
 // ── Tab types ────────────────────────────────────────────────────
-type DesignTab = 'hld' | 'lld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
+type DesignTab = 'hld' | 'lld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'rack' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
 
 const TAB_LABELS: Array<{ id: DesignTab; label: string }> = [
   { id: 'hld',        label: '📐 High Level Design' },
@@ -19,6 +20,7 @@ const TAB_LABELS: Array<{ id: DesignTab; label: string }> = [
   { id: 'vlan',       label: '🏷 VLAN Design' },
   { id: 'routing',    label: '🔀 Routing & Protocols' },
   { id: 'physical',   label: '🔌 Physical Links' },
+  { id: 'rack',       label: '🗄 Rack & Cabling' },
   { id: 'mermaid',    label: '📊 Mermaid Diagram' },
   { id: 'simulate',   label: '⚡ Simulate' },
   { id: 'summary',    label: '📋 Summary' },
@@ -781,7 +783,7 @@ function buildSummaryText(
 
 export function Step4NetworkDesign() {
   const {
-    useCase, scale, siteCode, numSites,
+    useCase, scale, siteCode, numSites, linkDistances,
     underlayProtocol, overlayProtocols, protoFeatures, redundancyModel,
     totalEndpoints, bandwidthPerServer, oversubscription,
     trafficPattern, firewallModel, compliance, vendorPrefs, appTypes,
@@ -815,6 +817,9 @@ export function Step4NetworkDesign() {
 
   // M-23: Physical Links
   const physicalLinks = useMemo(() => genPhysicalLinks(useCase, generatedDevices), [useCase, generatedDevices])
+
+  // G-A14: Cabling for Rack & Cable tab
+  const cablingData = useMemo(() => buildCabling(generatedDevices, linkDistances), [generatedDevices, linkDistances])
 
   // M-25: Mermaid Diagram
   const mermaidCode = useMemo(() => genMermaidDiagram(useCase, generatedDevices, trafficPattern), [useCase, generatedDevices, trafficPattern])
@@ -1229,6 +1234,13 @@ export function Step4NetworkDesign() {
             <div>• <span className="text-white">QSFP-100G-LR4</span> — 100G single-mode OS2 fiber, up to 10km (FW-spine, inter-DC)</div>
           </div>
         </div>
+      )}
+
+      {/* ── Rack & Cabling tab (G-A14) ──────────────────────────────── */}
+      {activeTab === 'rack' && (
+        <Card>
+          <RackElevation devices={generatedDevices} cabling={cablingData} siteCode={siteCode} />
+        </Card>
       )}
 
       {/* ── Mermaid Diagram tab (M-25) ──────────────────────────────── */}
