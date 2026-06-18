@@ -436,7 +436,7 @@ export const DCI_RT_ASN = 65100
 
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 
-function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false): string {
+function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false, appTypes: AppType[] = []): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
@@ -611,6 +611,132 @@ telemetry
     dst-grp 1
     snsr-grp 1 sample-interval 10000
     snsr-grp 2 sample-interval 30000
+${nxosStorageBlock(appTypes)}`
+}
+
+// ── Storage networking blocks (G-A11) ────────────────────────────────────────
+
+function nxosStorageBlock(appTypes: AppType[]): string {
+  if (!appTypes.includes('storage')) return ''
+  return `
+! ── STORAGE NETWORKING (NVMe-oF / FCoE / iSCSI) ─────────────────────────────
+! Enables lossless Ethernet for storage protocols. Priority 6 = storage class,
+! no-drop via PFC. FCoE requires FIP snooping; NVMe-oF rides RoCEv2 (priority 3).
+!
+feature fcoe
+feature lldp
+!
+! ── FCoE VLANs and VSANs ────────────────────────────────────────────────────
+vlan 200
+  name STORAGE-FCOE
+  fcoe vsan 100
+!
+vsan database
+  vsan 100 name STORAGE-VSAN
+  vsan 100 interface vfc1
+!
+interface vfc1
+  bind interface Ethernet1/48
+  switchport trunk allowed vsan 100
+  no shutdown
+!
+! ── iSCSI VLAN ───────────────────────────────────────────────────────────────
+vlan 201
+  name STORAGE-ISCSI
+!
+interface Vlan201
+  description iSCSI-STORAGE-NETWORK
+  ip address <CHANGE-ME-iscsi-gw-ip>/24
+  no shutdown
+  mtu 9216
+!
+! ── NVMe-oF / RoCEv2 VLAN ───────────────────────────────────────────────────
+vlan 202
+  name STORAGE-NVMEOF
+!
+interface Vlan202
+  description NVMe-over-Fabrics-RoCEv2
+  ip address <CHANGE-ME-nvmeof-gw-ip>/24
+  no shutdown
+  mtu 9216
+!
+! ── Storage QoS — PFC no-drop for priority 6 (FCoE/NVMe-oF) ─────────────────
+class-map type qos match-any CM-STORAGE-FCOE
+  match cos 6
+class-map type qos match-any CM-STORAGE-ISCSI
+  match access-group name ACL-ISCSI
+!
+ip access-list ACL-ISCSI
+  permit tcp any any eq 3260
+  permit tcp any eq 3260 any
+!
+policy-map type qos PM-STORAGE-CLASSIFY
+  class CM-STORAGE-FCOE
+    set qos-group 6
+  class CM-STORAGE-ISCSI
+    set qos-group 5
+!
+policy-map type queuing PM-STORAGE-QUEUING
+  class type queuing c-out-q6
+    priority level 1
+    bandwidth percent 20
+  class type queuing c-out-q5
+    bandwidth percent 15
+  class type queuing c-out-q-default
+    bandwidth remaining percent 100
+!
+! ── Jumbo MTU for storage interfaces ─────────────────────────────────────────
+system jumbomtu 9216
+!
+! ── FIP snooping (FCoE fabric provisioning) ──────────────────────────────────
+feature fip-snooping
+fcoe fcmap 0E:FC:00
+`
+}
+
+function aristaStorageBlock(appTypes: AppType[]): string {
+  if (!appTypes.includes('storage')) return ''
+  return `
+! ── STORAGE NETWORKING (NVMe-oF / iSCSI) ────────────────────────────────────
+! Arista supports NVMe-oF via RoCEv2 and iSCSI; FCoE is not supported natively.
+! Priority 6 = storage lossless class via PFC.
+!
+! ── iSCSI VLAN ───────────────────────────────────────────────────────────────
+vlan 201
+  name STORAGE-ISCSI
+!
+interface Vlan201
+  description iSCSI-STORAGE-NETWORK
+  ip address <CHANGE-ME-iscsi-gw-ip>/24
+  mtu 9214
+  no shutdown
+!
+! ── NVMe-oF / RoCEv2 VLAN ───────────────────────────────────────────────────
+vlan 202
+  name STORAGE-NVMEOF
+!
+interface Vlan202
+  description NVMe-over-Fabrics-RoCEv2
+  ip address <CHANGE-ME-nvmeof-gw-ip>/24
+  mtu 9214
+  no shutdown
+!
+! ── Storage QoS — lossless for priority 6 ────────────────────────────────────
+ip access-list ACL-ISCSI
+  permit tcp any any eq 3260
+  permit tcp any eq 3260 any
+!
+class-map type qos CM-STORAGE-ISCSI
+  match ip access-group ACL-ISCSI
+!
+policy-map type quality-of-service PM-STORAGE
+  class CM-STORAGE-ISCSI
+    set traffic-class 5
+!
+priority-flow-control priority 6 no-drop
+!
+! ── Jumbo MTU ────────────────────────────────────────────────────────────────
+system mtu jumbo 9214
 `
 }
 
@@ -894,7 +1020,7 @@ EOF
 `
 }
 
-function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false): string {
+function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false, appTypes: AppType[] = []): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
@@ -1020,7 +1146,7 @@ mlag configuration
 ${qos}
 !
 ${aristaTelemetryBlock()}
-`
+${aristaStorageBlock(appTypes)}`
 }
 
 function aristaTelemetryBlock(): string {
@@ -2820,10 +2946,10 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Cisco'     && l === 'wan-edge' && isIosXrPlatform(dev))  return iosxrPeConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
   if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
-  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite')
+  if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
   if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes)
   if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
-  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite')
+  if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
   if (v === 'Juniper'   && (l === 'leaf' || l === 'spine'))          return juniperLeafConfig(dev, idx)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)

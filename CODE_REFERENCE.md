@@ -511,6 +511,26 @@ npm test` after ANY change here):
   SKUs `ASR 9904` + `NCS 540` added to `lib/products.ts`. Tests: 9 in the
   `Gap G-A9` describe block of `test/configgen.test.ts`.
 
+### Storage Networking Blocks (NVMe-oF / FCoE / iSCSI) — *added 2026-06-18, gap G-A11*
+- **`nxosStorageBlock(appTypes): string`** — NX-OS storage networking config,
+  gated on `appTypes.includes('storage')`. Emits: FCoE feature + VSAN 100 +
+  vfc1 interface, VLAN 200 (STORAGE-FCOE), VLAN 201 (STORAGE-ISCSI) with SVI,
+  VLAN 202 (STORAGE-NVMEOF/RoCEv2) with SVI, storage QoS class-maps
+  (CM-STORAGE-FCOE cos 6, CM-STORAGE-ISCSI via ACL-ISCSI port 3260),
+  policy-maps (PM-STORAGE-CLASSIFY, PM-STORAGE-QUEUING with priority level 1
+  at 20% BW for storage), jumbo MTU 9216, FIP snooping (`fcoe fcmap 0E:FC:00`).
+  All IPs use `<CHANGE-ME-*>` placeholders.
+- **`aristaStorageBlock(appTypes): string`** — Arista EOS storage config,
+  gated on `appTypes.includes('storage')`. Emits: VLAN 201 (iSCSI) + VLAN 202
+  (NVMe-oF) with SVIs, ACL-ISCSI for port 3260, QoS class-map + policy-map,
+  PFC priority 6 no-drop, jumbo MTU 9214. **No FCoE** (not natively supported
+  on Arista).
+- **Wiring**: `nxosLeafConfig` and `aristaLeafConfig` accept `appTypes`
+  parameter (default `[]`); `generateConfig` dispatch passes `appTypes`
+  through for Cisco and Arista leaf roles.
+- **Tests**: 19 tests in `test/storage.test.ts` covering NX-OS and Arista
+  with/without storage appType, co-existence with GPU QoS.
+
 ### Cisco IOS-XE Campus (Distribution / Access) — *added 2026-06-11, Enterprise Upgrade A3*
 - **`iosxeCampusConfig(dev, idx, appTypes): string`** — replaces the old
   (incorrect) dispatch to `iosxeWanConfig` for campus
