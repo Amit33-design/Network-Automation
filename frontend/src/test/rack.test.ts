@@ -106,6 +106,108 @@ describe('computeRackLayout (G-A14)', () => {
   })
 })
 
+describe('computeRackLayout — ToR + GPU compute', () => {
+  function makeCompute(id: string): BOMDevice {
+    return makeDevice({
+      id, hostname: `IAD-GPU-${id}`, subLayer: 'gpu-compute',
+      model: 'GPU Server 4U (8x H100)', vendor: 'NVIDIA',
+      unitPrice: 150000, totalPrice: 150000, ports: 4,
+    })
+  }
+
+  it('uses ToR layout when gpu-compute devices present', () => {
+    const devices = [
+      makeDevice({ id: 's1', hostname: 'SPINE-A01', subLayer: 'spine' }),
+      makeDevice({ id: 'l1', hostname: 'LEAF-A01', subLayer: 'leaf' }),
+      makeDevice({ id: 'l2', hostname: 'LEAF-A02', subLayer: 'leaf' }),
+      makeCompute('001'), makeCompute('002'), makeCompute('003'),
+    ]
+    const racks = computeRackLayout(devices)
+    const computeRacks = racks.filter(r => r.rackId.startsWith('CR'))
+    const netRacks = racks.filter(r => r.rackId.startsWith('NW'))
+    expect(computeRacks.length).toBe(1) // 3 servers fit in 1 rack
+    expect(netRacks.length).toBe(1) // 1 spine
+    // Compute rack has leaf pair at top + compute below
+    expect(computeRacks[0].slots[0].device.subLayer).toBe('leaf')
+    expect(computeRacks[0].slots[1].device.subLayer).toBe('leaf')
+    expect(computeRacks[0].slots[2].device.subLayer).toBe('gpu-compute')
+  })
+
+  it('places 10 compute servers per rack (40U / 4U = 10)', () => {
+    const leaves = Array.from({ length: 4 }, (_, i) =>
+      makeDevice({ id: `l${i}`, hostname: `LEAF-${i}`, subLayer: 'leaf' }),
+    )
+    const servers = Array.from({ length: 20 }, (_, i) => makeCompute(`${i}`))
+    const racks = computeRackLayout([...leaves, ...servers])
+    const computeRacks = racks.filter(r => r.rackId.startsWith('CR'))
+    expect(computeRacks.length).toBe(2) // 20 servers / 10 per rack
+    expect(computeRacks[0].slots.filter(s => s.device.subLayer === 'gpu-compute').length).toBe(10)
+    expect(computeRacks[1].slots.filter(s => s.device.subLayer === 'gpu-compute').length).toBe(10)
+  })
+
+  it('assigns gpu-compute 4U height', () => {
+    const devices = [
+      makeDevice({ id: 'l1', subLayer: 'leaf' }),
+      makeDevice({ id: 'l2', subLayer: 'leaf' }),
+      makeCompute('001'),
+    ]
+    const racks = computeRackLayout(devices)
+    const gpuSlot = racks[0].slots.find(s => s.device.subLayer === 'gpu-compute')
+    expect(gpuSlot?.heightU).toBe(4)
+  })
+
+  it('spines go to network rack, not compute rack', () => {
+    const devices = [
+      makeDevice({ id: 's1', subLayer: 'spine' }),
+      makeDevice({ id: 's2', subLayer: 'spine' }),
+      makeDevice({ id: 'l1', subLayer: 'leaf' }),
+      makeDevice({ id: 'l2', subLayer: 'leaf' }),
+      makeCompute('001'),
+    ]
+    const racks = computeRackLayout(devices)
+    const netRack = racks.find(r => r.rackId.startsWith('NW'))
+    expect(netRack).toBeDefined()
+    expect(netRack!.slots.every(s => s.device.subLayer === 'spine')).toBe(true)
+  })
+
+  it('labels compute racks with alphaLabel', () => {
+    const servers = Array.from({ length: 30 }, (_, i) => makeCompute(`${i}`))
+    const racks = computeRackLayout(servers)
+    const computeRacks = racks.filter(r => r.rackId.startsWith('CR'))
+    expect(computeRacks[0].label).toBe('Compute A')
+    expect(computeRacks[1].label).toBe('Compute B')
+    expect(computeRacks[2].label).toBe('Compute C')
+  })
+
+  it('handles large GPU fabric — 256 servers yield ~26 compute racks', () => {
+    const leaves = Array.from({ length: 52 }, (_, i) =>
+      makeDevice({ id: `l${i}`, hostname: `LEAF-${i}`, subLayer: 'leaf' }),
+    )
+    const servers = Array.from({ length: 256 }, (_, i) => makeCompute(`${i}`))
+    const spines = Array.from({ length: 3 }, (_, i) =>
+      makeDevice({ id: `s${i}`, hostname: `SPINE-${i}`, subLayer: 'spine' }),
+    )
+    const racks = computeRackLayout([...spines, ...leaves, ...servers])
+    const computeRacks = racks.filter(r => r.rackId.startsWith('CR'))
+    const netRacks = racks.filter(r => r.rackId.startsWith('NW'))
+    expect(computeRacks.length).toBe(26) // 256 / 10 = 25.6 → 26
+    expect(netRacks.length).toBeGreaterThanOrEqual(1)
+    // Each compute rack should have leaf pair + servers
+    expect(computeRacks[0].slots[0].device.subLayer).toBe('leaf')
+  })
+
+  it('falls back to dense layout when no gpu-compute devices', () => {
+    const devices = [
+      makeDevice({ id: 's1', subLayer: 'spine' }),
+      makeDevice({ id: 'l1', subLayer: 'leaf' }),
+    ]
+    const racks = computeRackLayout(devices)
+    // Dense layout puts spine before leaf (role order), uses R-prefix rack IDs
+    expect(racks[0].rackId).toBe('R1')
+    expect(racks[0].slots[0].device.subLayer).toBe('spine')
+  })
+})
+
 describe('buildCableSchedule (G-A14)', () => {
   it('generates cable runs from cabling data', () => {
     const devices = [

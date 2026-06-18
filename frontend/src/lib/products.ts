@@ -403,6 +403,23 @@ export const PRODUCTS: Product[] = [
     detail: 'PTP Grandmaster clock — GNSS-synced, G.8275.1 telecom profile, Class A',
   },
 
+  // ── GPU Compute Servers ──────────────────────────────────────────────────
+  {
+    id: 'gpu-server-4u',
+    model: 'GPU Server 4U (8x H100)',
+    vendor: 'NVIDIA',
+    subLayer: 'gpu-compute',
+    ports: 4,
+    uplinks: 0,
+    speed: '100G',
+    asic: 'H100 SXM',
+    powerW: 6500,
+    priceUSD: 150000,
+    features: ['RoCEv2', 'RDMA', 'NCCL', 'GPU-Direct', 'NVLink'],
+    useCases: ['gpu'],
+    detail: '4U chassis, 8x H100 SXM GPUs, dual ConnectX-7 100G NICs',
+  },
+
   // ── Aviatrix ────────────────────────────────────────────────────────────────
   {
     id: 'aviatrix-gw',
