@@ -186,6 +186,16 @@ cabling, and optics. **Never hardcode device counts — always go through
 - **`buildBOM(state): { devices, summary, grandTotal }`** — calls
   `buildDeviceList()`, groups by `model` into `BOMSummaryRow`s, sums
   `grandTotal`.
+- **`computeTCO(devices, opts?): TCOModel`** *(G-A13, 2026-06-18)* — 3-year
+  TCO layered on the BOM (additive; does not affect device-count/capex math).
+  Capex = Σ `device.totalPrice`. 3-yr opex = power (Σ `powerW` looked up per
+  model from `PRODUCTS` → kWh/yr × PUE × $/kWh) + support (%/yr × capex) +
+  rack/colo (RU by `subLayer` × $/RU/mo × 12). Rates via `TCOOpts` /
+  `DEFAULT_TCO_OPTS` (default $0.12/kWh, PUE 1.5, support 15%/yr, $150/RU/mo,
+  3 yrs, 400W fallback). Returns per-category 3-yr subtotals, `annual`,
+  `byYear[]`, `total`, `totalPowerW`, `totalRackUnits`, echoed `rates`.
+  Surfaced as the "3-Year Total Cost of Ownership" card in Step 4 Summary
+  tab. Tests: `test/tco.test.ts` (11).
 - `export { SCALE_DEFS }` — re-exported for UI display (e.g. scale picker
   showing device counts).
 
