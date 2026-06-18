@@ -711,6 +711,12 @@ config-gen tests must keep passing; add new tests alongside).
 |---|------|--------|-------|
 | G1 | ToR + GPU compute server rack model — derive compute servers from endpoint count (2048 GPUs → 256 servers), ToR-based rack placement (leaf MLAG pair + N servers per rack), spines in dedicated network rack(s) | [x] | new `gpu-server-4u` product (4U, 8×H100, 6.5kW, $150k); `GPUS_PER_SERVER=8` constant; GPU compute injection in `buildDeviceList`; sequential hostnames (`GPU-001`); `computeToRLayout` in `RackElevation.tsx` (10 servers/rack); SVG capped at 12 racks; 13 new tests |
 
+### H. Design export/import & documentation (sourced 2026-06-18)
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| H1 | Design export (JSON + Markdown report) and import — full intent+BOM+configs serialization, round-trip validation, Markdown design report with TCO | [x] | new `lib/design-export.ts` (`serializeDesign`/`validateDesignImport`/`applyDesignImport`/`buildDesignMarkdown`/`downloadDesignJSON`/`downloadDesignMarkdown`); 3 export/import buttons in Step 4 Summary tab; 18 tests in `test/design-export.test.ts` |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)

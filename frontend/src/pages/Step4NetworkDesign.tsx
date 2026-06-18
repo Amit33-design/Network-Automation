@@ -9,7 +9,9 @@ import { RackElevation } from '@/components/RackElevation'
 import { formatUSD, cn } from '@/lib/utils'
 import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import { genIPBlocks, genIPRows, genVLANs, genVNIs, buildNetBoxIpamExport } from '@/lib/ipam'
-import type { BOMDevice, AppType } from '@/types'
+import { downloadDesignJSON, downloadDesignMarkdown, validateDesignImport, applyDesignImport } from '@/lib/design-export'
+import type { DesignExport } from '@/lib/design-export'
+import type { BOMDevice, AppType, AppState } from '@/types'
 
 // ── Tab types ────────────────────────────────────────────────────
 type DesignTab = 'hld' | 'lld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'rack' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
@@ -692,6 +694,7 @@ export function Step4NetworkDesign() {
   const [failedDeviceId, setFailedDeviceId] = useState<string | null>(null)
   const [summaryCopied, setSummaryCopied] = useState(false)
   const [mermaidCopied, setMermaidCopied] = useState(false)
+  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const svgRef = useRef<HTMLDivElement>(null)
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
@@ -1575,6 +1578,67 @@ export function Step4NetworkDesign() {
                 </div>
               )}
             </div>
+          </Card>
+
+          {/* Export / Import */}
+          <Card>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">Export & Import Design</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+              <button
+                onClick={() => downloadDesignJSON(useAppStore.getState() as AppState)}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-blue-500/40 bg-blue-600/20 text-blue-300 text-sm font-medium hover:bg-blue-600/30 transition-colors cursor-pointer"
+              >
+                Export JSON
+              </button>
+              <button
+                onClick={() => downloadDesignMarkdown(useAppStore.getState() as AppState)}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-green-500/40 bg-green-600/20 text-green-300 text-sm font-medium hover:bg-green-600/30 transition-colors cursor-pointer"
+              >
+                Export Report (.md)
+              </button>
+              <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-purple-500/40 bg-purple-600/20 text-purple-300 text-sm font-medium hover:bg-purple-600/30 transition-colors cursor-pointer">
+                Import Design
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    const reader = new FileReader()
+                    reader.onload = () => {
+                      try {
+                        const data = JSON.parse(reader.result as string)
+                        const result = validateDesignImport(data)
+                        if (!result.ok) {
+                          setImportStatus({ type: 'error', message: result.error! })
+                          return
+                        }
+                        const patch = applyDesignImport(data as DesignExport)
+                        useAppStore.setState(patch)
+                        const warnText = result.warnings.length > 0 ? ` (${result.warnings.join('; ')})` : ''
+                        setImportStatus({ type: 'success', message: `Design imported successfully${warnText}` })
+                      } catch {
+                        setImportStatus({ type: 'error', message: 'Failed to parse JSON file' })
+                      }
+                    }
+                    reader.readAsText(file)
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+            </div>
+            {importStatus && (
+              <div className={cn(
+                'p-3 rounded-lg text-sm border',
+                importStatus.type === 'success' ? 'bg-green-900/30 border-green-700/50 text-green-300' : 'bg-red-900/30 border-red-700/50 text-red-300'
+              )}>
+                {importStatus.message}
+              </div>
+            )}
+            <p className="text-xs text-gray-500 mt-2">
+              Export your full design as JSON (re-importable) or as a Markdown report for documentation and change management reviews.
+            </p>
           </Card>
 
           {/* Printable text version */}
