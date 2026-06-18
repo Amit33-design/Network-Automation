@@ -209,6 +209,17 @@ services:
       - victoriametrics
     restart: unless-stopped
 
+  # ── SNMP Exporter — Prometheus SNMP metrics collector (G-A17) ──────────────
+  # Translates SNMP polls into Prometheus metrics. Prometheus scrapes this
+  # service with ?target=<device-ip>&module=if_mib relabel magic.
+  snmp-exporter:
+    image: prometheuscommunity/snmp-exporter:v0.26.0
+    container_name: netdesign-snmp-exporter
+    ports:
+      - "9116:9116"
+    command: --config.file=/etc/snmp_exporter/snmp.yml
+    restart: unless-stopped
+
   # ── VictoriaMetrics — long-term TSDB (G-A7) ────────────────────────────────
   # Prometheus remote-writes here; Grafana queries it via the Prometheus API.
   victoriametrics:

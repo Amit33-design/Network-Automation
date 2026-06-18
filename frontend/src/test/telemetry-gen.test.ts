@@ -5,6 +5,8 @@ import {
   genTelegrafGNMIConfig,
   genPrometheusAlertRules,
   genGrafanaDashboardJSON,
+  genSNMPExporterConfig,
+  genSNMPPrometheusJob,
   GNMI_PORT,
 } from '@/lib/telemetry-gen'
 import type { BOMDevice } from '@/types'
@@ -196,5 +198,88 @@ describe('genGrafanaDashboardJSON', () => {
     const parsed = JSON.parse(json)
     const titles = parsed.dashboard.panels.map((p: { title: string }) => p.title)
     expect(titles.some((t: string) => t.includes('PFC'))).toBe(false)
+  })
+})
+
+// ── SNMP Exporter Config (G-A17) ─────────────────────────────────────────────
+describe('genSNMPExporterConfig (G-A17)', () => {
+  it('generates snmp.yml with auth and module sections', () => {
+    const devs = [makeDevice({ hostname: 'SPINE-A01', subLayer: 'spine', vendor: 'Cisco' })]
+    const cfg = genSNMPExporterConfig(devs)
+    expect(cfg).toContain('auths:')
+    expect(cfg).toContain('netdesign_v3')
+    expect(cfg).toContain('auth_protocol: SHA')
+    expect(cfg).toContain('priv_protocol: AES')
+    expect(cfg).toContain('modules:')
+  })
+
+  it('includes IF-MIB, HOST-RESOURCES, BGP4, ENTITY-SENSOR modules', () => {
+    const devs = [makeDevice()]
+    const cfg = genSNMPExporterConfig(devs)
+    expect(cfg).toContain('if_mib:')
+    expect(cfg).toContain('host_resources:')
+    expect(cfg).toContain('bgp4:')
+    expect(cfg).toContain('entity_sensor:')
+    expect(cfg).toContain('tcp_udp:')
+  })
+
+  it('lists target devices in header comment', () => {
+    const devs = [
+      makeDevice({ hostname: 'SPINE-A01', subLayer: 'spine', vendor: 'Cisco' }),
+      makeDevice({ hostname: 'LEAF-A01', subLayer: 'leaf', vendor: 'Arista' }),
+    ]
+    const cfg = genSNMPExporterConfig(devs)
+    expect(cfg).toContain('SPINE-A01')
+    expect(cfg).toContain('LEAF-A01')
+  })
+
+  it('uses CHANGE-ME placeholders for credentials', () => {
+    const cfg = genSNMPExporterConfig([makeDevice()])
+    expect(cfg).toContain('<CHANGE-ME-snmp-auth-pass>')
+    expect(cfg).toContain('<CHANGE-ME-snmp-priv-pass>')
+    expect(cfg).toContain('<CHANGE-ME-community>')
+  })
+
+  it('includes IF-MIB OID walks', () => {
+    const cfg = genSNMPExporterConfig([makeDevice()])
+    expect(cfg).toContain('1.3.6.1.2.1.2')
+    expect(cfg).toContain('1.3.6.1.2.1.31.1.1')
+  })
+})
+
+describe('genSNMPPrometheusJob (G-A17)', () => {
+  it('generates Prometheus scrape job config for snmp-exporter', () => {
+    const devs = [makeDevice({ hostname: 'SPINE-A01', subLayer: 'spine', vendor: 'Cisco' })]
+    const cfg = genSNMPPrometheusJob(devs)
+    expect(cfg).toContain('job_name: snmp-if-mib')
+    expect(cfg).toContain('job_name: snmp-host-resources')
+    expect(cfg).toContain('job_name: snmp-bgp4')
+    expect(cfg).toContain('job_name: snmp-entity-sensor')
+  })
+
+  it('sets metrics_path to /snmp with module param', () => {
+    const cfg = genSNMPPrometheusJob([makeDevice()])
+    expect(cfg).toContain('metrics_path: /snmp')
+    expect(cfg).toContain('module: [if_mib]')
+    expect(cfg).toContain('auth: [netdesign_v3]')
+  })
+
+  it('includes device management IPs as targets', () => {
+    const devs = [
+      makeDevice({ hostname: 'SPINE-A01', subLayer: 'spine' }),
+      makeDevice({ hostname: 'LEAF-A01', subLayer: 'leaf' }),
+    ]
+    const cfg = genSNMPPrometheusJob(devs)
+    expect(cfg).toContain('10.0.0.11')
+    expect(cfg).toContain('10.0.0.12')
+    expect(cfg).toContain('# SPINE-A01')
+    expect(cfg).toContain('# LEAF-A01')
+  })
+
+  it('configures relabel to route through snmp-exporter:9116', () => {
+    const cfg = genSNMPPrometheusJob([makeDevice()])
+    expect(cfg).toContain('replacement: snmp-exporter:9116')
+    expect(cfg).toContain('target_label: __param_target')
+    expect(cfg).toContain('target_label: instance')
   })
 })
