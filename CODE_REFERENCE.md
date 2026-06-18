@@ -448,6 +448,23 @@ npm test` after ANY change here):
   PL-OUT/PL-IN`, commented-out IPSec/DMVPN stub, QoS shaping `policy-map
   PM-WAN-SHAPING`. Calls `mgmtBlock(dev.hostname, 10)`.
 
+### Cisco IOS-XR SP/WAN (PE/P) — *added 2026-06-18, gap G-A9*
+- **`iosxrPeConfig(dev, idx): string`** — full IOS-XR PE/P generator emitting
+  true IOS-XR syntax (NOT IOS-XE): `GigabitEthernet0/0/0/0`/`Loopback0`/
+  `MgmtEth0/RP0/CPU0/0` naming, `!` separators, IOS-XR AAA (`secret 10`),
+  `route-policy … end-policy` (not `route-map`), `segment-routing` global
+  block + `router isis CORE … segment-routing mpls` with `prefix-sid index`
+  on Loopback0 + TI-LFA, L3VPN `vrf CUST-A` import/export route-targets,
+  `router bgp … address-family vpnv4 unicast` (RR-client neighbor-group +
+  PE-CE eBGP in VRF), gNMI telemetry. Single underlay **IS-IS+SR only** (no
+  OSPF, per §6 rule 4). Secrets `<CHANGE-ME-*>`, one mgmt/AAA block.
+- **`isIosXrPlatform(dev): boolean`** — dispatch discriminator: true when
+  `dev.features` includes `IOS-XR` or model matches `ASR 9xxx`/`NCS`/`CRS`/
+  `IOS-XRv`. Dispatch order in `generateConfig`: Cisco wan-edge + IOS-XR →
+  `iosxrPeConfig`; else Cisco wan-edge → `iosxeWanConfig` (ASR 1xxx, vEdge).
+  SKUs `ASR 9904` + `NCS 540` added to `lib/products.ts`. Tests: 9 in the
+  `Gap G-A9` describe block of `test/configgen.test.ts`.
+
 ### Cisco IOS-XE Campus (Distribution / Access) — *added 2026-06-11, Enterprise Upgrade A3*
 - **`iosxeCampusConfig(dev, idx, appTypes): string`** — replaces the old
   (incorrect) dispatch to `iosxeWanConfig` for campus
