@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   useReactTable,
   getCoreRowModel,
@@ -257,7 +257,7 @@ export function Step2Design() {
     [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols]
   )
 
-  useMemo(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
+  useEffect(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
 
   const cabling = useMemo(() => buildCabling(generatedDevices, linkDistances), [generatedDevices, linkDistances])
   const optics  = useMemo(() => buildOptics(generatedDevices, linkDistances),  [generatedDevices, linkDistances])

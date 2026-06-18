@@ -152,7 +152,7 @@ export const useAppStore = create<AppStore>()(
       nextStep: () => set(s => ({ step: Math.min(s.step + 1, 6) })),
       prevStep: () => set(s => ({ step: Math.max(s.step - 1, 1) })),
 
-      setUseCase: useCase => set({ useCase, configs: {} }),
+      setUseCase: useCase => set({ useCase, configs: {}, devices: [], cabling: [], optics: [] }),
       setAppTypes: appTypes => set({ appTypes }),
       setSiteName: siteName => set({ siteName }),
       setSiteCode: siteCode => set({ siteCode }),
