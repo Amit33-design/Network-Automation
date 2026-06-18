@@ -793,11 +793,28 @@ the gNMI/Prometheus/Grafana side.
   Inventory table; adds a "GPU Fabric — PFC Priority-3 Drops (RoCEv2)" panel
   when `useCase === 'gpu'`.
 
+- `genSNMPExporterConfig(devices): string` — *added 2026-06-18, gap G-A17* —
+  `snmp.yml` for `prom/snmp-exporter`: SNMPv3 auth (`netdesign_v3`, SHA/AES,
+  `<CHANGE-ME-*>` credentials) + SNMPv2c fallback; 5 modules — `if_mib`
+  (IF-MIB::interfaces + ifXTable), `host_resources` (CPU/memory/disk),
+  `entity_sensor` (ENTITY-MIB hardware sensors), `bgp4` (BGP4-MIB),
+  `tcp_udp` (TCP/UDP stats). Each module references `netdesign_v3` auth.
+  Target device list in header comments from `buildTelemetryTargets`.
+- `genSNMPPrometheusJob(devices): string` — *added 2026-06-18, gap G-A17* —
+  Prometheus `scrape_configs` block: 4 jobs (`snmp-if-mib` 60s,
+  `snmp-host-resources` 120s, `snmp-bgp4` 60s, `snmp-entity-sensor` 120s),
+  each with `metrics_path: /snmp`, module/auth params, relabel config
+  routing through `snmp-exporter:9116`. Device management IPs from
+  `buildTelemetryTargets`.
+
 **UI:** Step 6 → Monitoring tab → "Observability Downloads" card
-(`Step6Deploy.tsx`) — buttons for `gnmic.yml`, `telegraf-gnmi.conf`,
-`prometheus-alerts.yml`, `grafana-dashboard.json`, alongside the existing
-Grok/NetFlow downloads. All four use `storeDevices`/`orgName`/`storeUseCase`
-from `useAppStore`.
+(`Step6Deploy.tsx`) — buttons for `snmp.yml`, `snmp-scrape.yml`,
+`gnmic.yml`, `telegraf-gnmi.conf`, `prometheus-alerts.yml`,
+`grafana-dashboard.json`, alongside the existing Grok/NetFlow downloads.
+All use `storeDevices`/`orgName`/`storeUseCase` from `useAppStore`.
+
+**Docker:** `snmp-exporter` service (`prometheuscommunity/snmp-exporter:v0.26.0`)
+in `docker-compose.yml`, port 9116.
 
 **Tests:** `src/test/telemetry-gen.test.ts` — 17 tests covering target
 expansion/capping/IP assignment/OS+port mapping, gnmic/Telegraf config

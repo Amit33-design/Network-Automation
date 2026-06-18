@@ -13,7 +13,7 @@ import { useBackendMode } from '@/components/BackendToggle'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON } from '@/lib/telemetry-gen'
+import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON, genSNMPExporterConfig, genSNMPPrometheusJob } from '@/lib/telemetry-gen'
 import { useTroubleshoot } from '@/hooks/useTroubleshoot'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
@@ -3373,11 +3373,18 @@ export function Step6Deploy() {
           <Card>
             <CardHeader><CardTitle>Observability Downloads</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
-              Logstash Grok patterns for syslog parsing, NetFlow/sFlow exporter config snippets,
-              gNMI streaming-telemetry collector configs, Prometheus alert rules, and a Grafana
-              dashboard — all derived from your BOM device list.
+              SNMP exporter config, Logstash Grok patterns, NetFlow/sFlow, gNMI collector configs,
+              Prometheus alert rules, and Grafana dashboard — all derived from your BOM device list.
             </p>
             <div className="flex flex-wrap gap-3">
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadBlob('snmp.yml', genSNMPExporterConfig(storeDevices)); showToast('snmp.yml downloaded', 'success') }}>
+                ↓ SNMP Exporter Config
+              </Button>
+              <Button variant="secondary" size="sm"
+                onClick={() => { downloadBlob('snmp-scrape.yml', genSNMPPrometheusJob(storeDevices)); showToast('snmp-scrape.yml downloaded', 'success') }}>
+                ↓ SNMP Prometheus Job
+              </Button>
               <Button variant="secondary" size="sm"
                 onClick={() => { downloadBlob('network-grok.conf', buildGrokPatternsConfig()); showToast('network-grok.conf downloaded', 'success') }}>
                 ↓ Grok Patterns
