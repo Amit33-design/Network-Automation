@@ -83,7 +83,7 @@ export function buildTelemetryTargets(devices: BOMDevice[]): TelemetryTarget[] {
   const targets: TelemetryTarget[] = []
   let octet = 11
   for (const dev of devices) {
-    if (dev.subLayer === 'firewall') continue
+    if (dev.subLayer === 'firewall' || dev.subLayer === 'gpu-compute') continue
     const os   = deviceOS(dev.vendor, dev.subLayer)
     const port = GNMI_PORT[os] ?? 6030
     const count = Math.min(dev.count, 4)

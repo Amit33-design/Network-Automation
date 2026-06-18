@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { buildBOM, buildCabling, computeTCO } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
@@ -699,7 +699,7 @@ export function Step4NetworkDesign() {
     [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols]
   )
 
-  useMemo(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
+  useEffect(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
 
   const useCaseLabel = (useCase && USE_CASE_LABELS[useCase]) || useCase || '—'
   const uniqueModels = Object.values(summary).length

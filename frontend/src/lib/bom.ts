@@ -636,6 +636,7 @@ function selectCable(distM: number, speed: string): CableSpec {
 
 const LAYER_CONNECTS: Array<{ from: string; to: string; key: string }> = [
   { from: 'spine',        to: 'leaf',         key: 'spine-leaf'  },
+  { from: 'leaf',         to: 'gpu-compute',  key: 'spine-leaf'  },
   { from: 'core',         to: 'distribution', key: 'core-dist'   },
   { from: 'distribution', to: 'access',       key: 'dist-access' },
   { from: 'wan-edge',     to: 'distribution', key: 'wan-edge'    },

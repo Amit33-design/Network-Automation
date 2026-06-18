@@ -3547,7 +3547,10 @@ function oranConfig(dev: BOMDevice, idx: number): string {
   }
 }
 
+const NON_NETWORK_LAYERS = new Set(['gpu-compute', 'cloud-gw', 'cloud-transit'])
+
 export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '' = '', appTypes: AppType[] = [], allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
+  if (NON_NETWORK_LAYERS.has(dev.subLayer)) return ''
   const isGpu = useCase === 'gpu'
   const v = dev.vendor
   const l = dev.subLayer
@@ -3583,13 +3586,15 @@ export function generateAllConfigs(
   appTypes: AppType[] = [],
   protoFeatures: string[] = [],
 ): Record<string, string> {
-  return Object.fromEntries(
-    devices.map((dev, i) => {
-      const base = generateConfig(dev, i, useCase, appTypes, devices, protoFeatures)
-      const withPolicies = policyBlocks.length
-        ? applyPolicies(base, dev, useCase, policyBlocks)
-        : base
-      return [dev.id, withPolicies]
-    })
-  )
+  const entries: [string, string][] = []
+  for (let i = 0; i < devices.length; i++) {
+    const dev = devices[i]
+    const base = generateConfig(dev, i, useCase, appTypes, devices, protoFeatures)
+    if (!base) continue
+    const withPolicies = policyBlocks.length
+      ? applyPolicies(base, dev, useCase, policyBlocks)
+      : base
+    entries.push([dev.id, withPolicies])
+  }
+  return Object.fromEntries(entries)
 }
