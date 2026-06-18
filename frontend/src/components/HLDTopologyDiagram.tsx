@@ -637,10 +637,15 @@ function buildCampusTopology(devices: BOMDevice[], underlay: string, sc: string)
 // ─── GPU topology ─────────────────────────────────────────────────────────────
 
 function buildGPUTopology(devices: BOMDevice[], sc: string): Topo {
+  const spineDevs = devices.filter(d => d.subLayer === 'spine')
   const leafDevs = devices.filter(d => d.subLayer === 'leaf')
   const nLeaves  = Math.min(Math.max(leafDevs.length, 4), 8)
   const nGPU     = Math.min(nLeaves * 2, 8)
-  const leafModel = leafDevs[0]?.model ?? 'SN4600C'
+  // Reflect the actual BOM hardware rather than hardcoding one vendor.
+  const leafModel    = leafDevs[0]?.model  ?? 'SN4600C'
+  const leafVendor   = leafDevs[0]?.vendor ?? 'NVIDIA'
+  const spineModel   = spineDevs[0]?.model  ?? 'SN4800'
+  const spineVendor  = spineDevs[0]?.vendor ?? 'NVIDIA'
 
   const Y: Record<string, number> = {
     oob: 72, spine: 220, leaf: 360, gpu: 500, storage: 630,
@@ -660,9 +665,9 @@ function buildGPUTopology(devices: BOMDevice[], sc: string): Topo {
     { features:['VLAN10 OOB','SSH','SNMPv3','Syslog'] })
 
   const [sx1, sx2] = xCentered(2, 320)
-  const sp1 = mkNode('sp1','GPU-SPINE-01','SN4800','spine','NVIDIA','10.255.1.1','10.0.0.31',sx1,Y.spine,
+  const sp1 = mkNode('sp1',spineDevs[0]?.hostname ?? 'GPU-SPINE-01',spineModel,'spine',spineVendor,'10.255.1.1','10.0.0.31',sx1,Y.spine,
     { haRole:'active', asn:'65001', features:['400G QSFP-DD','RoCEv2 lossless','ECN','DCQCN'] })
-  const sp2 = mkNode('sp2','GPU-SPINE-02','SN4800','spine','NVIDIA','10.255.1.2','10.0.0.32',sx2,Y.spine,
+  const sp2 = mkNode('sp2',spineDevs[1]?.hostname ?? 'GPU-SPINE-02',spineModel,'spine',spineVendor,'10.255.1.2','10.0.0.32',sx2,Y.spine,
     { haRole:'active', asn:'65001', features:['400G QSFP-DD','RoCEv2 lossless','ECN','DCQCN'] })
 
   const leafGap = nLeaves <= 4 ? 30 : 16
@@ -672,7 +677,7 @@ function buildGPUTopology(devices: BOMDevice[], sc: string): Topo {
     const features = ['400G ToR','PFC P3','ECN','VXLAN NVE','BFD']
     if (pair) features.push(`vPC/MLAG Pair #${pair.pairId}`)
     return mkNode(
-      `lf${i+1}`, `GPU-LEAF-0${i+1}`, leafModel, 'leaf', 'NVIDIA',
+      `lf${i+1}`, leafDevs[i]?.hostname ?? `GPU-LEAF-0${i+1}`, leafModel, 'leaf', leafVendor,
       `10.255.2.${i+1}`, `10.0.0.${51+i}`, x, Y.leaf,
       { features, mlagPairId: pair?.pairId },
     )

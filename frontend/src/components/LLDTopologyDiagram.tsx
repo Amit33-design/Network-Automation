@@ -499,9 +499,20 @@ function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
 // ─── GPU AI Fabric LLD ────────────────────────────────────────────────────────
 
-function buildGPULLD(_devices: BOMDevice[], sc: string): LLDTopo {
+function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
   const NW = 190
   const Y = { oob: 50, spine: 180, leaf: 340, gpu: 510, stor: 680 }
+
+  // Use the actual BOM spine/leaf hardware (vendor/model/hostname) rather than
+  // hardcoding a single vendor — the fabric switches must reflect the BOM.
+  const spineDevs = devices.filter(d => d.subLayer === 'spine')
+  const leafDevs  = devices.filter(d => d.subLayer === 'leaf')
+  const spineVendor = spineDevs[0]?.vendor ?? 'NVIDIA'
+  const spineModel  = spineDevs[0]?.model  ?? 'SN4800'
+  const leafVendor  = leafDevs[0]?.vendor  ?? 'NVIDIA'
+  const leafModel   = leafDevs[0]?.model   ?? 'SN4600C'
+  const spineName = (i: number) => spineDevs[i]?.hostname ?? `GPU-SPINE-0${i + 1}`
+  const leafName  = (i: number) => leafDevs[i]?.hostname  ?? `GPU-LEAF-0${i + 1}`
 
   const zones: LLDZone[] = [
     { id: 'z-oob', label: 'OOB MANAGEMENT', sublabel: 'SSH · SNMPv3 · Syslog · VLAN 10',
@@ -527,7 +538,7 @@ function buildGPULLD(_devices: BOMDevice[], sc: string): LLDTopo {
   })
 
   const [s1x, s2x] = xCenter(2, 280, NW)
-  const sp1 = mkNode('sp1', 'GPU-SPINE-01', 'SN4800', 'spine', 'NVIDIA', s1x, Y.spine, NW, 110, {
+  const sp1 = mkNode('sp1', spineName(0), spineModel, 'spine', spineVendor, s1x, Y.spine, NW, 110, {
     haRole: 'active', icon: '🔷',
     interfaces: [
       { name: 'e1/1-4', ip: '10.1.0.x/31', speed: '400G' },
@@ -537,7 +548,7 @@ function buildGPULLD(_devices: BOMDevice[], sc: string): LLDTopo {
     configLines: ['IS-IS level-2', 'BFD interval 100ms', 'PFC priority 3 no-drop', 'ECN DCQCN enabled'],
     services: ['IS-IS', 'BFD', 'PFC', 'ECN', 'DCQCN'],
   })
-  const sp2 = mkNode('sp2', 'GPU-SPINE-02', 'SN4800', 'spine', 'NVIDIA', s2x, Y.spine, NW, 110, {
+  const sp2 = mkNode('sp2', spineName(1), spineModel, 'spine', spineVendor, s2x, Y.spine, NW, 110, {
     haRole: 'active', icon: '🔷',
     interfaces: [
       { name: 'e1/1-4', ip: '10.1.1.x/31', speed: '400G' },
@@ -551,7 +562,7 @@ function buildGPULLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const leafW = 180
   const leafXs = xCenter(4, 20, leafW)
   const leaves = leafXs.map((x, i) => mkNode(
-    `lf${i+1}`, `GPU-LEAF-0${i+1}`, 'SN4600C', 'leaf', 'NVIDIA', x, Y.leaf, leafW, 120, {
+    `lf${i+1}`, leafName(i), leafModel, 'leaf', leafVendor, x, Y.leaf, leafW, 120, {
       icon: '🟢',
       interfaces: [
         { name: 'e1/1', ip: `10.1.0.${i*4+1}/31`, speed: '400G', vlan: 'Spine-01 uplink' },

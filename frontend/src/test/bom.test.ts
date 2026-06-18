@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { buildDeviceList, buildBOM, SCALE_DEFS } from '@/lib/bom'
+import { buildDeviceList, buildBOM, SCALE_DEFS, alphaLabel, generateHostnames } from '@/lib/bom'
+import { haPairInfo } from '@/lib/configgen'
+import type { BOMDevice } from '@/types'
 
 describe('buildDeviceList', () => {
   it('returns correct device count for dc/small', () => {
@@ -77,5 +79,58 @@ describe('SCALE_DEFS', () => {
         expect(SCALE_DEFS[scale][uc]).toBeDefined()
       }
     }
+  })
+})
+
+describe('alphaLabel — bijective base-26 (no overflow past Z)', () => {
+  it('maps single letters A–Z', () => {
+    expect(alphaLabel(0)).toBe('A')
+    expect(alphaLabel(25)).toBe('Z')
+  })
+
+  it('continues with AA, AB … beyond 26 (no ASCII symbols)', () => {
+    expect(alphaLabel(26)).toBe('AA')
+    expect(alphaLabel(27)).toBe('AB')
+    expect(alphaLabel(51)).toBe('AZ')
+    expect(alphaLabel(52)).toBe('BA')
+  })
+
+  it('only ever emits A–Z characters', () => {
+    for (let i = 0; i < 1000; i++) {
+      expect(alphaLabel(i)).toMatch(/^[A-Z]+$/)
+    }
+  })
+})
+
+describe('generateHostnames at large scale (regression: leaf > 52)', () => {
+  function leaves(n: number): BOMDevice[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `l${i}`, hostname: '', vendor: 'Arista', model: '7050CX3-32S',
+      role: 'leaf', subLayer: 'leaf', count: 1, ports: 32, speed: '100G',
+      features: [], unitPrice: 1, totalPrice: 1,
+    }))
+  }
+
+  it('produces only alphanumeric hostnames for 70 leaves (no [ \\ ] ^ _ )', () => {
+    const named = generateHostnames(leaves(70), 'IAD')
+    for (const d of named) {
+      expect(d.hostname).toMatch(/^IAD-LEAF-[A-Z]+0[12]$/)
+    }
+  })
+
+  it('uses AA label for the 27th pair (53rd device) instead of overflowing', () => {
+    const named = generateHostnames(leaves(70), 'IAD')
+    // pair 27 = devices index 52 (01) and 53 (02)
+    expect(named[52].hostname).toBe('IAD-LEAF-AA01')
+    expect(named[53].hostname).toBe('IAD-LEAF-AA02')
+  })
+
+  it('haPairInfo still resolves peer/domain for two-letter labels', () => {
+    const named = generateHostnames(leaves(70), 'IAD')
+    const primary = named[52] // IAD-LEAF-AA01
+    const info = haPairInfo(primary, 52)
+    expect(info.isPrimary).toBe(true)
+    expect(info.peerHostname).toBe('IAD-LEAF-AA02')
+    expect(info.domainId).toBe('IAD-LEAF-AA')
   })
 })

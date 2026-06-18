@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { alphaLabel } from '@/lib/bom'
 import type { BOMDevice, CableLink } from '@/types'
 
 // ── Rack assignment types ──────────────────────────────────────────────────────
@@ -99,7 +100,7 @@ export function computeRackLayout(devices: BOMDevice[]): RackAssignment[] {
 
   const racks: RackAssignment[] = []
   let currentRack: RackAssignment = {
-    rackId: 'R1', label: 'Rack A', slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
+    rackId: 'R1', label: `Rack ${alphaLabel(0)}`, slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
   }
   let currentU = 1
 
@@ -110,7 +111,7 @@ export function computeRackLayout(devices: BOMDevice[]): RackAssignment[] {
       const nextIdx = racks.length + 1
       currentRack = {
         rackId: `R${nextIdx}`,
-        label: `Rack ${String.fromCharCode(64 + nextIdx)}`,
+        label: `Rack ${alphaLabel(nextIdx - 1)}`,
         slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
       }
       currentU = 1

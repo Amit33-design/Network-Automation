@@ -132,8 +132,20 @@ const ROLE_CODE: Record<string, string> = {
   'oran-timing':      'OPTM',
 }
 
+/** Bijective base-26 column label: 0→A … 25→Z, 26→AA, 27→AB … (no overflow). */
+export function alphaLabel(n: number): string {
+  let s = ''
+  let x = n + 1
+  while (x > 0) {
+    const rem = (x - 1) % 26
+    s = String.fromCharCode(65 + rem) + s
+    x = Math.floor((x - 1) / 26)
+  }
+  return s
+}
+
 function rackLabel(idx: number): string {
-  return String.fromCharCode(65 + Math.floor(idx / 2))
+  return alphaLabel(Math.floor(idx / 2))
 }
 
 export function generateHostnames(devices: BOMDevice[], siteCode: string): BOMDevice[] {
