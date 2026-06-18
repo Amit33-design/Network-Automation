@@ -44,7 +44,7 @@ const RACK_TOTAL_H = RACK_U * U_HEIGHT + MARGIN_TOP + MARGIN_BOTTOM
 
 const ROLE_ORDER = [
   'sdwan-controller', 'firewall', 'wan-edge', 'core', 'spine',
-  'distribution', 'leaf', 'access', 'cloud-gw', 'cloud-transit',
+  'distribution', 'leaf', 'access', 'gpu-compute', 'cloud-gw', 'cloud-transit',
 ]
 
 const ROLE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
@@ -56,6 +56,7 @@ const ROLE_COLORS: Record<string, { bg: string; border: string; text: string }> 
   'wan-edge':         { bg: '#4A2A0A', border: '#F59E0B', text: '#FDE68A' },
   'sdwan-controller': { bg: '#4A0A2A', border: '#F472B6', text: '#FBCFE8' },
   firewall:           { bg: '#5C1010', border: '#EF4444', text: '#FECACA' },
+  'gpu-compute':      { bg: '#4A0E4E', border: '#E879F9', text: '#F5D0FE' },
   'cloud-gw':         { bg: '#0A3A4A', border: '#22D3EE', text: '#CFFAFE' },
   'cloud-transit':    { bg: '#0A3A4A', border: '#22D3EE', text: '#CFFAFE' },
 }
@@ -68,6 +69,8 @@ function ruForRole(subLayer: string): number {
   switch (subLayer) {
     case 'spine': case 'core': case 'wan-edge': case 'sdwan-controller':
       return 2
+    case 'gpu-compute':
+      return 4
     case 'firewall':
       return 1
     case 'cloud-gw': case 'cloud-transit':
@@ -80,7 +83,7 @@ function ruForRole(subLayer: string): number {
 const ROLE_POWER: Record<string, number> = {
   spine: 800, core: 800, leaf: 480, distribution: 600, access: 400,
   'wan-edge': 300, 'sdwan-controller': 300, firewall: 800,
-  'cloud-gw': 0, 'cloud-transit': 0,
+  'gpu-compute': 6500, 'cloud-gw': 0, 'cloud-transit': 0,
 }
 
 function devicePower(d: BOMDevice): number {
@@ -90,6 +93,11 @@ function devicePower(d: BOMDevice): number {
 // ── Rack layout computation ──────────────────────────────────────────────────
 
 export function computeRackLayout(devices: BOMDevice[]): RackAssignment[] {
+  const hasCompute = devices.some(d => d.subLayer === 'gpu-compute')
+  return hasCompute ? computeToRLayout(devices) : computeDenseLayout(devices)
+}
+
+function computeDenseLayout(devices: BOMDevice[]): RackAssignment[] {
   const physical = devices.filter(d => ruForRole(d.subLayer) > 0)
 
   const sorted = [...physical].sort((a, b) => {
@@ -123,6 +131,113 @@ export function computeRackLayout(devices: BOMDevice[]): RackAssignment[] {
     currentU += h
   }
   if (currentRack.slots.length > 0) racks.push(currentRack)
+  if (racks.length === 0) {
+    racks.push({ rackId: 'R1', label: 'Rack A', slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0 })
+  }
+  return racks
+}
+
+function addSlot(rack: RackAssignment, startU: number, dev: BOMDevice): number {
+  const h = ruForRole(dev.subLayer)
+  const pw = devicePower(dev)
+  rack.slots.push({ startU, heightU: h, device: dev, powerW: pw })
+  rack.usedU += h
+  rack.totalPowerW += pw
+  return startU + h
+}
+
+function computeToRLayout(devices: BOMDevice[]): RackAssignment[] {
+  const leaves = devices.filter(d => d.subLayer === 'leaf')
+  const compute = devices.filter(d => d.subLayer === 'gpu-compute')
+  const network = devices.filter(d =>
+    d.subLayer !== 'leaf' && d.subLayer !== 'gpu-compute' && ruForRole(d.subLayer) > 0,
+  )
+
+  const leafPairs: BOMDevice[][] = []
+  for (let i = 0; i < leaves.length; i += 2) {
+    leafPairs.push(leaves.slice(i, Math.min(i + 2, leaves.length)))
+  }
+
+  const computeRU = ruForRole('gpu-compute')
+  const leafRU = ruForRole('leaf')
+  const torU = leafRU * 2
+  const serversPerRack = Math.floor((RACK_U - torU) / computeRU)
+
+  const racks: RackAssignment[] = []
+  let computeIdx = 0
+  let pairIdx = 0
+
+  while (computeIdx < compute.length) {
+    const rn = racks.length + 1
+    const rack: RackAssignment = {
+      rackId: `CR${rn}`, label: `Compute ${alphaLabel(rn - 1)}`,
+      slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
+    }
+    let currentU = 1
+
+    if (pairIdx < leafPairs.length) {
+      for (const leaf of leafPairs[pairIdx]) {
+        currentU = addSlot(rack, currentU, leaf)
+      }
+      pairIdx++
+    }
+
+    let placed = 0
+    while (computeIdx < compute.length && placed < serversPerRack && currentU + computeRU - 1 <= RACK_U) {
+      currentU = addSlot(rack, currentU, compute[computeIdx])
+      computeIdx++
+      placed++
+    }
+
+    racks.push(rack)
+  }
+
+  // Remaining leaf pairs without compute servers
+  while (pairIdx < leafPairs.length) {
+    const rn = racks.length + 1
+    const rack: RackAssignment = {
+      rackId: `LR${rn}`, label: `Leaf Rack ${alphaLabel(rn - 1)}`,
+      slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
+    }
+    let currentU = 1
+    for (const leaf of leafPairs[pairIdx]) {
+      currentU = addSlot(rack, currentU, leaf)
+    }
+    pairIdx++
+    racks.push(rack)
+  }
+
+  // Network rack(s) for spines, firewalls
+  if (network.length > 0) {
+    const sortedNet = [...network].sort((a, b) => {
+      const ai = ROLE_ORDER.indexOf(a.subLayer)
+      const bi = ROLE_ORDER.indexOf(b.subLayer)
+      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi)
+    })
+
+    let netNum = 1
+    let netRack: RackAssignment = {
+      rackId: `NW${netNum}`, label: `Network Rack ${netNum}`,
+      slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
+    }
+    let currentU = 1
+
+    for (const dev of sortedNet) {
+      const h = ruForRole(dev.subLayer)
+      if (currentU + h - 1 > RACK_U) {
+        racks.push(netRack)
+        netNum++
+        netRack = {
+          rackId: `NW${netNum}`, label: `Network Rack ${netNum}`,
+          slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
+        }
+        currentU = 1
+      }
+      currentU = addSlot(netRack, currentU, dev)
+    }
+    if (netRack.slots.length > 0) racks.push(netRack)
+  }
+
   if (racks.length === 0) {
     racks.push({ rackId: 'R1', label: 'Rack A', slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0 })
   }
@@ -291,6 +406,7 @@ function RackLegend() {
   const items = [
     { label: 'Spine / Core', subLayer: 'spine' },
     { label: 'Leaf / Access', subLayer: 'leaf' },
+    { label: 'GPU Compute', subLayer: 'gpu-compute' },
     { label: 'Distribution', subLayer: 'distribution' },
     { label: 'WAN Edge', subLayer: 'wan-edge' },
     { label: 'SD-WAN Controller', subLayer: 'sdwan-controller' },
@@ -342,13 +458,27 @@ export function RackElevation({ devices, cabling, siteCode }: Props) {
       </div>
 
       {/* Rack SVGs */}
-      <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(${Math.min(racks.length, 3)}, minmax(0, 1fr))` }}>
-        {racks.map(rack => (
-          <div key={rack.rackId} className="bg-black/40 border border-white/10 rounded-xl p-3">
-            <RackSVG rack={rack} />
-          </div>
-        ))}
-      </div>
+      {(() => {
+        const MAX_SVG = 12
+        const display = racks.length <= MAX_SVG ? racks : racks.slice(0, MAX_SVG)
+        const cols = Math.min(display.length, racks.length > 6 ? 4 : 3)
+        return (
+          <>
+            <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+              {display.map(rack => (
+                <div key={rack.rackId} className="bg-black/40 border border-white/10 rounded-xl p-3">
+                  <RackSVG rack={rack} />
+                </div>
+              ))}
+            </div>
+            {racks.length > MAX_SVG && (
+              <p className="text-xs text-gray-500 text-center mt-2">
+                Showing {MAX_SVG} of {racks.length} racks — see table below for full schedule
+              </p>
+            )}
+          </>
+        )
+      })()}
 
       {/* Cable Schedule Table */}
       {cableRuns.length > 0 && (

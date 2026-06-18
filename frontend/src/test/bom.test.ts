@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDeviceList, buildBOM, SCALE_DEFS, alphaLabel, generateHostnames } from '@/lib/bom'
+import { buildDeviceList, buildBOM, SCALE_DEFS, alphaLabel, generateHostnames, GPUS_PER_SERVER } from '@/lib/bom'
 import { haPairInfo } from '@/lib/configgen'
 import type { BOMDevice } from '@/types'
 
@@ -132,5 +132,65 @@ describe('generateHostnames at large scale (regression: leaf > 52)', () => {
     expect(info.isPrimary).toBe(true)
     expect(info.peerHostname).toBe('IAD-LEAF-AA02')
     expect(info.domainId).toBe('IAD-LEAF-AA')
+  })
+})
+
+describe('GPU compute server injection', () => {
+  it('adds compute servers when GPU use case has totalEndpoints', () => {
+    const devices = buildDeviceList({
+      useCase: 'gpu', scale: 'small', siteCode: 'IAD', totalEndpoints: 64,
+    })
+    const compute = devices.filter(d => d.subLayer === 'gpu-compute')
+    expect(compute.length).toBe(Math.ceil(64 / GPUS_PER_SERVER)) // 8 servers
+  })
+
+  it('does not add compute servers when totalEndpoints is 0', () => {
+    const devices = buildDeviceList({ useCase: 'gpu', scale: 'small', siteCode: 'IAD' })
+    const compute = devices.filter(d => d.subLayer === 'gpu-compute')
+    expect(compute.length).toBe(0)
+  })
+
+  it('does not add compute servers for DC use case', () => {
+    const devices = buildDeviceList({
+      useCase: 'dc', scale: 'small', siteCode: 'IAD', totalEndpoints: 500,
+    })
+    const compute = devices.filter(d => d.subLayer === 'gpu-compute')
+    expect(compute.length).toBe(0)
+  })
+
+  it('compute servers have sequential hostnames (not HA-paired)', () => {
+    const devices = buildDeviceList({
+      useCase: 'gpu', scale: 'small', siteCode: 'IAD', totalEndpoints: 24,
+    })
+    const compute = devices.filter(d => d.subLayer === 'gpu-compute')
+    expect(compute.length).toBe(3) // 24/8 = 3
+    expect(compute[0].hostname).toBe('IAD-GPU-001')
+    expect(compute[1].hostname).toBe('IAD-GPU-002')
+    expect(compute[2].hostname).toBe('IAD-GPU-003')
+  })
+
+  it('derives correct server count for large GPU fabric (2048 GPUs)', () => {
+    const devices = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'IAD',
+      totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
+    })
+    const compute = devices.filter(d => d.subLayer === 'gpu-compute')
+    const leaves = devices.filter(d => d.subLayer === 'leaf')
+    const spines = devices.filter(d => d.subLayer === 'spine')
+    expect(compute.length).toBe(256) // 2048 / 8
+    expect(leaves.length).toBeGreaterThan(0)
+    expect(spines.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('compute servers included in BOM summary and grandTotal', () => {
+    const { summary, grandTotal, devices } = buildBOM({
+      useCase: 'gpu', scale: 'small', siteCode: 'IAD', totalEndpoints: 16,
+    })
+    const gpuRow = Object.values(summary).find(r => r.subLayer === 'gpu-compute')
+    expect(gpuRow).toBeDefined()
+    expect(gpuRow!.qty).toBe(2) // 16/8 = 2
+    expect(gpuRow!.totalCost).toBe(gpuRow!.unitCost * gpuRow!.qty)
+    const total = devices.reduce((s, d) => s + d.unitPrice, 0)
+    expect(grandTotal).toBe(total)
   })
 })

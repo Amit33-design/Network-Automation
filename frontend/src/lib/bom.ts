@@ -130,7 +130,10 @@ const ROLE_CODE: Record<string, string> = {
   'oran-midhaul':     'OMH',
   'oran-core':        'OC5G',
   'oran-timing':      'OPTM',
+  'gpu-compute':      'GPU',
 }
+
+export const GPUS_PER_SERVER = 8
 
 /** Bijective base-26 column label: 0→A … 25→Z, 26→AA, 27→AB … (no overflow). */
 export function alphaLabel(n: number): string {
@@ -148,6 +151,8 @@ function rackLabel(idx: number): string {
   return alphaLabel(Math.floor(idx / 2))
 }
 
+const SEQUENTIAL_ROLES = new Set(['gpu-compute'])
+
 export function generateHostnames(devices: BOMDevice[], siteCode: string): BOMDevice[] {
   const site = (siteCode || 'SITE').toUpperCase().slice(0, 5)
   const counters: Record<string, number> = {}
@@ -156,6 +161,10 @@ export function generateHostnames(devices: BOMDevice[], siteCode: string): BOMDe
     const code = ROLE_CODE[dev.subLayer] ?? dev.subLayer.toUpperCase().slice(0, 4)
     if (!counters[code]) counters[code] = 0
     const idx = counters[code]++
+    if (SEQUENTIAL_ROLES.has(dev.subLayer)) {
+      const num = String(idx + 1).padStart(3, '0')
+      return { ...dev, hostname: `${site}-${code}-${num}` }
+    }
     const rack = rackLabel(idx)
     const num = String((idx % 2) + 1).padStart(2, '0')
     return { ...dev, hostname: `${site}-${code}-${rack}${num}` }
@@ -271,6 +280,31 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
         uplinks: product.uplinks,
         features: product.features,
       })
+    }
+  }
+
+  // GPU compute server injection: derive server count from GPU endpoint count
+  if (useCase === 'gpu' && endpointCount > 0) {
+    const gpuServerProd = PRODUCTS.find(p => p.id === 'gpu-server-4u')
+    if (gpuServerProd) {
+      const numServers = Math.ceil(endpointCount / GPUS_PER_SERVER)
+      for (let i = 0; i < numServers; i++) {
+        devices.push({
+          id: `gpu-server-4u-${++globalIdx}`,
+          hostname: '',
+          role: 'gpu-compute',
+          subLayer: gpuServerProd.subLayer,
+          model: gpuServerProd.model,
+          vendor: gpuServerProd.vendor,
+          count: 1,
+          unitPrice: gpuServerProd.priceUSD,
+          totalPrice: gpuServerProd.priceUSD,
+          speed: gpuServerProd.speed,
+          ports: gpuServerProd.ports,
+          uplinks: gpuServerProd.uplinks,
+          features: gpuServerProd.features,
+        })
+      }
     }
   }
 
@@ -442,6 +476,7 @@ const ROLE_DEFAULT_POWER_W: Record<string, number> = {
   'oran-midhaul': 600,
   'oran-core': 1000,
   'oran-timing': 50,
+  'gpu-compute': 6500,
 }
 
 /** Rack units consumed by a device, derived from its sub-layer role. */
@@ -466,6 +501,8 @@ function rackUnitsFor(subLayer: string): number {
       return 0 // field-mounted — no rack RU
     case 'oran-midhaul':
       return 2
+    case 'gpu-compute':
+      return 4
     default:
       return 1 // leaf / distribution / access — 1RU ToR/fixed
   }

@@ -130,7 +130,8 @@ cabling, and optics. **Never hardcode device counts — always go through
   Fortinet, Dell EMC, HPE Aruba, NVIDIA, Extreme.
 - `ROLE_CODE: Record<subLayer, hostnameCode>` — `spine→SPINE, leaf→LEAF,
   distribution→DIST, access→ACC, wan-edge→WAN, firewall→FW, cloud-gw→CGW,
-  cloud-transit→CTGW, core→CORE`.
+  cloud-transit→CTGW, core→CORE, gpu-compute→GPU`.
+- `GPUS_PER_SERVER = 8` — exported constant for GPU-to-server ratio.
 
 ### Functions
 - **`resolvePrefs(useCase, vendorPrefs): Record<role, productId>`** — starts
@@ -148,6 +149,9 @@ cabling, and optics. **Never hardcode device counts — always go through
   the next pair, etc.** This pairing convention is what `configgen.ts`'s
   `haPairInfo()` relies on (see below) to derive vPC/MLAG/HSRP pairing
   without needing extra state.
+  - **Exception:** `SEQUENTIAL_ROLES` set (`gpu-compute`) uses sequential
+    numbering instead of HA pairing: `IAD-GPU-001, IAD-GPU-002, ...`
+    (3-digit zero-padded).
 - **`buildDeviceList(state): BOMDevice[]`** — the core port-math engine:
   - Resolves `prefs` via `resolvePrefs()` (or Cisco defaults if no
     `vendorPrefs`).
@@ -174,6 +178,11 @@ cabling, and optics. **Never hardcode device counts — always go through
     useCases.includes(useCase)`), and pushes `qty` `BOMDevice` entries
     (`id = ${product.id}-${globalIdx}`, `hostname: ''` — filled in by
     `generateHostnames()` at the end).
+  - **GPU compute injection** *(2026-06-18)*: when `useCase === 'gpu'` and
+    `totalEndpoints > 0`, appends `ceil(totalEndpoints / GPUS_PER_SERVER)`
+    GPU compute server devices (`subLayer: 'gpu-compute'`, product
+    `gpu-server-4u`). These appear in the BOM summary and enable the ToR
+    rack layout in `RackElevation.tsx`.
   - **Note**: the intermediate `leafCount/spineCount/uplinksNeeded` numbers
     are computed but NOT attached to the returned `BOMDevice[]` — this is
     why `configgen.ts` re-derives uplink/pairing info from `idx`/`hostname`
@@ -702,9 +711,9 @@ rules:
 ## Frontend — `lib/products.ts` / `lib/utils.ts`
 
 ### `lib/products.ts`
-**Purpose:** Static hardware product catalog (31 SKUs) used by `lib/bom.ts` for BOM generation and Step 3 product selection.
+**Purpose:** Static hardware product catalog (32 SKUs) used by `lib/bom.ts` for BOM generation and Step 3 product selection.
 
-**Structure:** `PRODUCTS: Product[]` — 31 entries using the `Product` interface from `types/index.ts`:
+**Structure:** `PRODUCTS: Product[]` — 32 entries using the `Product` interface from `types/index.ts`:
 ```ts
 interface Product {
   id: string; model: string; vendor: string; subLayer: string
@@ -718,6 +727,7 @@ interface Product {
 - Spine/Core: Cisco Nexus 9336C-FX2 / 9364C-GX, Arista 7800R3, Juniper QFX10002-72Q, Dell Z9332F, Aruba CX 10000, NVIDIA Spectrum SN5600, Extreme 8720
 - Leaf/ToR: Cisco Nexus 93180YC-FX / 9332C, Arista 7050CX3-32S, Juniper QFX5120-48Y, Dell S5248F, NVIDIA Spectrum SN4600C, Extreme 8520
 - Distribution/Access (campus): Catalyst 9500-48Y4C, 9300L-48T-4G, 9200-48P, FortiSwitch T1024E/148F-POE, Aruba CX 6400/6300M, Extreme 5720/5420
+- GPU Compute: GPU Server 4U (8x H100) — `subLayer: 'gpu-compute'`, 4U, 6.5kW, $150k
 - WAN/Edge: ASR 1002-HX, Catalyst SD-WAN vEdge 2000, Catalyst 8300 Edge (cEdge)
 - SD-WAN Controllers: vManage, vSmart Controller, vBond Orchestrator
 - IOS-XR SP/WAN: ASR 9904, NCS 540
@@ -1397,16 +1407,22 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
   - Rack assignment schedule table (device → rack position/RU/power/ports)
   - Role-color legend
 - `computeRackLayout(devices): RackAssignment[]` — assigns devices to racks:
-  - Sorts by role priority (sdwan-controller → firewall → wan-edge → core → spine → dist → leaf → access)
-  - 2U for spine/core/wan-edge/sdwan-controller, 1U for leaf/access/firewall/distribution
+  - **ToR mode** (when `gpu-compute` devices present): creates Compute racks
+    (leaf MLAG pair as ToR at top + 10× 4U GPU servers filling 40U), plus
+    Network racks for spines/firewalls. Labels: "Compute A/B/C…",
+    "Network Rack 1/2…".
+  - **Dense mode** (no compute): sorts by role priority and packs into racks
+    (sdwan-controller → firewall → wan-edge → core → spine → dist → leaf → access)
+  - 4U for gpu-compute, 2U for spine/core/wan-edge/sdwan-controller,
+    1U for leaf/access/firewall/distribution
   - 0U for cloud-gw/cloud-transit (excluded from physical rack)
-  - Auto-overflow to next rack when capacity exceeded
+  - SVG display capped at 12 racks; full schedule always in table below
 - `buildCableSchedule(devices, cabling): CableRun[]` — expands aggregate CableLink entries
   into per-device-pair cable runs with hostname/port/type/speed/length
 
 **Types:** `RackSlot`, `RackAssignment`, `CableRun` (locally defined)
 
-**Integration:** Step 4 "Rack & Cabling" tab. Tests: 11 in `test/rack.test.ts`.
+**Integration:** Step 4 "Rack & Cabling" tab. Tests: 18 in `test/rack.test.ts`.
 
 #### `frontend/src/components/LLDTopologyDiagram.tsx`
 **Purpose:** Renders pure-SVG, use-case-aware Low-Level Design (LLD) topology diagrams with per-device IP addresses, interface mappings, VLANs, config snippets, port-to-port link labels, and a companion Physical Cabling Matrix table. Provides deeper implementation detail than the HLD diagram.
