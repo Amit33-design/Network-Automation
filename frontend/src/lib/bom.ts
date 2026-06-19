@@ -196,6 +196,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
 
   // Port-math: derive device counts from topology inputs when totalEndpoints > 0
   let scaleDef: RoleCounts
+  let computedLeafUplinks: number | undefined
   const endpointCount = state.totalEndpoints ?? 0
   if (endpointCount > 0 && (useCase === 'dc' || useCase === 'gpu' || useCase === 'campus' || useCase === 'multisite')) {
     const bwGbps = parseInt(state.bandwidthPerServer ?? '25') || 25
@@ -228,6 +229,11 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
         const spinesByUplinks = rawUplinksNeeded
         const spinesByFanout = Math.ceil(leafCount / spineSku.ports)
         const spineCount = Math.max(spinesByUplinks, spinesByFanout, 2)
+
+        // Actual uplinks per leaf = min(spineCount, SKU physical uplinks).
+        // In a full Clos each leaf connects to each spine; if the SKU has
+        // fewer uplink ports, some spine links can't be made (partial Clos).
+        computedLeafUplinks = Math.min(spineCount, leafSku.uplinks || leafSku.ports)
 
         scaleDef = { spine: spineCount, leaf: leafCount }
         if (needFirewall) {
@@ -272,6 +278,9 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
     if (!product) continue
 
     for (let i = 0; i < qty; i++) {
+      const actualUplinks = (product.subLayer === 'leaf' && computedLeafUplinks !== undefined)
+        ? computedLeafUplinks
+        : product.uplinks
       devices.push({
         id: `${product.id}-${++globalIdx}`,
         hostname: '',
@@ -284,7 +293,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
         totalPrice: product.priceUSD,
         speed: product.speed,
         ports: product.ports,
-        uplinks: product.uplinks,
+        uplinks: actualUplinks,
         features: product.features,
       })
     }
