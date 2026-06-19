@@ -13,6 +13,10 @@ interface SidebarProps {
   onGoHome: () => void
   onShowTroubleshooting: () => void
   showTroubleshooting: boolean
+  /** Called whenever the user navigates to a wizard step — lets the host
+   *  exit any full-page overlay (e.g. the Troubleshooting Engine) in a
+   *  single click instead of requiring a separate toggle-off. */
+  onNavigate?: () => void
   mobileOpen?: boolean
   onMobileClose?: () => void
 }
@@ -41,7 +45,7 @@ const DEPLOY_SUB_ITEMS = [
   { tab: 'batfish',  icon: '🦟', label: 'Batfish Validate' },
 ]
 
-export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, mobileOpen = false, onMobileClose }: SidebarProps) {
+export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, onNavigate, mobileOpen = false, onMobileClose }: SidebarProps) {
   const step              = useAppStore(s => s.step)
   const setStep           = useAppStore(s => s.setStep)
   const devices           = useAppStore(s => s.devices)
@@ -59,6 +63,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
   const [shareCopied, setShareCopied] = useState(false)
 
   function nav(n: number) {
+    onNavigate?.()
     setStep(n)
     onMobileClose?.()
   }
@@ -103,7 +108,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
 
   // ── Expanded nav content (shared between desktop + mobile drawer) ────────────
   function NavContent({ onClose }: { onClose?: () => void }) {
-    function closeAndNav(n: number) { setStep(n); onClose?.() }
+    function closeAndNav(n: number) { onNavigate?.(); setStep(n); onClose?.() }
 
     return (
       <>
@@ -160,7 +165,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
             <>
               {/* Top-level step 6 header */}
               {DEPLOY_STEPS.map(s => (
-                <button key={s.step} onClick={() => { setStep(6); setActiveDeployTab('deploy'); onClose?.() }}
+                <button key={s.step} onClick={() => { onNavigate?.(); setStep(6); setActiveDeployTab('deploy'); onClose?.() }}
                   className={itemCls(s.step)}>
                   <span className="text-base">{s.icon}</span>
                   <span>{s.label}</span>
@@ -172,7 +177,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
                 {DEPLOY_SUB_ITEMS.map(sub => (
                   <button
                     key={sub.tab}
-                    onClick={() => { setStep(6); setActiveDeployTab(sub.tab); onClose?.() }}
+                    onClick={() => { onNavigate?.(); setStep(6); setActiveDeployTab(sub.tab); onClose?.() }}
                     className={cn(
                       'flex items-center gap-2 w-full pl-8 pr-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer',
                       step === 6 && activeDeployTab === sub.tab

@@ -125,6 +125,7 @@ export default function App() {
                 onGoHome={goHome}
                 onShowTroubleshooting={() => setShowTroubleshooting(t => !t)}
                 showTroubleshooting={showTroubleshooting}
+                onNavigate={() => setShowTroubleshooting(false)}
                 mobileOpen={mobileNavOpen}
                 onMobileClose={() => setMobileNavOpen(false)}
               />
