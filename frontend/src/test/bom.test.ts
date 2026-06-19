@@ -439,3 +439,95 @@ describe('validateBOM — design validation', () => {
     expect(oversubWarn).toBeTruthy()
   })
 })
+
+describe('Port speed × GPU host count matrix', () => {
+  // Cisco GPU defaults: NX-9332C leaf (32 ports, 2 uplinks, 100G), NX-9364C spine (64 ports, 400G)
+  // downlinks = 30 per leaf; spinePortSpeed = 400G
+
+  const scenarios: Array<{
+    label: string; endpoints: number; bw: string; oversub: number;
+    expectedLeaves: number; expectedSpines: number; expectedServers: number;
+  }> = [
+    // 25G BW, 3:1 oversub (common enterprise)
+    { label: '1024 GPU, 25G, 3:1', endpoints: 1024, bw: '25G', oversub: 3,
+      expectedLeaves: 36, expectedSpines: 2, expectedServers: 128 },
+    { label: '2048 GPU, 25G, 3:1', endpoints: 2048, bw: '25G', oversub: 3,
+      expectedLeaves: 70, expectedSpines: 2, expectedServers: 256 },
+    { label: '4096 GPU, 25G, 3:1', endpoints: 4096, bw: '25G', oversub: 3,
+      expectedLeaves: 138, expectedSpines: 3, expectedServers: 512 },
+
+    // 100G BW, 1:1 oversub (GPU/HPC)
+    { label: '1024 GPU, 100G, 1:1', endpoints: 1024, bw: '100G', oversub: 1,
+      expectedLeaves: 36, expectedSpines: 8, expectedServers: 128 },
+    { label: '2048 GPU, 100G, 1:1', endpoints: 2048, bw: '100G', oversub: 1,
+      expectedLeaves: 70, expectedSpines: 8, expectedServers: 256 },
+    { label: '4096 GPU, 100G, 1:1', endpoints: 4096, bw: '100G', oversub: 1,
+      expectedLeaves: 138, expectedSpines: 8, expectedServers: 512 },
+
+    // 400G BW, 1:1 oversub (ultra-high bandwidth)
+    { label: '1024 GPU, 400G, 1:1', endpoints: 1024, bw: '400G', oversub: 1,
+      expectedLeaves: 36, expectedSpines: 30, expectedServers: 128 },
+    { label: '2048 GPU, 400G, 1:1', endpoints: 2048, bw: '400G', oversub: 1,
+      expectedLeaves: 70, expectedSpines: 30, expectedServers: 256 },
+
+    // 100G BW, 3:1 oversub (balanced)
+    { label: '2048 GPU, 100G, 3:1', endpoints: 2048, bw: '100G', oversub: 3,
+      expectedLeaves: 70, expectedSpines: 3, expectedServers: 256 },
+  ]
+
+  for (const s of scenarios) {
+    it(`${s.label} → ${s.expectedLeaves} leaves, ${s.expectedSpines} spines, ${s.expectedServers} servers`, () => {
+      const devices = buildDeviceList({
+        useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+        totalEndpoints: s.endpoints,
+        bandwidthPerServer: s.bw,
+        oversubscription: s.oversub,
+      })
+      const leaves = devices.filter(d => d.subLayer === 'leaf')
+      const spines = devices.filter(d => d.subLayer === 'spine')
+      const servers = devices.filter(d => d.subLayer === 'gpu-compute')
+
+      expect(leaves.length).toBe(s.expectedLeaves)
+      expect(spines.length).toBe(s.expectedSpines)
+      expect(servers.length).toBe(s.expectedServers)
+    })
+  }
+
+  it('higher BW always needs more or equal spines than lower BW', () => {
+    const low = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+      totalEndpoints: 2048, bandwidthPerServer: '25G', oversubscription: 1,
+    })
+    const high = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+      totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
+    })
+    const lowSpines = low.filter(d => d.subLayer === 'spine').length
+    const highSpines = high.filter(d => d.subLayer === 'spine').length
+    expect(highSpines).toBeGreaterThanOrEqual(lowSpines)
+  })
+
+  it('NVIDIA vendor: 2048 GPU, 100G, 1:1 → 14 spines (more than Cisco 8)', () => {
+    const devices = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+      totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
+      vendorPrefs: ['NVIDIA'],
+    })
+    const spines = devices.filter(d => d.subLayer === 'spine')
+    expect(spines.length).toBe(14)
+  })
+
+  it('leaf count is independent of bandwidth (only depends on endpoint count)', () => {
+    const bw25 = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+      totalEndpoints: 2048, bandwidthPerServer: '25G', oversubscription: 3,
+    })
+    const bw100 = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+      totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 3,
+    })
+    const leaves25 = bw25.filter(d => d.subLayer === 'leaf').length
+    const leaves100 = bw100.filter(d => d.subLayer === 'leaf').length
+    expect(leaves25).toBe(leaves100)
+  })
+})
