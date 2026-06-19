@@ -681,7 +681,17 @@ export function buildCabling(
     const distM  = linkDistances[conn.key] ?? 5
     const speed  = froms[0].speed ?? '100G'
     const cable  = selectCable(distM, speed)
-    const qty    = froms.length * tos.length
+
+    // Spine-leaf: each leaf has leafUplinks cables to spines (capped at
+    // actual physical ports). Other tiers: full mesh.
+    let qty: number
+    if ((conn.from === 'spine' && conn.to === 'leaf') || (conn.from === 'leaf' && conn.to === 'spine')) {
+      const leafDevs = conn.from === 'leaf' ? froms : tos
+      const uplinksPerLeaf = leafDevs[0]?.uplinks ?? 2
+      qty = leafDevs.length * uplinksPerLeaf
+    } else {
+      qty = froms.length * tos.length
+    }
     const unit   = cable.unitCost + cable.costPerM * distM
 
     links.push({
