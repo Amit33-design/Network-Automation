@@ -721,6 +721,19 @@ config-gen tests must keep passing; add new tests alongside).
 | H4 | BOM design validation — detect oversubscription degradation, fan-out limits, capacity issues, power draw | [x] | `validateBOM()` in `bom.ts`; "Design Validation" card in Step 4 between stats and tabs; 9 tests in `test/bom.test.ts` |
 | H5 | Endpoint-driven port-math for ALL use cases — device counts derived from totalEndpoints, bandwidthPerServer, oversubscription, numSites for all 8 use cases (DC, GPU, campus, WAN, multisite, multicloud, aviatrix, O-RAN) | [x] | Refactored `buildDeviceList` port-math: extracted `computeSpineLeaf()` helper; added WAN (router count from endpoints), multisite (spine-leaf + WAN edges from numSites), O-RAN (RU→DU→CU→fronthaul→midhaul cascading ratios), multicloud/aviatrix (transit per site, GW per 500 endpoints); `validateBOM` expanded for campus/WAN validation; `numSites` param added to `buildDeviceList`/`buildBOM`; 15 new tests across all use cases |
 
+### I. End-to-end test harness & trust (sourced 2026-06-19)
+
+> **Why this group exists**: the port-math bugs (spine count, uplinks,
+> cabling, per-use-case sizing) shipped for *months* despite daily review
+> because the unit tests never exercised the integrated path with real
+> endpoint counts and only asserted weak bounds (`>= 2`). The fix is a
+> full-journey harness with EXACT, cross-checked invariants.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| I1 | E2E "user journey" regression harness — simulates the real wizard flow (intent → BOM → configs → cabling → optics → racks → validation) for **all 8 use cases × scales × port speeds × oversub × site counts × vendors** (~190 scenarios) and asserts exact physical invariants: fabric capacity ≥ endpoints, spine-leaf cable qty = leaves×uplinks, TCO capex = grandTotal, every network device has a non-empty config, single underlay (no IS-IS+OSPF), fabric has BGP, GPU has PFC, hostnames alnum at extreme scale, device-count monotonic in endpoints, spine-count monotonic in bandwidth, no hardcoded secrets | [x] | `test/e2e-journey.test.ts`; this is the standing regression net — **add a scenario here for any new use case / sizing rule**. Runs in CI (`frontend-test` job) on every push/PR. |
+| I2 | SessionStart hook so Claude Code web sessions auto-install frontend deps and can run the suite immediately | [x] | `.claude/hooks/session-start.sh` + `.claude/settings.json` (synchronous, remote-only via `$CLAUDE_CODE_REMOTE`, idempotent `npm install`) |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
