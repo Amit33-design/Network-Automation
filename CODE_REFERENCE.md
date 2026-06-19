@@ -152,26 +152,30 @@ cabling, and optics. **Never hardcode device counts — always go through
   - **Exception:** `SEQUENTIAL_ROLES` set (`gpu-compute`) uses sequential
     numbering instead of HA pairing: `IAD-GPU-001, IAD-GPU-002, ...`
     (3-digit zero-padded).
-- **`buildDeviceList(state): BOMDevice[]`** — the core port-math engine:
-  - Resolves `prefs` via `resolvePrefs()` (or Cisco defaults if no
-    `vendorPrefs`).
+- **`buildDeviceList(state): BOMDevice[]`** — the core port-math engine.
+  Accepts `numSites` (2026-06-19 H5). Resolves `prefs` via `resolvePrefs()`
+  (or Cisco defaults if no `vendorPrefs`).
   - Decides if a firewall is needed: `fwAllowed = prefs['firewall'] &&
     firewallModel !== 'none'`; `needFirewall = fwAllowed && (scale !==
     'small' || trafficPattern is 'ns'/'both')`.
-  - **If `totalEndpoints > 0`** and useCase is `dc|gpu|campus|multisite`,
-    computes `scaleDef` from port math:
-    - **dc/gpu**: `downlinkPorts = leafSku.ports - leafSku.uplinks`;
-      `leafCount = ceil(endpoints / downlinkPorts)`, rounded up to even.
-      `uplinksNeeded = min(leafSku.uplinks, ceil((downlinkPorts * bwGbps) /
-      oversub / spineSku.speed))`. `spineCount = max(ceil(leafCount *
-      uplinksNeeded / spineSku.ports), 2)`. Firewalls: 2 if `spineCount <=
-      4` else 4.
-    - **campus**: `accessPorts = accessSku.ports - accessSku.uplinks` (default
-      48-4=44). `accessCount = ceil(endpoints / accessPorts)`, rounded to
-      even. `distCount = max(2, ceil(accessCount / 8))`, rounded to even.
-      Firewalls: 2 if `distCount <= 4` else 4.
-    - else: falls back to `SCALE_DEFS[scale][useCase]`.
-  - **Else** (no endpoint count, or other use cases): `scaleDef =
+  - **If `totalEndpoints > 0`**, computes `scaleDef` from port math for
+    **all 8 use cases**:
+    - **dc/gpu**: `computeSpineLeaf()` helper — `leafCount =
+      ceil(endpoints / downlinkPorts)` rounded even; `rawUplinksNeeded =
+      ceil(cap / oversub / spineSpeed)`; `spineCount = max(rawUplinks,
+      fanout, 2)`. `computedLeafUplinks = min(spineCount, SKU uplinks)`.
+    - **campus**: `accessCount = ceil(endpoints / accessDownlinks)` rounded
+      even; `distCount = ceil(accessCount / distDownlinks)` (uses actual
+      distribution SKU port count, min 2, rounded even).
+    - **wan**: `wanCount` scaled from endpoints (÷ ports ÷ 100, min 2, even).
+    - **multisite**: `computeSpineLeaf()` for spine-leaf + WAN edges from
+      `numSites` (2 for ≤4 sites, 4 for ≤8, ceil(n/2) above).
+    - **oran**: cascading ratios — RU = endpoints, DU = ceil(RU/3),
+      CU = ceil(DU/4), fronthaul = ceil(RU/fhDownlinks) even,
+      midhaul = ceil(fh/mhDownlinks) even, core = CU, timing = ceil(RU/32).
+    - **multicloud/aviatrix**: transit = numSites, gw = ceil(endpoints/500).
+    - Fallback: `SCALE_DEFS[scale][useCase]`.
+  - **Else** (no endpoint count): `scaleDef =
     SCALE_DEFS[scale][useCase]` (+ firewall bump if needed).
   - For each `(role, qty)` in `scaleDef`, looks up the `Product` (via
     `prefs[role]` or first product matching `subLayer===role &&
