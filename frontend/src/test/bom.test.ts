@@ -531,3 +531,172 @@ describe('Port speed × GPU host count matrix', () => {
     expect(leaves25).toBe(leaves100)
   })
 })
+
+describe('Endpoint-driven port-math for all use cases', () => {
+  describe('campus', () => {
+    it('access count scales with endpoints (Cat9200: 44 downlinks)', () => {
+      const devices = buildDeviceList({
+        useCase: 'campus', scale: 'medium', siteCode: 'SJC',
+        totalEndpoints: 500,
+      })
+      const access = devices.filter(d => d.subLayer === 'access')
+      // Cat9200: 48 ports - 4 uplinks = 44 downlinks
+      // rawAccess = ceil(500/44) = 12 → 12 (even)
+      expect(access.length).toBe(12)
+    })
+
+    it('distribution count scales with access count', () => {
+      const devices = buildDeviceList({
+        useCase: 'campus', scale: 'medium', siteCode: 'SJC',
+        totalEndpoints: 2000,
+      })
+      const access = devices.filter(d => d.subLayer === 'access')
+      const dist = devices.filter(d => d.subLayer === 'distribution')
+      // rawAccess = ceil(2000/44) = 46 → 46
+      expect(access.length).toBe(46)
+      // Cat9500: 48-4=44 downlinks; rawDist = ceil(46/44) = 2 → 2
+      expect(dist.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('more endpoints → more access switches', () => {
+      const small = buildDeviceList({ useCase: 'campus', scale: 'small', siteCode: 'SJC', totalEndpoints: 100 })
+      const large = buildDeviceList({ useCase: 'campus', scale: 'small', siteCode: 'SJC', totalEndpoints: 2000 })
+      const smallAccess = small.filter(d => d.subLayer === 'access').length
+      const largeAccess = large.filter(d => d.subLayer === 'access').length
+      expect(largeAccess).toBeGreaterThan(smallAccess)
+    })
+  })
+
+  describe('wan', () => {
+    it('WAN edge count scales with endpoints', () => {
+      const devices = buildDeviceList({
+        useCase: 'wan', scale: 'medium', siteCode: 'WAN',
+        totalEndpoints: 1000,
+      })
+      const wan = devices.filter(d => d.subLayer === 'wan-edge')
+      expect(wan.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('more endpoints → more WAN routers', () => {
+      const small = buildDeviceList({ useCase: 'wan', scale: 'small', siteCode: 'WAN', totalEndpoints: 100 })
+      const large = buildDeviceList({ useCase: 'wan', scale: 'small', siteCode: 'WAN', totalEndpoints: 10000 })
+      const smallWan = small.filter(d => d.subLayer === 'wan-edge').length
+      const largeWan = large.filter(d => d.subLayer === 'wan-edge').length
+      expect(largeWan).toBeGreaterThanOrEqual(smallWan)
+    })
+
+    it('always produces even WAN router count (HA pairs)', () => {
+      const devices = buildDeviceList({
+        useCase: 'wan', scale: 'small', siteCode: 'WAN',
+        totalEndpoints: 500,
+      })
+      const wan = devices.filter(d => d.subLayer === 'wan-edge')
+      expect(wan.length % 2).toBe(0)
+    })
+  })
+
+  describe('multisite', () => {
+    it('spine-leaf count derives from endpoints (like DC)', () => {
+      const devices = buildDeviceList({
+        useCase: 'multisite', scale: 'medium', siteCode: 'MSI',
+        totalEndpoints: 500, bandwidthPerServer: '25G', oversubscription: 3,
+      })
+      const leaves = devices.filter(d => d.subLayer === 'leaf')
+      const spines = devices.filter(d => d.subLayer === 'spine')
+      const wan = devices.filter(d => d.subLayer === 'wan-edge')
+      // NX-93180YC: 48-6=42 downlinks; rawLeaves = ceil(500/42) = 12
+      expect(leaves.length).toBe(12)
+      expect(spines.length).toBeGreaterThanOrEqual(2)
+      expect(wan.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('more sites → more WAN edges', () => {
+      const few = buildDeviceList({
+        useCase: 'multisite', scale: 'medium', siteCode: 'MSI',
+        totalEndpoints: 500, numSites: 2,
+      })
+      const many = buildDeviceList({
+        useCase: 'multisite', scale: 'medium', siteCode: 'MSI',
+        totalEndpoints: 500, numSites: 20,
+      })
+      const fewWan = few.filter(d => d.subLayer === 'wan-edge').length
+      const manyWan = many.filter(d => d.subLayer === 'wan-edge').length
+      expect(manyWan).toBeGreaterThanOrEqual(fewWan)
+    })
+  })
+
+  describe('oran', () => {
+    it('O-RU count matches endpoint count directly', () => {
+      const devices = buildDeviceList({
+        useCase: 'oran', scale: 'medium', siteCode: 'RAN',
+        totalEndpoints: 100,
+      })
+      const ru = devices.filter(d => d.subLayer === 'oran-ru')
+      expect(ru.length).toBe(100)
+    })
+
+    it('O-DU count = ceil(RU/3)', () => {
+      const devices = buildDeviceList({
+        useCase: 'oran', scale: 'medium', siteCode: 'RAN',
+        totalEndpoints: 30,
+      })
+      const du = devices.filter(d => d.subLayer === 'oran-du')
+      expect(du.length).toBe(10)
+    })
+
+    it('fronthaul switches scale with RU count', () => {
+      const small = buildDeviceList({ useCase: 'oran', scale: 'small', siteCode: 'RAN', totalEndpoints: 10 })
+      const large = buildDeviceList({ useCase: 'oran', scale: 'small', siteCode: 'RAN', totalEndpoints: 200 })
+      const smallFh = small.filter(d => d.subLayer === 'oran-fronthaul').length
+      const largeFh = large.filter(d => d.subLayer === 'oran-fronthaul').length
+      expect(largeFh).toBeGreaterThan(smallFh)
+    })
+
+    it('all O-RAN roles present', () => {
+      const devices = buildDeviceList({
+        useCase: 'oran', scale: 'medium', siteCode: 'RAN',
+        totalEndpoints: 50,
+      })
+      const roles = new Set(devices.map(d => d.subLayer))
+      expect(roles.has('oran-cu')).toBe(true)
+      expect(roles.has('oran-du')).toBe(true)
+      expect(roles.has('oran-ru')).toBe(true)
+      expect(roles.has('oran-fronthaul')).toBe(true)
+      expect(roles.has('oran-midhaul')).toBe(true)
+      expect(roles.has('oran-core')).toBe(true)
+      expect(roles.has('oran-timing')).toBe(true)
+    })
+  })
+
+  describe('multicloud / aviatrix', () => {
+    it('gateway count scales with endpoints', () => {
+      const devices = buildDeviceList({
+        useCase: 'multicloud', scale: 'medium', siteCode: 'CLD',
+        totalEndpoints: 2000,
+      })
+      const gw = devices.filter(d => d.subLayer === 'cloud-gw')
+      // ceil(2000/500) = 4
+      expect(gw.length).toBe(4)
+    })
+
+    it('transit count scales with numSites', () => {
+      const devices = buildDeviceList({
+        useCase: 'aviatrix', scale: 'medium', siteCode: 'AVX',
+        totalEndpoints: 500, numSites: 5,
+      })
+      const transit = devices.filter(d => d.subLayer === 'cloud-transit')
+      expect(transit.length).toBe(5)
+    })
+  })
+
+  it('all use cases produce devices when totalEndpoints > 0', () => {
+    const useCases = ['campus', 'dc', 'gpu', 'wan', 'multisite', 'multicloud', 'aviatrix', 'oran'] as const
+    for (const uc of useCases) {
+      const devices = buildDeviceList({
+        useCase: uc, scale: 'medium', siteCode: 'TST',
+        totalEndpoints: 500, numSites: 3,
+      })
+      expect(devices.length).toBeGreaterThan(0)
+    }
+  })
+})

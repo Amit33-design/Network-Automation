@@ -181,6 +181,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
   trafficPattern?: string
   firewallModel?: string
   overlayProtocols?: string[]
+  numSites?: number
 }): BOMDevice[] {
   const useCase = (state.useCase || 'dc') as UseCase
   const scale = (state.scale || 'small') as Scale
@@ -198,51 +199,43 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
   let scaleDef: RoleCounts
   let computedLeafUplinks: number | undefined
   const endpointCount = state.totalEndpoints ?? 0
-  if (endpointCount > 0 && (useCase === 'dc' || useCase === 'gpu' || useCase === 'campus' || useCase === 'multisite')) {
-    const bwGbps = parseInt(state.bandwidthPerServer ?? '25') || 25
-    const oversub = Math.max(1, state.oversubscription ?? 3)
+  const bwGbps = parseInt(state.bandwidthPerServer ?? '25') || 25
+  const oversub = Math.max(1, state.oversubscription ?? 3)
+  const numSites = Math.max(1, state.numSites ?? 1)
 
+  // Helper: compute spine-leaf Clos from endpoint count and SKU specs
+  function computeSpineLeaf(leafProdId: string | undefined, spineProdId: string | undefined): RoleCounts | null {
+    const leafSku = leafProdId ? PRODUCTS.find(p => p.id === leafProdId) : undefined
+    const spineSku = spineProdId ? PRODUCTS.find(p => p.id === spineProdId) : undefined
+    if (!leafSku || !spineSku) return null
+
+    const downlinkPorts = Math.max(1, leafSku.ports - (leafSku.uplinks || 0))
+    const rawLeaves = Math.ceil(endpointCount / downlinkPorts)
+    const leafCount = rawLeaves % 2 === 0 ? rawLeaves : rawLeaves + 1
+
+    const serverCapacityPerLeaf = downlinkPorts * bwGbps
+    const spinePortSpeed = Math.max(1, parseInt(spineSku.speed) || 100)
+    const rawUplinksNeeded = Math.max(1, Math.ceil(serverCapacityPerLeaf / oversub / spinePortSpeed))
+
+    const spinesByUplinks = rawUplinksNeeded
+    const spinesByFanout = Math.ceil(leafCount / spineSku.ports)
+    const spineCount = Math.max(spinesByUplinks, spinesByFanout, 2)
+
+    computedLeafUplinks = Math.min(spineCount, leafSku.uplinks || leafSku.ports)
+    return { spine: spineCount, leaf: leafCount }
+  }
+
+  if (endpointCount > 0) {
     if (useCase === 'dc' || useCase === 'gpu') {
-      const leafProdId = prefs['leaf']
-      const spineProdId = prefs['spine']
-      const leafSku = leafProdId ? PRODUCTS.find(p => p.id === leafProdId) : undefined
-      const spineSku = spineProdId ? PRODUCTS.find(p => p.id === spineProdId) : undefined
-
-      if (leafSku && spineSku) {
-        // Use only downlink ports for endpoint capacity (uplink ports connect to spine)
-        const downlinkPorts = Math.max(1, leafSku.ports - (leafSku.uplinks || 0))
-        const rawLeaves = Math.ceil(endpointCount / downlinkPorts)
-        const leafCount = rawLeaves % 2 === 0 ? rawLeaves : rawLeaves + 1
-
-        // Uplinks needed per leaf based on the oversubscription target.
-        // In a Clos fabric each leaf connects to each spine, so
-        // spineCount ≈ uplinksPerLeaf. We must NOT cap at the SKU's
-        // physical uplink count here — doing so silently degrades the
-        // oversubscription ratio and under-provisions spines.
-        const serverCapacityPerLeaf = downlinkPorts * bwGbps
-        const spinePortSpeed = Math.max(1, parseInt(spineSku.speed) || 100)
-        const rawUplinksNeeded = Math.max(1, Math.ceil(serverCapacityPerLeaf / oversub / spinePortSpeed))
-
-        // Spine count: in a true Clos every leaf connects to every spine,
-        // so spineCount = rawUplinksNeeded. Additionally each spine must
-        // have enough ports to accept one link from every leaf.
-        const spinesByUplinks = rawUplinksNeeded
-        const spinesByFanout = Math.ceil(leafCount / spineSku.ports)
-        const spineCount = Math.max(spinesByUplinks, spinesByFanout, 2)
-
-        // Actual uplinks per leaf = min(spineCount, SKU physical uplinks).
-        // In a full Clos each leaf connects to each spine; if the SKU has
-        // fewer uplink ports, some spine links can't be made (partial Clos).
-        computedLeafUplinks = Math.min(spineCount, leafSku.uplinks || leafSku.ports)
-
-        scaleDef = { spine: spineCount, leaf: leafCount }
-        if (needFirewall) {
-          scaleDef['firewall'] = spineCount <= 4 ? 2 : 4
-        }
+      const clos = computeSpineLeaf(prefs['leaf'], prefs['spine'])
+      if (clos) {
+        scaleDef = { ...clos }
+        if (needFirewall) scaleDef['firewall'] = clos.spine <= 4 ? 2 : 4
       } else {
         scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
         if (needFirewall && !scaleDef['firewall']) scaleDef = { ...scaleDef, firewall: 2 }
       }
+
     } else if (useCase === 'campus') {
       const accessProdId = prefs['access']
       const accessSku = accessProdId ? PRODUCTS.find(p => p.id === accessProdId) : undefined
@@ -250,13 +243,65 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
 
       const rawAccess = Math.ceil(endpointCount / accessPorts)
       const accessCount = rawAccess % 2 === 0 ? rawAccess : rawAccess + 1
-      const rawDist = Math.max(2, Math.ceil(accessCount / 8))
+
+      const distProdId = prefs['distribution']
+      const distSku = distProdId ? PRODUCTS.find(p => p.id === distProdId) : undefined
+      const distDownlinks = Math.max(1, (distSku?.ports ?? 48) - (distSku?.uplinks ?? 4))
+      const rawDist = Math.max(2, Math.ceil(accessCount / distDownlinks))
       const distCount = rawDist % 2 === 0 ? rawDist : rawDist + 1
 
       scaleDef = { distribution: distCount, access: accessCount }
-      if (needFirewall) {
-        scaleDef['firewall'] = distCount <= 4 ? 2 : 4
+      if (needFirewall) scaleDef['firewall'] = distCount <= 4 ? 2 : 4
+
+    } else if (useCase === 'wan') {
+      const wanProdId = prefs['wan-edge']
+      const wanSku = wanProdId ? PRODUCTS.find(p => p.id === wanProdId) : undefined
+      const portsPerRouter = Math.max(1, wanSku?.ports ?? 4)
+      const rawWan = Math.max(2, Math.ceil(endpointCount / portsPerRouter / 100))
+      const wanCount = rawWan % 2 === 0 ? rawWan : rawWan + 1
+      scaleDef = { 'wan-edge': wanCount }
+
+    } else if (useCase === 'multisite') {
+      const clos = computeSpineLeaf(prefs['leaf'], prefs['spine'])
+      if (clos) {
+        const wanCount = Math.max(2, numSites <= 4 ? 2 : (numSites <= 8 ? 4 : Math.ceil(numSites / 2)))
+        scaleDef = { ...clos, 'wan-edge': wanCount }
+        if (needFirewall) scaleDef['firewall'] = clos.spine <= 4 ? 2 : 4
+      } else {
+        scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small).multisite
+        if (needFirewall && !scaleDef['firewall']) scaleDef = { ...scaleDef, firewall: 2 }
       }
+
+    } else if (useCase === 'oran') {
+      // O-RAN: endpoints = radio units (antennas/cells)
+      const ruCount = Math.max(1, endpointCount)
+      // Each DU serves ~3 RUs, each CU serves ~4 DUs
+      const duCount = Math.max(1, Math.ceil(ruCount / 3))
+      const cuCount = Math.max(1, Math.ceil(duCount / 4))
+      // Fronthaul switches: each switch ports ~12 RUs (using downlink ports)
+      const fhProdId = prefs['oran-fronthaul']
+      const fhSku = fhProdId ? PRODUCTS.find(p => p.id === fhProdId) : undefined
+      const fhDownlinks = Math.max(1, (fhSku?.ports ?? 48) - (fhSku?.uplinks ?? 6))
+      const rawFh = Math.ceil(ruCount / fhDownlinks)
+      const fhCount = rawFh % 2 === 0 ? rawFh : rawFh + 1
+      // Midhaul routers: aggregate fronthaul switches
+      const mhProdId = prefs['oran-midhaul']
+      const mhSku = mhProdId ? PRODUCTS.find(p => p.id === mhProdId) : undefined
+      const mhDownlinks = Math.max(1, (mhSku?.ports ?? 20) - (mhSku?.uplinks ?? 4))
+      const rawMh = Math.max(1, Math.ceil(fhCount / mhDownlinks))
+      const mhCount = rawMh % 2 === 0 ? rawMh : rawMh + 1
+      scaleDef = {
+        'oran-cu': cuCount, 'oran-du': duCount, 'oran-ru': ruCount,
+        'oran-fronthaul': fhCount, 'oran-midhaul': mhCount,
+        'oran-core': Math.max(1, cuCount), 'oran-timing': Math.max(1, Math.ceil(ruCount / 32)),
+      }
+
+    } else if (useCase === 'multicloud' || useCase === 'aviatrix') {
+      // Cloud virtual appliances: transit gateways per site, spoke gateways per endpoint group
+      const transitCount = Math.max(1, numSites)
+      const gwCount = Math.max(2, Math.ceil(endpointCount / 500))
+      scaleDef = { 'cloud-transit': transitCount, 'cloud-gw': gwCount }
+
     } else {
       scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc
       if (needFirewall && !scaleDef['firewall']) scaleDef = { ...scaleDef, firewall: 2 }
@@ -406,6 +451,7 @@ export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>
   trafficPattern?: string
   firewallModel?: string
   overlayProtocols?: string[]
+  numSites?: number
 }): {
   devices: BOMDevice[]
   summary: Record<string, BOMSummaryRow>
@@ -787,94 +833,115 @@ export function validateBOM(
   } = {},
 ): BOMValidationIssue[] {
   const issues: BOMValidationIssue[] = []
+  const uc = state.useCase ?? 'dc'
+  const endpoints = state.totalEndpoints ?? 0
+
+  // ── Spine-leaf validation (DC, GPU, multisite) ──
   const leaves = devices.filter(d => d.subLayer === 'leaf')
   const spines = devices.filter(d => d.subLayer === 'spine')
 
-  if (leaves.length === 0 || spines.length === 0) return issues
+  if (leaves.length > 0 && spines.length > 0) {
+    const leafSample = leaves[0]
+    const spineSample = spines[0]
+    const leafUplinks = leafSample.uplinks ?? 0
+    const leafDownlinks = Math.max(1, leafSample.ports - leafUplinks)
+    const bwGbps = parseInt(state.bandwidthPerServer ?? '25') || 25
+    const requestedOversub = Math.max(1, state.oversubscription ?? 3)
+    const spinePortSpeed = Math.max(1, parseInt(spineSample.speed) || 100)
 
-  const leafSample = leaves[0]
-  const spineSample = spines[0]
-  const leafUplinks = leafSample.uplinks ?? 0
-  const leafDownlinks = Math.max(1, leafSample.ports - leafUplinks)
-  const bwGbps = parseInt(state.bandwidthPerServer ?? '25') || 25
-  const requestedOversub = Math.max(1, state.oversubscription ?? 3)
-  const spinePortSpeed = Math.max(1, parseInt(spineSample.speed) || 100)
+    const serverCapPerLeaf = leafDownlinks * bwGbps
+    const rawUplinksNeeded = Math.ceil(serverCapPerLeaf / requestedOversub / spinePortSpeed)
 
-  const serverCapPerLeaf = leafDownlinks * bwGbps
-  const rawUplinksNeeded = Math.ceil(serverCapPerLeaf / requestedOversub / spinePortSpeed)
-
-  if (rawUplinksNeeded > leafUplinks && leafUplinks > 0) {
-    const effectiveOversub = serverCapPerLeaf / (leafUplinks * spinePortSpeed)
-    issues.push({
-      severity: 'warning',
-      category: 'oversubscription',
-      message: `Requested ${requestedOversub}:1 oversubscription needs ${rawUplinksNeeded} uplinks per leaf, but ${leafSample.model} has ${leafUplinks}. Effective ratio: ${effectiveOversub.toFixed(1)}:1. Consider a leaf with more uplink ports.`,
-    })
-  }
-
-  if (leaves.length > spineSample.ports) {
-    issues.push({
-      severity: 'warning',
-      category: 'fan-out',
-      message: `${leaves.length} leaves exceed ${spineSample.model} port count (${spineSample.ports}). Multi-plane or higher-radix spines needed for full Clos connectivity.`,
-    })
-  }
-
-  if (spines.length > leafUplinks && leafUplinks > 0) {
-    issues.push({
-      severity: 'warning',
-      category: 'fan-out',
-      message: `${spines.length} spines exceed ${leafSample.model} uplink count (${leafUplinks}). Not all leaves can connect to all spines — partial Clos fabric.`,
-    })
-  }
-
-  if (leaves.length < 2) {
-    issues.push({
-      severity: 'error',
-      category: 'redundancy',
-      message: 'Only 1 leaf switch — no host redundancy. Minimum 2 leaves recommended for MLAG/vPC.',
-    })
-  }
-
-  if (spines.length < 2) {
-    issues.push({
-      severity: 'error',
-      category: 'redundancy',
-      message: 'Only 1 spine switch — single point of failure in the fabric.',
-    })
-  }
-
-  const endpoints = state.totalEndpoints ?? 0
-  const totalDownlinks = leaves.length * leafDownlinks
-  if (endpoints > 0 && endpoints > totalDownlinks) {
-    issues.push({
-      severity: 'error',
-      category: 'capacity',
-      message: `${endpoints} endpoints exceed total leaf downlink capacity (${totalDownlinks} ports). Add more leaf switches or use higher-density models.`,
-    })
-  }
-
-  if (endpoints > 0 && totalDownlinks > 0) {
-    const util = endpoints / totalDownlinks
-    if (util < 0.2) {
+    if (rawUplinksNeeded > leafUplinks && leafUplinks > 0) {
+      const effectiveOversub = serverCapPerLeaf / (leafUplinks * spinePortSpeed)
       issues.push({
-        severity: 'info',
-        category: 'capacity',
-        message: `Leaf port utilization is ${Math.round(util * 100)}% — heavily over-provisioned. Consider fewer or smaller leaf switches to reduce cost.`,
+        severity: 'warning',
+        category: 'oversubscription',
+        message: `Requested ${requestedOversub}:1 oversubscription needs ${rawUplinksNeeded} uplinks per leaf, but ${leafSample.model} has ${leafUplinks}. Effective ratio: ${effectiveOversub.toFixed(1)}:1. Consider a leaf with more uplink ports.`,
       })
+    }
+
+    if (leaves.length > spineSample.ports) {
+      issues.push({
+        severity: 'warning',
+        category: 'fan-out',
+        message: `${leaves.length} leaves exceed ${spineSample.model} port count (${spineSample.ports}). Multi-plane or higher-radix spines needed for full Clos connectivity.`,
+      })
+    }
+
+    if (spines.length > leafUplinks && leafUplinks > 0) {
+      issues.push({
+        severity: 'warning',
+        category: 'fan-out',
+        message: `${spines.length} spines exceed ${leafSample.model} uplink count (${leafUplinks}). Not all leaves can connect to all spines — partial Clos fabric.`,
+      })
+    }
+
+    if (leaves.length < 2) {
+      issues.push({ severity: 'error', category: 'redundancy',
+        message: 'Only 1 leaf switch — no host redundancy. Minimum 2 leaves recommended for MLAG/vPC.' })
+    }
+    if (spines.length < 2) {
+      issues.push({ severity: 'error', category: 'redundancy',
+        message: 'Only 1 spine switch — single point of failure in the fabric.' })
+    }
+
+    const totalDownlinks = leaves.length * leafDownlinks
+    if (endpoints > 0 && endpoints > totalDownlinks) {
+      issues.push({ severity: 'error', category: 'capacity',
+        message: `${endpoints} endpoints exceed total leaf downlink capacity (${totalDownlinks} ports). Add more leaf switches or use higher-density models.` })
+    }
+    if (endpoints > 0 && totalDownlinks > 0 && endpoints / totalDownlinks < 0.2) {
+      issues.push({ severity: 'info', category: 'capacity',
+        message: `Leaf port utilization is ${Math.round((endpoints / totalDownlinks) * 100)}% — heavily over-provisioned. Consider fewer or smaller leaf switches to reduce cost.` })
     }
   }
 
+  // ── Campus distribution-access validation ──
+  const access = devices.filter(d => d.subLayer === 'access')
+  const dist = devices.filter(d => d.subLayer === 'distribution')
+
+  if (access.length > 0 && dist.length > 0 && uc === 'campus') {
+    const accSample = access[0]
+    const accUplinks = accSample.uplinks ?? 0
+    const accDownlinks = Math.max(1, accSample.ports - accUplinks)
+    const totalAccPorts = access.length * accDownlinks
+
+    if (endpoints > 0 && endpoints > totalAccPorts) {
+      issues.push({ severity: 'error', category: 'capacity',
+        message: `${endpoints} endpoints exceed total access port capacity (${totalAccPorts} ports). Add more access switches.` })
+    }
+    if (endpoints > 0 && totalAccPorts > 0 && endpoints / totalAccPorts < 0.2) {
+      issues.push({ severity: 'info', category: 'capacity',
+        message: `Access port utilization is ${Math.round((endpoints / totalAccPorts) * 100)}% — over-provisioned. Consider fewer access switches.` })
+    }
+    if (access.length < 2) {
+      issues.push({ severity: 'error', category: 'redundancy',
+        message: 'Only 1 access switch — no endpoint redundancy.' })
+    }
+    if (dist.length < 2) {
+      issues.push({ severity: 'error', category: 'redundancy',
+        message: 'Only 1 distribution switch — single point of failure.' })
+    }
+  }
+
+  // ── WAN edge validation ──
+  const wanEdges = devices.filter(d => d.subLayer === 'wan-edge')
+  if (wanEdges.length > 0 && (uc === 'wan' || uc === 'multisite')) {
+    if (wanEdges.length < 2) {
+      issues.push({ severity: 'error', category: 'redundancy',
+        message: 'Only 1 WAN edge router — no WAN redundancy.' })
+    }
+  }
+
+  // ── Power draw (all use cases) ──
   const totalPowerW = devices.reduce((s, d) => {
     const prod = PRODUCTS.find(p => p.model === d.model)
     return s + (prod?.powerW ?? 500)
   }, 0)
   if (totalPowerW > 40000) {
-    issues.push({
-      severity: 'info',
-      category: 'power',
-      message: `Total power draw is ${(totalPowerW / 1000).toFixed(1)} kW. Verify data center power and cooling capacity.`,
-    })
+    issues.push({ severity: 'info', category: 'power',
+      message: `Total power draw is ${(totalPowerW / 1000).toFixed(1)} kW. Verify data center power and cooling capacity.` })
   }
 
   return issues
