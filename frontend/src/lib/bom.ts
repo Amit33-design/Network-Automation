@@ -213,14 +213,21 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
         const rawLeaves = Math.ceil(endpointCount / downlinkPorts)
         const leafCount = rawLeaves % 2 === 0 ? rawLeaves : rawLeaves + 1
 
-        // Uplinks needed per leaf, capped at the SKU's actual uplink port count
+        // Uplinks needed per leaf based on the oversubscription target.
+        // In a Clos fabric each leaf connects to each spine, so
+        // spineCount ≈ uplinksPerLeaf. We must NOT cap at the SKU's
+        // physical uplink count here — doing so silently degrades the
+        // oversubscription ratio and under-provisions spines.
         const serverCapacityPerLeaf = downlinkPorts * bwGbps
         const spinePortSpeed = Math.max(1, parseInt(spineSku.speed) || 100)
-        const rawUplinksNeeded = Math.ceil(serverCapacityPerLeaf / oversub / spinePortSpeed)
-        const uplinksNeeded = Math.min(leafSku.uplinks || leafSku.ports, Math.max(1, rawUplinksNeeded))
+        const rawUplinksNeeded = Math.max(1, Math.ceil(serverCapacityPerLeaf / oversub / spinePortSpeed))
 
-        const totalLeafUplinks = leafCount * uplinksNeeded
-        const spineCount = Math.max(Math.ceil(totalLeafUplinks / spineSku.ports), 2)
+        // Spine count: in a true Clos every leaf connects to every spine,
+        // so spineCount = rawUplinksNeeded. Additionally each spine must
+        // have enough ports to accept one link from every leaf.
+        const spinesByUplinks = rawUplinksNeeded
+        const spinesByFanout = Math.ceil(leafCount / spineSku.ports)
+        const spineCount = Math.max(spinesByUplinks, spinesByFanout, 2)
 
         scaleDef = { spine: spineCount, leaf: leafCount }
         if (needFirewall) {

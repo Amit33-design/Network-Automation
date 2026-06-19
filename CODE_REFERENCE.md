@@ -837,6 +837,26 @@ controls. Replaces the static "Compliance Audit" placeholder in Day-2 Ops.
   control list with status pills, and "Export Report" button.
 - **Tests**: 22 in `test/compliance-scan.test.ts`.
 
+## Frontend — `lib/capacity-planning.ts` (Capacity Planning — H3)
+
+**Purpose:** Projects endpoint growth over N years against the current
+leaf-spine BOM, computing per-year utilization (leaf port + spine uplink)
+with status thresholds (ok / warn / critical / exceeded). Produces
+capacity-breach year predictions and actionable recommendations
+(over-provisioned, expansion needed, spine-tier saturation).
+
+**Key exports:**
+- `GrowthProjection` — per-year record: `{ year, endpoints, leafUtilization,
+  spineUtilization, portCapacity, portsUsed, status }`.
+- `CapacityPlan` — full result: `{ currentEndpoints, growthRate, projections,
+  maxCapacityYear, warnYear, recommendations }`.
+- `computeCapacityPlan(devices, currentEndpoints, growthRate?, years?)` —
+  pure function; filters BOM for leaf/spine roles, derives port capacity,
+  runs compound growth projection.
+- **UI**: Step 4 "Summary" tab "Capacity Planning" card with interactive
+  growth-rate selector and year-by-year projection table.
+- **Tests**: 15 in `test/capacity-planning.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance
