@@ -217,6 +217,42 @@ describe('Clos spine count for high-density GPU fabrics', () => {
     const spines = devices.filter(d => d.subLayer === 'spine')
     expect(spines.length).toBe(14)
   })
+
+  it('leaf uplinks reflect actual topology, not raw SKU spec', () => {
+    // Cisco NX-9332C has 2 physical uplinks, but with 8 spines
+    // actual uplinks = min(8, 2) = 2
+    const devices = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+      totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
+    })
+    const leaves = devices.filter(d => d.subLayer === 'leaf')
+    const spines = devices.filter(d => d.subLayer === 'spine')
+    expect(spines.length).toBe(8)
+    expect(leaves[0].uplinks).toBe(Math.min(spines.length, 2))
+  })
+
+  it('NVIDIA leaf uplinks capped at physical ports when spines exceed', () => {
+    // SN4600C has 8 uplinks, 14 spines → uplinks = min(14, 8) = 8
+    const devices = buildDeviceList({
+      useCase: 'gpu', scale: 'medium', siteCode: 'GPU',
+      totalEndpoints: 256, bandwidthPerServer: '100G', oversubscription: 1,
+      vendorPrefs: ['NVIDIA'],
+    })
+    const leaves = devices.filter(d => d.subLayer === 'leaf')
+    expect(leaves[0].uplinks).toBe(8)
+  })
+
+  it('leaf uplinks equal spine count when spines fit within SKU ports', () => {
+    // Cisco NX-9332C, 3:1 oversub → 3 spines, SKU has 2 uplinks → min(3,2) = 2
+    const devices = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+      totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 3,
+    })
+    const leaves = devices.filter(d => d.subLayer === 'leaf')
+    const spines = devices.filter(d => d.subLayer === 'spine')
+    expect(spines.length).toBe(3)
+    expect(leaves[0].uplinks).toBe(2)
+  })
 })
 
 describe('GPU compute server injection', () => {
