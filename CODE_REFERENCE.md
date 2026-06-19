@@ -289,6 +289,31 @@ CI (`frontend-test` job) on every push/PR. A SessionStart hook
 (`.claude/hooks/session-start.sh` + `.claude/settings.json`) installs
 frontend deps in Claude Code web sessions so the suite is runnable on start.
 
+## Frontend — `store/useAuthStore.ts` (user accounts / RBAC — J1, 2026-06-19)
+
+Frontend auth wired to the existing backend (`backend/auth.py`) with
+demo-mode fallback. Two login paths: **backend** (`/api/auth/token` →
+JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
+(named, role-tagged, browser-only — no backend needed).
+
+- `Role` = `'viewer' | 'designer' | 'operator' | 'admin'`; `ROLE_PERMISSIONS`
+  mirrors `backend/auth.py` (keep in sync).
+- `AuthUser { id, email, name, role, orgId, source: 'backend'|'local' }`.
+- Actions: `loginBackend(user, pass, totp?)` (returns `{mfaRequired}`),
+  `verifyTotp(code)`, `loginLocal(name, role)`, `switchProfile(id)`,
+  `removeProfile(id)`, `logout()`, `setPrefs(patch)`.
+- `can(permission)` — client-side RBAC check (backend remains the real
+  enforcement point for live deploys).
+- `prefsByUser` — per-user `{theme, vendorPrefs, lastUseCase}`.
+- `authScopeKey()` — `'guest'` or the user id; used to namespace per-user
+  localStorage (e.g. `MyDesigns` saved-design key).
+- Persisted under `nd-auth` (user, token, profiles, prefsByUser).
+- UI: `LoginModal.tsx` (Account + Demo-profile tabs, MFA step). Sidebar
+  shows the account block (badge + role chip + sign in/out) and gates the
+  Enterprise group + policy-editing tools — **gating applies only when
+  signed in; guests keep full access** (demo-first). Tests:
+  `test/auth-store.test.ts` (14).
+
 ### Shared helpers
 - **`mgmtBlock(hostname, mgmtVlan = 10): string`** — the ONE management
   block: hostname, domain/DNS, security hardening (`no ip http server`,

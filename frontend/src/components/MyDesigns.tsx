@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAppStore } from '@/store/useAppStore'
+import { authScopeKey } from '@/store/useAuthStore'
 import type { AppState } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -11,13 +12,20 @@ interface SavedDesign {
   state: AppState
 }
 
-const STORAGE_KEY = 'netdesign-saved-designs'
+const STORAGE_KEY_BASE = 'netdesign-saved-designs'
+
+// Per-user namespacing: each signed-in user (or demo profile) gets their own
+// saved-design list. Guests fall back to the legacy global key.
+function storageKey(): string {
+  const scope = authScopeKey()
+  return scope === 'guest' ? STORAGE_KEY_BASE : `${STORAGE_KEY_BASE}:${scope}`
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function loadDesigns(): SavedDesign[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(storageKey())
     return raw ? (JSON.parse(raw) as SavedDesign[]) : []
   } catch {
     return []
@@ -25,7 +33,7 @@ function loadDesigns(): SavedDesign[] {
 }
 
 function persistDesigns(designs: SavedDesign[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(designs))
+  localStorage.setItem(storageKey(), JSON.stringify(designs))
 }
 
 function formatDate(iso: string) {

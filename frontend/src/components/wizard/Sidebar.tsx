@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
+import { useAuthStore } from '@/store/useAuthStore'
+import { LoginModal } from '@/components/LoginModal'
 import { MyDesigns } from '@/components/MyDesigns'
 import { ConfigPolicyModal } from '@/components/ConfigPolicyModal'
 import { ExportModal } from '@/components/ExportModal'
@@ -52,8 +54,12 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
   const configs           = useAppStore(s => s.configs)
   const activeDeployTab   = useAppStore(s => s.activeDeployTab)
   const setActiveDeployTab = useAppStore(s => s.setActiveDeployTab)
+  const user              = useAuthStore(s => s.user)
+  const logout            = useAuthStore(s => s.logout)
+  const can               = useAuthStore(s => s.can)
   const [collapsed, setCollapsed] = useState(false)
   const [deployOpen, setDeployOpen] = useState(true)
+  const [showLogin, setShowLogin] = useState(false)
   const [showMyDesigns, setShowMyDesigns] = useState(false)
   const [showConfigPolicy, setShowConfigPolicy] = useState(false)
   const [showExport, setShowExport] = useState(false)
@@ -67,6 +73,10 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
     setStep(n)
     onMobileClose?.()
   }
+
+  // Role-gating: features hide only for a logged-in user lacking the
+  // permission. Guests (no login) keep full access — demo-first philosophy.
+  const gated = (permission: string) => !user || can(permission)
 
   function handleShare() {
     const json = JSON.stringify(useAppStore.getState())
@@ -103,7 +113,44 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
       <PolicyRulesEditor open={showPolicyRules} onClose={() => setShowPolicyRules(false)} />
       <EnterpriseApprovals open={showApprovals} onClose={() => setShowApprovals(false)} />
       <IntegrationsPanel open={showIntegrations} onClose={() => setShowIntegrations(false)} />
+      <LoginModal open={showLogin} onClose={() => setShowLogin(false)} />
     </>
+  )
+
+  const ROLE_BADGE: Record<string, string> = {
+    viewer:   'bg-gray-500/20 text-gray-300',
+    designer: 'bg-blue-500/20 text-blue-300',
+    operator: 'bg-purple-500/20 text-purple-300',
+    admin:    'bg-amber-500/20 text-amber-300',
+  }
+
+  // Account block — shown at the top of the nav (shared desktop + mobile).
+  const accountBlock = (
+    <div className="px-3 mb-4">
+      {user ? (
+        <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-full bg-blue-600/30 text-blue-200 flex items-center justify-center text-xs font-bold uppercase shrink-0">
+              {(user.name || user.email || '?').slice(0, 2)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm text-gray-200 truncate">{user.name || user.email}</div>
+              <span className={cn('inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase', ROLE_BADGE[user.role] ?? ROLE_BADGE.viewer)}>
+                {user.role}{user.source === 'local' ? ' · demo' : ''}
+              </span>
+            </div>
+            <button onClick={logout} title="Sign out"
+              className="text-gray-500 hover:text-gray-200 cursor-pointer text-sm shrink-0">⎋</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setShowLogin(true)}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:bg-blue-600/30 transition-colors cursor-pointer">
+          <span className="text-base">👤</span>
+          <span>Sign in</span>
+        </button>
+      )}
+    </div>
   )
 
   // ── Expanded nav content (shared between desktop + mobile drawer) ────────────
@@ -124,6 +171,9 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
             <button onClick={() => setCollapsed(true)} className="text-gray-500 hover:text-gray-300 cursor-pointer text-sm" title="Collapse">◀</button>
           )}
         </div>
+
+        {/* ACCOUNT */}
+        {accountBlock}
 
         {/* DEMO LOADER */}
         <div className="px-3 mb-4">
@@ -210,11 +260,13 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
             <span className="text-base">💾</span>
             <span>My Designs</span>
           </button>
-          <button onClick={() => setShowConfigPolicy(true)}
-            className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-            <span className="text-base">📜</span>
-            <span>Config Policy</span>
-          </button>
+          {gated('designs:write') && (
+            <button onClick={() => setShowConfigPolicy(true)}
+              className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+              <span className="text-base">📜</span>
+              <span>Config Policy</span>
+            </button>
+          )}
           <button onClick={() => setShowExport(true)}
             className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
             <span className="text-base">📤</span>
@@ -225,27 +277,35 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
             <span className="text-base">🔗</span>
             <span>{shareCopied ? 'Copied!' : 'Share Design'}</span>
           </button>
-          <button onClick={() => setShowPolicyRules(true)}
-            className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-            <span className="text-base">📋</span>
-            <span>Policy Rules</span>
-          </button>
+          {gated('designs:write') && (
+            <button onClick={() => setShowPolicyRules(true)}
+              className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+              <span className="text-base">📋</span>
+              <span>Policy Rules</span>
+            </button>
+          )}
         </div>
 
-        {/* ENTERPRISE group */}
-        <div className="px-3 mt-3">
-          <div className="text-xs font-bold text-gray-500 uppercase tracking-widest px-3 mb-2">Enterprise</div>
-          <button onClick={() => setShowApprovals(true)}
-            className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-            <span className="text-base">✅</span>
-            <span>Approvals</span>
-          </button>
-          <button onClick={() => setShowIntegrations(true)}
-            className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-            <span className="text-base">🔌</span>
-            <span>Integrations</span>
-          </button>
-        </div>
+        {/* ENTERPRISE group — gated by role when signed in */}
+        {(gated('approvals:read') || gated('org:admin')) && (
+          <div className="px-3 mt-3">
+            <div className="text-xs font-bold text-gray-500 uppercase tracking-widest px-3 mb-2">Enterprise</div>
+            {gated('approvals:read') && (
+              <button onClick={() => setShowApprovals(true)}
+                className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+                <span className="text-base">✅</span>
+                <span>Approvals</span>
+              </button>
+            )}
+            {gated('org:admin') && (
+              <button onClick={() => setShowIntegrations(true)}
+                className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
+                <span className="text-base">🔌</span>
+                <span>Integrations</span>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Step indicator at bottom */}
         <div className="mt-auto px-4 pt-4 border-t border-white/10">
