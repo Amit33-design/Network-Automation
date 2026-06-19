@@ -717,6 +717,7 @@ config-gen tests must keep passing; add new tests alongside).
 |---|------|--------|-------|
 | H1 | Design export (JSON + Markdown report) and import — full intent+BOM+configs serialization, round-trip validation, Markdown design report with TCO | [x] | new `lib/design-export.ts` (`serializeDesign`/`validateDesignImport`/`applyDesignImport`/`buildDesignMarkdown`/`downloadDesignJSON`/`downloadDesignMarkdown`); 3 export/import buttons in Step 4 Summary tab; 18 tests in `test/design-export.test.ts` |
 | H2 | Compliance Scanner — framework-aware design validation (PCI/HIPAA/SOC2/FedRAMP/ISO27001/NIST CSF) with per-control pass/fail/warn, score, and exportable report | [x] | new `lib/compliance-scan.ts` (`runComplianceScan`/`exportComplianceReport`, 6 frameworks × 5-8 controls each checking design state + generated configs); replaced static Day-2 Ops "Compliance Audit" with live scanner UI (score badge, grouped controls, export report button); 22 tests in `test/compliance-scan.test.ts` |
+| H3 | Capacity Planning — compound growth projection with utilization thresholds and expansion recommendations | [x] | new `lib/capacity-planning.ts` (`computeCapacityPlan`); Step 4 Summary tab "Capacity Planning" card with growth-rate selector and projection table; 15 tests in `test/capacity-planning.test.ts` |
 
 ---
 
