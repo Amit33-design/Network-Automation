@@ -10,6 +10,7 @@ import { formatUSD, cn } from '@/lib/utils'
 import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import { genIPBlocks, genIPRows, genVLANs, genVNIs, buildNetBoxIpamExport } from '@/lib/ipam'
 import { downloadDesignJSON, downloadDesignMarkdown, validateDesignImport, applyDesignImport } from '@/lib/design-export'
+import { computeCapacityPlan } from '@/lib/capacity-planning'
 import type { DesignExport } from '@/lib/design-export'
 import type { BOMDevice, AppType, AppState } from '@/types'
 
@@ -743,6 +744,13 @@ export function Step4NetworkDesign() {
 
   // G-A13: 3-year TCO model (capex + power + support + rack/colo)
   const tco = useMemo(() => computeTCO(generatedDevices), [generatedDevices])
+
+  // H3: Capacity planning
+  const [growthRate, setGrowthRate] = useState(20)
+  const capacityPlan = useMemo(
+    () => computeCapacityPlan(generatedDevices, totalEndpoints, growthRate / 100, 5),
+    [generatedDevices, totalEndpoints, growthRate]
+  )
 
   // M-27: Summary
   const summaryText = useMemo(
@@ -1578,6 +1586,99 @@ export function Step4NetworkDesign() {
                 </div>
               )}
             </div>
+          </Card>
+
+          {/* H3: Capacity Planning */}
+          <Card>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-300">Capacity Planning & Growth Projection</h3>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-500">Annual growth:</label>
+                <select
+                  value={growthRate}
+                  onChange={e => setGrowthRate(Number(e.target.value))}
+                  className="bg-gray-800 border border-white/10 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                >
+                  {[10, 15, 20, 25, 30, 40, 50].map(r => (
+                    <option key={r} value={r}>{r}%</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {generatedDevices.length > 0 ? (
+              <>
+                {/* Projection table */}
+                <div className="overflow-x-auto mb-4">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 bg-white/5">
+                        {['Year', 'Endpoints', 'Port Capacity', 'Leaf Util %', 'Status'].map(h => (
+                          <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {capacityPlan.projections.map(p => (
+                        <tr key={p.year} className="border-b border-white/5">
+                          <td className="px-4 py-2 text-gray-300 font-medium">
+                            {p.year === 0 ? 'Now' : `Year ${p.year}`}
+                          </td>
+                          <td className="px-4 py-2 text-gray-200 font-mono text-xs">
+                            {p.endpoints.toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2 text-gray-400 font-mono text-xs">
+                            {p.portCapacity.toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2">
+                            <div className="flex items-center gap-2">
+                              <div className="w-20 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div
+                                  className={cn(
+                                    'h-full rounded-full transition-all',
+                                    p.status === 'ok' ? 'bg-green-500' : p.status === 'warn' ? 'bg-yellow-500' : p.status === 'critical' ? 'bg-orange-500' : 'bg-red-500'
+                                  )}
+                                  style={{ width: `${Math.min(p.leafUtilization * 100, 100)}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-gray-400 font-mono">
+                                {Math.round(p.leafUtilization * 100)}%
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className={cn(
+                              'text-xs font-semibold rounded px-2 py-0.5',
+                              p.status === 'ok' ? 'text-green-400 bg-green-500/10'
+                                : p.status === 'warn' ? 'text-yellow-400 bg-yellow-500/10'
+                                : p.status === 'critical' ? 'text-orange-400 bg-orange-500/10'
+                                : 'text-red-400 bg-red-500/10'
+                            )}>
+                              {p.status === 'ok' ? 'OK' : p.status === 'warn' ? 'WARN' : p.status === 'critical' ? 'CRITICAL' : 'EXCEEDED'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Recommendations */}
+                <div>
+                  <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">Recommendations</div>
+                  <div className="space-y-1.5">
+                    {capacityPlan.recommendations.map((r, i) => (
+                      <div key={i} className="flex gap-2 text-sm">
+                        <span className="text-blue-400 shrink-0">-</span>
+                        <span className="text-gray-300">{r}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500">No devices in BOM — capacity projection requires a generated design.</p>
+            )}
           </Card>
 
           {/* Export / Import */}
