@@ -734,6 +734,19 @@ config-gen tests must keep passing; add new tests alongside).
 | I1 | E2E "user journey" regression harness — simulates the real wizard flow (intent → BOM → configs → cabling → optics → racks → validation) for **all 8 use cases × scales × port speeds × oversub × site counts × vendors** (~190 scenarios) and asserts exact physical invariants: fabric capacity ≥ endpoints, spine-leaf cable qty = leaves×uplinks, TCO capex = grandTotal, every network device has a non-empty config, single underlay (no IS-IS+OSPF), fabric has BGP, GPU has PFC, hostnames alnum at extreme scale, device-count monotonic in endpoints, spine-count monotonic in bandwidth, no hardcoded secrets | [x] | `test/e2e-journey.test.ts`; this is the standing regression net — **add a scenario here for any new use case / sizing rule**. Runs in CI (`frontend-test` job) on every push/PR. |
 | I2 | SessionStart hook so Claude Code web sessions auto-install frontend deps and can run the suite immediately | [x] | `.claude/hooks/session-start.sh` + `.claude/settings.json` (synchronous, remote-only via `$CLAUDE_CODE_REMOTE`, idempotent `npm install`) |
 
+### J. User accounts & per-user experience (sourced 2026-06-19)
+
+> User-requested: a NetBox-like login / per-user design experience. Approach
+> chosen: **frontend login wired to the existing backend auth** (`backend/
+> auth.py` already has JWT/OIDC/TOTP/RBAC) with graceful demo-mode fallback
+> to local profiles. Scope: per-user My Designs, preferences, activity, and
+> role-based UI gating.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| J1 | Auth foundation + login UI + per-user My Designs + role gating | [x] | `store/useAuthStore.ts` (backend login via `/api/auth/token`+`/totp-verify`, demo local profiles, `can()` mirroring backend `ROLE_PERMISSIONS`, per-user `prefsByUser`, `authScopeKey()`); `LoginModal.tsx` (account + demo-profile tabs, MFA step); Sidebar account block (user badge, role chip, sign in/out) + role-gated Enterprise/policy items (gating only applies when signed in — guests keep full access); `MyDesigns` storage key namespaced per user; `client.ts` `login()`/`verifyTotp()`; 14 tests `auth-store.test.ts` |
+| J2 | Per-user activity dashboard + full preferences sync + backend-persisted designs (`/api/designs`) — apply saved theme/vendorPrefs on login, "recent designs" view, profile switcher UI, server-side design storage when live | [ ] | follow-up slice; foundation (`prefsByUser`, `profiles`, `authScopeKey`) already in `useAuthStore` |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)

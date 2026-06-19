@@ -56,17 +56,41 @@ const del  = <T>(path: string)               => request<T>('DELETE', path)
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-export async function login(username: string, password: string): Promise<{ token: string; role: string }> {
+export async function login(
+  username: string,
+  password: string,
+  totpCode?: string,
+): Promise<{ token: string; role: string; orgId: string | null; mfaRequired: boolean }> {
   const url = getBackendUrl().replace(/\/$/, '') + '/api/auth/token'
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, totp_code: totpCode ?? null }),
   })
-  if (!res.ok) throw new Error('Login failed')
-  const data = await res.json() as { access_token: string; role: string }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Login failed' })) as { detail?: string }
+    throw new Error(err.detail ?? 'Login failed')
+  }
+  const data = await res.json() as { access_token: string; role: string; org_id: string | null; mfa_required?: boolean }
   saveSettings({ token: data.access_token })
-  return { token: data.access_token, role: data.role }
+  return { token: data.access_token, role: data.role, orgId: data.org_id ?? null, mfaRequired: !!data.mfa_required }
+}
+
+/** Second MFA step — exchange a pre-MFA token for a full token. */
+export async function verifyTotp(code: string): Promise<{ token: string; role: string; orgId: string | null }> {
+  const url = getBackendUrl().replace(/\/$/, '') + '/api/auth/totp-verify'
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ code }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'TOTP verification failed' })) as { detail?: string }
+    throw new Error(err.detail ?? 'TOTP verification failed')
+  }
+  const data = await res.json() as { access_token: string; role: string; org_id: string | null }
+  saveSettings({ token: data.access_token })
+  return { token: data.access_token, role: data.role, orgId: data.org_id ?? null }
 }
 
 // ── Observability ─────────────────────────────────────────────────────────────
