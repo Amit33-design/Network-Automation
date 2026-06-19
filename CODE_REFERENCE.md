@@ -266,6 +266,29 @@ npm test` after ANY change here):
    router configs.
 5. GPU QoS = ECN + WRED + PFC priority-3 + DCQCN buffer carving.
 
+## Testing system — `test/e2e-journey.test.ts` (the regression net, 2026-06-19)
+
+The standing end-to-end harness. Unit tests cover functions in isolation;
+this covers the **full user journey** the way Step 4 runs it:
+`buildBOM → generateAllConfigs → buildCabling → buildOptics →
+computeRackLayout → validateBOM`, across a matrix of **all 8 use cases ×
+scales × port speeds (25/100/400G) × oversub (1:1, 3:1) × site counts ×
+vendors (Cisco/Arista/NVIDIA/Juniper)** (~190 scenarios). It asserts EXACT,
+cross-checked invariants — the things weak unit assertions missed:
+- fabric leaf/access capacity ≥ totalEndpoints (the bug that shipped);
+- spine-leaf cable qty == leaves × uplinks (not full mesh);
+- TCO capex == BOM grandTotal;
+- every network device has a non-empty config; non-network (gpu-compute,
+  cloud-gw/transit) have none; no hardcoded secrets;
+- single underlay (never IS-IS + OSPF together); fabric runs BGP; GPU has PFC;
+- device count monotonic in endpoints; spine count monotonic in bandwidth;
+- hostnames stay alphanumeric at extreme scale (1–8192 endpoints).
+
+**When adding a new use case or sizing rule, add a scenario here.** Runs in
+CI (`frontend-test` job) on every push/PR. A SessionStart hook
+(`.claude/hooks/session-start.sh` + `.claude/settings.json`) installs
+frontend deps in Claude Code web sessions so the suite is runnable on start.
+
 ### Shared helpers
 - **`mgmtBlock(hostname, mgmtVlan = 10): string`** — the ONE management
   block: hostname, domain/DNS, security hardening (`no ip http server`,
