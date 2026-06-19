@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDeviceList, buildBOM, SCALE_DEFS, alphaLabel, generateHostnames, GPUS_PER_SERVER } from '@/lib/bom'
+import { buildDeviceList, buildBOM, SCALE_DEFS, alphaLabel, generateHostnames, GPUS_PER_SERVER, validateBOM } from '@/lib/bom'
 import { haPairInfo } from '@/lib/configgen'
 import type { BOMDevice } from '@/types'
 
@@ -276,5 +276,130 @@ describe('GPU compute server injection', () => {
     expect(gpuRow!.totalCost).toBe(gpuRow!.unitCost * gpuRow!.qty)
     const total = devices.reduce((s, d) => s + d.unitPrice, 0)
     expect(grandTotal).toBe(total)
+  })
+})
+
+describe('validateBOM — design validation', () => {
+  function makeFabric(opts: {
+    leafCount: number; leafPorts: number; leafUplinks: number; leafSpeed: string; leafModel: string;
+    spineCount: number; spinePorts: number; spineSpeed: string; spineModel: string;
+  }): BOMDevice[] {
+    const devices: BOMDevice[] = []
+    for (let i = 0; i < opts.leafCount; i++) {
+      devices.push({
+        id: `leaf-${i}`, hostname: `LF-${i}`, role: 'leaf', subLayer: 'leaf',
+        model: opts.leafModel, vendor: 'Test', count: 1,
+        unitPrice: 10000, totalPrice: 10000,
+        speed: opts.leafSpeed, ports: opts.leafPorts, uplinks: opts.leafUplinks, features: [],
+      })
+    }
+    for (let i = 0; i < opts.spineCount; i++) {
+      devices.push({
+        id: `spine-${i}`, hostname: `SP-${i}`, role: 'spine', subLayer: 'spine',
+        model: opts.spineModel, vendor: 'Test', count: 1,
+        unitPrice: 30000, totalPrice: 30000,
+        speed: opts.spineSpeed, ports: opts.spinePorts, uplinks: 0, features: [],
+      })
+    }
+    return devices
+  }
+
+  it('warns when uplinks needed exceed SKU physical uplinks', () => {
+    // 30 downlinks * 100G / 1:1 / 400G = 8 uplinks needed, SKU has 2
+    const devices = makeFabric({
+      leafCount: 4, leafPorts: 32, leafUplinks: 2, leafSpeed: '100G', leafModel: 'NX-9332C',
+      spineCount: 8, spinePorts: 64, spineSpeed: '400G', spineModel: 'NX-9364C',
+    })
+    const issues = validateBOM(devices, { bandwidthPerServer: '100G', oversubscription: 1 })
+    const oversub = issues.find(i => i.category === 'oversubscription')
+    expect(oversub).toBeTruthy()
+    expect(oversub!.severity).toBe('warning')
+    expect(oversub!.message).toContain('8 uplinks')
+    expect(oversub!.message).toContain('has 2')
+  })
+
+  it('no oversubscription warning when uplinks sufficient', () => {
+    // 56 downlinks * 25G / 3:1 / 400G = 1.17 → 2 uplinks, SKU has 8
+    const devices = makeFabric({
+      leafCount: 4, leafPorts: 64, leafUplinks: 8, leafSpeed: '100G', leafModel: 'SN4600C',
+      spineCount: 2, spinePorts: 64, spineSpeed: '400G', spineModel: 'SN5600',
+    })
+    const issues = validateBOM(devices, { bandwidthPerServer: '25G', oversubscription: 3 })
+    expect(issues.find(i => i.category === 'oversubscription')).toBeUndefined()
+  })
+
+  it('warns when leaves exceed spine port count', () => {
+    const devices = makeFabric({
+      leafCount: 70, leafPorts: 32, leafUplinks: 2, leafSpeed: '100G', leafModel: 'NX-9332C',
+      spineCount: 8, spinePorts: 48, spineSpeed: '400G', spineModel: '7800R3',
+    })
+    const issues = validateBOM(devices)
+    const fanout = issues.find(i => i.category === 'fan-out' && i.message.includes('70 leaves'))
+    expect(fanout).toBeTruthy()
+  })
+
+  it('warns when spines exceed leaf uplink count', () => {
+    const devices = makeFabric({
+      leafCount: 4, leafPorts: 32, leafUplinks: 2, leafSpeed: '100G', leafModel: 'NX-9332C',
+      spineCount: 8, spinePorts: 64, spineSpeed: '400G', spineModel: 'NX-9364C',
+    })
+    const issues = validateBOM(devices)
+    const partial = issues.find(i => i.category === 'fan-out' && i.message.includes('8 spines'))
+    expect(partial).toBeTruthy()
+    expect(partial!.message).toContain('uplink count (2)')
+  })
+
+  it('errors when endpoints exceed total downlink capacity', () => {
+    const devices = makeFabric({
+      leafCount: 2, leafPorts: 32, leafUplinks: 2, leafSpeed: '100G', leafModel: 'NX-9332C',
+      spineCount: 2, spinePorts: 64, spineSpeed: '400G', spineModel: 'NX-9364C',
+    })
+    const issues = validateBOM(devices, { totalEndpoints: 100 })
+    const cap = issues.find(i => i.category === 'capacity' && i.severity === 'error')
+    expect(cap).toBeTruthy()
+    expect(cap!.message).toContain('100 endpoints')
+    expect(cap!.message).toContain('60 ports')
+  })
+
+  it('info for heavily over-provisioned fabric', () => {
+    const devices = makeFabric({
+      leafCount: 10, leafPorts: 48, leafUplinks: 4, leafSpeed: '25G', leafModel: 'TestLeaf',
+      spineCount: 4, spinePorts: 64, spineSpeed: '100G', spineModel: 'TestSpine',
+    })
+    const issues = validateBOM(devices, { totalEndpoints: 20 })
+    const info = issues.find(i => i.category === 'capacity' && i.severity === 'info')
+    expect(info).toBeTruthy()
+    expect(info!.message).toContain('over-provisioned')
+  })
+
+  it('returns no issues for a well-sized fabric', () => {
+    const devices = makeFabric({
+      leafCount: 4, leafPorts: 48, leafUplinks: 6, leafSpeed: '25G', leafModel: 'TestLeaf',
+      spineCount: 2, spinePorts: 64, spineSpeed: '100G', spineModel: 'TestSpine',
+    })
+    const issues = validateBOM(devices, {
+      totalEndpoints: 100, bandwidthPerServer: '25G', oversubscription: 3,
+    })
+    expect(issues.filter(i => i.severity === 'error').length).toBe(0)
+  })
+
+  it('returns empty for no devices', () => {
+    expect(validateBOM([])).toEqual([])
+  })
+
+  it('works with real buildDeviceList output (GPU 2048)', () => {
+    const devices = buildDeviceList({
+      useCase: 'gpu', scale: 'large', siteCode: 'GPU',
+      totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
+      vendorPrefs: ['NVIDIA'],
+    })
+    const issues = validateBOM(devices, {
+      totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
+    })
+    const errors = issues.filter(i => i.severity === 'error')
+    expect(errors.length).toBe(0)
+    // NVIDIA SN4600C has 8 uplinks but needs 14 → should warn about oversub
+    const oversubWarn = issues.find(i => i.category === 'oversubscription')
+    expect(oversubWarn).toBeTruthy()
   })
 })

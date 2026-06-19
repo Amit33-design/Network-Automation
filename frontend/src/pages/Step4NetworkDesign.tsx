@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { useAppStore } from '@/store/useAppStore'
-import { buildBOM, buildCabling, computeTCO } from '@/lib/bom'
+import { buildBOM, buildCabling, computeTCO, validateBOM } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
@@ -705,6 +705,11 @@ export function Step4NetworkDesign() {
 
   useEffect(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
 
+  const bomIssues = useMemo(
+    () => validateBOM(generatedDevices, { useCase, totalEndpoints, bandwidthPerServer, oversubscription }),
+    [generatedDevices, useCase, totalEndpoints, bandwidthPerServer, oversubscription]
+  )
+
   const useCaseLabel = (useCase && USE_CASE_LABELS[useCase]) || useCase || '—'
   const uniqueModels = Object.values(summary).length
   const scaleLabel   = scale ? scale.charAt(0).toUpperCase() + scale.slice(1) : '—'
@@ -821,6 +826,24 @@ export function Step4NetworkDesign() {
           <div className="text-xs text-gray-500 mt-1">Scale</div>
         </Card>
       </div>
+
+      {/* BOM design validation */}
+      {bomIssues.length > 0 && (
+        <Card className="space-y-2">
+          <h3 className="text-sm font-semibold text-gray-300">Design Validation</h3>
+          {bomIssues.map((issue, idx) => (
+            <div key={idx} className={cn(
+              'flex items-start gap-2 text-xs rounded px-3 py-2',
+              issue.severity === 'error'   && 'bg-red-900/30 text-red-300',
+              issue.severity === 'warning' && 'bg-yellow-900/30 text-yellow-300',
+              issue.severity === 'info'    && 'bg-blue-900/30 text-blue-300',
+            )}>
+              <span className="font-bold uppercase shrink-0">{issue.severity}</span>
+              <span>{issue.message}</span>
+            </div>
+          ))}
+        </Card>
+      )}
 
       {/* Design tab bar */}
       <div className="flex gap-0 border-b border-white/10 overflow-x-auto">

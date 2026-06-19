@@ -749,3 +749,114 @@ export function buildOptics(
 
   return entries
 }
+
+// ── BOM design validation ───────────────────────────────────────────────────
+
+export interface BOMValidationIssue {
+  severity: 'error' | 'warning' | 'info'
+  category: 'oversubscription' | 'fan-out' | 'power' | 'redundancy' | 'capacity'
+  message: string
+}
+
+export function validateBOM(
+  devices: BOMDevice[],
+  state: {
+    useCase?: string
+    totalEndpoints?: number
+    bandwidthPerServer?: string
+    oversubscription?: number
+  } = {},
+): BOMValidationIssue[] {
+  const issues: BOMValidationIssue[] = []
+  const leaves = devices.filter(d => d.subLayer === 'leaf')
+  const spines = devices.filter(d => d.subLayer === 'spine')
+
+  if (leaves.length === 0 || spines.length === 0) return issues
+
+  const leafSample = leaves[0]
+  const spineSample = spines[0]
+  const leafUplinks = leafSample.uplinks ?? 0
+  const leafDownlinks = Math.max(1, leafSample.ports - leafUplinks)
+  const bwGbps = parseInt(state.bandwidthPerServer ?? '25') || 25
+  const requestedOversub = Math.max(1, state.oversubscription ?? 3)
+  const spinePortSpeed = Math.max(1, parseInt(spineSample.speed) || 100)
+
+  const serverCapPerLeaf = leafDownlinks * bwGbps
+  const rawUplinksNeeded = Math.ceil(serverCapPerLeaf / requestedOversub / spinePortSpeed)
+
+  if (rawUplinksNeeded > leafUplinks && leafUplinks > 0) {
+    const effectiveOversub = serverCapPerLeaf / (leafUplinks * spinePortSpeed)
+    issues.push({
+      severity: 'warning',
+      category: 'oversubscription',
+      message: `Requested ${requestedOversub}:1 oversubscription needs ${rawUplinksNeeded} uplinks per leaf, but ${leafSample.model} has ${leafUplinks}. Effective ratio: ${effectiveOversub.toFixed(1)}:1. Consider a leaf with more uplink ports.`,
+    })
+  }
+
+  if (leaves.length > spineSample.ports) {
+    issues.push({
+      severity: 'warning',
+      category: 'fan-out',
+      message: `${leaves.length} leaves exceed ${spineSample.model} port count (${spineSample.ports}). Multi-plane or higher-radix spines needed for full Clos connectivity.`,
+    })
+  }
+
+  if (spines.length > leafUplinks && leafUplinks > 0) {
+    issues.push({
+      severity: 'warning',
+      category: 'fan-out',
+      message: `${spines.length} spines exceed ${leafSample.model} uplink count (${leafUplinks}). Not all leaves can connect to all spines — partial Clos fabric.`,
+    })
+  }
+
+  if (leaves.length < 2) {
+    issues.push({
+      severity: 'error',
+      category: 'redundancy',
+      message: 'Only 1 leaf switch — no host redundancy. Minimum 2 leaves recommended for MLAG/vPC.',
+    })
+  }
+
+  if (spines.length < 2) {
+    issues.push({
+      severity: 'error',
+      category: 'redundancy',
+      message: 'Only 1 spine switch — single point of failure in the fabric.',
+    })
+  }
+
+  const endpoints = state.totalEndpoints ?? 0
+  const totalDownlinks = leaves.length * leafDownlinks
+  if (endpoints > 0 && endpoints > totalDownlinks) {
+    issues.push({
+      severity: 'error',
+      category: 'capacity',
+      message: `${endpoints} endpoints exceed total leaf downlink capacity (${totalDownlinks} ports). Add more leaf switches or use higher-density models.`,
+    })
+  }
+
+  if (endpoints > 0 && totalDownlinks > 0) {
+    const util = endpoints / totalDownlinks
+    if (util < 0.2) {
+      issues.push({
+        severity: 'info',
+        category: 'capacity',
+        message: `Leaf port utilization is ${Math.round(util * 100)}% — heavily over-provisioned. Consider fewer or smaller leaf switches to reduce cost.`,
+      })
+    }
+  }
+
+  const totalPowerW = devices.reduce((s, d) => {
+    const prod = PRODUCTS.find(p => p.model === d.model)
+    return s + (prod?.powerW ?? 500)
+  }, 0)
+  if (totalPowerW > 40000) {
+    issues.push({
+      severity: 'info',
+      category: 'power',
+      message: `Total power draw is ${(totalPowerW / 1000).toFixed(1)} kW. Verify data center power and cooling capacity.`,
+    })
+  }
+
+  return issues
+}

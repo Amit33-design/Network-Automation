@@ -205,6 +205,14 @@ cabling, and optics. **Never hardcode device counts — always go through
   `byYear[]`, `total`, `totalPowerW`, `totalRackUnits`, echoed `rates`.
   Surfaced as the "3-Year Total Cost of Ownership" card in Step 4 Summary
   tab. Tests: `test/tco.test.ts` (11).
+- **`validateBOM(devices, state?): BOMValidationIssue[]`** *(H4, 2026-06-19)* —
+  Post-BOM design validation. Checks: (1) uplinks needed vs SKU physical
+  uplinks (oversubscription degradation warning), (2) leaf count vs spine
+  port count (fan-out), (3) spine count vs leaf uplinks (partial Clos),
+  (4) single leaf/spine redundancy errors, (5) endpoint capacity overflow,
+  (6) over-provisioning info, (7) high power draw info. Returns `{ severity:
+  'error'|'warning'|'info', category, message }[]`. Surfaced as "Design
+  Validation" card in Step 4. Tests: 9 in `test/bom.test.ts`.
 - `export { SCALE_DEFS }` — re-exported for UI display (e.g. scale picker
   showing device counts).
 
