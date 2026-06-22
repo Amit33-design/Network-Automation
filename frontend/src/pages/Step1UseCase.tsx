@@ -82,7 +82,7 @@ export function Step1UseCase({ onBack }: Props) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-gray-100 mb-1">Select Use Case</h2>
+        <h2 className="text-xl font-bold text-gray-50 mb-1 tracking-tight">Select Use Case</h2>
         <p className="text-sm text-gray-400">Choose the network topology that matches your deployment</p>
       </div>
 
@@ -142,15 +142,35 @@ export function Step1UseCase({ onBack }: Props) {
             key={uc.id}
             onClick={() => setUseCase(uc.id)}
             className={cn(
-              'p-4 rounded-xl border text-left transition-all cursor-pointer',
+              'group relative p-5 rounded-xl border text-left transition-all duration-200 cursor-pointer overflow-hidden',
               useCase === uc.id
-                ? 'border-blue-500 bg-blue-600/20 text-gray-100'
-                : 'border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200',
+                ? 'border-blue-500 bg-gradient-to-br from-blue-600/25 to-blue-800/15 text-gray-100 shadow-lg shadow-blue-500/10 ring-1 ring-blue-500/30'
+                : 'border-white/10 bg-white/[0.03] text-gray-400 hover:border-white/25 hover:bg-white/[0.06] hover:text-gray-200',
             )}
           >
-            <div className="text-2xl mb-2">{uc.icon}</div>
-            <div className="text-sm font-semibold">{uc.label}</div>
-            <div className="text-xs text-gray-500 mt-1">{uc.desc}</div>
+            {useCase === uc.id && (
+              <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600" />
+            )}
+            <div className={cn(
+              'text-2xl mb-3 w-10 h-10 flex items-center justify-center rounded-lg transition-colors',
+              useCase === uc.id
+                ? 'bg-blue-500/20'
+                : 'bg-white/5 group-hover:bg-white/10',
+            )}>
+              {uc.icon}
+            </div>
+            <div className={cn(
+              'text-sm font-semibold tracking-tight',
+              useCase === uc.id ? 'text-gray-50' : '',
+            )}>
+              {uc.label}
+            </div>
+            <div className={cn(
+              'text-xs mt-1.5 leading-relaxed',
+              useCase === uc.id ? 'text-blue-200/70' : 'text-gray-500',
+            )}>
+              {uc.desc}
+            </div>
           </button>
         ))}
       </div>

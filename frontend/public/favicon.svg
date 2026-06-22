@@ -1,33 +1,42 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-  <rect width="48" height="48" rx="9" fill="#060F1E"/>
-  <circle cx="11" cy="9"  r="8"  fill="#3B82F6" opacity="0.18"/>
-  <circle cx="37" cy="39" r="8"  fill="#60A5FA" opacity="0.18"/>
-  <rect x="8" y="7" width="5" height="34" rx="2.5" fill="url(#vl)"/>
-  <rect x="35" y="7" width="5" height="34" rx="2.5" fill="url(#vr)"/>
-  <polygon points="13,7 18,7 40,41 35,41" fill="url(#diag)"/>
-  <circle cx="10.5" cy="9"  r="3.5" fill="#93C5FD"/>
-  <circle cx="10.5" cy="39" r="3.5" fill="#60A5FA"/>
-  <circle cx="37.5" cy="9"  r="3.5" fill="#60A5FA"/>
-  <circle cx="37.5" cy="39" r="3.5" fill="#93C5FD"/>
-  <circle cx="24"   cy="24" r="2.5" fill="#BAE6FD"/>
-  <line x1="24" y1="24" x2="30" y2="18" stroke="#3B82F6" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
-  <circle cx="30" cy="18" r="1.5" fill="#60A5FA" opacity="0.9"/>
-  <line x1="24" y1="24" x2="18" y2="30" stroke="#3B82F6" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
-  <circle cx="18" cy="30" r="1.5" fill="#60A5FA" opacity="0.9"/>
-  <circle cx="10.5" cy="9"  r="5.5" fill="#3B82F6" opacity="0.25"/>
-  <circle cx="37.5" cy="39" r="5.5" fill="#60A5FA" opacity="0.25"/>
   <defs>
-    <linearGradient id="vl" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#93C5FD"/>
-      <stop offset="100%" stop-color="#3B82F6"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#020617"/>
     </linearGradient>
-    <linearGradient id="vr" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#3B82F6"/>
-      <stop offset="100%" stop-color="#93C5FD"/>
-    </linearGradient>
-    <linearGradient id="diag" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%"   stop-color="#60A5FA"/>
+    <linearGradient id="nLeft" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#60A5FA"/>
       <stop offset="100%" stop-color="#2563EB"/>
     </linearGradient>
+    <linearGradient id="nDiag" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="nRight" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#60A5FA"/>
+    </linearGradient>
   </defs>
+  <!-- Badge background -->
+  <rect width="48" height="48" rx="10" fill="url(#bg)"/>
+  <rect x="1" y="1" width="46" height="46" rx="9" fill="none" stroke="#1E3A5F" stroke-width="0.8" opacity="0.5"/>
+  <!-- Glow accents -->
+  <circle cx="10" cy="8" r="10" fill="#3B82F6" opacity="0.12"/>
+  <circle cx="38" cy="40" r="10" fill="#60A5FA" opacity="0.12"/>
+  <!-- Bold N letterform -->
+  <rect x="10" y="8" width="5.5" height="32" rx="2.5" fill="url(#nLeft)"/>
+  <rect x="32.5" y="8" width="5.5" height="32" rx="2.5" fill="url(#nRight)"/>
+  <polygon points="15.5,8 20,8 38,40 33.5,40" fill="url(#nDiag)"/>
+  <!-- Network node dots (spine-leaf hint) -->
+  <circle cx="12.75" cy="10" r="2.8" fill="#93C5FD"/>
+  <circle cx="35.25" cy="10" r="2.8" fill="#93C5FD"/>
+  <circle cx="12.75" cy="38" r="2.8" fill="#60A5FA"/>
+  <circle cx="35.25" cy="38" r="2.8" fill="#60A5FA"/>
+  <!-- Center crossover node -->
+  <circle cx="24" cy="24" r="2.2" fill="#BAE6FD"/>
+  <!-- Fabric link lines -->
+  <line x1="12.75" y1="10" x2="24" y2="24" stroke="#38BDF8" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+  <line x1="35.25" y1="10" x2="24" y2="24" stroke="#38BDF8" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+  <line x1="24" y1="24" x2="12.75" y2="38" stroke="#3B82F6" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+  <line x1="24" y1="24" x2="35.25" y2="38" stroke="#3B82F6" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
 </svg>
