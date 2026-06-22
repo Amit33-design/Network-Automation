@@ -758,6 +758,18 @@ config-gen tests must keep passing; add new tests alongside).
 | J1 | Auth foundation + login UI + per-user My Designs + role gating | [x] | `store/useAuthStore.ts` (backend login via `/api/auth/token`+`/totp-verify`, demo local profiles, `can()` mirroring backend `ROLE_PERMISSIONS`, per-user `prefsByUser`, `authScopeKey()`); `LoginModal.tsx` (account + demo-profile tabs, MFA step); Sidebar account block (user badge, role chip, sign in/out) + role-gated Enterprise/policy items (gating only applies when signed in — guests keep full access); `MyDesigns` storage key namespaced per user; `client.ts` `login()`/`verifyTotp()`; 14 tests `auth-store.test.ts` |
 | J2 | Per-user activity dashboard + full preferences sync + backend-persisted designs (`/api/designs`) — apply saved theme/vendorPrefs on login, "recent designs" view, profile switcher UI, server-side design storage when live | [x] | `activitiesByUser` in auth store (per-user, capped 50, persisted); `logActivity()` action tracks create/load/delete/deploy/export; `getActivities()` selector; `useApplyPrefsOnLogin` hook (theme, vendorPrefs, lastUseCase synced on login); MyDesigns: tabs (Saved/Recent Activity), activity timeline with action icons + relative timestamps; Sidebar: profile switcher dropdown (avatar click reveals other saved profiles); `client.ts`: `fetchUserPrefs`/`saveUserPrefs`/`fetchUserActivity`/`postUserActivity` for backend sync when live; 7 new tests in `auth-store.test.ts` (21 total) |
 
+### K. Closed-loop automation (sourced 2026-06-22 — §20 + §22 A–J exhausted)
+
+> Per §23 "Sourcing new work" priority 3: drift detection → auto-remediation,
+> auto-rollback on post-check regression. Builds on existing pre/post checks
+> (§12), drift remediation (G-A4/G-A16), and the documented platform-native
+> rollback strategies (§9 ROLLBACK_STRATEGIES — currently Python-only, not
+> exposed in the frontend).
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| K1 | Auto-rollback on post-check regression — detect checks that regressed PASS→FAIL/WARN between pre and post phases, classify severity, and generate platform-native rollback commands (§9 strategies) per affected device; surface as a "Rollback Advisor" in Step 6 | [x] | new `lib/rollback.ts` (`ROLLBACK_STRATEGIES` ported from §9, `vendorToPlatform`, `detectRegressions` PASS→FAIL=critical/WARN→FAIL=major/PASS→WARN=minor, `generateRollbackPlan`, `rollbackCommandsFor`, `rollbackTimestamp`, `rollbackPlanToText`); "🛟 Rollback Advisor" card in Step 6 Checks tab (after Pre→Post Delta) — recommendation banner, per-device regression list + platform-native restore commands, download runbook; 25 tests in `test/rollback.test.ts` |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)

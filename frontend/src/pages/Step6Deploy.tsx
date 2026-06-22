@@ -17,6 +17,7 @@ import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules
 import { useTroubleshoot } from '@/hooks/useTroubleshoot'
 import { runComplianceScan, exportComplianceReport } from '@/lib/compliance-scan'
 import type { ComplianceScanResult } from '@/lib/compliance-scan'
+import { generateRollbackPlan, rollbackPlanToText, rollbackTimestamp } from '@/lib/rollback'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -3060,6 +3061,102 @@ export function Step6Deploy() {
                           </div>
                         ))}
                       </div>
+                    </Card>
+                  )
+                })()}
+
+                {/* K1: Rollback Advisor — closed-loop auto-rollback on post-check regression */}
+                {preResults.length > 0 && postResults.length > 0 && (() => {
+                  // Expand BOM rows to per-instance hostnames that match the
+                  // check device names (e.g. "LEAF-01"), preserving vendor/role.
+                  const expanded = storeDevices.flatMap(d => {
+                    const count = Math.min(d.count, 4)
+                    return Array.from({ length: count }, (_, i) => ({
+                      ...d, hostname: `${d.hostname}-${String(i + 1).padStart(2, '0')}`,
+                    }))
+                  })
+                  const ts = rollbackTimestamp()
+                  const plan = generateRollbackPlan(preResults, postResults, expanded, ts)
+                  if (plan.summary.total === 0) {
+                    return (
+                      <Card>
+                        <CardHeader><CardTitle>🛟 Rollback Advisor</CardTitle></CardHeader>
+                        <div className="mt-2 flex items-center gap-2 text-sm text-green-400">
+                          <span className="text-lg">✓</span>
+                          <span>No regressions detected between pre and post checks — no rollback required.</span>
+                        </div>
+                      </Card>
+                    )
+                  }
+                  return (
+                    <Card className={cn(plan.recommended && 'border-red-500/40')}>
+                      <CardHeader>
+                        <div className="flex items-center justify-between w-full">
+                          <CardTitle>🛟 Rollback Advisor</CardTitle>
+                          <button
+                            onClick={() => { downloadBlob('rollback-runbook.txt', rollbackPlanToText(plan, ts)); showToast('rollback-runbook.txt downloaded', 'success') }}
+                            className="px-3 py-1 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition-colors cursor-pointer"
+                          >
+                            ⬇ Download runbook
+                          </button>
+                        </div>
+                      </CardHeader>
+
+                      {/* Recommendation banner */}
+                      <div className={cn(
+                        'mt-2 px-4 py-3 rounded-lg border text-sm flex items-start gap-3',
+                        plan.recommended
+                          ? 'bg-red-500/10 border-red-500/30 text-red-300'
+                          : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300',
+                      )}>
+                        <span className="text-lg leading-none">{plan.recommended ? '⚠️' : 'ℹ️'}</span>
+                        <div>
+                          <div className="font-semibold">
+                            {plan.recommended
+                              ? 'Rollback recommended — the change regressed healthy checks.'
+                              : 'Minor regressions only — review before rolling back.'}
+                          </div>
+                          <div className="text-xs mt-0.5 opacity-80">
+                            {plan.summary.total} regression(s) across {plan.summary.devices} device(s) ·{' '}
+                            {plan.summary.critical} critical · {plan.summary.major} major · {plan.summary.minor} minor
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Per-device rollback plans */}
+                      <div className="space-y-2 mt-3">
+                        {plan.devices.map(d => (
+                          <div key={d.device} className="rounded-lg border border-white/10 overflow-hidden">
+                            <div className="flex items-center gap-3 px-4 py-2 bg-white/[0.02]">
+                              <span className="font-mono text-sm font-semibold text-gray-200">{d.device}</span>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-500/15 text-blue-300 border border-blue-500/30">{d.platform}</span>
+                              <span className="ml-auto text-xs text-gray-500">{d.regressions.length} regressed</span>
+                            </div>
+                            <div className="px-4 py-2 space-y-1">
+                              {d.regressions.map((r, i) => (
+                                <div key={i} className="flex items-center gap-2 text-xs">
+                                  <span className="text-gray-500 flex-1 truncate">{r.checkName}</span>
+                                  <Badge variant={badgeVariant(r.fromStatus)}>{r.fromStatus}</Badge>
+                                  <span className="text-gray-600">→</span>
+                                  <Badge variant={badgeVariant(r.toStatus)}>{r.toStatus}</Badge>
+                                  <span className={cn(
+                                    'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase',
+                                    r.severity === 'critical' ? 'bg-red-500/15 text-red-400'
+                                      : r.severity === 'major' ? 'bg-orange-500/15 text-orange-400'
+                                      : 'bg-yellow-500/15 text-yellow-400',
+                                  )}>{r.severity}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <pre className="px-4 py-2 bg-black/30 text-xs font-mono text-green-300 overflow-x-auto border-t border-white/5">{d.commands.join('\n')}</pre>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-gray-600 mt-3">
+                        Commands restore each device from its <span className="font-mono">pre-deploy-{ts}</span> checkpoint
+                        (CLAUDE.md §9 platform-native strategies). In live mode the backend executes rollback automatically
+                        from captured backups when post-checks fail.
+                      </p>
                     </Card>
                   )
                 })()}
