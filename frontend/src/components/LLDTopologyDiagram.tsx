@@ -173,15 +173,15 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     { id: 'z-inet', label: 'INTERNET / UNTRUSTED ZONE', sublabel: 'External Networks',
       yStart: 0, yEnd: 130, fill: 'rgba(17,17,17,0.9)', stroke: '#374151' },
     { id: 'z-dmz', label: 'DMZ — PERIMETER', sublabel: 'Firewall HA Cluster · IPS · TLS Inspect',
-      yStart: 130, yEnd: 290, fill: 'rgba(127,29,29,0.12)', stroke: '#B91C1C' },
+      yStart: 130, yEnd: 290, fill: 'rgba(127,29,29,0.22)', stroke: '#B91C1C' },
     { id: 'z-int', label: 'INTERNAL NETWORK', sublabel: 'Core Routing · BGP · OSPF · QoS',
-      yStart: 290, yEnd: 440, fill: 'rgba(29,78,216,0.10)', stroke: '#1D4ED8' },
+      yStart: 290, yEnd: 440, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
     { id: 'z-lb', label: 'LOAD BALANCED TIER', sublabel: 'F5 HA · SSL Offload · L7 Routing',
-      yStart: 440, yEnd: 590, fill: 'rgba(180,83,9,0.10)', stroke: '#B45309' },
+      yStart: 440, yEnd: 590, fill: 'rgba(180,83,9,0.20)', stroke: '#B45309' },
     { id: 'z-srv', label: 'SERVER TIER · 10.3.1.0/24', sublabel: 'Web Servers · Frontside + Backside VLAN',
-      yStart: 590, yEnd: 740, fill: 'rgba(21,128,61,0.10)', stroke: '#15803D' },
+      yStart: 590, yEnd: 740, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
     { id: 'z-app', label: 'APPLICATION TIER · 10.3.1.0/24', sublabel: 'API Gateway · App Server · Database',
-      yStart: 740, yEnd: 920, fill: 'rgba(88,28,135,0.10)', stroke: '#7E22CE' },
+      yStart: 740, yEnd: 920, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
   ]
 
   const [ix] = xCenter(1, 0, NW)
@@ -358,15 +358,15 @@ function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
   const zones: LLDZone[] = [
     { id: 'z-wan', label: 'WAN EDGE', sublabel: 'Dual ISP · BGP eBGP · BFD',
-      yStart: 0, yEnd: 150, fill: 'rgba(180,83,9,0.10)', stroke: '#B45309' },
+      yStart: 0, yEnd: 150, fill: 'rgba(180,83,9,0.20)', stroke: '#B45309' },
     { id: 'z-core', label: 'CAMPUS CORE', sublabel: 'OSPF Area 0 · VSS · HSRP · L3 GW',
-      yStart: 150, yEnd: 320, fill: 'rgba(88,28,135,0.10)', stroke: '#7E22CE' },
+      yStart: 150, yEnd: 320, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
     { id: 'z-dist', label: 'DISTRIBUTION LAYER', sublabel: 'MLAG Pairs · DHCP Relay · Inter-VLAN',
-      yStart: 320, yEnd: 480, fill: 'rgba(29,78,216,0.10)', stroke: '#1D4ED8' },
+      yStart: 320, yEnd: 480, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
     { id: 'z-access', label: 'ACCESS LAYER', sublabel: '802.1X · PoE+ · DAI · LLDP · Voice VLAN',
-      yStart: 480, yEnd: 650, fill: 'rgba(21,128,61,0.10)', stroke: '#15803D' },
+      yStart: 480, yEnd: 650, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
     { id: 'z-ep', label: 'ENDPOINTS', sublabel: 'PCs · IP Phones · APs · Printers',
-      yStart: 650, yEnd: 810, fill: 'rgba(28,25,23,0.10)', stroke: '#57534E' },
+      yStart: 650, yEnd: 810, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
   ]
 
   const [w1x, w2x] = xCenter(2, 200, NW)
@@ -516,15 +516,15 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const zones: LLDZone[] = [
     { id: 'z-oob', label: 'OOB MANAGEMENT', sublabel: 'SSH · SNMPv3 · Syslog · VLAN 10',
-      yStart: 0, yEnd: 130, fill: 'rgba(28,25,23,0.10)', stroke: '#57534E' },
+      yStart: 0, yEnd: 130, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
     { id: 'z-spine', label: 'SPINE FABRIC', sublabel: 'IS-IS underlay · 400G QSFP-DD · ECMP 16-path',
-      yStart: 130, yEnd: 290, fill: 'rgba(29,78,216,0.10)', stroke: '#1D4ED8' },
+      yStart: 130, yEnd: 290, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
     { id: 'z-leaf', label: 'LEAF / ToR', sublabel: 'VXLAN NVE · BGP EVPN · Anycast-GW · PFC P3',
-      yStart: 290, yEnd: 460, fill: 'rgba(21,128,61,0.10)', stroke: '#15803D' },
+      yStart: 290, yEnd: 460, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
     { id: 'z-gpu', label: 'GPU COMPUTE', sublabel: 'NVIDIA A100/H100 · NVLink · GPUDirect RDMA · PFC lossless',
-      yStart: 460, yEnd: 630, fill: 'rgba(6,78,59,0.10)', stroke: '#065F46' },
+      yStart: 460, yEnd: 630, fill: 'rgba(6,78,59,0.20)', stroke: '#065F46' },
     { id: 'z-stor', label: 'STORAGE', sublabel: 'NVMe-oF TCP · GPUDirect Storage · RDMA',
-      yStart: 630, yEnd: 790, fill: 'rgba(30,27,75,0.10)', stroke: '#3730A3' },
+      yStart: 630, yEnd: 790, fill: 'rgba(30,27,75,0.20)', stroke: '#3730A3' },
   ]
 
   const [oobX] = xCenter(1, 0, 200)
@@ -660,13 +660,13 @@ function buildWANLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     { id: 'z-sp', label: 'SP BACKBONE', sublabel: 'MPLS / Internet Transit · BGP full-table',
       yStart: 0, yEnd: 140, fill: 'rgba(17,17,17,0.9)', stroke: '#374151' },
     { id: 'z-hub', label: 'HQ / HUB SITE', sublabel: 'PE Routers · BGP Route Reflector · MPLS LDP',
-      yStart: 140, yEnd: 320, fill: 'rgba(127,29,29,0.10)', stroke: '#B91C1C' },
+      yStart: 140, yEnd: 320, fill: 'rgba(127,29,29,0.20)', stroke: '#B91C1C' },
     { id: 'z-wan', label: 'WAN TRANSPORT', sublabel: 'MPLS L3VPN · SD-WAN · QoS DSCP 6-class',
-      yStart: 320, yEnd: 480, fill: 'rgba(29,78,216,0.10)', stroke: '#1D4ED8' },
+      yStart: 320, yEnd: 480, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
     { id: 'z-branch', label: 'BRANCH SITES', sublabel: 'CE Router · Local FW · OSPF Area 10',
-      yStart: 480, yEnd: 640, fill: 'rgba(21,128,61,0.10)', stroke: '#15803D' },
+      yStart: 480, yEnd: 640, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
     { id: 'z-ep', label: 'BRANCH ENDPOINTS', sublabel: 'Desktops · VoIP · Local Servers',
-      yStart: 640, yEnd: 790, fill: 'rgba(28,25,23,0.10)', stroke: '#57534E' },
+      yStart: 640, yEnd: 790, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
   ]
 
   const [spX] = xCenter(1, 0, 200)
@@ -780,13 +780,13 @@ function buildMultisiteLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
   const zones: LLDZone[] = [
     { id: 'z-dci', label: 'DCI INTERCONNECT', sublabel: 'EVPN Type-5 · RT 65100:<vni> · BGP multi-AS',
-      yStart: 0, yEnd: 140, fill: 'rgba(127,29,29,0.10)', stroke: '#B91C1C' },
+      yStart: 0, yEnd: 140, fill: 'rgba(127,29,29,0.20)', stroke: '#B91C1C' },
     { id: 'z-spine', label: 'SPINE FABRIC', sublabel: 'IS-IS underlay · BGP EVPN overlay · ECMP',
-      yStart: 140, yEnd: 290, fill: 'rgba(29,78,216,0.10)', stroke: '#1D4ED8' },
+      yStart: 140, yEnd: 290, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
     { id: 'z-leaf', label: 'LEAF / ToR', sublabel: 'VXLAN NVE · Anycast-GW · vPC domain',
-      yStart: 290, yEnd: 430, fill: 'rgba(21,128,61,0.10)', stroke: '#15803D' },
+      yStart: 290, yEnd: 430, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
     { id: 'z-srv', label: 'COMPUTE / STORAGE', sublabel: 'Dual-homed LAG · jumbo 9000 · 25G',
-      yStart: 430, yEnd: 600, fill: 'rgba(28,25,23,0.10)', stroke: '#57534E' },
+      yStart: 430, yEnd: 600, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
   ]
 
   const siteASpineXs = xCenter(2, 40, NW)
@@ -901,13 +901,13 @@ function buildMulticloudLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
   const zones: LLDZone[] = [
     { id: 'z-onprem', label: 'ON-PREMISES DC', sublabel: 'Spine-Leaf · VXLAN/EVPN · BGP',
-      yStart: 0, yEnd: 150, fill: 'rgba(29,78,216,0.10)', stroke: '#1D4ED8' },
+      yStart: 0, yEnd: 150, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
     { id: 'z-gw', label: 'CLOUD GATEWAY', sublabel: 'DirectConnect · ExpressRoute · Cloud Interconnect',
-      yStart: 150, yEnd: 320, fill: 'rgba(180,83,9,0.10)', stroke: '#B45309' },
+      yStart: 150, yEnd: 320, fill: 'rgba(180,83,9,0.20)', stroke: '#B45309' },
     { id: 'z-cloud', label: 'CLOUD PROVIDERS', sublabel: 'AWS VPC · Azure VNet · GCP VPC',
-      yStart: 320, yEnd: 470, fill: 'rgba(6,78,59,0.10)', stroke: '#065F46' },
+      yStart: 320, yEnd: 470, fill: 'rgba(6,78,59,0.20)', stroke: '#065F46' },
     { id: 'z-wl', label: 'CLOUD WORKLOADS', sublabel: 'EC2 · AKS · GKE · Serverless',
-      yStart: 470, yEnd: 640, fill: 'rgba(88,28,135,0.10)', stroke: '#7E22CE' },
+      yStart: 470, yEnd: 640, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
   ]
 
   const [s1x, s2x] = xCenter(2, 200, NW)
@@ -1033,13 +1033,13 @@ function buildAviatrixLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
   const zones: LLDZone[] = [
     { id: 'z-onprem', label: 'ON-PREMISES', sublabel: 'DC Edge · BGP · IPSec tunnel',
-      yStart: 0, yEnd: 150, fill: 'rgba(29,78,216,0.10)', stroke: '#1D4ED8' },
+      yStart: 0, yEnd: 150, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
     { id: 'z-transit', label: 'AVIATRIX TRANSIT', sublabel: 'Transit Gateway · BGP over IPSec · FQDN Filter',
-      yStart: 150, yEnd: 320, fill: 'rgba(180,83,9,0.10)', stroke: '#B45309' },
+      yStart: 150, yEnd: 320, fill: 'rgba(180,83,9,0.20)', stroke: '#B45309' },
     { id: 'z-spoke', label: 'AVIATRIX SPOKES', sublabel: 'Spoke Gateways · Network Segmentation · NAT',
-      yStart: 320, yEnd: 460, fill: 'rgba(21,128,61,0.10)', stroke: '#15803D' },
+      yStart: 320, yEnd: 460, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
     { id: 'z-wl', label: 'CLOUD WORKLOADS', sublabel: 'EC2 · AKS · GKE · Cloud-native',
-      yStart: 460, yEnd: 640, fill: 'rgba(88,28,135,0.10)', stroke: '#7E22CE' },
+      yStart: 460, yEnd: 640, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
   ]
 
   const [e1x, e2x] = xCenter(2, 200, NW)
@@ -1167,15 +1167,15 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const zones: LLDZone[] = [
     { id: 'z-core', label: '5G CORE + PTP GRANDMASTER', sublabel: 'UPF N3/N6 · GNSS-locked PTP GM · G.8275.1 PRC',
-      yStart: 0, yEnd: 140, fill: 'rgba(30,13,80,0.10)', stroke: '#3730A3' },
+      yStart: 0, yEnd: 140, fill: 'rgba(30,13,80,0.20)', stroke: '#3730A3' },
     { id: 'z-mid', label: 'MIDHAUL + O-CU', sublabel: 'SR-MPLS transport · PTP boundary-clock · F1/E1 · NG to AMF',
-      yStart: 140, yEnd: 300, fill: 'rgba(146,64,14,0.10)', stroke: '#92400E' },
+      yStart: 140, yEnd: 300, fill: 'rgba(146,64,14,0.20)', stroke: '#92400E' },
     { id: 'z-fh', label: 'FRONTHAUL SWITCH', sublabel: 'eCPRI Class C7 · PTP transparent-clock · PFC · 9216 MTU',
-      yStart: 300, yEnd: 470, fill: 'rgba(21,128,61,0.10)', stroke: '#15803D' },
+      yStart: 300, yEnd: 470, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
     { id: 'z-du', label: 'O-DU (DISTRIBUTED UNIT)', sublabel: 'High-PHY/MAC/RLC · FAPI · L1 FPGA offload · eCPRI 25G',
-      yStart: 470, yEnd: 640, fill: 'rgba(8,40,64,0.10)', stroke: '#0E7490' },
+      yStart: 470, yEnd: 640, fill: 'rgba(8,40,64,0.20)', stroke: '#0E7490' },
     { id: 'z-ru', label: 'O-RU (RADIO UNIT)', sublabel: 'Low-PHY/RF · 64T64R mMIMO · n78 3.5GHz · beamforming',
-      yStart: 640, yEnd: 810, fill: 'rgba(61,30,8,0.10)', stroke: '#9A3412' },
+      yStart: 640, yEnd: 810, fill: 'rgba(61,30,8,0.20)', stroke: '#9A3412' },
   ]
 
   const [coreX, gmX] = xCenter(2, 260, NW)
@@ -1371,21 +1371,23 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
           {topo.zones.map(z => (
             <g key={z.id}>
               <rect x={0} y={z.yStart} width={SVG_W} height={z.yEnd - z.yStart}
-                fill={z.fill} stroke={z.stroke} strokeWidth={0.5} opacity={0.9} />
-              <text x={8} y={z.yStart + 18} fill={z.stroke} fontSize={8} fontWeight="700" opacity={0.85}>
+                fill={z.fill} stroke={z.stroke} strokeWidth={0.8} opacity={1} />
+              {/* Left accent rail for clear zone separation */}
+              <rect x={0} y={z.yStart} width={3} height={z.yEnd - z.yStart} fill={z.stroke} opacity={0.85} />
+              <text x={10} y={z.yStart + 18} fill={z.stroke} fontSize={8.5} fontWeight="700" opacity={1}>
                 {z.label}
               </text>
-              <text x={8} y={z.yStart + 32} fill={z.stroke} fontSize={6.5} opacity={0.55}>
+              <text x={10} y={z.yStart + 32} fill="#CBD5E1" fontSize={7} fontWeight="500" opacity={0.9}>
                 {z.sublabel}
               </text>
               <line x1={LEFT_W - 4} y1={z.yStart} x2={LEFT_W - 4} y2={z.yEnd}
-                stroke={z.stroke} strokeWidth={0.4} opacity={0.3} />
+                stroke={z.stroke} strokeWidth={0.5} opacity={0.5} />
             </g>
           ))}
 
           {/* Title */}
           <text x={LEFT_W + 8} y={22} fill="#E2E8F0" fontSize={12} fontWeight="700">{topo.title}</text>
-          <text x={LEFT_W + 8} y={38} fill="#64748B" fontSize={8.5}>{topo.subtitle}</text>
+          <text x={LEFT_W + 8} y={38} fill="#94A3B8" fontSize={8.5}>{topo.subtitle}</text>
 
           {/* Links */}
           {topo.links.map(link => {
@@ -1419,11 +1421,11 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
                 {!isHoriz && (
                   <>
                     <text x={x1 + (x2 > x1 ? 8 : -8)} y={y1n + 10}
-                      textAnchor={x2 > x1 ? 'start' : 'end'} fill="#64748B" fontSize={5.5}>
+                      textAnchor={x2 > x1 ? 'start' : 'end'} fill="#94A3B8" fontSize={5.5}>
                       {link.fromPort}
                     </text>
                     <text x={x2 + (x1 > x2 ? 8 : -8)} y={y2n - 4}
-                      textAnchor={x1 > x2 ? 'start' : 'end'} fill="#64748B" fontSize={5.5}>
+                      textAnchor={x1 > x2 ? 'start' : 'end'} fill="#94A3B8" fontSize={5.5}>
                       {link.toPort}
                     </text>
                   </>
@@ -1437,7 +1439,7 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
                     <text x={midX} y={midY - 2} textAnchor="middle" fill="#BAE6FD" fontSize={6.5} fontWeight="600">
                       {link.speed} · {link.protocol}
                     </text>
-                    <text x={midX} y={midY + 10} textAnchor="middle" fill="#475569" fontSize={6}>
+                    <text x={midX} y={midY + 10} textAnchor="middle" fill="#94A3B8" fontSize={6}>
                       {[link.vlan, link.subnet].filter(Boolean).join(' · ') || `${link.fromPort} → ${link.toPort}`}
                     </text>
                   </g>
@@ -1492,14 +1494,14 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
                 {/* Interfaces (up to 3) */}
                 {node.interfaces.slice(0, 3).map((iface, i) => (
                   <g key={iface.name}>
-                    <text x={6} y={42 + i * 11} fill="#475569" fontSize={5.5} fontWeight="600">
+                    <text x={6} y={42 + i * 11} fill="#94A3B8" fontSize={5.5} fontWeight="600">
                       {iface.name}
                     </text>
                     <text x={node.w / 2 - 10} y={42 + i * 11} fill="#60A5FA" fontSize={5.5}>
                       {iface.ip}
                     </text>
                     {iface.vlan && (
-                      <text x={node.w - 6} y={42 + i * 11} textAnchor="end" fill="#6B7280" fontSize={5}>
+                      <text x={node.w - 6} y={42 + i * 11} textAnchor="end" fill="#9CA3AF" fontSize={5}>
                         {iface.vlan}
                       </text>
                     )}
@@ -1509,7 +1511,7 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
                 {/* Config lines */}
                 {node.configLines.slice(0, 2).map((line, i) => (
                   <text key={line} x={6} y={42 + Math.min(node.interfaces.length, 3) * 11 + i * 10}
-                    fill="#9CA3AF" fontSize={5.5} opacity={0.7}>
+                    fill="#CBD5E1" fontSize={5.5} opacity={0.9}>
                     {line.length > 40 ? line.slice(0, 40) + '…' : line}
                   </text>
                 ))}
@@ -1534,7 +1536,7 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
           {/* Legend */}
           <line x1={LEFT_W} y1={topo.svgH - 36} x2={SVG_W - RIGHT_PAD} y2={topo.svgH - 36}
             stroke="#1E293B" strokeWidth={0.8} />
-          <text x={LEFT_W + 8} y={topo.svgH - 22} fill="#475569" fontSize={7}>
+          <text x={LEFT_W + 8} y={topo.svgH - 22} fill="#94A3B8" fontSize={7}>
             ━━ Active link  · · · HA sync / Peer  ·  Hover link for port details  ·  Click device for full specs
           </text>
           <text x={SVG_W - RIGHT_PAD} y={topo.svgH - 22} textAnchor="end" fill="#7E22CE" fontSize={7} opacity={0.6}>
