@@ -295,13 +295,13 @@ function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string
     { id:'z-internet', label:'INTERNET', sublabel:'Untrusted / Public',
       yStart:0, yEnd:136, fill:'rgba(17,17,17,0.9)', stroke:'#374151', icon:'🌐' },
     { id:'z-edge', label:'EDGE / UNTRUST', sublabel:'WAN · Corp FW · BGP eBGP',
-      yStart:136, yEnd:380, fill:'rgba(127,29,29,0.15)', stroke:'#B91C1C', icon:'🔴' },
+      yStart:136, yEnd:380, fill:'rgba(127,29,29,0.26)', stroke:'#B91C1C', icon:'🔴' },
     { id:'z-dmz', label:'DMZ', sublabel:'Perimeter FW · IPS · TLS Inspect',
-      yStart:380, yEnd:500, fill:'rgba(154,52,18,0.15)', stroke:'#C2410C', icon:'🟠' },
+      yStart:380, yEnd:500, fill:'rgba(154,52,18,0.26)', stroke:'#C2410C', icon:'🟠' },
     { id:'z-fabric', label:'DC FABRIC / TRUST', sublabel:`${underlay.toUpperCase()} underlay · ${overlay.join('/') || 'VXLAN/EVPN'} overlay`,
-      yStart:500, yEnd:746, fill:'rgba(29,78,216,0.12)', stroke:'#1D4ED8', icon:'🔵' },
+      yStart:500, yEnd:746, fill:'rgba(29,78,216,0.24)', stroke:'#1D4ED8', icon:'🔵' },
     { id:'z-compute', label:'COMPUTE', sublabel:'Servers · GPU · Storage',
-      yStart:746, yEnd:860, fill:'rgba(21,128,61,0.12)', stroke:'#15803D', icon:'🟢' },
+      yStart:746, yEnd:860, fill:'rgba(21,128,61,0.24)', stroke:'#15803D', icon:'🟢' },
   ]
 
   // WAN routers (always 2 for HA)
@@ -484,13 +484,13 @@ function buildCampusTopology(devices: BOMDevice[], underlay: string, sc: string)
     { id:'z-int',  label:'INTERNET', sublabel:'Dual ISP BGP',
       yStart:0,   yEnd:140, fill:'rgba(17,17,17,0.9)', stroke:'#374151', icon:'🌐' },
     { id:'z-edge', label:'EDGE / UNTRUST', sublabel:'WAN Edge · BGP eBGP',
-      yStart:140, yEnd:260, fill:'rgba(127,29,29,0.15)', stroke:'#B91C1C', icon:'🔴' },
+      yStart:140, yEnd:260, fill:'rgba(127,29,29,0.26)', stroke:'#B91C1C', icon:'🔴' },
     { id:'z-fw',   label:'PERIMETER FW', sublabel:'NGFW · IPS · 802.1X NAC',
-      yStart:260, yEnd:380, fill:'rgba(154,52,18,0.15)', stroke:'#C2410C', icon:'🟠' },
+      yStart:260, yEnd:380, fill:'rgba(154,52,18,0.26)', stroke:'#C2410C', icon:'🟠' },
     { id:'z-core', label:'CAMPUS CORE', sublabel:`${underlay.toUpperCase()} Area 0 · VSS/StackWise · L3 GW`,
-      yStart:380, yEnd:620, fill:'rgba(88,28,135,0.12)', stroke:'#7E22CE', icon:'🟣' },
+      yStart:380, yEnd:620, fill:'rgba(88,28,135,0.24)', stroke:'#7E22CE', icon:'🟣' },
     { id:'z-access', label:'ACCESS', sublabel:'802.1X · PoE+ · DAI · LLDP',
-      yStart:620, yEnd:870, fill:'rgba(21,128,61,0.12)', stroke:'#15803D', icon:'🟢' },
+      yStart:620, yEnd:870, fill:'rgba(21,128,61,0.24)', stroke:'#15803D', icon:'🟢' },
   ]
 
   const [icx] = xCentered(1, 0)
@@ -655,9 +655,9 @@ function buildGPUTopology(devices: BOMDevice[], sc: string): Topo {
     { id:'z-oob',  label:'OOB MGMT', sublabel:'Out-of-band · SSH · SNMP · Syslog',
       yStart:0,   yEnd:148, fill:'rgba(28,25,23,0.9)', stroke:'#57534E', icon:'⚙' },
     { id:'z-fabric', label:'GPU FABRIC', sublabel:'RoCEv2 lossless · PFC priority 3 · ECN/DCQCN · BFD',
-      yStart:148, yEnd:580, fill:'rgba(6,78,59,0.15)', stroke:'#065F46', icon:'🟢' },
+      yStart:148, yEnd:580, fill:'rgba(6,78,59,0.26)', stroke:'#065F46', icon:'🟢' },
     { id:'z-compute', label:'GPU COMPUTE', sublabel:'NVIDIA A100/H100 · NVLink · GPUDirect RDMA · NVMe-oF',
-      yStart:580, yEnd:730, fill:'rgba(30,27,75,0.18)', stroke:'#3730A3', icon:'⚡' },
+      yStart:580, yEnd:730, fill:'rgba(30,27,75,0.28)', stroke:'#3730A3', icon:'⚡' },
   ]
 
   const oob = mkNode('oob','OOB-MGMT-SW','C9300-24T','oob','Cisco','10.0.0.250','10.0.0.250',
@@ -769,11 +769,11 @@ function buildWANTopology(devices: BOMDevice[], underlay: string, sc: string): T
     { id:'z-isp', label:'SP BACKBONE', sublabel:'MPLS / Internet Transit',
       yStart:0, yEnd:140, fill:'rgba(17,17,17,0.9)', stroke:'#374151', icon:'🌐' },
     { id:'z-hub', label:'HQ / HUB', sublabel:'BGP Route Reflector · PE handoff',
-      yStart:140, yEnd:280, fill:'rgba(127,29,29,0.15)', stroke:'#B91C1C', icon:'🔴' },
+      yStart:140, yEnd:280, fill:'rgba(127,29,29,0.26)', stroke:'#B91C1C', icon:'🔴' },
     { id:'z-wan', label:'WAN TRANSPORT', sublabel:`${underlay.toUpperCase()} · SD-WAN · MPLS · BFD`,
-      yStart:280, yEnd:430, fill:'rgba(29,78,216,0.12)', stroke:'#1D4ED8', icon:'🔵' },
+      yStart:280, yEnd:430, fill:'rgba(29,78,216,0.24)', stroke:'#1D4ED8', icon:'🔵' },
     { id:'z-branch', label:'BRANCH SITES', sublabel:'CPE · L3 VPN · QoS · Local Internet Breakout',
-      yStart:430, yEnd:720, fill:'rgba(21,128,61,0.12)', stroke:'#15803D', icon:'🟢' },
+      yStart:430, yEnd:720, fill:'rgba(21,128,61,0.24)', stroke:'#15803D', icon:'🟢' },
   ]
 
   const ispX = LEFT_W + CONTENT_W/2 - NW/2
@@ -869,11 +869,11 @@ function buildORANTopology(devices: BOMDevice[], sc: string): Topo {
 
   const zones: SecurityZone[] = [
     { id:'z-core', label:'5G CORE + TIMING', sublabel:'UPF (N3/N6) · PTP Grandmaster (G.8275.1) · GNSS-locked PRC',
-      yStart:0, yEnd:170, fill:'rgba(30,13,80,0.18)', stroke:'#3730A3', icon:'🛰' },
+      yStart:0, yEnd:170, fill:'rgba(30,13,80,0.28)', stroke:'#3730A3', icon:'🛰' },
     { id:'z-transport', label:'TRANSPORT (MIDHAUL + CU)', sublabel:'SR-MPLS · PTP boundary-clock · F1/E1 · SyncE',
-      yStart:170, yEnd:460, fill:'rgba(42,26,5,0.15)', stroke:'#92400E', icon:'🔗' },
+      yStart:170, yEnd:460, fill:'rgba(42,26,5,0.26)', stroke:'#92400E', icon:'🔗' },
     { id:'z-fronthaul', label:'FRONTHAUL (O-RAN 7.2x)', sublabel:'eCPRI Class C7 · PTP transparent-clock · DU↔RU lossless',
-      yStart:460, yEnd:760, fill:'rgba(6,78,59,0.15)', stroke:'#065F46', icon:'📡' },
+      yStart:460, yEnd:760, fill:'rgba(6,78,59,0.26)', stroke:'#065F46', icon:'📡' },
   ]
 
   // ── 5G Core (UPF) + PTP Grandmaster ──
@@ -1139,26 +1139,27 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
             <g key={z.id}>
               <rect
                 x={0} y={z.yStart} width={SVG_W} height={z.yEnd - z.yStart}
-                fill={z.fill} stroke={z.stroke} strokeWidth={0.5} opacity={0.9}
-              />
+                fill={z.fill} stroke={z.stroke} strokeWidth={0.8} opacity={1} />
+              {/* Left accent rail for clear zone separation */}
+              <rect x={0} y={z.yStart} width={3} height={z.yEnd - z.yStart} fill={z.stroke} opacity={0.85} />
               {/* Left zone label */}
-              <text x={8} y={z.yStart + 16} fill={z.stroke} fontSize={8} fontWeight="700" opacity={0.9}>
+              <text x={10} y={z.yStart + 16} fill={z.stroke} fontSize={8.5} fontWeight="700" opacity={1}>
                 {z.icon}
               </text>
-              <text x={8} y={z.yStart + 28} fill={z.stroke} fontSize={7.5} fontWeight="700" opacity={0.85}>
+              <text x={10} y={z.yStart + 28} fill={z.stroke} fontSize={8} fontWeight="700" opacity={1}>
                 {z.label}
               </text>
-              <text x={8} y={z.yStart + 40} fill={z.stroke} fontSize={6.5} opacity={0.55} style={{ maxWidth: 130 }}>
+              <text x={10} y={z.yStart + 40} fill="#CBD5E1" fontSize={7} fontWeight="500" opacity={0.9} style={{ maxWidth: 130 }}>
                 {z.sublabel}
               </text>
               {/* Right separator line */}
-              <line x1={LEFT_W - 4} y1={z.yStart} x2={LEFT_W - 4} y2={z.yEnd} stroke={z.stroke} strokeWidth={0.4} opacity={0.3} />
+              <line x1={LEFT_W - 4} y1={z.yStart} x2={LEFT_W - 4} y2={z.yEnd} stroke={z.stroke} strokeWidth={0.5} opacity={0.5} />
             </g>
           ))}
 
           {/* ── Title ── */}
           <text x={LEFT_W + 8} y={22} fill="#E2E8F0" fontSize={12} fontWeight="700">{topo.title}</text>
-          <text x={LEFT_W + 8} y={38} fill="#64748B" fontSize={8.5}>{topo.subtitle}</text>
+          <text x={LEFT_W + 8} y={38} fill="#94A3B8" fontSize={8.5}>{topo.subtitle}</text>
 
           {/* ── Links (behind nodes) ── */}
           {(primaryPathOnly ? topo.links.filter(l => flowLinkIds.has(l.id)) : topo.links).map(link => {
@@ -1201,7 +1202,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                       {link.speed} · {link.protocol.length > 20 ? link.protocol.slice(0, 20) : link.protocol}
                     </text>
                     {link.linkSubnet && link.linkSubnet !== '—' && (
-                      <text x={midX} y={midY + 13} textAnchor="middle" fill="#475569" fontSize={6}>
+                      <text x={midX} y={midY + 13} textAnchor="middle" fill="#94A3B8" fontSize={6}>
                         {link.linkSubnet}
                       </text>
                     )}
@@ -1309,19 +1310,19 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                 </text>
                 {/* Model */}
                 <text x={NW / 2} y={38} textAnchor="middle"
-                  fill={node.border} fontSize={7.5} opacity={0.8}>
+                  fill={node.border} fontSize={7.5} opacity={0.95}>
                   {node.model}
                 </text>
                 {/* Loopback IP */}
                 {node.loopback && node.loopback !== '—' && node.loopback !== '' && (
                   <text x={NW / 2} y={52} textAnchor="middle"
-                    fill="#475569" fontSize={6.5}>
+                    fill="#94A3B8" fontSize={6.5}>
                     {node.loopback}/32
                   </text>
                 )}
                 {/* ASN badge */}
                 {node.asn && (
-                  <text x={6} y={NH - 6} fill="#475569" fontSize={6}>
+                  <text x={6} y={NH - 6} fill="#94A3B8" fontSize={6} fontWeight="600">
                     AS{node.asn}
                   </text>
                 )}
@@ -1347,7 +1348,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
 
           {/* ── Legend ── */}
           <line x1={LEFT_W} y1={LEGEND_Y} x2={SVG_W - RIGHT_PAD} y2={LEGEND_Y} stroke="#1E293B" strokeWidth={0.8} />
-          <text x={LEFT_W + 8} y={LEGEND_Y + 14} fill="#475569" fontSize={7}>
+          <text x={LEFT_W + 8} y={LEGEND_Y + 14} fill="#94A3B8" fontSize={7}>
             ━━ Active path  · · · HA sync / OOB  ·  Click device for details  ·  Select flow scenario above to animate packet path
           </text>
           <text x={SVG_W - RIGHT_PAD} y={LEGEND_Y + 14} textAnchor="end" fill="#1D4ED8" fontSize={7} opacity={0.6}>
