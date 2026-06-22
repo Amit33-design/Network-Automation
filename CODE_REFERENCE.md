@@ -926,6 +926,36 @@ capacity-breach year predictions and actionable recommendations
   growth-rate selector and year-by-year projection table.
 - **Tests**: 15 in `test/capacity-planning.test.ts`.
 
+## Frontend — `lib/rollback.ts` (Closed-loop auto-rollback — K1)
+
+**Purpose:** Detects post-check regressions (a check that was healthy
+pre-deploy now FAILs/WARNs) and generates the platform-native rollback
+commands to restore each affected device from its pre-deploy checkpoint.
+Pure functions, demo-mode friendly. The backend
+(`jobs/deploy_job.py::_initiate_rollback`) performs the *actual* restore
+from captured backups; this is the design-time advisor + exact commands.
+
+**Key exports:**
+- `Platform` = `'nxos'|'iosxe'|'eos'|'junos'|'sonic'`.
+- `ROLLBACK_STRATEGIES: Record<Platform, RollbackStrategy>` — ported from
+  CLAUDE.md §9 (keep in sync). `{ pre?, exec?, deployCmd?, note? }` with
+  `{ts}` token.
+- `vendorToPlatform(vendor, subLayer)` — Cisco spine/leaf→nxos, Cisco
+  edge/campus→iosxe, Arista→eos, Juniper→junos, Dell/NVIDIA→sonic, else iosxe.
+- `Regression { device, checkName, fromStatus, toStatus, severity, message }`;
+  `Severity` = critical (PASS→FAIL) | major (WARN→FAIL) | minor (PASS→WARN).
+- `detectRegressions(pre, post)` — matches CheckResults on `device::name`,
+  flags strict worsening (STATUS_RANK PASS<WARN<FAIL, SKIP ignored).
+- `generateRollbackPlan(pre, post, devices, ts?)` → `RollbackPlan
+  { regressions, devices: DeviceRollbackPlan[], recommended, summary }`;
+  `recommended` = any critical/major. Sorts worst-affected device first.
+- `rollbackCommandsFor(platform, ts)`, `rollbackTimestamp(date?)`
+  (`YYYYMMDD-HHMMSS`), `rollbackPlanToText(plan, ts?)` (copy/paste runbook).
+- **UI**: "🛟 Rollback Advisor" card in Step 6 Checks tab (after Pre→Post
+  Delta) — appears once both pre+post checks ran; recommendation banner,
+  per-device regression list + restore commands, download runbook.
+- **Tests**: 25 in `test/rollback.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance
