@@ -423,6 +423,18 @@ export interface DemoTopology {
   optics: OpticsEntry[]
 }
 
+// ── User activity (J2) ──────────────────────────────────────────────────────
+
+export type ActivityAction = 'created' | 'updated' | 'loaded' | 'deployed' | 'exported' | 'deleted'
+
+export interface UserActivity {
+  id: string
+  action: ActivityAction
+  designName: string
+  useCase: string
+  timestamp: string
+}
+
 // ── Metrics summary (gNMI simulator / Prometheus) ─────────────────────────────
 
 export interface DeviceMetrics {

@@ -301,18 +301,27 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
 - `AuthUser { id, email, name, role, orgId, source: 'backend'|'local' }`.
 - Actions: `loginBackend(user, pass, totp?)` (returns `{mfaRequired}`),
   `verifyTotp(code)`, `loginLocal(name, role)`, `switchProfile(id)`,
-  `removeProfile(id)`, `logout()`, `setPrefs(patch)`.
+  `removeProfile(id)`, `logout()`, `setPrefs(patch)`,
+  `logActivity(action, designName, useCase)`, `getActivities()`.
 - `can(permission)` — client-side RBAC check (backend remains the real
   enforcement point for live deploys).
 - `prefsByUser` — per-user `{theme, vendorPrefs, lastUseCase}`.
+- `activitiesByUser` — per-user activity log (capped 50, most-recent-first).
+  `UserActivity { id, action, designName, useCase, timestamp }`.
+  `ActivityAction = 'created'|'updated'|'loaded'|'deployed'|'exported'|'deleted'`.
 - `authScopeKey()` — `'guest'` or the user id; used to namespace per-user
   localStorage (e.g. `MyDesigns` saved-design key).
-- Persisted under `nd-auth` (user, token, profiles, prefsByUser).
+- Persisted under `nd-auth` (user, token, profiles, prefsByUser,
+  activitiesByUser).
 - UI: `LoginModal.tsx` (Account + Demo-profile tabs, MFA step). Sidebar
-  shows the account block (badge + role chip + sign in/out) and gates the
-  Enterprise group + policy-editing tools — **gating applies only when
-  signed in; guests keep full access** (demo-first). Tests:
-  `test/auth-store.test.ts` (14).
+  shows the account block (badge + role chip + sign in/out + **profile
+  switcher dropdown** — click avatar to reveal other saved profiles) and
+  gates the Enterprise group + policy-editing tools — **gating applies only
+  when signed in; guests keep full access** (demo-first).
+- `useApplyPrefsOnLogin` hook (`hooks/useApplyPrefsOnLogin.ts`) — applies
+  saved `theme`, `vendorPrefs`, `lastUseCase` from `prefsByUser` to the app
+  store whenever the user identity changes. Wired into `App.tsx`.
+- Tests: `test/auth-store.test.ts` (21).
 
 ### Shared helpers
 - **`mgmtBlock(hostname, mgmtVlan = 10): string`** — the ONE management
@@ -1760,12 +1769,14 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 **Key exports / structure:**
 - `export function MyDesigns({ open, onClose }: MyDesignsProps)`
-- `SavedDesign` interface (`id, name, savedAt, state: AppState`); persisted under localStorage key `'netdesign-saved-designs'` via `loadDesigns()`/`persistDesigns()`
-- `handleSave()` — `window.prompt`s for name, snapshots `useAppStore.getState()`, prepends to list
-- `handleLoad(design)` — `useAppStore.setState(design.state)` (full overwrite), closes modal
-- `handleDelete(id)` — two-click confirm pattern (`confirmDeleteId`)
+- `SavedDesign` interface (`id, name, savedAt, state: AppState`); persisted under localStorage key `'netdesign-saved-designs'` (namespaced per user via `authScopeKey()`)
+- Two tabs: **Saved** (design list) and **Recent Activity** (timeline)
+- `handleSave()` — `window.prompt`s for name, snapshots `useAppStore.getState()`, prepends to list, calls `logActivity('created', ...)`
+- `handleLoad(design)` — `useAppStore.setState(design.state)`, calls `logActivity('loaded', ...)`
+- `handleDelete(id)` — two-click confirm, calls `logActivity('deleted', ...)`
+- Activity tab: renders `getActivities()` with action icons, relative timestamps, use-case badges
 
-**Notes:** `AppState` type from `@/types`. Only component performing a full Zustand `setState` replacement — loading a design discards all current in-memory state. Escape closes.
+**Notes:** `AppState` type from `@/types`. Only component performing a full Zustand `setState` replacement — loading a design discards all current in-memory state. Escape closes. Activity is per-user and persisted in `useAuthStore.activitiesByUser` (J2).
 
 ---
 

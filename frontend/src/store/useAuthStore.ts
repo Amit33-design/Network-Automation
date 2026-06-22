@@ -18,6 +18,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { login as apiLogin, verifyTotp as apiVerifyTotp, saveSettings } from '@/api/client'
+import type { UserActivity, ActivityAction } from '@/types'
 
 export type Role = 'viewer' | 'designer' | 'operator' | 'admin'
 
@@ -62,6 +63,8 @@ interface AuthState {
   profiles: AuthUser[]
   /** Per-user prefs keyed by user id. */
   prefsByUser: Record<string, UserPrefs>
+  /** Per-user activity log (most recent first, capped at 50). */
+  activitiesByUser: Record<string, UserActivity[]>
 
   // ── actions ──
   loginBackend: (username: string, password: string, totp?: string) => Promise<{ mfaRequired: boolean }>
@@ -71,6 +74,8 @@ interface AuthState {
   removeProfile: (id: string) => void
   logout: () => void
   setPrefs: (patch: UserPrefs) => void
+  logActivity: (action: ActivityAction, designName: string, useCase: string) => void
+  getActivities: () => UserActivity[]
 
   // ── selectors (pure) ──
   can: (permission: string) => boolean
@@ -84,6 +89,7 @@ function slug(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'user'
 }
 
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -92,6 +98,7 @@ export const useAuthStore = create<AuthState>()(
       mfaPending: false,
       profiles: [],
       prefsByUser: {},
+      activitiesByUser: {},
 
       loginBackend: async (username, password, totp) => {
         const res = await apiLogin(username, password, totp)
@@ -162,6 +169,34 @@ export const useAuthStore = create<AuthState>()(
         }))
       },
 
+      logActivity: (action, designName, useCase) => {
+        const u = get().user
+        if (!u) return
+        const activity: UserActivity = {
+          id: crypto.randomUUID(),
+          action,
+          designName,
+          useCase,
+          timestamp: new Date().toISOString(),
+        }
+        set(s => {
+          const key = u.id
+          const prev = s.activitiesByUser[key] ?? []
+          return {
+            activitiesByUser: {
+              ...s.activitiesByUser,
+              [key]: [activity, ...prev].slice(0, 50),
+            },
+          }
+        })
+      },
+
+      getActivities: () => {
+        const u = get().user
+        if (!u) return []
+        return get().activitiesByUser[u.id] ?? []
+      },
+
       can: (permission) => {
         const u = get().user
         if (!u) return false
@@ -171,7 +206,8 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'nd-auth',
       partialize: (s) => ({
-        user: s.user, token: s.token, profiles: s.profiles, prefsByUser: s.prefsByUser,
+        user: s.user, token: s.token, profiles: s.profiles,
+        prefsByUser: s.prefsByUser, activitiesByUser: s.activitiesByUser,
       }),
     },
   ),
