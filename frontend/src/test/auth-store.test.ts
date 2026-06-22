@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useAuthStore, ROLE_PERMISSIONS, authScopeKey } from '@/store/useAuthStore'
 
 function reset() {
-  useAuthStore.setState({ user: null, token: null, mfaPending: false, profiles: [], prefsByUser: {} })
+  useAuthStore.setState({ user: null, token: null, mfaPending: false, profiles: [], prefsByUser: {}, activitiesByUser: {} })
 }
 
 beforeEach(reset)
@@ -113,5 +113,78 @@ describe('useAuthStore — per-user prefs + scope', () => {
     expect(authScopeKey()).toBe('guest')
     useAuthStore.getState().loginLocal('Amit', 'admin')
     expect(authScopeKey()).toBe('local:amit')
+  })
+})
+
+describe('useAuthStore — activity tracking (J2)', () => {
+  it('logActivity stores activity for the current user', () => {
+    useAuthStore.getState().loginLocal('Amit', 'designer')
+    useAuthStore.getState().logActivity('created', 'DC Design', 'dc')
+    const acts = useAuthStore.getState().getActivities()
+    expect(acts).toHaveLength(1)
+    expect(acts[0].action).toBe('created')
+    expect(acts[0].designName).toBe('DC Design')
+    expect(acts[0].useCase).toBe('dc')
+  })
+
+  it('logActivity is a no-op when logged out', () => {
+    useAuthStore.getState().logActivity('created', 'Test', 'dc')
+    expect(useAuthStore.getState().activitiesByUser).toEqual({})
+  })
+
+  it('activities are namespaced per user', () => {
+    useAuthStore.getState().loginLocal('Alice', 'designer')
+    useAuthStore.getState().logActivity('created', 'Alice Design', 'dc')
+    useAuthStore.getState().loginLocal('Bob', 'operator')
+    useAuthStore.getState().logActivity('created', 'Bob Design', 'campus')
+
+    useAuthStore.getState().switchProfile('local:alice')
+    const aliceActs = useAuthStore.getState().getActivities()
+    expect(aliceActs).toHaveLength(1)
+    expect(aliceActs[0].designName).toBe('Alice Design')
+
+    useAuthStore.getState().switchProfile('local:bob')
+    const bobActs = useAuthStore.getState().getActivities()
+    expect(bobActs).toHaveLength(1)
+    expect(bobActs[0].designName).toBe('Bob Design')
+  })
+
+  it('activities are capped at 50 (most recent first)', () => {
+    useAuthStore.getState().loginLocal('Busy', 'admin')
+    for (let i = 0; i < 55; i++) {
+      useAuthStore.getState().logActivity('updated', `Design ${i}`, 'dc')
+    }
+    const acts = useAuthStore.getState().getActivities()
+    expect(acts).toHaveLength(50)
+    expect(acts[0].designName).toBe('Design 54')
+  })
+
+  it('getActivities returns empty array when logged out', () => {
+    expect(useAuthStore.getState().getActivities()).toEqual([])
+  })
+})
+
+describe('useAuthStore — profile switcher (J2)', () => {
+  it('multiple profiles are remembered for switching', () => {
+    useAuthStore.getState().loginLocal('Alice', 'designer')
+    useAuthStore.getState().loginLocal('Bob', 'operator')
+    useAuthStore.getState().loginLocal('Charlie', 'admin')
+    expect(useAuthStore.getState().profiles).toHaveLength(3)
+    expect(useAuthStore.getState().user!.name).toBe('Charlie')
+
+    useAuthStore.getState().switchProfile('local:alice')
+    expect(useAuthStore.getState().user!.name).toBe('Alice')
+    expect(useAuthStore.getState().user!.role).toBe('designer')
+  })
+
+  it('switching profiles preserves per-user prefs', () => {
+    useAuthStore.getState().loginLocal('Alice', 'designer')
+    useAuthStore.getState().setPrefs({ theme: 'light', vendorPrefs: ['Arista'] })
+    useAuthStore.getState().loginLocal('Bob', 'operator')
+    useAuthStore.getState().setPrefs({ theme: 'dark', vendorPrefs: ['Cisco'] })
+
+    useAuthStore.getState().switchProfile('local:alice')
+    expect(useAuthStore.getState().prefsByUser['local:alice'].theme).toBe('light')
+    expect(useAuthStore.getState().prefsByUser['local:bob'].theme).toBe('dark')
   })
 })
