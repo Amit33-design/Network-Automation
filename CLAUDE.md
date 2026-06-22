@@ -72,13 +72,24 @@ expectation:
 3. If a session is handed a specific feature branch in its task setup,
    still merge that branch into `main` once the work is done (squash or
    merge commit), unless the user explicitly says to hold off.
-4. After merge, the feature branch may be deleted; `main` is the single
-   source of truth that gets deployed.
+4. **After merge, delete the feature branch** (both local and remote)
+   using `git push origin --delete <branch>`. `main` is the single
+   source of truth that gets deployed. Stale feature branches cause
+   divergence, duplicate commits, and merge confusion.
+5. **Never merge `main` back into a feature branch** — this creates
+   criss-cross merge histories. Instead, rebase the feature branch on
+   `main` before the PR, or simply work directly on `main` if the
+   change is small.
 
-Rationale: prior sessions left enterprise work (LLD diagrams, config-gen,
-NetBox/ZTP, monitoring, drift remediation) on
-`claude/network-automation-enterprise-lifybd`, so the live site kept
-showing old behavior. Merging to `main` is now part of "done."
+### Git identity (REQUIRED for Vercel deployment)
+Every commit must use `noreply@anthropic.com` as the author email.
+The session-start hook (`.claude/hooks/session-start.sh`) sets this
+automatically in remote sessions. If you see "Unverified" warnings
+on GitHub, run:
+```bash
+git config user.email "noreply@anthropic.com"
+git config user.name "Claude"
+```
 
 ---
 
@@ -772,10 +783,10 @@ user which item to do — pick it yourself per the priority order below.
 
 ### The loop
 
-1. **Orient** — read this file (`CLAUDE.md`) and `CODE_REFERENCE.md`. Confirm
-   you're on `claude/network-automation-enterprise-lifybd` (create it from
-   latest `main` if it doesn't exist locally; `git pull origin
-   claude/network-automation-enterprise-lifybd` if it does).
+1. **Orient** — read this file (`CLAUDE.md`) and `CODE_REFERENCE.md`. Create
+   a short-lived feature branch from latest `main` (e.g.
+   `claude/<topic-slug>`). Set git identity:
+   `git config user.email noreply@anthropic.com && git config user.name Claude`.
 2. **Pick the next item**, in this priority order:
    - Section 22 (Enterprise Upgrade Tracker), table A → B → C → D, top to
      bottom: the first row with status `[ ]`.
@@ -805,12 +816,13 @@ user which item to do — pick it yourself per the priority order below.
 6. **Commit + push**: conventional commit (`feat:`/`fix:`/`docs:`/`test:`)
    referencing the item ID, e.g. `feat: A4 — Arista gNMI/eAPI telemetry
    block`. Push the feature branch
-   (`git push -u origin claude/network-automation-enterprise-lifybd`).
+   (`git push -u origin claude/<topic-slug>`).
 7. **Flip the tracker row** to `[x] (commitHash)` — can be the same commit as
    step 6 or a small follow-up `docs:` commit.
-8. **Merge to `main`**: per the Branch & merge policy in §0, open a PR to
-   `main` and merge it once the item is complete and green (tests + tsc +
-   build). Finished work must not be left stranded on the feature branch —
+8. **Merge to `main` + delete the feature branch**: open a PR to `main` and
+   squash-merge it once the item is complete and green (tests + tsc + build).
+   After merge, delete the remote branch (`git push origin --delete <branch>`).
+   Finished work must not be left stranded on a feature branch —
    `main` is what gets deployed to netdesignai.com.
 9. **Continue or stop**:
    - If there's clearly enough context budget left, loop back to step 2 for
@@ -843,10 +855,14 @@ tracker stays the single source of truth.
 
 ### Guardrails (apply always, including in autonomous mode)
 
-- **Merge finished work to `main`** (see §0 Branch & merge policy): develop
-  on a feature branch, then open a PR and merge to `main` once green.
-  Everything is expected to land on `main` — that is the deployed branch.
-  (Earlier guidance to never touch `main` is superseded by this policy.)
+- **Merge finished work to `main` and delete the branch** (see §0 Branch &
+  merge policy): develop on a feature branch, PR to `main`, squash-merge,
+  then delete the remote branch. No long-lived feature branches — `main`
+  is the single source of truth.
+- **Git identity**: always set `user.email=noreply@anthropic.com` and
+  `user.name=Claude` before committing (session-start hook does this
+  automatically in remote sessions). Commits with other emails show as
+  "Unverified" on GitHub and break Vercel deployments.
 - Never modify `licensing/` pricing/entitlement logic, billing, or auth
   secrets without stopping to ask first.
 - Never use `--no-verify`, force-push, or `git reset --hard`.
