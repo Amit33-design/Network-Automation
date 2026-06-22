@@ -8,6 +8,7 @@ import { LandingPage } from '@/components/LandingPage'
 import { BackendToggle, BackendToggleProvider } from '@/components/BackendToggle'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useAppStore } from '@/store/useAppStore'
+import { useApplyPrefsOnLogin } from '@/hooks/useApplyPrefsOnLogin'
 import { Step1UseCase } from '@/pages/Step1UseCase'
 import { Step2Requirements } from '@/pages/Step2Requirements'
 import { Step2Design } from '@/pages/Step2Design'
@@ -77,6 +78,8 @@ export default function App() {
   const setStep = useAppStore(s => s.setStep)
   const step = useAppStore(s => s.step)
   const theme = useAppStore(s => s.theme)
+
+  useApplyPrefsOnLogin()
 
   // Apply the light/dark theme to <html> so the CSS variable overrides kick in.
   useEffect(() => {

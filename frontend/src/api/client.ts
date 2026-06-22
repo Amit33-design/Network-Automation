@@ -93,6 +93,15 @@ export async function verifyTotp(code: string): Promise<{ token: string; role: s
   return { token: data.access_token, role: data.role, orgId: data.org_id ?? null }
 }
 
+// ── User preferences & activity (J2) ─────────────────────────────────────────
+
+import type { UserActivity } from '@/types'
+
+export const fetchUserPrefs = () => get<Record<string, unknown>>('/api/user/preferences')
+export const saveUserPrefs  = (prefs: Record<string, unknown>) => put<null>('/api/user/preferences', prefs)
+export const fetchUserActivity = (limit = 50) => get<{ activities: UserActivity[] }>(`/api/user/activity?limit=${limit}`)
+export const postUserActivity  = (activity: Omit<UserActivity, 'id'>) => post<null>('/api/user/activity', activity)
+
 // ── Observability ─────────────────────────────────────────────────────────────
 
 import type { Alert, RcaHypothesis } from '@/types'

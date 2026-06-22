@@ -57,7 +57,10 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
   const user              = useAuthStore(s => s.user)
   const logout            = useAuthStore(s => s.logout)
   const can               = useAuthStore(s => s.can)
+  const profiles          = useAuthStore(s => s.profiles)
+  const switchProfile     = useAuthStore(s => s.switchProfile)
   const [collapsed, setCollapsed] = useState(false)
+  const [showProfileSwitcher, setShowProfileSwitcher] = useState(false)
   const [deployOpen, setDeployOpen] = useState(true)
   const [showLogin, setShowLogin] = useState(false)
   const [showMyDesigns, setShowMyDesigns] = useState(false)
@@ -124,15 +127,23 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
     admin:    'bg-amber-500/20 text-amber-300',
   }
 
-  // Account block — shown at the top of the nav (shared desktop + mobile).
+  const otherProfiles = profiles.filter(p => p.id !== user?.id)
+
   const accountBlock = (
     <div className="px-3 mb-4">
       {user ? (
         <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full bg-blue-600/30 text-blue-200 flex items-center justify-center text-xs font-bold uppercase shrink-0">
+            <button
+              onClick={() => otherProfiles.length > 0 && setShowProfileSwitcher(v => !v)}
+              className={cn(
+                'w-7 h-7 rounded-full bg-blue-600/30 text-blue-200 flex items-center justify-center text-xs font-bold uppercase shrink-0',
+                otherProfiles.length > 0 ? 'cursor-pointer hover:bg-blue-600/50' : '',
+              )}
+              title={otherProfiles.length > 0 ? 'Switch profile' : user.name}
+            >
               {(user.name || user.email || '?').slice(0, 2)}
-            </div>
+            </button>
             <div className="min-w-0 flex-1">
               <div className="text-sm text-gray-200 truncate">{user.name || user.email}</div>
               <span className={cn('inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase', ROLE_BADGE[user.role] ?? ROLE_BADGE.viewer)}>
@@ -140,13 +151,34 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
               </span>
             </div>
             <button onClick={logout} title="Sign out"
-              className="text-gray-500 hover:text-gray-200 cursor-pointer text-sm shrink-0">⎋</button>
+              className="text-gray-500 hover:text-gray-200 cursor-pointer text-sm shrink-0">&#x23CF;</button>
           </div>
+          {/* Profile switcher dropdown */}
+          {showProfileSwitcher && otherProfiles.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-white/5 space-y-1">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mb-1">Switch profile</div>
+              {otherProfiles.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => { switchProfile(p.id); setShowProfileSwitcher(false) }}
+                  className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs text-gray-400 hover:bg-white/5 hover:text-gray-200 cursor-pointer transition-colors"
+                >
+                  <span className="w-5 h-5 rounded-full bg-gray-700 text-gray-300 flex items-center justify-center text-[9px] font-bold uppercase shrink-0">
+                    {(p.name || '?').slice(0, 2)}
+                  </span>
+                  <span className="truncate">{p.name}</span>
+                  <span className={cn('ml-auto px-1 py-0.5 rounded text-[9px] font-semibold uppercase', ROLE_BADGE[p.role] ?? ROLE_BADGE.viewer)}>
+                    {p.role}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         <button onClick={() => setShowLogin(true)}
           className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:bg-blue-600/30 transition-colors cursor-pointer">
-          <span className="text-base">👤</span>
+          <span className="text-base">&#x1F464;</span>
           <span>Sign in</span>
         </button>
       )}
