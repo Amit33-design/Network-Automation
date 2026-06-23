@@ -18,6 +18,7 @@ const variantClasses = {
 export function Badge({ variant = 'neutral', className, children }: BadgeProps) {
   return (
     <span
+      role="status"
       className={cn(
         'inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border',
         variantClasses[variant],

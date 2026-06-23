@@ -291,7 +291,10 @@ function RackSVG({ rack }: { rack: RackAssignment }) {
       viewBox={`0 0 ${RACK_W + 60} ${svgH}`}
       style={{ width: '100%', maxWidth: RACK_W + 60, height: 'auto', display: 'block' }}
       xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={`Rack elevation for ${rack.label}: ${rack.usedU}U of ${rack.totalU}U used (${pctUsed}%) with ${rack.slots.length} devices`}
     >
+      <title>{rack.label} — {rack.usedU}U / {rack.totalU}U ({pctUsed}% utilized)</title>
       {/* Rack title */}
       <text x={RACK_W / 2 + 30} y={18} textAnchor="middle" fill="#E5E7EB" fontSize={13} fontWeight="bold">
         {rack.label} — {rack.usedU}U / {rack.totalU}U ({pctUsed}%)

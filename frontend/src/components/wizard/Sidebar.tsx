@@ -193,14 +193,14 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
       <>
         {/* Logo + collapse (desktop only) / close (mobile) */}
         <div className="flex items-center justify-between px-4 mb-6">
-          <button onClick={() => { onGoHome(); onClose?.() }} className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
-            <img src="/favicon.svg" alt="" className="w-6 h-6" />
+          <button onClick={() => { onGoHome(); onClose?.() }} className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity" aria-label="Go to home page">
+            <img src="/favicon.svg" alt="NetDesign AI logo" className="w-6 h-6" />
             <span className="font-bold text-white text-sm">NetDesign <span className="text-blue-400">AI</span></span>
           </button>
           {onClose ? (
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-300 cursor-pointer text-xl leading-none" title="Close">✕</button>
+            <button onClick={onClose} className="text-gray-500 hover:text-gray-300 cursor-pointer text-xl leading-none" aria-label="Close sidebar">✕</button>
           ) : (
-            <button onClick={() => setCollapsed(true)} className="text-gray-500 hover:text-gray-300 cursor-pointer text-sm" title="Collapse">◀</button>
+            <button onClick={() => setCollapsed(true)} className="text-gray-500 hover:text-gray-300 cursor-pointer text-sm" aria-label="Collapse sidebar">◀</button>
           )}
         </div>
 
@@ -213,35 +213,38 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
         </div>
 
         {/* DESIGN group */}
-        <div className="px-3 mb-1">
+        <nav aria-label="Design steps" className="px-3 mb-1">
           <div className="text-xs font-bold text-gray-500 uppercase tracking-widest px-3 mb-2">Design</div>
           {DESIGN_STEPS.map(s => (
-            <button key={s.step} onClick={() => closeAndNav(s.step)} className={itemCls(s.step)}>
-              <span className="text-base">{s.icon}</span>
+            <button key={s.step} onClick={() => closeAndNav(s.step)} className={itemCls(s.step)}
+              aria-current={step === s.step ? 'step' : undefined}>
+              <span className="text-base" aria-hidden="true">{s.icon}</span>
               <span>{s.label}</span>
-              {s.step < step && <span className="ml-auto text-xs text-green-500">✓</span>}
+              {s.step < step && <span className="ml-auto text-xs text-green-500" aria-label="completed">✓</span>}
             </button>
           ))}
-        </div>
+        </nav>
 
         {/* CONFIGURATION group */}
-        <div className="px-3 mb-1 mt-3">
+        <nav aria-label="Configuration steps" className="px-3 mb-1 mt-3">
           <div className="text-xs font-bold text-gray-500 uppercase tracking-widest px-3 mb-2">Configuration</div>
           {CONFIG_STEPS.map(s => (
-            <button key={s.step} onClick={() => closeAndNav(s.step)} className={itemCls(s.step)}>
-              <span className="text-base">{s.icon}</span>
+            <button key={s.step} onClick={() => closeAndNav(s.step)} className={itemCls(s.step)}
+              aria-current={step === s.step ? 'step' : undefined}>
+              <span className="text-base" aria-hidden="true">{s.icon}</span>
               <span>{s.label}</span>
-              {s.step < step && <span className="ml-auto text-xs text-green-500">✓</span>}
+              {s.step < step && <span className="ml-auto text-xs text-green-500" aria-label="completed">✓</span>}
             </button>
           ))}
-        </div>
+        </nav>
 
         {/* DEPLOY & VALIDATE group */}
-        <div className="px-3 mb-1 mt-3">
+        <nav aria-label="Deploy & Validate" className="px-3 mb-1 mt-3">
           <button onClick={() => setDeployOpen(o => !o)}
+            aria-expanded={deployOpen}
             className="flex items-center justify-between w-full text-xs font-bold text-gray-500 uppercase tracking-widest px-3 mb-2 cursor-pointer hover:text-gray-300">
             <span>Deploy & Validate</span>
-            <span className={cn('transition-transform', deployOpen ? 'rotate-90' : '')}>{deployOpen ? '▼' : '▶'}</span>
+            <span className={cn('transition-transform', deployOpen ? 'rotate-90' : '')} aria-hidden="true">{deployOpen ? '▼' : '▶'}</span>
           </button>
           {deployOpen && (
             <>
@@ -255,11 +258,13 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
                 </button>
               ))}
               {/* Sub-items */}
-              <div className="mt-1 space-y-0.5">
+              <div className="mt-1 space-y-0.5" role="list" aria-label="Deploy sub-tabs">
                 {DEPLOY_SUB_ITEMS.map(sub => (
                   <button
                     key={sub.tab}
+                    role="listitem"
                     onClick={() => { onNavigate?.(); setStep(6); setActiveDeployTab(sub.tab); onClose?.() }}
+                    aria-current={step === 6 && activeDeployTab === sub.tab ? 'page' : undefined}
                     className={cn(
                       'flex items-center gap-2 w-full pl-8 pr-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer',
                       step === 6 && activeDeployTab === sub.tab
@@ -267,14 +272,14 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
                         : 'text-gray-500 hover:bg-white/5 hover:text-gray-300',
                     )}
                   >
-                    <span>{sub.icon}</span>
+                    <span aria-hidden="true">{sub.icon}</span>
                     <span>{sub.label}</span>
                   </button>
                 ))}
               </div>
             </>
           )}
-        </div>
+        </nav>
 
         {/* TOOLS group */}
         <div className="px-3 mt-3">
