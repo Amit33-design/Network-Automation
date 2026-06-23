@@ -698,6 +698,7 @@ export function Step4NetworkDesign() {
   const [mermaidCopied, setMermaidCopied] = useState(false)
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const svgRef = useRef<HTMLDivElement>(null)
+  const lldRef = useRef<HTMLDivElement>(null)
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
     () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols, numSites }),
@@ -773,6 +774,18 @@ export function Step4NetworkDesign() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url; a.download = `hld-${useCase || 'topology'}-${new Date().toISOString().slice(0,10)}.svg`
+    a.click(); URL.revokeObjectURL(url)
+  }
+
+  function handleExportLLDSVG() {
+    const svgEl = lldRef.current?.querySelector('svg')
+    if (!svgEl) return
+    const serializer = new XMLSerializer()
+    const svgStr = serializer.serializeToString(svgEl)
+    const blob = new Blob([svgStr], { type: 'image/svg+xml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `lld-${useCase || 'topology'}-${new Date().toISOString().slice(0,10)}.svg`
     a.click(); URL.revokeObjectURL(url)
   }
 
@@ -902,12 +915,18 @@ export function Step4NetworkDesign() {
               <h3 className="text-sm font-semibold text-purple-300">Low Level Design — Port-level detail</h3>
               <p className="text-xs text-gray-500 mt-1">IP addresses, interface mappings, VLANs, config snippets, and physical cabling matrix</p>
             </div>
+            <button onClick={handleExportLLDSVG}
+              className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+              ⬇ SVG
+            </button>
           </div>
+          <div ref={lldRef}>
           <LLDTopologyDiagram
             devices={generatedDevices}
             useCase={useCase}
             siteCode={siteCode}
           />
+          </div>
         </Card>
       )}
 

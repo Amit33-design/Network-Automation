@@ -795,7 +795,7 @@ config-gen tests must keep passing; add new tests alongside).
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | N1 | Containerlab topology export — generate `containerlab.yml` from BOM devices + cabling with vendor-correct container images (ceos, crpd, nxos, srl), links derived from cable schedule, startup-config bind mounts from generated configs; download button in Step 4 | [x] | `lib/containerlab.ts` — `buildContainerlabTopology`/`topologyToYAML`/`generateStartupConfigs`/`containerlabReadme`; vendor→image mapping (Cisco NX-OS/IOS-XE/IOS-XR, Arista cEOS, Juniper cRPD, Nokia SRL, NVIDIA CVX, PAN-OS); multi-count device expansion; link generation from cabling; "Containerlab (.yml)" button in Step 4 Summary tab; 19 tests |
-| N2 | SVG diagram download — export HLD and LLD topology diagrams as standalone SVG files for inclusion in design documents | [ ] | |
+| N2 | SVG diagram download — export HLD and LLD topology diagrams as standalone SVG files for inclusion in design documents | [x] | HLD already had SVG export; added LLD SVG export (`handleExportLLDSVG` + `lldRef`) with "⬇ SVG" button in LLD tab header |
 
 ---
 
