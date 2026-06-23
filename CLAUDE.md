@@ -772,6 +772,12 @@ config-gen tests must keep passing; add new tests alongside).
 | K2 | Closed-loop orchestration view — a single Day-2 Ops panel that runs the full loop end-to-end: drift detect → generate remediation → (demo) re-push → re-check → show converged/diverged status. Ties together existing `simulateConfigDrift`/`simulateRemediation` (G-A4/G-A16) + checks into one stepped workflow with a loop-status timeline | [x] | new `lib/closed-loop.ts` (`runClosedLoop(drift, remediation, opts)` → 5-stage pipeline detect/plan/apply/verify/done + per-device convergence; `closedLoopToText` report); "🔁 Closed-Loop Remediation" card in Step 6 Day-2 Ops tab — Run Loop button, divergence-demo checkbox, stage timeline, per-device CONVERGED/DIVERGED, download report; composes existing demo simulators; 12 tests in `test/closed-loop.test.ts` |
 | K3 | Scheduled/periodic compliance + drift scans — a "watchers" config (interval, scope, action) that the UI can define and export as a cron/systemd-timer + script bundle; demo-mode shows a simulated scan history timeline | [x] | `lib/scheduled-scans.ts` (WatcherConfig, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory); "📅 Scheduled Scans" card in Day-2 Ops; 27 tests in `test/scheduled-scans.test.ts` |
 
+### L. Dead-code cleanup + observability wiring (sourced 2026-06-23)
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| L1 | Remove unused UI primitives (`ui/index.ts` barrel, `ui/Input.tsx`, `ui/Select.tsx`, `ui/Dialog.tsx`, `ui/Skeleton.tsx`, `ui/Tabs.tsx`) and wire orphaned observability panels (`AlertsPanel`, `RcaPanel`, `LiveProgressFeed`) into Step 6 Deploy tab as a collapsible observability sidebar | [x] | 6 dead UI files removed; observability panels wired into Deploy tab as collapsible panel with tabbed Alerts/RCA/Feed views |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
