@@ -797,6 +797,17 @@ config-gen tests must keep passing; add new tests alongside).
 | N1 | Containerlab topology export — generate `containerlab.yml` from BOM devices + cabling with vendor-correct container images (ceos, crpd, nxos, srl), links derived from cable schedule, startup-config bind mounts from generated configs; download button in Step 4 | [x] | `lib/containerlab.ts` — `buildContainerlabTopology`/`topologyToYAML`/`generateStartupConfigs`/`containerlabReadme`; vendor→image mapping (Cisco NX-OS/IOS-XE/IOS-XR, Arista cEOS, Juniper cRPD, Nokia SRL, NVIDIA CVX, PAN-OS); multi-count device expansion; link generation from cabling; "Containerlab (.yml)" button in Step 4 Summary tab; 19 tests |
 | N2 | SVG diagram download — export HLD and LLD topology diagrams as standalone SVG files for inclusion in design documents | [x] | HLD already had SVG export; added LLD SVG export (`handleExportLLDSVG` + `lldRef`) with "⬇ SVG" button in LLD tab header |
 
+### O. Troubleshooting engine — TAC KB expansion (sourced 2026-06-23)
+
+> Expand the troubleshooting engine from 8 symptom categories to 20
+> TAC-knowledge-base-level playbooks, grouped by category. Each playbook
+> provides platform-specific diagnostic commands (NX-OS/IOS-XE/EOS/JunOS),
+> ranked likely causes with confidence scores, and step-by-step remediation.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| O1 | TAC KB troubleshooting expansion — 12 new symptom playbooks (stp_loop, dhcp_failure, mtu_blackhole, aaa_auth_failure, hsrp_vrrp, mac_flap, vpc_mlag, ntp_sync, hardware_failure, memory_exhaustion, routing_loop, isis_adjacency) with category-grouped `<optgroup>` dropdown UI | [x] | `TROUBLESHOOT_SYMPTOMS` expanded to 20 entries with `group` field; `TROUBLESHOOT_PLAYBOOKS` expanded to 20 full playbooks; UI dropdown uses `<optgroup>` by group (Routing, Overlay, Physical/L2, Performance, Device Health, Services, Redundancy, GPU Fabric) |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
