@@ -981,6 +981,36 @@ of `simulateConfigDrift`/`simulateRemediation` (demo) or `/api/drift/*` (live).
   CONVERGED/DIVERGED rows, download report. Driven by the demo simulators.
 - **Tests**: 12 in `test/closed-loop.test.ts`.
 
+## Frontend — `lib/scheduled-scans.ts` (Scheduled compliance + drift scans — K3)
+
+**Purpose:** Defines a "watcher" configuration model for periodic compliance
+and drift scans. Export-only (no real scheduler in the browser) — generates
+cron jobs, systemd timers, and shell scripts that can be installed on a
+server to automate scans against the NetDesign API. Also provides a
+simulated scan-history timeline for the demo UI.
+
+**Key exports:**
+- `WatcherConfig { id, name, scanType, intervalMinutes, frameworks, action,
+  enabled, notifyEmail, scope }` — the central watcher definition.
+- `ScanHistoryEntry { id, watcherId, watcherName, scanType, timestamp,
+  durationMs, complianceScore, driftCount, deviceCount, status, detail }`.
+- `INTERVAL_PRESETS` — 6 presets from 15 min to weekly.
+- `createWatcher(partial?)` — factory with unique ID and sensible defaults.
+- `exportCronTab(watchers)` — generates a full crontab file for all enabled
+  watchers with the correct cron expressions and CLI flags.
+- `exportSystemdTimer(watcher)` — returns `{ timer, service }` unit files
+  for a single watcher.
+- `exportScanScript(watchers)` — generates a `scan-runner.sh` bash wrapper
+  script with argument parsing and API calls.
+- `simulateScanHistory(watchers, deviceCount, count?)` — produces a
+  deterministic simulated scan history timeline (round-robin across watchers,
+  occasional drift/compliance warnings).
+- `watcherSummaryText(watchers)` — one-line summary per watcher.
+- **UI**: "📅 Scheduled Scans" card in Step 6 Day-2 Ops tab — add/edit/delete
+  watchers, watcher list with status dots, inline editor form, download
+  crontab / systemd timer / scan-runner.sh, simulated scan history timeline.
+- **Tests**: 27 in `test/scheduled-scans.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance
