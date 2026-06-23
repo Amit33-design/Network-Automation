@@ -11,6 +11,7 @@ import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import { genIPBlocks, genIPRows, genVLANs, genVNIs, buildNetBoxIpamExport } from '@/lib/ipam'
 import { downloadDesignJSON, downloadDesignMarkdown, validateDesignImport, applyDesignImport } from '@/lib/design-export'
 import { computeCapacityPlan } from '@/lib/capacity-planning'
+import { buildContainerlabTopology, topologyToYAML } from '@/lib/containerlab'
 import type { DesignExport } from '@/lib/design-export'
 import type { BOMDevice, AppType, AppState } from '@/types'
 
@@ -1707,7 +1708,7 @@ export function Step4NetworkDesign() {
           {/* Export / Import */}
           <Card>
             <h3 className="text-sm font-semibold text-gray-300 mb-3">Export & Import Design</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
               <button
                 onClick={() => downloadDesignJSON(useAppStore.getState() as AppState)}
                 className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-blue-500/40 bg-blue-600/20 text-blue-300 text-sm font-medium hover:bg-blue-600/30 transition-colors cursor-pointer"
@@ -1751,6 +1752,28 @@ export function Step4NetworkDesign() {
                   }}
                 />
               </label>
+              <button
+                onClick={() => {
+                  const state = useAppStore.getState()
+                  const topo = buildContainerlabTopology(
+                    generatedDevices,
+                    cablingData,
+                    state.configs,
+                    `${siteCode || useCase || 'lab'}`,
+                  )
+                  const yaml = topologyToYAML(topo)
+                  const blob = new Blob([yaml], { type: 'text/yaml' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `${topo.name}.clab.yml`
+                  a.click()
+                  URL.revokeObjectURL(url)
+                }}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-orange-500/40 bg-orange-600/20 text-orange-300 text-sm font-medium hover:bg-orange-600/30 transition-colors cursor-pointer"
+              >
+                Containerlab (.yml)
+              </button>
             </div>
             {importStatus && (
               <div className={cn(

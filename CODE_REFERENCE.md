@@ -1028,6 +1028,25 @@ validation checks that parse config text and cross-reference with intent
 
 - **Tests**: 24 in `test/config-validator.test.ts`.
 
+## Frontend — `lib/containerlab.ts` (Containerlab topology export — N1)
+
+**Purpose:** Generates containerlab YAML topology files from BOM devices +
+cabling, mapping vendors to container images (Cisco NX-OS → vrnetlab/vr-n9kv,
+IOS-XE → vr-csr, IOS-XR → vr-xrv9k, Arista → cEOS, Juniper → cRPD, Nokia →
+SRLinux, NVIDIA → CVX, Palo Alto → PAN-OS). Expands multi-count BOM devices,
+generates inter-device links from cable schedule, and binds startup configs.
+
+**Key exports:**
+- `buildContainerlabTopology(devices, cabling, configs, name): ContainerlabTopology` — builds the topology object.
+- `topologyToYAML(topo): string` — renders hand-rolled YAML (no dependency).
+- `generateStartupConfigs(topo, configs): {filename, content}[]` — extracts config files for bind mounts.
+- `containerlabReadme(topo): string` — generates a README with node/link tables.
+
+**Types:** `ContainerImage`, `ClabNode`, `ClabLink`, `ContainerlabTopology`.
+
+- **UI integration:** "Containerlab (.yml)" button in Step 4 Summary → Export & Import card.
+- **Tests**: 19 in `test/containerlab.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance
