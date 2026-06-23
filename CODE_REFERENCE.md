@@ -956,6 +956,31 @@ from captured backups; this is the design-time advisor + exact commands.
   per-device regression list + restore commands, download runbook.
 - **Tests**: 25 in `test/rollback.test.ts`.
 
+## Frontend — `lib/closed-loop.ts` (Closed-loop remediation orchestration — K2)
+
+**Purpose:** Models the full Day-2 remediation loop as a deterministic,
+demo-friendly pipeline composing the *existing* building blocks: drift
+detection (G-A4) → remediation generation (G-A16) → simulated apply →
+re-verify → converged/diverged. Pure functions; the UI feeds it the results
+of `simulateConfigDrift`/`simulateRemediation` (demo) or `/api/drift/*` (live).
+
+**Key exports:**
+- `LoopStageName` = `'detect'|'plan'|'apply'|'verify'|'done'`;
+  `LoopStatus` = `'ok'|'warn'|'failed'|'skipped'`.
+- `LoopStage { name, label, status, detail }`.
+- `DeviceLoopResult { hostname, platform, driftLinesBefore, commandsApplied,
+  driftLinesAfter, converged }`.
+- `ClosedLoopResult { stages, devices, converged, summary }`.
+- `runClosedLoop(drift: ConfigDriftResponse, remediation:
+  ConfigRemediationResponse, opts?: { failDevices? })` — only drifted devices
+  enter the loop; `failDevices` makes a device persist drift on verify
+  (divergence demo). Clean system → all stages ok, done = "in sync".
+- `closedLoopToText(result)` — plain-text report for download.
+- **UI**: "🔁 Closed-Loop Remediation" card in Step 6 Day-2 Ops tab — Run
+  Loop button, "simulate divergence" checkbox, stage timeline, per-device
+  CONVERGED/DIVERGED rows, download report. Driven by the demo simulators.
+- **Tests**: 12 in `test/closed-loop.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance

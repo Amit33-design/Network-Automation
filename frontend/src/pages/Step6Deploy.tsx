@@ -18,6 +18,7 @@ import { useTroubleshoot } from '@/hooks/useTroubleshoot'
 import { runComplianceScan, exportComplianceReport } from '@/lib/compliance-scan'
 import type { ComplianceScanResult } from '@/lib/compliance-scan'
 import { generateRollbackPlan, rollbackPlanToText, rollbackTimestamp } from '@/lib/rollback'
+import { runClosedLoop, closedLoopToText, type ClosedLoopResult } from '@/lib/closed-loop'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2037,6 +2038,34 @@ export function Step6Deploy() {
   // Clear stale remediation whenever a fresh drift check runs
   useEffect(() => { setRemediationResult(null) }, [driftResult])
 
+  // K2: Closed-loop remediation orchestration — detect → plan → apply → verify.
+  const [loopResult, setLoopResult] = useState<ClosedLoopResult | null>(null)
+  const [loopSimulateDivergence, setLoopSimulateDivergence] = useState(false)
+  const [loopRunning, setLoopRunning] = useState(false)
+
+  async function handleRunClosedLoop() {
+    setLoopRunning(true)
+    setLoopResult(null)
+    // Drive the loop from the existing demo simulators so it works standalone.
+    const faultHost = Object.keys(storeConfigs)[0] ?? ''
+    const drift = simulateConfigDrift(storeConfigs, faultHost)
+    const remInputs: RemediationDeviceInput[] = drift.devices
+      .filter(d => d.has_drift)
+      .map(d => ({
+        hostname: d.hostname,
+        platform: configIdToPlatform[d.hostname] ?? 'ios-xe',
+        added: d.added,
+        removed: d.removed,
+      }))
+    const remediation = simulateRemediation(remInputs)
+    // A short staged delay makes the pipeline feel like it's executing.
+    await new Promise(r => setTimeout(r, 600))
+    // Divergence demo: the drifted device fails to converge on verify.
+    const failDevices = loopSimulateDivergence && faultHost ? [faultHost] : []
+    setLoopResult(runClosedLoop(drift, remediation, { failDevices }))
+    setLoopRunning(false)
+  }
+
   // ── Batfish state (M-68) ──────────────────────────────────────────────────
   const [batfishRunning, setBatfishRunning] = useState(false)
   const [batfishStep, setBatfishStep] = useState(-1)
@@ -3909,6 +3938,103 @@ export function Step6Deploy() {
                     </div>
                   )
                 })}
+              </div>
+            )}
+          </Card>
+
+          {/* K2: Closed-Loop Remediation — detect → plan → apply → verify */}
+          <Card>
+            <CardHeader><CardTitle>🔁 Closed-Loop Remediation</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              Run the full Day-2 loop end-to-end: detect drift, generate platform-aware
+              remediation, apply it, then re-verify until the design converges.
+            </p>
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              <Button onClick={handleRunClosedLoop} disabled={loopRunning}>
+                {loopRunning ? 'Running loop…' : '▶ Run Loop'}
+              </Button>
+              <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={loopSimulateDivergence}
+                  onChange={e => setLoopSimulateDivergence(e.target.checked)}
+                  className="accent-red-500"
+                />
+                Simulate divergence (device fails to converge)
+              </label>
+              {loopResult && (
+                <button
+                  onClick={() => { downloadBlob('closed-loop-report.txt', closedLoopToText(loopResult)); showToast('closed-loop-report.txt downloaded', 'success') }}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer"
+                >
+                  ⬇ Download report
+                </button>
+              )}
+            </div>
+
+            {loopResult && (
+              <div className="space-y-4">
+                {/* Final status banner */}
+                <div className={cn(
+                  'px-4 py-3 rounded-lg border text-sm flex items-center gap-3',
+                  loopResult.converged
+                    ? 'bg-green-500/10 border-green-500/30 text-green-300'
+                    : 'bg-red-500/10 border-red-500/30 text-red-300',
+                )}>
+                  <span className="text-lg leading-none">{loopResult.converged ? '✓' : '⚠️'}</span>
+                  <div>
+                    <div className="font-semibold">
+                      {loopResult.converged ? 'System converged' : 'System diverged — manual action required'}
+                    </div>
+                    <div className="text-xs mt-0.5 opacity-80">
+                      {loopResult.summary.converged}/{loopResult.summary.drifted} drifted device(s) converged ·{' '}
+                      {loopResult.summary.commands} command(s) applied
+                    </div>
+                  </div>
+                </div>
+
+                {/* Stage timeline */}
+                <div className="flex flex-wrap items-stretch gap-2">
+                  {loopResult.stages.map((s, i) => (
+                    <div key={s.name} className="flex items-center gap-2">
+                      <div className={cn(
+                        'rounded-lg border px-3 py-2 min-w-[8rem]',
+                        s.status === 'ok' ? 'border-green-500/30 bg-green-500/5'
+                          : s.status === 'warn' ? 'border-yellow-500/30 bg-yellow-500/5'
+                          : s.status === 'failed' ? 'border-red-500/30 bg-red-500/5'
+                          : 'border-white/10 bg-white/[0.02]',
+                      )}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm">
+                            {s.status === 'ok' ? '✓' : s.status === 'warn' ? '⚠' : s.status === 'failed' ? '✕' : '○'}
+                          </span>
+                          <span className="text-xs font-semibold text-gray-200">{s.label}</span>
+                        </div>
+                        <div className="text-[11px] text-gray-500 mt-1 leading-tight">{s.detail}</div>
+                      </div>
+                      {i < loopResult.stages.length - 1 && <span className="text-gray-600">→</span>}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Per-device convergence */}
+                {loopResult.devices.length > 0 && (
+                  <div className="space-y-1.5">
+                    {loopResult.devices.map(d => (
+                      <div key={d.hostname} className="flex items-center gap-3 px-4 py-2 rounded-lg border border-white/10 bg-white/[0.02] text-xs">
+                        <span className="font-mono font-semibold text-gray-200 w-40 truncate">{d.hostname}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-500/15 text-blue-300 border border-blue-500/30">{d.platform}</span>
+                        <span className="text-gray-500">{d.driftLinesBefore} drift → {d.commandsApplied} cmd → {d.driftLinesAfter} left</span>
+                        <span className={cn(
+                          'ml-auto px-2 py-0.5 rounded font-bold',
+                          d.converged ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400',
+                        )}>
+                          {d.converged ? 'CONVERGED' : 'DIVERGED'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </Card>
