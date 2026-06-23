@@ -19,6 +19,9 @@ import { runComplianceScan, exportComplianceReport } from '@/lib/compliance-scan
 import type { ComplianceScanResult } from '@/lib/compliance-scan'
 import { generateRollbackPlan, rollbackPlanToText, rollbackTimestamp } from '@/lib/rollback'
 import { runClosedLoop, closedLoopToText, type ClosedLoopResult } from '@/lib/closed-loop'
+import { AlertsPanel } from '@/components/AlertsPanel'
+import { RcaPanel } from '@/components/RcaPanel'
+import { LiveProgressFeed } from '@/components/LiveProgressFeed'
 import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory, INTERVAL_PRESETS, type WatcherConfig, type ScanType, type ScanAction, type ScanHistoryEntry } from '@/lib/scheduled-scans'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
@@ -1746,6 +1749,10 @@ export function Step6Deploy() {
   const [showRollbackModal, setShowRollbackModal] = useState(false)
   const [rollbackScope, setRollbackScope] = useState<'stage' | 'full'>('stage')
 
+  // L1 — Observability panel
+  const [showObservability, setShowObservability] = useState(false)
+  const [observabilityTab, setObservabilityTab] = useState<'alerts' | 'rca' | 'feed'>('alerts')
+
   // M-38 — Grid / Table toggle
   const [deviceView, setDeviceView] = useState<'grid' | 'table'>('grid')
 
@@ -2856,6 +2863,46 @@ export function Step6Deploy() {
               </div>
             )}
           </Card>
+
+          {/* L1: Observability — Alerts, RCA, Deploy Feed */}
+          <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
+            <button
+              onClick={() => setShowObservability(o => !o)}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-300 hover:bg-white/[0.03] transition-colors cursor-pointer"
+            >
+              <span>Observability Panel</span>
+              <span className="text-xs text-gray-500">{showObservability ? '▾ collapse' : '▸ expand'}</span>
+            </button>
+            {showObservability && (
+              <div className="border-t border-white/10">
+                <div className="flex border-b border-white/10">
+                  {([
+                    { key: 'alerts' as const, label: 'Alerts' },
+                    { key: 'rca' as const, label: 'Root Cause Analysis' },
+                    { key: 'feed' as const, label: 'Deploy Feed' },
+                  ]).map(t => (
+                    <button
+                      key={t.key}
+                      onClick={() => setObservabilityTab(t.key)}
+                      className={cn(
+                        'px-4 py-2 text-xs font-medium transition-colors cursor-pointer',
+                        observabilityTab === t.key
+                          ? 'text-blue-400 border-b-2 border-blue-400 bg-blue-500/5'
+                          : 'text-gray-500 hover:text-gray-300',
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="p-4 max-h-96 overflow-y-auto">
+                  {observabilityTab === 'alerts' && <AlertsPanel />}
+                  {observabilityTab === 'rca' && <RcaPanel />}
+                  {observabilityTab === 'feed' && <LiveProgressFeed deploymentId={null} />}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -1337,7 +1337,7 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 
 - `App.tsx` also wires: `Sidebar`, `TroubleshootingEngine` (toggled via `showTroubleshooting` state, NOT a wizard step), `LandingPage` (shown before `showLanding=false`), `BackendToggleProvider`/`BackendToggle`, `ThemeToggle`, `ToastProvider`, `ErrorBoundary`, TanStack `QueryClientProvider`.
 - `M-57`: on mount, `App.tsx` checks `?design=` URL param, base64+JSON-decodes it, and calls `useAppStore.setState(decoded)` to restore a shared design (used by `ExportModal`'s "Share Design" feature in `Sidebar.tsx`).
-- `frontend/src/components/LiveProgressFeed.tsx`, `AlertsPanel.tsx`, and `RcaPanel.tsx` are **not currently mounted anywhere** in the live UI — only referenced by `e2e-features.test.ts`. (CLAUDE.md describes an "Observability panel" with these, but it isn't wired into `App.tsx`/`Step6Deploy.tsx` yet.)
+- `frontend/src/components/LiveProgressFeed.tsx`, `AlertsPanel.tsx`, and `RcaPanel.tsx` are mounted in Step6Deploy's Deploy tab via a collapsible "Observability Panel" (L1) with tabbed Alerts / RCA / Deploy Feed views.
 
 ---
 
