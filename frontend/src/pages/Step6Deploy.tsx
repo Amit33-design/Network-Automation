@@ -2312,12 +2312,24 @@ export function Step6Deploy() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-0 border-b border-white/10">
+      <div className="flex gap-0 border-b border-white/10" role="tablist" aria-label="Deploy & Validate sections">
         {tabs.map(t => (
           <button
             key={t.id}
             type="button"
+            role="tab"
+            id={`tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls={`tabpanel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
             onClick={() => setTab(t.id)}
+            onKeyDown={e => {
+              const idx = tabs.findIndex(x => x.id === tab)
+              if (e.key === 'ArrowRight') { e.preventDefault(); setTab(tabs[(idx + 1) % tabs.length].id) }
+              if (e.key === 'ArrowLeft') { e.preventDefault(); setTab(tabs[(idx - 1 + tabs.length) % tabs.length].id) }
+              if (e.key === 'Home') { e.preventDefault(); setTab(tabs[0].id) }
+              if (e.key === 'End') { e.preventDefault(); setTab(tabs[tabs.length - 1].id) }
+            }}
             className={cn(
               'px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer',
               tab === t.id
@@ -2332,7 +2344,7 @@ export function Step6Deploy() {
 
       {/* ── Deploy Pipeline tab ─────────────────────────────────────────── */}
       {tab === 'deploy' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="tabpanel-deploy" aria-labelledby="tab-deploy">
 
           {/* ── Policy & Approval Gate ────────────────────────────────────── */}
           {!isDeploying && !deployDone && (
@@ -2868,14 +2880,16 @@ export function Step6Deploy() {
           <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
             <button
               onClick={() => setShowObservability(o => !o)}
+              aria-expanded={showObservability}
+              aria-controls="observability-content"
               className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-300 hover:bg-white/[0.03] transition-colors cursor-pointer"
             >
               <span>Observability Panel</span>
-              <span className="text-xs text-gray-500">{showObservability ? '▾ collapse' : '▸ expand'}</span>
+              <span className="text-xs text-gray-500" aria-hidden="true">{showObservability ? '▾ collapse' : '▸ expand'}</span>
             </button>
             {showObservability && (
-              <div className="border-t border-white/10">
-                <div className="flex border-b border-white/10">
+              <div id="observability-content" className="border-t border-white/10">
+                <div className="flex border-b border-white/10" role="tablist" aria-label="Observability views">
                   {([
                     { key: 'alerts' as const, label: 'Alerts' },
                     { key: 'rca' as const, label: 'Root Cause Analysis' },
@@ -2883,6 +2897,9 @@ export function Step6Deploy() {
                   ]).map(t => (
                     <button
                       key={t.key}
+                      role="tab"
+                      aria-selected={observabilityTab === t.key}
+                      tabIndex={observabilityTab === t.key ? 0 : -1}
                       onClick={() => setObservabilityTab(t.key)}
                       className={cn(
                         'px-4 py-2 text-xs font-medium transition-colors cursor-pointer',
@@ -2908,7 +2925,7 @@ export function Step6Deploy() {
 
       {/* ── ZTP tab ─────────────────────────────────────────────────────── */}
       {tab === 'ztp' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="tabpanel-ztp" aria-labelledby="tab-ztp">
           {summary && (
             <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
               {[
@@ -3095,7 +3112,7 @@ export function Step6Deploy() {
 
       {/* ── Checks tab ──────────────────────────────────────────────────── */}
       {tab === 'checks' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="tabpanel-checks" aria-labelledby="tab-checks">
           <Card>
             <CardHeader><CardTitle>Fault Injection (optional)</CardTitle></CardHeader>
             <div className="flex flex-wrap gap-3 items-end">
@@ -3349,7 +3366,7 @@ export function Step6Deploy() {
 
       {/* ── Monitor tab ─────────────────────────────────────────────────── */}
       {tab === 'monitor' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="tabpanel-monitor" aria-labelledby="tab-monitor">
 
           {/* ── Header: live vs demo badge + grafana link ──────────────────── */}
           <div className="flex flex-wrap items-center gap-3">
@@ -3638,7 +3655,7 @@ export function Step6Deploy() {
 
       {/* ── NETCONF tab (M-65) ─────────────────────────────────────────── */}
       {tab === 'netconf' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="tabpanel-netconf" aria-labelledby="tab-netconf">
           {/* Interactive NETCONF panel */}
           <Card>
             <CardHeader><CardTitle>NETCONF Interactive Demo</CardTitle></CardHeader>
@@ -3735,7 +3752,7 @@ export function Step6Deploy() {
 
       {/* ── Day-2 Ops tab (M-67) ───────────────────────────────────────── */}
       {tab === 'day2ops' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="tabpanel-day2ops" aria-labelledby="tab-day2ops">
           {/* Change Window */}
           <Card>
             <CardHeader><CardTitle>Change Window</CardTitle></CardHeader>
@@ -4299,7 +4316,7 @@ export function Step6Deploy() {
 
       {/* ── Troubleshooting Tooling Engine tab (G-A19) ─────────────────── */}
       {tab === 'troubleshoot' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="tabpanel-troubleshoot" aria-labelledby="tab-troubleshoot">
           <Card>
             <CardHeader><CardTitle>Troubleshooting Tooling Engine</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
@@ -4460,7 +4477,7 @@ export function Step6Deploy() {
 
       {/* ── Batfish tab (M-68) ─────────────────────────────────────────── */}
       {tab === 'batfish' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="tabpanel-batfish" aria-labelledby="tab-batfish">
           <Card>
             <CardHeader><CardTitle>Batfish Network Validation</CardTitle></CardHeader>
             <p className="text-sm text-gray-400 mb-2">

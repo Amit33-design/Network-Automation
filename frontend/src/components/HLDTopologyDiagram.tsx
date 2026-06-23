@@ -1119,8 +1119,11 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
         <svg
           viewBox={`0 0 ${SVG_W} ${topo.svgH}`}
           style={{ width: '100%', height: 'auto', display: 'block', fontFamily: 'monospace' }}
+          role="img"
+          aria-label={`High-level network topology diagram for ${useCase} design with ${topo.nodes.length} devices across ${topo.zones.length} security zones`}
           onClick={(e) => { if (e.currentTarget === e.target) setSelectedNode(null) }}
         >
+          <title>HLD Network Topology — {useCase.toUpperCase()}</title>
           <defs>
             {/* Animated flow path */}
             {flowPath && <path id="flow-path" d={flowPath} />}

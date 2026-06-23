@@ -1362,8 +1362,11 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
         <svg
           viewBox={`0 0 ${SVG_W} ${topo.svgH}`}
           style={{ width: '100%', height: 'auto', display: 'block', fontFamily: 'monospace' }}
+          role="img"
+          aria-label={`Low-level network topology diagram for ${useCase} design with ${topo.nodes.length} devices showing IP addresses and interface mappings`}
           onClick={(e) => { if (e.currentTarget === e.target) setSelectedNode(null) }}
         >
+          <title>LLD Network Topology — {useCase.toUpperCase()}</title>
           {/* Background */}
           <rect width={SVG_W} height={topo.svgH} fill="#080E1A" />
 
