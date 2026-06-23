@@ -19,6 +19,7 @@ import { runComplianceScan, exportComplianceReport } from '@/lib/compliance-scan
 import type { ComplianceScanResult } from '@/lib/compliance-scan'
 import { generateRollbackPlan, rollbackPlanToText, rollbackTimestamp } from '@/lib/rollback'
 import { runClosedLoop, closedLoopToText, type ClosedLoopResult } from '@/lib/closed-loop'
+import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory, INTERVAL_PRESETS, type WatcherConfig, type ScanType, type ScanAction, type ScanHistoryEntry } from '@/lib/scheduled-scans'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2066,6 +2067,50 @@ export function Step6Deploy() {
     setLoopRunning(false)
   }
 
+  // K3: Scheduled / periodic compliance + drift scans
+  const [scanWatchers, setScanWatchers] = useState<WatcherConfig[]>([])
+  const [scanHistory, setScanHistory] = useState<ScanHistoryEntry[]>([])
+  const [editingWatcher, setEditingWatcher] = useState<WatcherConfig | null>(null)
+
+  function handleAddWatcher() {
+    const w = createWatcher({ name: `Scan ${scanWatchers.length + 1}`, frameworks: compliance.length > 0 ? [...compliance] : [] })
+    setEditingWatcher(w)
+  }
+
+  function handleSaveWatcher(w: WatcherConfig) {
+    setScanWatchers(prev => {
+      const idx = prev.findIndex(x => x.id === w.id)
+      if (idx >= 0) return prev.map((x, i) => i === idx ? w : x)
+      return [...prev, w]
+    })
+    setEditingWatcher(null)
+    const deviceCount = storeDevices.reduce((s: number, d: BOMDevice) => s + d.count, 0)
+    setScanHistory(simulateScanHistory([...scanWatchers.filter(x => x.id !== w.id), w].filter(x => x.enabled), deviceCount))
+  }
+
+  function handleDeleteWatcher(id: string) {
+    setScanWatchers(prev => prev.filter(w => w.id !== id))
+    if (editingWatcher?.id === id) setEditingWatcher(null)
+  }
+
+  function handleDownloadCron() {
+    downloadBlob('netdesign-scans.crontab', exportCronTab(scanWatchers))
+    showToast('Crontab downloaded', 'success')
+  }
+
+  function handleDownloadSystemdTimer(w: WatcherConfig) {
+    const { timer, service } = exportSystemdTimer(w)
+    const slug = w.name.replace(/\s+/g, '-').toLowerCase()
+    downloadBlob(`netdesign-${slug}.timer`, timer)
+    downloadBlob(`netdesign-${slug}.service`, service)
+    showToast('Systemd timer + service downloaded', 'success')
+  }
+
+  function handleDownloadScanScript() {
+    downloadBlob('scan-runner.sh', exportScanScript(scanWatchers))
+    showToast('scan-runner.sh downloaded', 'success')
+  }
+
   // ── Batfish state (M-68) ──────────────────────────────────────────────────
   const [batfishRunning, setBatfishRunning] = useState(false)
   const [batfishStep, setBatfishStep] = useState(-1)
@@ -3938,6 +3983,170 @@ export function Step6Deploy() {
                     </div>
                   )
                 })}
+              </div>
+            )}
+          </Card>
+
+          {/* K3: Scheduled / periodic compliance + drift scans */}
+          <Card>
+            <CardHeader><CardTitle>📅 Scheduled Scans</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-4">
+              Define periodic compliance and drift scan watchers. Export the schedule
+              as a cron job, systemd timer, or shell script for automated execution.
+            </p>
+
+            {/* Watcher list */}
+            {scanWatchers.length > 0 && (
+              <div className="space-y-2 mb-4">
+                {scanWatchers.map(w => (
+                  <div key={w.id} className={cn(
+                    'flex items-center gap-3 px-4 py-2.5 rounded-lg border bg-white/[0.02] text-xs',
+                    w.enabled ? 'border-white/10' : 'border-white/5 opacity-50',
+                  )}>
+                    <span className={cn('w-2 h-2 rounded-full shrink-0', w.enabled ? 'bg-green-400' : 'bg-gray-600')} />
+                    <span className="font-semibold text-gray-200 min-w-[8rem] truncate">{w.name}</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                      {w.scanType}
+                    </span>
+                    <span className="text-gray-500">
+                      {INTERVAL_PRESETS.find(p => p.minutes === w.intervalMinutes)?.label ?? `${w.intervalMinutes}m`}
+                    </span>
+                    <span className="text-gray-500">→ {w.action}</span>
+                    {w.frameworks.length > 0 && (
+                      <span className="text-gray-600">{w.frameworks.join(', ')}</span>
+                    )}
+                    <span className="ml-auto flex gap-2">
+                      <button onClick={() => setEditingWatcher({ ...w })}
+                        className="text-blue-400 hover:text-blue-300 cursor-pointer">Edit</button>
+                      <button onClick={() => handleDownloadSystemdTimer(w)}
+                        className="text-blue-400 hover:text-blue-300 cursor-pointer">Timer</button>
+                      <button onClick={() => handleDeleteWatcher(w.id)}
+                        className="text-red-400 hover:text-red-300 cursor-pointer">Del</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Watcher editor form */}
+            {editingWatcher && (
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 mb-4 space-y-3">
+                <div className="text-xs font-semibold text-blue-300 mb-2">
+                  {scanWatchers.find(w => w.id === editingWatcher.id) ? 'Edit Watcher' : 'New Watcher'}
+                </div>
+                <div className="flex flex-wrap gap-3 items-end">
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Name</label>
+                    <input value={editingWatcher.name}
+                      onChange={e => setEditingWatcher({ ...editingWatcher, name: e.target.value })}
+                      className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500 w-48" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Scan type</label>
+                    <select value={editingWatcher.scanType}
+                      onChange={e => setEditingWatcher({ ...editingWatcher, scanType: e.target.value as ScanType })}
+                      className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                      <option value="both">Compliance + Drift</option>
+                      <option value="compliance">Compliance only</option>
+                      <option value="drift">Drift only</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Interval</label>
+                    <select value={editingWatcher.intervalMinutes}
+                      onChange={e => setEditingWatcher({ ...editingWatcher, intervalMinutes: Number(e.target.value) })}
+                      className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                      {INTERVAL_PRESETS.map(p => (
+                        <option key={p.minutes} value={p.minutes}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Action</label>
+                    <select value={editingWatcher.action}
+                      onChange={e => setEditingWatcher({ ...editingWatcher, action: e.target.value as ScanAction })}
+                      className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                      <option value="report">Report only</option>
+                      <option value="remediate">Auto-remediate</option>
+                      <option value="alert">Alert (PagerDuty/Slack)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Scope</label>
+                    <select value={editingWatcher.scope}
+                      onChange={e => setEditingWatcher({ ...editingWatcher, scope: e.target.value as 'all' | 'drifted' })}
+                      className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+                      <option value="all">All devices</option>
+                      <option value="drifted">Drifted only</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3 items-end">
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Notify email (optional)</label>
+                    <input value={editingWatcher.notifyEmail}
+                      onChange={e => setEditingWatcher({ ...editingWatcher, notifyEmail: e.target.value })}
+                      placeholder="ops@example.com"
+                      className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500 w-56" />
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+                    <input type="checkbox" checked={editingWatcher.enabled}
+                      onChange={e => setEditingWatcher({ ...editingWatcher, enabled: e.target.checked })}
+                      className="accent-green-500" />
+                    Enabled
+                  </label>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <Button onClick={() => handleSaveWatcher(editingWatcher)}>Save</Button>
+                  <button onClick={() => setEditingWatcher(null)}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              <Button onClick={handleAddWatcher}>+ Add Watcher</Button>
+              {scanWatchers.length > 0 && (
+                <>
+                  <button onClick={handleDownloadCron}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+                    ⬇ Crontab
+                  </button>
+                  <button onClick={handleDownloadScanScript}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:border-white/30 hover:text-gray-200 transition-colors cursor-pointer">
+                    ⬇ scan-runner.sh
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Simulated scan history timeline */}
+            {scanHistory.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-gray-300 mb-2">Scan History (simulated)</div>
+                <div className="space-y-1">
+                  {scanHistory.map(e => (
+                    <div key={e.id} className={cn(
+                      'flex items-center gap-3 px-3 py-1.5 rounded text-xs',
+                      e.status === 'ok' ? 'bg-green-500/5 border border-green-500/10'
+                        : e.status === 'warn' ? 'bg-yellow-500/5 border border-yellow-500/10'
+                        : 'bg-red-500/5 border border-red-500/10',
+                    )}>
+                      <span className={cn(
+                        'w-1.5 h-1.5 rounded-full shrink-0',
+                        e.status === 'ok' ? 'bg-green-400' : e.status === 'warn' ? 'bg-yellow-400' : 'bg-red-400',
+                      )} />
+                      <span className="font-mono text-gray-500 w-36 shrink-0">{e.timestamp.slice(0, 19).replace('T', ' ')}</span>
+                      <span className="text-gray-400 w-24 truncate">{e.watcherName}</span>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-500/10 text-blue-300 border border-blue-500/20">{e.scanType}</span>
+                      <span className="text-gray-400 flex-1 truncate">{e.detail}</span>
+                      <span className="text-gray-600 text-[10px]">{e.durationMs}ms</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </Card>
