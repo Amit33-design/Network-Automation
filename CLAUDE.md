@@ -783,7 +783,7 @@ config-gen tests must keep passing; add new tests alongside).
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | M1 | Accessibility pass — add ARIA attributes, roles, labels, and keyboard navigation to Step 6 tabs, HLD/LLD SVG diagrams, interactive controls, and all Card/Button/Badge UI primitives | [x] | ARIA tablist/tab/tabpanel + keyboard nav on Step 6 tabs; `role="img"` + `aria-label` + `<title>` on HLD/LLD/Rack SVGs; `nav` landmarks + `aria-current` + `aria-expanded` on Sidebar; `role="status"` on Badge; observability panel `aria-expanded`/`aria-controls` |
-| M2 | Batfish validation engine — replace the fake 5-step setTimeout animation with real client-side config validation (parse generated configs against intent constraints, check reachability invariants, protocol consistency, ACL coverage) | [ ] | Currently purely cosmetic; a real validator adds genuine pre-deploy confidence |
+| M2 | Batfish validation engine — replace the fake 5-step setTimeout animation with real client-side config validation (parse generated configs against intent constraints, check reachability invariants, protocol consistency, ACL coverage) | [x] | `lib/config-validator.ts` — 13 checks (V-01…V-13): single underlay, duplicate router-IDs, BGP presence/peer reachability, EVPN consistency, hostname/management/loopback, no hardcoded secrets, undefined ACL refs, GPU QoS, BFD; `ValidationResult` w/ summary counts; `validationReportText` export; wired into Step 6 Batfish tab with real results + download report; 24 tests |
 
 ---
 

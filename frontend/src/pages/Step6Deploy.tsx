@@ -23,6 +23,7 @@ import { AlertsPanel } from '@/components/AlertsPanel'
 import { RcaPanel } from '@/components/RcaPanel'
 import { LiveProgressFeed } from '@/components/LiveProgressFeed'
 import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory, INTERVAL_PRESETS, type WatcherConfig, type ScanType, type ScanAction, type ScanHistoryEntry } from '@/lib/scheduled-scans'
+import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2118,30 +2119,45 @@ export function Step6Deploy() {
     showToast('scan-runner.sh downloaded', 'success')
   }
 
-  // ── Batfish state (M-68) ──────────────────────────────────────────────────
+  // ── Batfish / Config Validation state (M2) ─────────────────────────────────
   const [batfishRunning, setBatfishRunning] = useState(false)
   const [batfishStep, setBatfishStep] = useState(-1)
   const [batfishDone, setBatfishDone] = useState(false)
+  const [batfishResult, setBatfishResult] = useState<ValidationResult | null>(null)
 
   const BATFISH_STEPS = [
-    'Initializing Batfish snapshot...',
+    'Initializing validation snapshot...',
     'Parsing device configs...',
-    'Running forwarding analysis...',
-    'Checking BGP reachability...',
-    'Validation complete',
+    'Analyzing routing & fabric consistency...',
+    'Checking BGP peer reachability...',
+    'Validating security & QoS policies...',
   ]
 
   async function handleBatfishValidation() {
     if (batfishRunning) return
     setBatfishRunning(true)
     setBatfishDone(false)
+    setBatfishResult(null)
     setBatfishStep(0)
     for (let i = 0; i < BATFISH_STEPS.length; i++) {
       setBatfishStep(i)
-      await new Promise(r => setTimeout(r, 900))
+      await new Promise(r => setTimeout(r, 600))
     }
+    const result = validateConfigs({
+      configs: storeConfigs,
+      devices: storeDevices,
+      useCase: storeUseCase,
+    })
+    setBatfishResult(result)
     setBatfishRunning(false)
     setBatfishDone(true)
+  }
+
+  function handleDownloadValidationReport() {
+    if (!batfishResult) return
+    const text = validationReportText(batfishResult)
+    downloadBlob('validation-report.txt', text)
+    showToast('Validation report downloaded', 'success')
   }
 
   // ── Troubleshooting Tooling Engine state (G-A19) ──────────────────────────
@@ -4479,23 +4495,28 @@ export function Step6Deploy() {
       {tab === 'batfish' && (
         <div className="space-y-6" role="tabpanel" id="tabpanel-batfish" aria-labelledby="tab-batfish">
           <Card>
-            <CardHeader><CardTitle>Batfish Network Validation</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Network Config Validation</CardTitle></CardHeader>
             <p className="text-sm text-gray-400 mb-2">
-              Batfish is an open-source network analysis tool that performs vendor-agnostic
-              static analysis of device configurations. It can identify bugs, guarantee
-              compliance, and verify intent before configs are pushed to production.
+              Static analysis of generated device configurations against your design intent.
+              Validates routing consistency, fabric integrity, security posture, and QoS
+              policies — catching misconfigurations before deployment.
             </p>
             <ul className="list-disc list-inside text-sm text-gray-400 space-y-1 mb-4">
-              <li>Forwarding analysis — verify every packet traverses the intended path</li>
-              <li>BGP reachability — confirm all BGP peers can exchange routes</li>
-              <li>Undefined references — catch references to non-existent ACLs, prefix-lists, etc.</li>
-              <li>Duplicate router IDs — detect OSPF/BGP misconfigurations</li>
+              <li>Single underlay enforcement — no IS-IS + OSPF on the same device</li>
+              <li>BGP peer reachability — all neighbor IPs exist in device configs</li>
+              <li>Duplicate router-ID detection — catch OSPF/BGP conflicts</li>
+              <li>EVPN/VXLAN consistency — NVE + EVPN properly paired</li>
+              <li>Security audit — no hardcoded secrets, ACL reference integrity</li>
+              <li>GPU QoS — PFC, ECN, DCQCN verified for GPU use cases</li>
             </ul>
+            {Object.keys(storeConfigs).length === 0 && (
+              <p className="text-sm text-yellow-400/80 mb-3">⚠ No generated configs found — generate configs in Step 3 first.</p>
+            )}
             <Button
               onClick={handleBatfishValidation}
               disabled={batfishRunning}
             >
-              {batfishRunning ? '⏳ Running Validation…' : '▶ Run Batfish Validation'}
+              {batfishRunning ? '⏳ Running Validation…' : '▶ Run Config Validation'}
             </Button>
           </Card>
 
@@ -4539,38 +4560,54 @@ export function Step6Deploy() {
             </Card>
           )}
 
-          {batfishDone && (
+          {batfishDone && batfishResult && (
             <Card>
-              <CardHeader><CardTitle>Validation Results</CardTitle></CardHeader>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Validation Results</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="pass">{batfishResult.summary.pass} Pass</Badge>
+                    {batfishResult.summary.fail > 0 && <Badge variant="fail">{batfishResult.summary.fail} Fail</Badge>}
+                    {batfishResult.summary.warn > 0 && <Badge variant="warn">{batfishResult.summary.warn} Warn</Badge>}
+                    {batfishResult.summary.info > 0 && <Badge variant="info">{batfishResult.summary.info} Info</Badge>}
+                  </div>
+                </div>
+              </CardHeader>
               <div className="overflow-x-auto rounded-lg border border-white/10 mt-2">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
-                      {['Check', 'Status', 'Details'].map(h => (
+                      {['ID', 'Check', 'Category', 'Status', 'Details'].map(h => (
                         <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {[
-                      { check: 'Route reachability',        status: 'PASS', detail: 'All /32 loopbacks reachable across fabric' },
-                      { check: 'Undefined references',      status: 'PASS', detail: 'No dangling ACL or prefix-list references' },
-                      { check: 'BGP peer reachability',     status: 'PASS', detail: 'All BGP neighbors reachable via underlay' },
-                      { check: 'Duplicate router-ids',      status: 'PASS', detail: 'No OSPF/BGP router-id conflicts detected' },
-                      { check: 'Invalid BGP configurations',status: 'PASS', detail: 'All BGP neighbor configs are well-formed' },
-                    ].map(row => (
-                      <tr key={row.check} className="border-b border-white/5 hover:bg-white/[0.02]">
-                        <td className="px-4 py-2 text-sm text-gray-200">{row.check}</td>
+                    {batfishResult.checks.map(row => (
+                      <tr key={row.id} className="border-b border-white/5 hover:bg-white/[0.02]">
+                        <td className="px-4 py-2 text-xs text-gray-500 font-mono">{row.id}</td>
+                        <td className="px-4 py-2 text-sm text-gray-200">{row.name}</td>
+                        <td className="px-4 py-2 text-xs text-gray-400">{row.category}</td>
                         <td className="px-4 py-2">
-                          <span className="text-xs text-green-400 font-semibold bg-green-500/10 border border-green-500/20 rounded px-2 py-0.5">
-                            ✓ {row.status}
-                          </span>
+                          <Badge variant={row.severity === 'pass' ? 'pass' : row.severity === 'fail' ? 'fail' : row.severity === 'warn' ? 'warn' : 'info'}>
+                            {row.severity === 'pass' ? '✓' : row.severity === 'fail' ? '✗' : row.severity === 'warn' ? '⚠' : 'ℹ'} {row.severity.toUpperCase()}
+                          </Badge>
                         </td>
-                        <td className="px-4 py-2 text-xs text-gray-400">{row.detail}</td>
+                        <td className="px-4 py-2 text-xs text-gray-400">
+                          {row.detail}
+                          {row.devices && row.devices.length > 0 && (
+                            <span className="block mt-0.5 text-gray-500">Devices: {row.devices.join(', ')}</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="mt-3">
+                <Button onClick={handleDownloadValidationReport}>
+                  ⬇ Download Report
+                </Button>
               </div>
             </Card>
           )}

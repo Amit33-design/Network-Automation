@@ -1011,6 +1011,23 @@ simulated scan-history timeline for the demo UI.
   crontab / systemd timer / scan-runner.sh, simulated scan history timeline.
 - **Tests**: 27 in `test/scheduled-scans.test.ts`.
 
+## Frontend — `lib/config-validator.ts` (Config validation engine — M2)
+
+**Purpose:** Client-side static analysis of generated device configs against
+design intent. Replaces the former fake Batfish placeholder with 13 real
+validation checks that parse config text and cross-reference with intent
+(use case, devices, protocols).
+
+**Key exports:**
+- `validateConfigs(input: ValidateInput): ValidationResult` — runs all 13 checks (V-01 through V-13) against the provided configs/devices/useCase and returns structured results with per-check severity (pass/fail/warn/info), detail, and affected device list.
+- `validationReportText(result: ValidationResult): string` — renders a plain-text report for download.
+
+**Checks:** V-01 Single underlay (no IS-IS+OSPF mix), V-02 Duplicate router-IDs, V-03 BGP fabric presence, V-04 BGP peer reachability, V-05 No hardcoded secrets, V-06 Hostname config, V-07 Management plane, V-08 EVPN/VXLAN consistency, V-09 GPU QoS (PFC/ECN/DCQCN), V-10 Undefined ACL references, V-11 Non-empty configs, V-12 Loopback presence, V-13 BFD for fast failover.
+
+**Types:** `ValidationCheck`, `ValidationResult`, `ValidateInput`, `CheckSeverity`.
+
+- **Tests**: 24 in `test/config-validator.test.ts`.
+
 ## Frontend — `lib/netbox.ts` (NetBox/Nautobot import — Enterprise Upgrade B1)
 
 **Purpose:** Reads existing inventory from a NetBox or Nautobot instance
@@ -1532,9 +1549,9 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 - **State:** `changeWindow` (`'immediate'|'scheduled'|'emergency'`, default immediate); G-A4: `driftResult: ConfigDriftResponse|null`, `driftFaultDevice` (id of device to simulate drift on, demo mode only), `expandedDriftDevices: Set<string>` (per-device diff expand/collapse), `useConfigDrift()` → `runConfigDrift`/`driftChecking`; G-A16: `remediationResult: ConfigRemediationResponse|null`, `useConfigRemediation()` → `runRemediation`/`remediationPending`, `configIdToPlatform` (id→vendor map), cleared via `useEffect` whenever `driftResult` changes
 - **UI:** Change Window card (scheduled shows "Sun 02:00-04:00 UTC"; emergency shows CAB-approval warning); **Config Drift Detection card (G-A4)** — reads `configs` from the Zustand store (generated in Step 3); if empty, shows "No generated configs yet" prompt. Otherwise: demo-mode-only "Simulate drift on" device selector, "Run Drift Check" button → `handleDriftCheck()` (live: `runConfigDrift({configs})`→`/api/drift/config`; demo: `simulateConfigDrift(configs, driftFaultDevice)`); results table (Device / Status — "✓ In sync", "⚠ Drift detected", or "— no baseline" / Added count / Removed count / "View diff" toggle) with an expandable colorized unified-diff row (`toggleDriftDevice`); summary line shows `drift_count`/`device_count`. **Inline remediation (G-A16)** — when `drift_count > 0`, a "🛠 Generate Remediation" button (`handleGenerateRemediation()`; live → `runRemediation` to `/api/drift/remediate`, demo → `simulateRemediation`) renders per-device platform-aware command blocks (restore-then-prune) with Copy-all / Download (`remediation.txt` via `downloadBlob`); platform comes from `configIdToPlatform` (device vendor). Compliance Audit card (7 hardcoded "✓ PASS" checks: password complexity, SSHv2, NTP, syslog, SNMP strings, unused interfaces shut, logging buffered)
 
-##### Tab: Batfish Validate (`batfish`, lines ~3030-3130)
-- **State:** `batfishRunning`, `batfishStep` (default -1), `batfishDone`, local `BATFISH_STEPS` (5 labels: Initializing snapshot / Parsing configs / Forwarding analysis / BGP reachability / Validation complete)
-- **UI:** header card + bullet list (forwarding analysis, BGP reachability, undefined references, duplicate router IDs); "Run Batfish Validation" → `handleBatfishValidation()` (900ms/step async progression through `BATFISH_STEPS`); Validation Results card (5 hardcoded PASS rows: route reachability, undefined references, BGP peer reachability, duplicate router-ids, invalid BGP configs)
+##### Tab: Batfish Validate (`batfish`) — Config Validation Engine (M2)
+- **State:** `batfishRunning`, `batfishStep` (default -1), `batfishDone`, `batfishResult: ValidationResult | null`; local `BATFISH_STEPS` (5 labels: Initializing snapshot / Parsing configs / Analyzing routing & fabric / BGP peer reachability / Validating security & QoS)
+- **UI:** header card + bullet list (single underlay, BGP peer reachability, duplicate router-IDs, EVPN/VXLAN, security audit, GPU QoS); warning when no configs generated; "Run Config Validation" → `handleBatfishValidation()` (600ms/step animation + `validateConfigs({configs, devices, useCase})` from `lib/config-validator.ts`); Validation Results card with real results table (ID, Check, Category, Status badge, Details + affected devices), summary badges (PASS/FAIL/WARN/INFO counts), "Download Report" button (`handleDownloadValidationReport` → `validationReportText`); 13 checks: V-01 single underlay, V-02 duplicate router-IDs, V-03 BGP presence, V-04 BGP peer reachability, V-05 no hardcoded secrets, V-06 hostname config, V-07 management plane, V-08 EVPN/VXLAN consistency, V-09 GPU QoS, V-10 undefined ACL refs, V-11 non-empty configs, V-12 loopback presence, V-13 BFD
 
 **Notes (whole file):**
 - Component closes at line 3209; **all helpers are module-level functions defined BEFORE the component** (lines ~757-1253) — nothing after the component's closing brace.
