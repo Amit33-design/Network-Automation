@@ -248,13 +248,13 @@ export function Step2Design() {
   const { useCase, scale, siteCode, linkDistances, devices, setDevices,
           totalEndpoints, bandwidthPerServer, oversubscription,
           underlayProtocol, compliance, vendorPrefs, overlayProtocols,
-          trafficPattern, firewallModel,
+          trafficPattern, firewallModel, budgetTier,
           nextStep, prevStep } = useAppStore()
   const [activeTab, setActiveTab] = useState<Tab>('devices')
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
-    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols }),
-    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols]
+    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols, budgetTier }),
+    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols, budgetTier]
   )
 
   useEffect(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])

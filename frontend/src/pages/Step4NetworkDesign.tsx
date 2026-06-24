@@ -689,7 +689,7 @@ export function Step4NetworkDesign() {
     underlayProtocol, overlayProtocols, protoFeatures, redundancyModel,
     totalEndpoints, bandwidthPerServer, oversubscription,
     trafficPattern, firewallModel, compliance, vendorPrefs, appTypes,
-    devices, setDevices, nextStep, prevStep,
+    devices, setDevices, nextStep, prevStep, budgetTier,
   } = useAppStore()
 
   const [activeTab, setActiveTab] = useState<DesignTab>('hld')
@@ -701,15 +701,15 @@ export function Step4NetworkDesign() {
   const lldRef = useRef<HTMLDivElement>(null)
 
   const { summary, grandTotal, devices: generatedDevices } = useMemo(
-    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols, numSites }),
-    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols, numSites]
+    () => buildBOM({ useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols, numSites, budgetTier }),
+    [useCase, scale, siteCode, totalEndpoints, bandwidthPerServer, oversubscription, vendorPrefs, trafficPattern, firewallModel, overlayProtocols, numSites, budgetTier]
   )
 
   useEffect(() => { setDevices(generatedDevices) }, [generatedDevices, setDevices])
 
   const bomIssues = useMemo(
-    () => validateBOM(generatedDevices, { useCase, totalEndpoints, bandwidthPerServer, oversubscription }),
-    [generatedDevices, useCase, totalEndpoints, bandwidthPerServer, oversubscription]
+    () => validateBOM(generatedDevices, { useCase, totalEndpoints, bandwidthPerServer, oversubscription, budgetTier }),
+    [generatedDevices, useCase, totalEndpoints, bandwidthPerServer, oversubscription, budgetTier]
   )
 
   const useCaseLabel = (useCase && USE_CASE_LABELS[useCase]) || useCase || '—'
