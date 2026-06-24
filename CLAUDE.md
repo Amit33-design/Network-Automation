@@ -819,6 +819,17 @@ config-gen tests must keep passing; add new tests alongside).
 |---|------|--------|-------|
 | P1 | Expanded product catalog + budget-aware BOM — 30+ new SKUs across all major vendors (Nokia SRL, Arista 7020R/7060X/720XP, Juniper QFX5130/EX4400/EX4650/SRX/MX204, Palo Alto PA-460/PA-3260, Cisco Nexus 3232C/93108TC/ISR4331/FTD1150/Cat9300, Dell S5232F/N3248TE, HPE Aruba CX6200, Fortinet FG100F/FG600F); `budgetTier` wired into `buildDeviceList`/`buildBOM`/`validateBOM` via `BUDGET_TIER_PREFS`/`BUDGET_VENDOR_OVERRIDES`/`BUDGET_BANDS`; budget validation (error when BOM > ceiling, warning at 80%); 13 new tests | [x] | products.ts: 45→75+ SKUs; bom.ts: `BUDGET_BANDS` (smb<$100K, mid<$500K, enterprise<$2M, hyperscale=∞), `BUDGET_TIER_PREFS` (Cisco tier overrides), `BUDGET_VENDOR_OVERRIDES` (per-vendor tier overrides for 8 vendors); Step4/Step2 pass `budgetTier` to BOM calls |
 
+### Q. Vendor config generator expansion (sourced 2026-06-24)
+
+> Ensure every vendor that has products in the catalog also has proper
+> config generation — no silent fallback to `genericConfig` for roles
+> the vendor covers. Adds platform-authentic config generators for
+> Nokia SR Linux, Juniper campus/WAN/firewall, and Arista campus.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| Q1 | Vendor-specific config generators + dispatch wiring — `nokiaSrLinuxConfig` (YANG-style: system, ISIS, BGP/EVPN, mac-vrf, VXLAN), `juniperCampusConfig` (EX dist: VLANs, VRRP, OSPF, RSTP; access: trunk, RSTP portfast), `juniperSrxConfig` (SRX: security zones TRUST/UNTRUST/DMZ, policies, IPS, NAT, HA cluster), `juniperWanConfig` (MX: OSPF, BGP, MPLS/LDP, BFD), `aristaCampusConfig` (EOS dist: VLANs, virtual-router, OSPF; access: switchport, RSTP); dispatch in `generateConfig()` updated; 15 new tests | [x] | configgen.ts: 5 new generators + dispatch routes; configgen.test.ts: 78→93 tests |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)

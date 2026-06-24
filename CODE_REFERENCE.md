@@ -691,6 +691,30 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   `swp` ports to spines). GPU PFC/ECN comments.
 - **`extremeExosConfig(dev, idx)`** — EXOS. Spine → BGP+EVPN (VNI 10001);
   access → VLANs+PoE+STP edge-safeguard.
+- **`nokiaSrLinuxConfig(dev, idx)`** — Nokia SR Linux YANG-style config:
+  system (hostname, admin user, gNMI/JSON-RPC, syslog, NTP), management
+  interface mgmt0, ISIS (`area 49.0001`, `level-capability 2`, net from
+  hostname), BGP/EVPN (ASN 65000+idx, RR `10.255.0.1`, EVPN/IPv4-unicast),
+  and for leaves: mac-vrf TENANT-1 (VLAN 100→VNI 10100), vxlan-interface
+  vxlan1, IRB subinterface anycast-gw `10.100.0.1/24`.
+- **`juniperCampusConfig(dev, idx)`** — Juniper EX distribution/access. Junos
+  `set` syntax. Distribution: VLANs (Mgmt/Data/Voice/Server), `irb` units
+  with VRRP (priority 200 primary, 100 backup), OSPF area 0, RSTP priority
+  `(idx+1)*4096`, LLDP. Access: trunk uplinks `ge-0/0/{0,1}`, RSTP
+  edge/BPDU-guard on `ge-0/0/2-47`, PoE.
+- **`juniperSrxConfig(dev, _idx)`** — Juniper SRX firewall. Junos `set`
+  syntax. Security zones TRUST/UNTRUST/DMZ, inter-zone policies
+  (ALLOW-OUTBOUND, DENY-INBOUND, ALLOW-DMZ), IDP (recommended policy), NAT
+  (source SNAT), HA cluster (reth-count 4, redundancy-groups).
+- **`juniperWanConfig(dev, idx)`** — Juniper MX WAN edge. Junos `set` syntax.
+  Loopback0, WAN interfaces `ge-0/0/0-1`, OSPF area 0, BGP group
+  WAN-PEERS (external, BFD), MPLS + LDP on all interfaces, `commit
+  confirmed 5` reminder.
+- **`aristaCampusConfig(dev, idx)`** — Arista EOS distribution/access.
+  Distribution: VLANs (Mgmt/Data/Voice), `ip virtual-router` anycast-gw on
+  SVIs, OSPF router-id from loopback, `spanning-tree mode mstp` priority
+  `(idx+1)*4096`, trunk uplinks. Access: switchport access/trunk,
+  `spanning-tree portfast`/`bpduguard`, PoE.
 - **`genericConfig(dev)`** — fallback: `mgmtBlock()` + TODO comment.
 
 ### Dispatch
@@ -703,7 +727,11 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   ((vendor==='Dell EMC'||vendor==='NVIDIA') && useCase==='dc')` — Dell/NVIDIA
   DC fabrics always get lossless QoS; Cisco/Arista only when
   `useCase==='gpu'`. Cisco `distribution`/`access` →
-  `iosxeCampusConfig(dev, idx, appTypes)`. The Cisco/Arista spine and leaf
+  `iosxeCampusConfig(dev, idx, appTypes)`. Arista `distribution`/`access` →
+  `aristaCampusConfig`. Juniper `distribution`/`access` →
+  `juniperCampusConfig`; `firewall` → `juniperSrxConfig`; `wan-edge` →
+  `juniperWanConfig`. Nokia `spine`/`leaf` → `nokiaSrLinuxConfig`. The
+  Cisco/Arista spine and leaf
   branches (`nxosSpineConfig`, `nxosLeafConfig`, `aristaSpineConfig`,
   `aristaLeafConfig`) receive `allDevices` so they can compute
   topology-driven CLOS fabric links via

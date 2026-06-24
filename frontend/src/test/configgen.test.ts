@@ -689,3 +689,129 @@ describe('generateAllConfigs', () => {
     expect(configs['gpu-1']).toContain('pause no-drop')
   })
 })
+
+// ── Vendor config expansion tests ──────────────────────────────────────
+
+describe('Nokia SR Linux config', () => {
+  it('spine generates YANG-style config with system + ISIS + BGP', () => {
+    const dev = makeDevice({ hostname: 'DC-SPINE-A01', vendor: 'Nokia', subLayer: 'spine', model: 'Nokia 7250 IXR-10' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('system')
+    expect(cfg).toContain('isis')
+    expect(cfg).toContain('bgp')
+    expect(cfg).not.toContain('aaa new-model')
+  })
+
+  it('leaf generates YANG-style config with mac-vrf + vxlan', () => {
+    const dev = makeDevice({ hostname: 'DC-LEAF-A01', vendor: 'Nokia', subLayer: 'leaf', model: 'Nokia 7220 D3' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('system')
+    expect(cfg).toContain('mac-vrf')
+    expect(cfg).toContain('vxlan-interface')
+    expect(cfg).not.toContain('aaa new-model')
+  })
+
+  it('uses CHANGE-ME placeholders for credentials', () => {
+    const dev = makeDevice({ hostname: 'DC-SPINE-A01', vendor: 'Nokia', subLayer: 'spine' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('CHANGE-ME')
+    expect(cfg).not.toMatch(/password\s+[a-zA-Z0-9]{4,}(?!.*CHANGE-ME)/)
+  })
+})
+
+describe('Juniper campus config (EX distribution/access)', () => {
+  it('distribution generates Junos set commands with VRRP + OSPF', () => {
+    const dev = makeDevice({ hostname: 'CAMPUS-DIST-A01', vendor: 'Juniper', subLayer: 'distribution', model: 'Juniper EX4650' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('set')
+    expect(cfg).toContain('vrrp')
+    expect(cfg).toContain('ospf')
+    expect(cfg).not.toContain('feature bgp')
+  })
+
+  it('access generates Junos set commands with RSTP', () => {
+    const dev = makeDevice({ hostname: 'CAMPUS-ACC-A01', vendor: 'Juniper', subLayer: 'access', model: 'Juniper EX4400' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('set')
+    expect(cfg).toContain('rstp')
+    expect(cfg).not.toContain('feature bgp')
+  })
+
+  it('uses CHANGE-ME placeholders', () => {
+    const dev = makeDevice({ hostname: 'CAMPUS-DIST-A01', vendor: 'Juniper', subLayer: 'distribution' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('CHANGE-ME')
+  })
+})
+
+describe('Juniper SRX firewall config', () => {
+  it('generates Junos set commands with security zones', () => {
+    const dev = makeDevice({ hostname: 'FW-A01', vendor: 'Juniper', subLayer: 'firewall', model: 'Juniper SRX1500' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('set security zones')
+    expect(cfg).toContain('TRUST')
+    expect(cfg).toContain('UNTRUST')
+    expect(cfg).not.toContain('zone security')
+  })
+
+  it('has security policies', () => {
+    const dev = makeDevice({ hostname: 'FW-A01', vendor: 'Juniper', subLayer: 'firewall' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('security policies')
+  })
+
+  it('uses CHANGE-ME placeholders', () => {
+    const dev = makeDevice({ hostname: 'FW-A01', vendor: 'Juniper', subLayer: 'firewall' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('CHANGE-ME')
+  })
+})
+
+describe('Juniper WAN config (MX router)', () => {
+  it('generates Junos set commands with OSPF + BGP', () => {
+    const dev = makeDevice({ hostname: 'WAN-EDGE-A01', vendor: 'Juniper', subLayer: 'wan-edge', model: 'Juniper MX204' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('set')
+    expect(cfg).toContain('ospf')
+    expect(cfg).toContain('bgp')
+    expect(cfg).not.toContain('router ospf')
+  })
+
+  it('has MPLS / LDP config', () => {
+    const dev = makeDevice({ hostname: 'WAN-EDGE-A01', vendor: 'Juniper', subLayer: 'wan-edge' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('mpls')
+    expect(cfg).toContain('ldp')
+  })
+
+  it('uses CHANGE-ME placeholders', () => {
+    const dev = makeDevice({ hostname: 'WAN-EDGE-A01', vendor: 'Juniper', subLayer: 'wan-edge' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('CHANGE-ME')
+  })
+})
+
+describe('Arista campus config (EOS distribution/access)', () => {
+  it('distribution generates EOS config with OSPF + virtual-router', () => {
+    const dev = makeDevice({ hostname: 'CAMPUS-DIST-A01', vendor: 'Arista', subLayer: 'distribution', model: 'Arista 750' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('router ospf')
+    expect(cfg).toContain('ip virtual-router')
+    expect(cfg).toContain('!')
+    expect(cfg).not.toContain('feature bgp')
+  })
+
+  it('access generates EOS switchport config with RSTP', () => {
+    const dev = makeDevice({ hostname: 'CAMPUS-ACC-A01', vendor: 'Arista', subLayer: 'access', model: 'Arista 720XP' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('switchport')
+    expect(cfg).toContain('spanning-tree')
+    expect(cfg).toContain('!')
+  })
+
+  it('uses CHANGE-ME placeholders', () => {
+    const dev = makeDevice({ hostname: 'CAMPUS-DIST-A01', vendor: 'Arista', subLayer: 'distribution' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('CHANGE-ME')
+  })
+})
