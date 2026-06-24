@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDeviceList, buildBOM, SCALE_DEFS, alphaLabel, generateHostnames, GPUS_PER_SERVER, validateBOM } from '@/lib/bom'
+import { buildDeviceList, buildBOM, SCALE_DEFS, alphaLabel, generateHostnames, GPUS_PER_SERVER, validateBOM, BUDGET_BANDS } from '@/lib/bom'
 import { haPairInfo } from '@/lib/configgen'
 import type { BOMDevice } from '@/types'
 
@@ -698,5 +698,106 @@ describe('Endpoint-driven port-math for all use cases', () => {
       })
       expect(devices.length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('budget-aware BOM', () => {
+  it('SMB tier selects cheaper Cisco models for DC', () => {
+    const smb = buildDeviceList({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'smb' })
+    const enterprise = buildDeviceList({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'enterprise' })
+    const smbSpine = smb.find(d => d.subLayer === 'spine')
+    const entSpine = enterprise.find(d => d.subLayer === 'spine')
+    expect(smbSpine!.unitPrice).toBeLessThan(entSpine!.unitPrice)
+  })
+
+  it('SMB tier selects cheaper leaf switches', () => {
+    const smb = buildDeviceList({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'smb' })
+    const leaf = smb.find(d => d.subLayer === 'leaf')
+    expect(leaf!.unitPrice).toBeLessThanOrEqual(10000)
+  })
+
+  it('SMB BOM total is lower than enterprise for same topology', () => {
+    const smb = buildBOM({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'smb' })
+    const ent = buildBOM({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'enterprise' })
+    expect(smb.grandTotal).toBeLessThan(ent.grandTotal)
+  })
+
+  it('mid tier selects intermediate pricing', () => {
+    const smb = buildBOM({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'smb' })
+    const mid = buildBOM({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'mid' })
+    const ent = buildBOM({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'enterprise' })
+    expect(mid.grandTotal).toBeGreaterThanOrEqual(smb.grandTotal)
+    expect(mid.grandTotal).toBeLessThanOrEqual(ent.grandTotal)
+  })
+
+  it('SMB + vendor override selects budget-aware vendor models', () => {
+    const smb = buildDeviceList({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'smb', vendorPrefs: ['Arista'] })
+    const ent = buildDeviceList({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'enterprise', vendorPrefs: ['Arista'] })
+    const smbTotal = smb.reduce((s, d) => s + d.unitPrice, 0)
+    const entTotal = ent.reduce((s, d) => s + d.unitPrice, 0)
+    expect(smbTotal).toBeLessThan(entTotal)
+  })
+
+  it('campus SMB uses cheaper firewall', () => {
+    const smb = buildDeviceList({ useCase: 'campus', scale: 'medium', siteCode: 'T', budgetTier: 'smb' })
+    const ent = buildDeviceList({ useCase: 'campus', scale: 'medium', siteCode: 'T', budgetTier: 'enterprise' })
+    const smbFw = smb.find(d => d.subLayer === 'firewall')
+    const entFw = ent.find(d => d.subLayer === 'firewall')
+    expect(smbFw!.unitPrice).toBeLessThan(entFw!.unitPrice)
+  })
+
+  it('WAN SMB uses cheaper router', () => {
+    const smb = buildDeviceList({ useCase: 'wan', scale: 'small', siteCode: 'T', budgetTier: 'smb' })
+    const ent = buildDeviceList({ useCase: 'wan', scale: 'small', siteCode: 'T', budgetTier: 'enterprise' })
+    const smbWan = smb.find(d => d.subLayer === 'wan-edge')
+    const entWan = ent.find(d => d.subLayer === 'wan-edge')
+    expect(smbWan!.unitPrice).toBeLessThan(entWan!.unitPrice)
+  })
+
+  it('no budget tier uses default (enterprise-grade) products', () => {
+    const noBudget = buildDeviceList({ useCase: 'dc', scale: 'small', siteCode: 'T' })
+    const enterprise = buildDeviceList({ useCase: 'dc', scale: 'small', siteCode: 'T', budgetTier: 'enterprise' })
+    const nbSpine = noBudget.find(d => d.subLayer === 'spine')
+    const entSpine = enterprise.find(d => d.subLayer === 'spine')
+    expect(nbSpine!.model).toBe(entSpine!.model)
+  })
+
+  it('BUDGET_BANDS defines sensible ceiling for each tier', () => {
+    expect(BUDGET_BANDS.smb.maxUSD).toBeLessThan(BUDGET_BANDS.mid.maxUSD)
+    expect(BUDGET_BANDS.mid.maxUSD).toBeLessThan(BUDGET_BANDS.enterprise.maxUSD)
+    expect(BUDGET_BANDS.hyperscale.maxUSD).toBe(Infinity)
+  })
+
+  it('validateBOM flags budget exceeded for SMB with large topology', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'large', siteCode: 'T', budgetTier: 'smb' })
+    const issues = validateBOM(devices, { budgetTier: 'smb' })
+    const budgetIssue = issues.find(i => i.category === 'budget')
+    expect(budgetIssue).toBeDefined()
+    expect(budgetIssue!.severity).toBe('error')
+  })
+
+  it('validateBOM does not flag budget for hyperscale', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'large', siteCode: 'T', budgetTier: 'hyperscale' })
+    const issues = validateBOM(devices, { budgetTier: 'hyperscale' })
+    const budgetIssue = issues.find(i => i.category === 'budget')
+    expect(budgetIssue).toBeUndefined()
+  })
+
+  it('Nokia vendor preference selects Nokia products', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['Nokia'] })
+    const spine = devices.find(d => d.subLayer === 'spine')
+    const leaf = devices.find(d => d.subLayer === 'leaf')
+    expect(spine!.vendor).toBe('Nokia')
+    expect(leaf!.vendor).toBe('Nokia')
+  })
+
+  it('Juniper vendor preference populates campus/wan/firewall roles', () => {
+    const devices = buildDeviceList({ useCase: 'campus', scale: 'medium', siteCode: 'T', vendorPrefs: ['Juniper'] })
+    const dist = devices.find(d => d.subLayer === 'distribution')
+    const access = devices.find(d => d.subLayer === 'access')
+    const fw = devices.find(d => d.subLayer === 'firewall')
+    expect(dist!.vendor).toBe('Juniper')
+    expect(access!.vendor).toBe('Juniper')
+    expect(fw!.vendor).toBe('Juniper')
   })
 })

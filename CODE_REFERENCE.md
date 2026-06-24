@@ -127,17 +127,26 @@ cabling, and optics. **Never hardcode device counts — always go through
   default SKU per role per use case (e.g. `dc.spine = 'nxos-9336c'`).
 - `VENDOR_PRODUCT_MAP: Record<vendor, Partial<Record<UseCase, Record<role,
   productId>>>>` — per-vendor SKU overrides for Arista, Juniper, Palo Alto,
-  Fortinet, Dell EMC, HPE Aruba, NVIDIA, Extreme.
+  Fortinet, Dell EMC, HPE Aruba, NVIDIA, Extreme, Nokia.
+- `BUDGET_BANDS: Record<BudgetTier, { label, maxUSD }>` — budget ceilings
+  per tier (smb: $100K, mid: $500K, enterprise: $2M, hyperscale: ∞). Exported.
+- `BUDGET_TIER_PREFS: Record<tier, Partial<Record<UseCase, Record<role,
+  productId>>>>` — Cisco-default SKU overrides for smb/mid tiers (cheaper
+  spines, leaves, firewalls, routers). Enterprise/hyperscale use defaults.
+- `BUDGET_VENDOR_OVERRIDES: Record<tier, Record<vendor, …>>` — per-vendor
+  budget-aware SKU overrides (e.g. smb+Arista→7060X+7020R instead of 7800R3).
 - `ROLE_CODE: Record<subLayer, hostnameCode>` — `spine→SPINE, leaf→LEAF,
   distribution→DIST, access→ACC, wan-edge→WAN, firewall→FW, cloud-gw→CGW,
   cloud-transit→CTGW, core→CORE, gpu-compute→GPU`.
 - `GPUS_PER_SERVER = 8` — exported constant for GPU-to-server ratio.
 
 ### Functions
-- **`resolvePrefs(useCase, vendorPrefs): Record<role, productId>`** — starts
-  from `PREFERRED_PRODUCTS[useCase]` (Cisco defaults) then layers each vendor
-  in `vendorPrefs` on top via `VENDOR_PRODUCT_MAP`. Later vendors in the
-  array win on role conflicts.
+- **`resolvePrefs(useCase, vendorPrefs, budgetTier?): Record<role, productId>`**
+  — starts from `PREFERRED_PRODUCTS[useCase]` (Cisco defaults), layers
+  `BUDGET_TIER_PREFS[tier]` for smb/mid tiers, then layers each vendor via
+  `BUDGET_VENDOR_OVERRIDES[tier][vendor]` (if budget-aware override exists)
+  or falls back to `VENDOR_PRODUCT_MAP[vendor]`. Later vendors win on role
+  conflicts. Enterprise/hyperscale/empty tiers skip budget overrides.
 - **`rackLabel(idx): string`** — `String.fromCharCode(65 + Math.floor(idx /
   2))` → `A, A, B, B, C, C, ...`. Two consecutive devices of the same role
   share a rack letter (an HA pair).
@@ -782,7 +791,7 @@ rules:
 ### `lib/products.ts`
 **Purpose:** Static hardware product catalog (32 SKUs) used by `lib/bom.ts` for BOM generation and Step 3 product selection.
 
-**Structure:** `PRODUCTS: Product[]` — 32 entries using the `Product` interface from `types/index.ts`:
+**Structure:** `PRODUCTS: Product[]` — 75+ entries using the `Product` interface from `types/index.ts`:
 ```ts
 interface Product {
   id: string; model: string; vendor: string; subLayer: string
@@ -792,16 +801,16 @@ interface Product {
 }
 ```
 
-**Vendor/category coverage:**
-- Spine/Core: Cisco Nexus 9336C-FX2 / 9364C-GX, Arista 7800R3, Juniper QFX10002-72Q, Dell Z9332F, Aruba CX 10000, NVIDIA Spectrum SN5600, Extreme 8720
-- Leaf/ToR: Cisco Nexus 93180YC-FX / 9332C, Arista 7050CX3-32S, Juniper QFX5120-48Y, Dell S5248F, NVIDIA Spectrum SN4600C, Extreme 8520
-- Distribution/Access (campus): Catalyst 9500-48Y4C, 9300L-48T-4G, 9200-48P, FortiSwitch T1024E/148F-POE, Aruba CX 6400/6300M, Extreme 5720/5420
+**Vendor/category coverage (P1 expansion — 30+ new SKUs for budget tiering):**
+- Spine/Core: Cisco Nexus 9336C-FX2 / 9364C-GX / **3232C** (budget), Arista 7800R3 / **7060X4** (mid), Juniper QFX10002 / **QFX5130** (400G), Nokia **7250 IXR-10**, Dell Z9332F / **S5232F** (budget), Aruba CX 10000, NVIDIA Spectrum SN5600, Extreme 8720
+- Leaf/ToR: Cisco Nexus 93180YC-FX / 9332C / **93108TC** (10G copper, budget), Arista 7050CX3 / **7020R** (entry) / **7010T** (1G entry), Juniper QFX5120-48Y, Nokia **7220 IXR-D3**, Dell S5248F / **N3248TE** (budget), NVIDIA Spectrum SN4600C, Extreme 8520
+- Distribution/Access (campus): Catalyst 9500 / **9300-48UXM** (mid) / 9300L / 9200, Arista **CCS-750** / **CCS-720XP**, Juniper **EX4650** / **EX4400**, FortiSwitch T1024E/148F-POE, Aruba CX 6400 / 6300M / **6200** (entry), Extreme 5720/5420
 - GPU Compute: GPU Server 4U (8x H100) — `subLayer: 'gpu-compute'`, 4U, 6.5kW, $150k
-- WAN/Edge: ASR 1002-HX, Catalyst SD-WAN vEdge 2000, Catalyst 8300 Edge (cEdge)
+- WAN/Edge: ASR 1002-HX / **ISR 4331** (branch, budget), Juniper **MX204**, Catalyst SD-WAN vEdge 2000, Catalyst 8300 Edge (cEdge)
 - SD-WAN Controllers: vManage, vSmart Controller, vBond Orchestrator
 - IOS-XR SP/WAN: ASR 9904, NCS 540
 - Aviatrix cloud gateways: Aviatrix Gateway (c5.xlarge), Aviatrix Transit GW (c5.2xlarge)
-- Firewalls: Firepower 4145 NGFW, PA-5260 NGFW, FortiGate 2600F
+- Firewalls: Firepower 4145 / **1150** (SMB), PA-5260 / **PA-3260** (mid) / **PA-460** (SMB), FortiGate 2600F / **600F** (mid) / **100F** (SMB), Juniper **SRX4600** / **SRX1500** (SMB)
 
 **Other exports:**
 - `LAYER_PAIRS: Record<UseCase, string[]>` — maps each use case to its relevant cabling-layer pair keys (e.g. `dc: ['spine-leaf']`, `campus: ['distribution-access','core-distribution']`, `multicloud/aviatrix: ['cloud-gw','cloud-transit']`)

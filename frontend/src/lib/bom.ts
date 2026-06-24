@@ -1,4 +1,4 @@
-import type { AppState, BOMDevice, Scale, UseCase } from '@/types'
+import type { AppState, BOMDevice, BudgetTier, Scale, UseCase } from '@/types'
 import { PRODUCTS } from './products'
 
 // ── Scale definitions ────────────────────────────────────────────────────────
@@ -55,12 +55,16 @@ const VENDOR_PRODUCT_MAP: Record<string, Partial<Record<UseCase, Record<string, 
   'Arista': {
     dc:        { spine: 'arista-7800r3',    leaf: 'arista-7050cx3' },
     gpu:       { spine: 'arista-7800r3',    leaf: 'arista-7050cx3' },
+    campus:    { distribution: 'arista-750', access: 'arista-720xp' },
     multisite: { spine: 'arista-7800r3',    leaf: 'arista-7050cx3' },
   },
   'Juniper': {
-    dc:        { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
-    gpu:       { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
-    multisite: { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+    dc:        { spine: 'juniper-qfx5130', leaf: 'juniper-qfx5120', firewall: 'juniper-srx4600' },
+    gpu:       { spine: 'juniper-qfx5130', leaf: 'juniper-qfx5120' },
+    campus:    { distribution: 'juniper-ex4650', access: 'juniper-ex4400', firewall: 'juniper-srx4600' },
+    wan:       { 'wan-edge': 'juniper-mx204' },
+    multisite: { spine: 'juniper-qfx5130', leaf: 'juniper-qfx5120', 'wan-edge': 'juniper-mx204', firewall: 'juniper-srx4600' },
+    multicloud: { firewall: 'juniper-srx4600' },
   },
   'Palo Alto': {
     dc:        { firewall: 'panos-pa5260' },
@@ -93,12 +97,151 @@ const VENDOR_PRODUCT_MAP: Record<string, Partial<Record<UseCase, Record<string, 
     multisite: { spine: 'extreme-8720',  leaf: 'extreme-8520' },
     campus:    { distribution: 'extreme-5720', access: 'extreme-5420' },
   },
+  'Nokia': {
+    dc:        { spine: 'nokia-srl-7250ixr', leaf: 'nokia-srl-7220d3' },
+    multisite: { spine: 'nokia-srl-7250ixr', leaf: 'nokia-srl-7220d3' },
+  },
 }
 
-/** Build role→productId prefs by layering vendorPrefs on top of Cisco defaults. */
-function resolvePrefs(useCase: UseCase, vendorPrefs: string[]): Record<string, string> {
+// ── Budget tier bands & product overrides ──────────────────────────────────
+// Budget bands define the MAXIMUM total BOM cost expected per tier.
+// Used both for product selection (cheaper SKUs for lower tiers) and validation.
+
+export const BUDGET_BANDS: Record<Exclude<BudgetTier, ''>, { label: string; maxUSD: number }> = {
+  smb:        { label: 'SMB (< $100K)',           maxUSD: 100_000 },
+  mid:        { label: 'Mid-Market ($100K–$500K)', maxUSD: 500_000 },
+  enterprise: { label: 'Enterprise ($500K–$2M)',   maxUSD: 2_000_000 },
+  hyperscale: { label: 'Hyperscale ($2M+)',        maxUSD: Infinity },
+}
+
+// Maps budgetTier → use-case → role → product ID.
+// Layers on top of PREFERRED_PRODUCTS (Cisco defaults) to select cheaper SKUs
+// for lower budget tiers. 'enterprise' and 'hyperscale' use the defaults (premium gear).
+const BUDGET_TIER_PREFS: Record<string, Partial<Record<UseCase, Record<string, string>>>> = {
+  smb: {
+    dc:        { spine: 'nxos-3232c',  leaf: 'nxos-93108tc', firewall: 'ftd1150' },
+    gpu:       { spine: 'nxos-3232c',  leaf: 'nxos-93108tc' },
+    campus:    { distribution: 'cat9300', access: 'cat9200', firewall: 'ftd1150' },
+    wan:       { 'wan-edge': 'isr4331' },
+    multisite: { spine: 'nxos-3232c',  leaf: 'nxos-93108tc', 'wan-edge': 'isr4331', firewall: 'ftd1150' },
+  },
+  mid: {
+    dc:        { spine: 'nxos-9336c',  leaf: 'nxos-93180yc', firewall: 'ftd1150' },
+    gpu:       { spine: 'nxos-9336c',  leaf: 'nxos-93180yc' },
+    campus:    { distribution: 'cat9500', access: 'cat9200', firewall: 'ftd1150' },
+    wan:       { 'wan-edge': 'asr1002hx' },
+    multisite: { spine: 'nxos-9336c',  leaf: 'nxos-93180yc', 'wan-edge': 'asr1002hx', firewall: 'ftd1150' },
+  },
+}
+
+// Maps budgetTier × vendor → use-case → role → product ID.
+// Selects cheaper vendor-specific SKUs for smb/mid tiers.
+const BUDGET_VENDOR_OVERRIDES: Record<string, Record<string, Partial<Record<UseCase, Record<string, string>>>>> = {
+  smb: {
+    'Arista': {
+      dc:        { spine: 'arista-7060x',  leaf: 'arista-7020r' },
+      gpu:       { spine: 'arista-7060x',  leaf: 'arista-7020r' },
+      campus:    { distribution: 'arista-750', access: 'arista-720xp' },
+      multisite: { spine: 'arista-7060x',  leaf: 'arista-7020r' },
+    },
+    'Juniper': {
+      dc:        { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+      gpu:       { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120' },
+      campus:    { distribution: 'juniper-ex4650', access: 'juniper-ex4400' },
+      wan:       { 'wan-edge': 'juniper-mx204' },
+      multisite: { spine: 'juniper-qfx10002', leaf: 'juniper-qfx5120', 'wan-edge': 'juniper-mx204' },
+    },
+    'Palo Alto': {
+      dc:        { firewall: 'panos-pa3260' },
+      campus:    { firewall: 'panos-pa460' },
+      multisite: { firewall: 'panos-pa3260' },
+    },
+    'Fortinet': {
+      dc:        { firewall: 'fortinet-fg600f' },
+      campus:    { firewall: 'fortinet-fg100f' },
+      multisite: { firewall: 'fortinet-fg600f' },
+    },
+    'Dell EMC': {
+      dc:        { spine: 'dell-s5232f',  leaf: 'dell-n3248te' },
+      gpu:       { spine: 'dell-s5232f',  leaf: 'dell-s5248f' },
+      multisite: { spine: 'dell-s5232f',  leaf: 'dell-n3248te' },
+    },
+    'HPE Aruba': {
+      campus:    { distribution: 'aruba-cx6400', access: 'aruba-cx6200' },
+    },
+    'Nokia': {
+      dc:        { spine: 'nokia-srl-7250ixr', leaf: 'nokia-srl-7220d3' },
+      multisite: { spine: 'nokia-srl-7250ixr', leaf: 'nokia-srl-7220d3' },
+    },
+  },
+  mid: {
+    'Arista': {
+      dc:        { spine: 'arista-7060x',  leaf: 'arista-7050cx3' },
+      gpu:       { spine: 'arista-7060x',  leaf: 'arista-7050cx3' },
+      campus:    { distribution: 'arista-750', access: 'arista-720xp' },
+      multisite: { spine: 'arista-7060x',  leaf: 'arista-7050cx3' },
+    },
+    'Juniper': {
+      dc:        { spine: 'juniper-qfx5130', leaf: 'juniper-qfx5120' },
+      gpu:       { spine: 'juniper-qfx5130', leaf: 'juniper-qfx5120' },
+      campus:    { distribution: 'juniper-ex4650', access: 'juniper-ex4400' },
+      wan:       { 'wan-edge': 'juniper-mx204' },
+      multisite: { spine: 'juniper-qfx5130', leaf: 'juniper-qfx5120', 'wan-edge': 'juniper-mx204' },
+    },
+    'Palo Alto': {
+      dc:        { firewall: 'panos-pa3260' },
+      campus:    { firewall: 'panos-pa3260' },
+      multisite: { firewall: 'panos-pa3260' },
+    },
+    'Fortinet': {
+      dc:        { firewall: 'fortinet-fg600f' },
+      campus:    { firewall: 'fortinet-fg600f' },
+      multisite: { firewall: 'fortinet-fg600f' },
+    },
+    'Dell EMC': {
+      dc:        { spine: 'dell-s5232f',  leaf: 'dell-s5248f' },
+      gpu:       { spine: 'dell-z9332f',  leaf: 'dell-s5248f' },
+      multisite: { spine: 'dell-s5232f',  leaf: 'dell-s5248f' },
+    },
+    'Nokia': {
+      dc:        { spine: 'nokia-srl-7250ixr', leaf: 'nokia-srl-7220d3' },
+      multisite: { spine: 'nokia-srl-7250ixr', leaf: 'nokia-srl-7220d3' },
+    },
+  },
+}
+
+/** Build role→productId prefs by layering budgetTier and vendorPrefs on top of Cisco defaults. */
+function resolvePrefs(useCase: UseCase, vendorPrefs: string[], budgetTier?: BudgetTier): Record<string, string> {
   const base = { ...(PREFERRED_PRODUCTS[useCase] ?? PREFERRED_PRODUCTS.dc) }
+
+  // Layer 1: budget tier overrides (Cisco defaults → cheaper Cisco SKUs)
+  const tier = budgetTier || ''
+  if (tier && tier !== 'enterprise' && tier !== 'hyperscale') {
+    const tierMap = BUDGET_TIER_PREFS[tier]
+    if (tierMap) {
+      const ucMap = tierMap[useCase]
+      if (ucMap) {
+        for (const [role, prodId] of Object.entries(ucMap)) {
+          base[role] = prodId
+        }
+      }
+    }
+  }
+
+  // Layer 2: vendor overrides (may override budget tier selections)
   for (const vendor of vendorPrefs) {
+    // First try budget-aware vendor overrides
+    if (tier && tier !== 'enterprise' && tier !== 'hyperscale') {
+      const budgetVendor = BUDGET_VENDOR_OVERRIDES[tier]?.[vendor]
+      if (budgetVendor) {
+        const ucMap = budgetVendor[useCase]
+        if (ucMap) {
+          for (const [role, prodId] of Object.entries(ucMap)) base[role] = prodId
+          continue
+        }
+      }
+    }
+    // Fall back to standard vendor overrides
     const vendorMap = VENDOR_PRODUCT_MAP[vendor]
     if (!vendorMap) continue
     const ucMap = vendorMap[useCase]
@@ -107,6 +250,7 @@ function resolvePrefs(useCase: UseCase, vendorPrefs: string[]): Record<string, s
       base[role] = prodId
     }
   }
+
   return base
 }
 
@@ -182,12 +326,14 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
   firewallModel?: string
   overlayProtocols?: string[]
   numSites?: number
+  budgetTier?: BudgetTier
 }): BOMDevice[] {
   const useCase = (state.useCase || 'dc') as UseCase
   const scale = (state.scale || 'small') as Scale
+  const budgetTier = state.budgetTier || ''
 
-  const prefs = state.vendorPrefs?.length
-    ? resolvePrefs(useCase, state.vendorPrefs)
+  const prefs = (state.vendorPrefs?.length || budgetTier)
+    ? resolvePrefs(useCase, state.vendorPrefs ?? [], budgetTier)
     : (PREFERRED_PRODUCTS[useCase] ?? PREFERRED_PRODUCTS.dc)
 
   // Firewall needed when: medium/large scale OR intent explicitly includes N-S traffic
@@ -452,6 +598,7 @@ export function buildBOM(state: Pick<AppState, 'useCase' | 'scale' | 'siteCode'>
   firewallModel?: string
   overlayProtocols?: string[]
   numSites?: number
+  budgetTier?: BudgetTier
 }): {
   devices: BOMDevice[]
   summary: Record<string, BOMSummaryRow>
@@ -819,7 +966,7 @@ export function buildOptics(
 
 export interface BOMValidationIssue {
   severity: 'error' | 'warning' | 'info'
-  category: 'oversubscription' | 'fan-out' | 'power' | 'redundancy' | 'capacity'
+  category: 'oversubscription' | 'fan-out' | 'power' | 'redundancy' | 'capacity' | 'budget'
   message: string
 }
 
@@ -830,11 +977,33 @@ export function validateBOM(
     totalEndpoints?: number
     bandwidthPerServer?: string
     oversubscription?: number
+    budgetTier?: BudgetTier
   } = {},
 ): BOMValidationIssue[] {
   const issues: BOMValidationIssue[] = []
   const uc = state.useCase ?? 'dc'
   const endpoints = state.totalEndpoints ?? 0
+
+  // ── Budget tier validation ──
+  const tier = state.budgetTier
+  if (tier && tier in BUDGET_BANDS) {
+    const band = BUDGET_BANDS[tier as Exclude<BudgetTier, ''>]
+    const grandTotal = devices.reduce((s, d) => s + d.totalPrice, 0)
+    if (grandTotal > band.maxUSD && band.maxUSD !== Infinity) {
+      const pct = Math.round((grandTotal / band.maxUSD) * 100)
+      issues.push({
+        severity: 'error',
+        category: 'budget',
+        message: `BOM total $${grandTotal.toLocaleString()} exceeds ${band.label} budget ceiling ($${band.maxUSD.toLocaleString()}) by ${pct - 100}%. Consider a higher budget tier or lower-cost device models.`,
+      })
+    } else if (grandTotal > band.maxUSD * 0.8 && band.maxUSD !== Infinity) {
+      issues.push({
+        severity: 'warning',
+        category: 'budget',
+        message: `BOM total $${grandTotal.toLocaleString()} is at ${Math.round((grandTotal / band.maxUSD) * 100)}% of ${band.label} budget ceiling. Approaching budget limit.`,
+      })
+    }
+  }
 
   // ── Spine-leaf validation (DC, GPU, multisite) ──
   const leaves = devices.filter(d => d.subLayer === 'leaf')
