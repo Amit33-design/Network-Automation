@@ -847,6 +847,20 @@ config-gen tests must keep passing; add new tests alongside).
 | Q6 | GPU RoCEv2 lossless parity for Juniper — Juniper is a selectable GPU-fabric vendor (`juniper-qfx5130`/`qfx5120` in `VENDOR_PRODUCT_MAP.gpu`), but `juniperSpineConfig`/`juniperLeafConfig` emitted no PFC/ECN/RDMA, so a Juniper GPU fabric was non-deployable and failed validator V-09 (GPU QoS). Add `juniperRoceBlock()` (Junos CoS: RDMA no-loss forwarding-class queue-3, DSCP-26 classifier, `congestion-notification-profile … pfc`, ECN WRED drop-profile, 60%-BW scheduler with `explicit-congestion-notification`) wired into both Juniper spine+leaf when `needsRoce`; thread `needsRoce` through dispatch. 3 configgen tests + 1 validator integration test (Juniper GPU now passes V-09) | [x] | configgen.ts: `juniperRoceBlock` + dispatch; configgen.test.ts 106→109; config-validator.test.ts 31→32 |
 | Q7 | Storage lossless (NVMe-oF/iSCSI) appType parity for Juniper + Nokia — Cisco/Arista leaves emit `nxosStorageBlock`/`aristaStorageBlock` (PFC priority-6 no-drop storage class) when the `storage` app type is set, but Juniper/Nokia leaves ignored `appTypes`. Thread `appTypes` to `juniperLeafConfig`/`nokiaSrLinuxConfig`; add `juniperStorageBlock()` (Junos CoS STORAGE FC queue-5 no-loss, DSCP-48 classifier, `congestion-notification-profile … pfc`) gated on `storage && !needsRoce` (RoCE block already defines a STORAGE class — avoids double-definition); Nokia leaf adds a `qos` PFC priority-6 block. 3 new tests | [x] | configgen.ts: `juniperStorageBlock` + `appTypes` on the 2 leaves + dispatch; configgen.test.ts 109→112 |
 
+### R. Enterprise ZTP — any-vendor identify-and-provision (sourced 2026-06-29)
+
+> User-requested: make ZTP work as a standard enterprise tool — work for ANY
+> vendor, identify which hardware + device role, and push the right config.
+> Audit found the backend ZTP covered only 4 platforms (nxos/ios-xe/eos/junos),
+> had **hardcoded credentials** (`ChangeMe!`/`NetDesignZTP1!`) and hardcoded
+> NTP/syslog IPs in the Day-0 templates, no DHCP option-60 vendor classification,
+> and no device identification (vendor/model/role) — it required manual
+> pre-registration. The frontend ZTP sim was fully vendor-agnostic (name+role).
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| R1 | ZTP engine (`lib/ztp.ts`) — vendor identification + per-vendor mechanism + Day-0 + provisioning plan. `ZTP_VENDOR_PROFILES` (11 platforms: nxos/ios-xe/iosxr/eos/junos/srl/cumulus/dellos10/fortios/arubaoscx/exos/panos) each with ZTP method (POAP/PnP/ZTP/eZTP/FortiZTP/Aruba-ZTP/ZTP+/Panorama-ZTP), DHCP option-60 vendor-class, boot protocol, redirect mechanism. `ztpPlatform(dev)` (Cisco model-aware: Nexus→nxos POAP, Catalyst/ISR→ios-xe PnP, ASR9k/NCS→iosxr ZTP), `ztpRole`, `identifyDevice`. `generateDay0Config` — vendor-correct **management-plane-only** bootstrap for all 12 platforms (mgmt IP/SSH/NTP/syslog/callback, `<CHANGE-ME-*>` secrets — fixes the backend hardcoded-credential bug; NO production config per §11). `generateDhcpConfig` — ISC dhcpd.conf with one option-60 class per vendor (true multi-vendor auto-classification) + IOS-XE option-43 PnP redirect. `buildZTPPlan(devices, configs)` — identifies every device, generates Day-0, and pairs it with its Day-N production config by BOM id ("push the right config"); summary byVendor/byMethod/byRole. `ztpPlanToCsv`. 39 tests in `test/ztp.test.ts` | [x] | new `lib/ztp.ts` + `test/ztp.test.ts` (39); 1045 tests total. **Next (R2):** wire into Step6Deploy ZTP tab (per-device vendor/method/role + Day-0/Day-N + DHCP download); **R3 (backend):** port vendor profiles + `<CHANGE-ME>` Day-0 to `backend/ztp` (replace hardcoded creds, add 7 missing platforms, option-60 classes) |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
