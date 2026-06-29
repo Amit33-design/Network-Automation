@@ -1,0 +1,13 @@
+# ============================================================
+# NetDesign AI — NVIDIA Cumulus Linux DAY 0 ZTP (management plane only)
+# Device : {{ hostname }}   Role: {{ role }}
+# Admin password set by the ZTP script (usermod → {{ admin_password }}).
+# Replace <CHANGE-ME-*> before production.
+# ============================================================
+net add hostname {{ hostname }}
+net add interface eth0 ip address {{ mgmt_ip }}/24
+net add interface eth0 ip gateway {{ mgmt_gw }}
+net add time ntp server {{ ntp_server }} iburst
+net add syslog host {{ syslog_server }}
+net add ssh-server
+net commit

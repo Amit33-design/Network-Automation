@@ -1,0 +1,15 @@
+! ============================================================
+! NetDesign AI — IOS-XR DAY 0 ZTP BOOTSTRAP (management plane only)
+! Device : {{ hostname }}   Role: {{ role }}
+! Replace <CHANGE-ME-*> before production.
+! ============================================================
+hostname {{ hostname }}
+ssh server v2
+username admin group root-lr secret {{ admin_password }}
+interface MgmtEth0/RP0/CPU0/0
+ ipv4 address {{ mgmt_ip }} 255.255.255.0
+ no shutdown
+router static vrf default address-family ipv4 unicast 0.0.0.0/0 {{ mgmt_gw }}
+ntp server {{ ntp_server }}
+logging {{ syslog_server }}
+commit

@@ -1,0 +1,14 @@
+! ============================================================
+! NetDesign AI — Dell EMC OS10 DAY 0 ZTD (management plane only)
+! Device : {{ hostname }}   Role: {{ role }}
+! Replace <CHANGE-ME-*> before production.
+! ============================================================
+hostname {{ hostname }}
+username admin password {{ admin_password }} role sysadmin
+ip ssh server enable
+interface mgmt 1/1/1
+ no shutdown
+ ip address {{ mgmt_ip }}/24
+management route 0.0.0.0/0 {{ mgmt_gw }}
+ntp server {{ ntp_server }}
+logging server {{ syslog_server }}

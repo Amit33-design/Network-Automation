@@ -1,0 +1,38 @@
+# ============================================================
+# NetDesign AI — Fortinet FortiOS DAY 0 (FortiZTP, management plane only)
+# Device : {{ hostname }}   Role: {{ role }}
+# Replace <CHANGE-ME-*> before production.
+# ============================================================
+config system global
+  set hostname "{{ hostname }}"
+  set admin-ssh-v1 disable
+end
+config system admin
+  edit "admin"
+    set password {{ admin_password }}
+  next
+end
+config system interface
+  edit "mgmt"
+    set ip {{ mgmt_ip }}/24
+    set allowaccess ping https ssh
+  next
+end
+config router static
+  edit 1
+    set gateway {{ mgmt_gw }}
+    set device "mgmt"
+  next
+end
+config system ntp
+  set ntpsync enable
+  config ntpserver
+    edit 1
+      set server "{{ ntp_server }}"
+    next
+  end
+end
+config log syslogd setting
+  set status enable
+  set server "{{ syslog_server }}"
+end

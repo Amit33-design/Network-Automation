@@ -1,0 +1,14 @@
+! ============================================================
+! NetDesign AI — HPE Aruba CX DAY 0 (Aruba Central/Activate, mgmt plane only)
+! Device : {{ hostname }}   Role: {{ role }}
+! Replace <CHANGE-ME-*> before production.
+! ============================================================
+hostname {{ hostname }}
+user admin group administrators password plaintext {{ admin_password }}
+ssh server vrf mgmt
+interface mgmt
+ no shutdown
+ ip static {{ mgmt_ip }}/24
+ default-gateway {{ mgmt_gw }}
+ntp server {{ ntp_server }}
+logging {{ syslog_server }} vrf mgmt
