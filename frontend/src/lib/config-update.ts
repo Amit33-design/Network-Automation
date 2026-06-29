@@ -307,8 +307,89 @@ const staticRoute: ChangeOperation = {
   },
 }
 
+// ── Management server (NTP / syslog / SNMP host) ─────────────────────────────
+const mgmtServer: ChangeOperation = {
+  id: 'mgmt-server',
+  label: 'Management server (NTP/Syslog/SNMP)',
+  icon: '🛰',
+  category: 'Management',
+  description: 'Add an NTP, syslog, or SNMP trap host to live devices.',
+  appliesTo: ['*'],
+  families: ['ios', 'junos', 'nokia'],
+  fields: [
+    { key: 'service', label: 'Service (ntp/syslog/snmp)', default: 'ntp', required: true },
+    { key: 'server', label: 'Server IP', placeholder: '10.0.0.100', required: true },
+  ],
+  render: (fam, p) => {
+    const svc = v(p, 'service', 'ntp').toLowerCase()
+    const ip = v(p, 'server')
+    if (fam === 'ios') {
+      const cmd = svc === 'syslog' ? `logging host ${ip}`
+        : svc === 'snmp' ? `snmp-server host ${ip} version 3 priv <CHANGE-ME-snmp-user>`
+        : `ntp server ${ip}`
+      return { commands: [cmd], rollback: [`no ${cmd}`] }
+    }
+    if (fam === 'junos') {
+      const cmd = svc === 'syslog' ? `system syslog host ${ip} any info`
+        : svc === 'snmp' ? `snmp trap-group NMS targets ${ip}`
+        : `system ntp server ${ip}`
+      return { commands: [`set ${cmd}`], rollback: [`delete ${cmd}`] }
+    }
+    // nokia
+    const cmd = svc === 'syslog' ? `/ system logging remote-server ${ip}`
+      : svc === 'snmp' ? `/ system snmp trap-group NMS target ${ip}`
+      : `/ system ntp server ${ip}`
+    return { commands: [`set ${cmd}`], rollback: [`delete ${cmd}`] }
+  },
+}
+
+// ── Interface config (description / admin state / access VLAN) ────────────────
+const interfaceConfig: ChangeOperation = {
+  id: 'interface-config',
+  label: 'Interface config',
+  icon: '🔌',
+  category: 'L2',
+  description: 'Set an interface description, admin state, and optional access VLAN.',
+  appliesTo: ['*'],
+  families: ['ios', 'junos'],
+  fields: [
+    { key: 'iface', label: 'Interface', placeholder: 'GigabitEthernet1/0/1', required: true },
+    { key: 'description', label: 'Description', placeholder: 'uplink-to-core' },
+    { key: 'admin_state', label: 'Admin state (up/down)', default: 'up', required: true },
+    { key: 'access_vlan', label: 'Access VLAN (optional)', placeholder: '120' },
+  ],
+  render: (fam, p) => {
+    const iface = v(p, 'iface'), desc = v(p, 'description')
+    const up = v(p, 'admin_state', 'up').toLowerCase() !== 'down'
+    const vlan = v(p, 'access_vlan')
+    if (fam === 'ios') {
+      const c = [`interface ${iface}`]
+      if (desc) c.push(` description ${desc}`)
+      c.push(up ? ' no shutdown' : ' shutdown')
+      if (vlan) c.push(` switchport access vlan ${vlan}`)
+      // rollback: undo what we set (remove description, opposite admin state, no access vlan)
+      const rb = [`interface ${iface}`]
+      if (desc) rb.push(' no description')
+      rb.push(up ? ' shutdown' : ' no shutdown')
+      if (vlan) rb.push(' no switchport access vlan')
+      return { commands: c, rollback: rb }
+    }
+    // junos
+    const c: string[] = []
+    if (desc) c.push(`set interfaces ${iface} description "${desc}"`)
+    c.push(up ? `delete interfaces ${iface} disable` : `set interfaces ${iface} disable`)
+    if (vlan) c.push(`set interfaces ${iface} unit 0 family ethernet-switching vlan members ${vlan}`)
+    const rb: string[] = []
+    if (desc) rb.push(`delete interfaces ${iface} description`)
+    rb.push(up ? `set interfaces ${iface} disable` : `delete interfaces ${iface} disable`)
+    if (vlan) rb.push(`delete interfaces ${iface} unit 0 family ethernet-switching vlan members ${vlan}`)
+    return { commands: c, rollback: rb }
+  },
+}
+
 export const CHANGE_CATALOG: ChangeOperation[] = [
   bgpNeighbor, bgpRoutePolicy, firewallRule, vlanAdd, staticRoute,
+  mgmtServer, interfaceConfig,
 ]
 
 export function getChangeOp(id: string): ChangeOperation | undefined {
