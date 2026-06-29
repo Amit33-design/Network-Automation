@@ -272,6 +272,33 @@ describe('generateConfig — core functionality', () => {
   })
 })
 
+// Multisite DCI route-target parity (A7) — Juniper + Nokia leaves must emit
+// the stretched 65100:<vni> RT for multisite, matching NX-OS/Arista.
+describe('Multisite DCI route-targets — Juniper + Nokia', () => {
+  it('Juniper leaf emits the stretched DCI RT only for multisite', () => {
+    const dev = makeDevice({ vendor: 'Juniper', subLayer: 'leaf' })
+    const multi = generateConfig(dev, 0, 'multisite')
+    const dc = generateConfig(dev, 0, 'dc')
+    expect(multi).toContain('target:65100:10010')
+    expect(multi).toContain('vni-options vni 10010')
+    expect(dc).not.toContain('65100')
+  })
+
+  it('Nokia leaf emits the stretched DCI RT only for multisite', () => {
+    const dev = makeDevice({ vendor: 'Nokia', subLayer: 'leaf' })
+    const multi = generateConfig(dev, 0, 'multisite')
+    const dc = generateConfig(dev, 0, 'dc')
+    expect(multi).toContain('export-rt target:65100:10010')
+    expect(multi).toContain('import-rt target:65100:10010')
+    expect(dc).not.toContain('65100')
+  })
+
+  it('Nokia spine does not get the leaf DCI RT', () => {
+    const spine = generateConfig(makeDevice({ vendor: 'Nokia', subLayer: 'spine' }), 0, 'multisite')
+    expect(spine).not.toContain('export-rt target:65100')
+  })
+})
+
 // ── Enterprise upgrade A1/A2: MLAG / vPC HA-pair pairing ──────────────────────
 describe('vPC / MLAG HA-pair config (Enterprise upgrade A1/A2)', () => {
   it('NX-OS leaf pair (idx 0 & 1) share the same vPC domain', () => {

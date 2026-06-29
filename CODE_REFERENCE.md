@@ -517,11 +517,14 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   collector ingest).
 
 ### Juniper JunOS
-- **`juniperLeafConfig(dev, idx): string`** — set-style **leaf** config
-  (`leaf` only since Q3). `leafAsn = 65001+idx`, `lo0ip = 10.255.2.${idx+1}`.
-  IS-IS level 2 with auth key, BGP group `SPINE-RR` (external, peers UP to
-  spines), EVPN/VXLAN VTEP with `vtep-source-interface lo0.0` +
-  `vrf-target target:65000:1`.
+- **`juniperLeafConfig(dev, idx, isMultisite=false): string`** — set-style
+  **leaf** config (`leaf` only since Q3). `leafAsn = 65001+idx`,
+  `lo0ip = 10.255.2.${idx+1}`. IS-IS level 2 with auth key, BGP group
+  `SPINE-RR` (external, peers UP to spines), EVPN/VXLAN VTEP with
+  `vtep-source-interface lo0.0` + `vrf-target target:65000:1`. **Q4:** when
+  `isMultisite`, also emits the stretched DCI RT
+  (`vni-options vni 10010 vrf-target target:${DCI_RT_ASN}:10010` + L3
+  `routing-instances EVPN-L3 vrf-target target:${DCI_RT_ASN}:50000`).
 - **`juniperSpineConfig(dev, idx): string`** *(Q3, 2026-06-29)* — set-style
   **spine** config (previously both spine+leaf wrongly used the leaf
   template). Role "DC Spine (EVPN route-reflector / underlay)",
@@ -707,12 +710,14 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   `swp` ports to spines). GPU PFC/ECN comments.
 - **`extremeExosConfig(dev, idx)`** — EXOS. Spine → BGP+EVPN (VNI 10001);
   access → VLANs+PoE+STP edge-safeguard.
-- **`nokiaSrLinuxConfig(dev, idx)`** — Nokia SR Linux YANG-style config:
-  system (hostname, admin user, gNMI/JSON-RPC, syslog, NTP), management
-  interface mgmt0, ISIS (`area 49.0001`, `level-capability 2`, net from
-  hostname), BGP/EVPN (ASN 65000+idx, RR `10.255.0.1`, EVPN/IPv4-unicast),
-  and for leaves: mac-vrf TENANT-1 (VLAN 100→VNI 10100), vxlan-interface
-  vxlan1, IRB subinterface anycast-gw `10.100.0.1/24`.
+- **`nokiaSrLinuxConfig(dev, idx, isMultisite=false)`** — Nokia SR Linux
+  YANG-style config: system (hostname, admin user, gNMI/JSON-RPC, syslog,
+  NTP), management interface mgmt0, ISIS (`area 49.0001`,
+  `level-capability 2`, net from hostname), BGP/EVPN (ASN 65000+idx, RR
+  `10.255.0.1`, EVPN/IPv4-unicast), and for leaves: mac-vrf `vxlan-default`
+  (VNI 10001), vxlan-interface. **Q4:** when `isMultisite`, the leaf mac-vrf
+  `bgp-vpn bgp-instance 1` carries the stretched DCI RT (`export-rt`/
+  `import-rt target:${DCI_RT_ASN}:10010`).
 - **`juniperCampusConfig(dev, idx)`** — Juniper EX distribution/access. Junos
   `set` syntax. Distribution: VLANs (Mgmt/Data/Voice/Server), `irb` units
   with VRRP (priority 200 primary, 100 backup), OSPF area 0, RSTP priority
