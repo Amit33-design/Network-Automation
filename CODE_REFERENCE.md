@@ -525,13 +525,16 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   `isMultisite`, also emits the stretched DCI RT
   (`vni-options vni 10010 vrf-target target:${DCI_RT_ASN}:10010` + L3
   `routing-instances EVPN-L3 vrf-target target:${DCI_RT_ASN}:50000`).
-- **`juniperSpineConfig(dev, idx): string`** *(Q3, 2026-06-29)* — set-style
-  **spine** config (previously both spine+leaf wrongly used the leaf
-  template). Role "DC Spine (EVPN route-reflector / underlay)",
-  `lo0ip = 10.255.1.${idx+1}`, `autonomous-system 65000`, BGP group `LEAVES`
-  (external, multipath, `family evpn signaling`, peers DOWN to leaves with
-  per-leaf `peer-as`), IS-IS level 2. **Not a VTEP** — no
-  `vtep-source-interface`/`vrf-target`.
+- **`juniperSpineConfig(dev, idx, protoFeatures=[]): string`** *(Q3,
+  2026-06-29)* — set-style **spine** config (previously both spine+leaf
+  wrongly used the leaf template). Role "DC Spine (EVPN route-reflector /
+  underlay)", `lo0ip = 10.255.1.${idx+1}`, `autonomous-system 65000`, BGP
+  group `LEAVES` (external, multipath, `family evpn signaling`, peers DOWN to
+  leaves with per-leaf `peer-as`), IS-IS level 2. **Not a VTEP** — no
+  `vtep-source-interface`/`vrf-target`. **Q5:** when `protoFeatures` includes
+  `IPv6 Dual-Stack`, adds `family inet6` on lo0 + fabric ports and
+  `set protocols isis topologies ipv6-unicast` (same block in
+  `juniperLeafConfig`).
 
 ### Firewalls
 - **`ciscoFirewallConfig(dev, idx): string`** — IOS-XE Zone-Based Firewall:
