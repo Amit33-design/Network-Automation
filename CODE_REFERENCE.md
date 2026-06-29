@@ -1093,7 +1093,7 @@ validation checks that parse config text and cross-reference with intent
 - `validateConfigs(input: ValidateInput): ValidationResult` — runs all 13 checks (V-01 through V-13) against the provided configs/devices/useCase and returns structured results with per-check severity (pass/fail/warn/info), detail, and affected device list.
 - `validationReportText(result: ValidationResult): string` — renders a plain-text report for download.
 
-**Checks:** V-01 Single underlay (no IS-IS+OSPF mix), V-02 Duplicate router-IDs, V-03 BGP fabric presence, V-04 BGP peer reachability, V-05 No hardcoded secrets, V-06 Hostname config, V-07 Management plane, V-08 EVPN/VXLAN consistency, V-09 GPU QoS (PFC/ECN/DCQCN), V-10 Undefined ACL references, V-11 Non-empty configs, V-12 Loopback presence, V-13 BFD for fast failover.
+**Checks:** V-01 Single underlay (no IS-IS+OSPF mix), V-02 Duplicate router-IDs, V-03 BGP fabric presence, V-04 BGP peer reachability, V-05 No hardcoded secrets, V-06 Hostname config, V-07 Management plane, V-08 EVPN/VXLAN consistency, V-09 GPU QoS (PFC/ECN/DCQCN), V-10 Undefined ACL references, V-11 Non-empty configs, V-12 Loopback presence, V-13 BFD for fast failover, **V-14 Jumbo MTU on VXLAN fabric** (M5 — warns when an NVE/VXLAN device lacks a ≥9000 underlay MTU; vendor-aware `mtu`/`jumbo-frame-size 9xxx`; fabric use-cases only).
 
 **Vendor-aware syntax detection (M3, 2026-06-29):** the detection regexes
 (`RE_BGP`, `RE_ISIS`, `RE_OSPF`, `RE_HOSTNAME`, `RE_MGMT`, `RE_ROUTING_DEVICE`)
@@ -1106,7 +1106,7 @@ prevents false V-03/V-06/V-07 failures on multi-vendor designs.
 
 **Types:** `ValidationCheck`, `ValidationResult`, `ValidateInput`, `CheckSeverity`.
 
-- **Tests**: 31 in `test/config-validator.test.ts` (7 vendor-aware M3 tests using real generated Nokia/Juniper/Arista configs).
+- **Tests**: 34 in `test/config-validator.test.ts` (7 vendor-aware M3 tests + M5 jumbo-MTU tests, using real generated multi-vendor configs).
 
 ## Frontend — `lib/containerlab.ts` (Containerlab topology export — N1)
 

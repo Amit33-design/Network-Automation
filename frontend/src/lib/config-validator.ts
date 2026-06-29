@@ -585,6 +585,69 @@ function checkBFDEnabled(
   }
 }
 
+// V-14: VXLAN/EVPN fabrics need a jumbo underlay MTU (≥9000) — VXLAN adds 50B
+// of encap, so a default 1500 MTU underlay silently drops/fragments overlay
+// traffic. Recognizes Cisco/Arista (`mtu 9216`, `system mtu`, `l2 mtu`),
+// Junos (`mtu 9216`), Nokia (`mtu 9232`), Cumulus (`mtu 9216`), EXOS
+// (`jumbo-frame-size 9216`). Only flags devices that actually run VXLAN/NVE.
+function checkJumboMtu(
+  configs: Record<string, string>,
+  useCase: UseCase | '',
+): ValidationCheck {
+  const fabricUseCases: (UseCase | '')[] = ['dc', 'gpu', 'multisite', 'multicloud', 'aviatrix']
+  if (!fabricUseCases.includes(useCase)) {
+    return {
+      id: 'V-14',
+      name: 'Jumbo MTU on VXLAN fabric',
+      category: 'Fabric',
+      severity: 'info',
+      detail: 'Jumbo-MTU check applies to VXLAN/EVPN fabrics only',
+    }
+  }
+
+  // A device "runs VXLAN" if it has an NVE/VXLAN/vxlan-interface construct.
+  const vxlanRe = /interface nve|vxlan|virtual-network|vni\s+\d+/i
+  // Jumbo = an MTU value of 9000-9999 in any vendor syntax.
+  const jumboRe = /(?:mtu|jumbo-frame-size)\s+9\d{3}\b/i
+
+  const missing: string[] = []
+  let vxlanDevices = 0
+  for (const [host, cfg] of Object.entries(configs)) {
+    if (!vxlanRe.test(cfg)) continue
+    vxlanDevices++
+    if (!jumboRe.test(cfg)) missing.push(host)
+  }
+
+  if (vxlanDevices === 0) {
+    return {
+      id: 'V-14',
+      name: 'Jumbo MTU on VXLAN fabric',
+      category: 'Fabric',
+      severity: 'info',
+      detail: 'No VXLAN/NVE devices found to check',
+    }
+  }
+
+  if (missing.length > 0) {
+    return {
+      id: 'V-14',
+      name: 'Jumbo MTU on VXLAN fabric',
+      category: 'Fabric',
+      severity: 'warn',
+      detail: `${missing.length} VXLAN device(s) lack a jumbo (≥9000) underlay MTU — overlay traffic may be dropped/fragmented: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}`,
+      devices: missing,
+    }
+  }
+
+  return {
+    id: 'V-14',
+    name: 'Jumbo MTU on VXLAN fabric',
+    category: 'Fabric',
+    severity: 'pass',
+    detail: `All ${vxlanDevices} VXLAN device(s) carry a jumbo underlay MTU`,
+  }
+}
+
 // ── Main validation entry point ───────────────────────────────────────────────
 
 export interface ValidateInput {
@@ -624,6 +687,7 @@ export function validateConfigs(input: ValidateInput): ValidationResult {
     checkGPUQoS(configs, useCase),
     checkLoopbackPresence(configs),
     checkBFDEnabled(configs, useCase),
+    checkJumboMtu(configs, useCase),
   ]
 
   const summary = { pass: 0, fail: 0, warn: 0, info: 0 }

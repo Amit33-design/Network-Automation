@@ -86,7 +86,7 @@ describe('config-validator', () => {
       expect(result.checks[0].id).toBe('V-00')
     })
 
-    it('runs all 13 checks on valid DC configs', () => {
+    it('runs all 14 checks on valid DC configs', () => {
       const configs: Record<string, string> = {
         'LEAF-01': dcConfig('LEAF-01', '10.255.0.1', '10.1.0.1'),
         'LEAF-02': dcConfig('LEAF-02', '10.255.0.2', '10.1.0.2'),
@@ -97,7 +97,7 @@ describe('config-validator', () => {
         devices: [device('LEAF-01'), device('LEAF-02'), device('SPINE-01')],
         useCase: 'dc',
       })
-      expect(result.checks).toHaveLength(13)
+      expect(result.checks).toHaveLength(14)
       expect(result.summary.fail).toBe(0)
     })
 
@@ -379,6 +379,29 @@ describe('config-validator', () => {
       const bgp = check(result, 'V-03')
       // WAN is not a fabric use case, but BGP should still be detected → pass
       expect(bgp.severity).toBe('pass')
+    })
+
+    it('V-14: real generated DC fabrics carry a jumbo underlay MTU', () => {
+      for (const vendor of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks']) {
+        const devices = buildDeviceList({
+          useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: [vendor],
+        })
+        if (devices.length === 0) continue
+        const configs = generateAllConfigs(devices, 'dc')
+        const result = validateConfigs({ configs, devices, useCase: 'dc' })
+        const mtu = result.checks.find(c => c.id === 'V-14')!
+        expect(mtu.severity, `${vendor}: ${mtu.detail}`).toBe('pass')
+      }
+    })
+
+    it('V-14: warns when a VXLAN device lacks a jumbo MTU', () => {
+      const configs = {
+        'LEAF-01': 'hostname LEAF-01\ninterface nve1\n source-interface loopback1\nntp server 1.1.1.1\nlogging host 1.1.1.2\nrouter bgp 65001\n router-id 10.0.0.1\ninterface Loopback0\n ip address 10.0.0.1/32\nusername a secret <CHANGE-ME>',
+      }
+      const result = validateConfigs({ configs, devices: [device('LEAF-01')], useCase: 'dc' })
+      const mtu = result.checks.find(c => c.id === 'V-14')!
+      expect(mtu.severity).toBe('warn')
+      expect(mtu.devices).toContain('LEAF-01')
     })
 
     it('Juniper GPU fabric passes GPU QoS (V-09) — RoCEv2 lossless emitted', () => {
