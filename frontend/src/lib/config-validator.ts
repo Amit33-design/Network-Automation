@@ -89,7 +89,10 @@ function extractLoopbacks(configs: Record<string, string>): Map<string, string[]
 // `set` style, and Nokia SR Linux YANG `{ }` blocks all express the same
 // concepts with different keywords. These regexes recognize all three so the
 // validator doesn't false-fail multi-vendor designs.
-const RE_BGP = /router bgp\s+\d+|protocols bgp|\bbgp\s*\{|autonomous-system\s+\d+/i
+// `router bgp` with ANY operand (a literal ASN or a `<CHANGE-ME-asn>`
+// placeholder, as Cumulus/Dell emit), Junos `protocols bgp`, Nokia `bgp {` /
+// `autonomous-system`, and Extreme `configure bgp`.
+const RE_BGP = /router bgp\b|protocols bgp|\bbgp\s*\{|autonomous-system\s+\d+|configure bgp\b/i
 const RE_ISIS = /router isis|isis enable|protocols isis|\bisis\s*\{/i
 const RE_OSPF = /router ospf\s|ospf area|protocols ospf/i
 const RE_HOSTNAME = /\bhostname\s+\S+|host-name\s+\S+/i

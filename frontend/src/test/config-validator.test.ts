@@ -404,6 +404,21 @@ describe('config-validator', () => {
       expect(mtu.devices).toContain('LEAF-01')
     })
 
+    it('V-03: BGP detected for vendors that use a <CHANGE-ME-asn> placeholder', () => {
+      // NVIDIA Cumulus / Dell OS10 emit `router bgp <CHANGE-ME-asn>` (no digit);
+      // Extreme uses `configure bgp AS-number` — all must register as BGP.
+      for (const vendor of ['NVIDIA', 'Dell EMC', 'Extreme Networks']) {
+        const devices = buildDeviceList({
+          useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: [vendor],
+        })
+        if (devices.length === 0) continue
+        const configs = generateAllConfigs(devices, 'dc')
+        const result = validateConfigs({ configs, devices, useCase: 'dc' })
+        const bgp = result.checks.find(c => c.id === 'V-03')!
+        expect(bgp.severity, `${vendor}: ${bgp.detail}`).toBe('pass')
+      }
+    })
+
     it('Juniper GPU fabric passes GPU QoS (V-09) — RoCEv2 lossless emitted', () => {
       const devices = buildDeviceList({
         useCase: 'gpu', scale: 'small', siteCode: 'T', vendorPrefs: ['Juniper'],
