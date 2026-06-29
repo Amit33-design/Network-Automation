@@ -404,6 +404,24 @@ describe('config-validator', () => {
       expect(mtu.devices).toContain('LEAF-01')
     })
 
+    it('V-06: Extreme EXOS sysName is recognized as the hostname', () => {
+      const devices = buildDeviceList({
+        useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['Extreme Networks'],
+      })
+      const configs = generateAllConfigs(devices, 'dc')
+      const result = validateConfigs({ configs, devices, useCase: 'dc' })
+      expect(result.checks.find(c => c.id === 'V-06')!.severity).toBe('pass')
+    })
+
+    it('V-12: Dell OS10 emits a loopback interface (no false warn)', () => {
+      const devices = buildDeviceList({
+        useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['Dell EMC'],
+      })
+      const configs = generateAllConfigs(devices, 'dc')
+      const result = validateConfigs({ configs, devices, useCase: 'dc' })
+      expect(result.checks.find(c => c.id === 'V-12')!.severity).toBe('pass')
+    })
+
     it('V-12: NVIDIA Cumulus loopback (iface lo + placeholder IP) is not false-warned', () => {
       const devices = buildDeviceList({
         useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['NVIDIA'],

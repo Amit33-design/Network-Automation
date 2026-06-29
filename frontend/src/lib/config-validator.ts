@@ -95,7 +95,7 @@ function extractLoopbacks(configs: Record<string, string>): Map<string, string[]
 const RE_BGP = /router bgp\b|protocols bgp|\bbgp\s*\{|autonomous-system\s+\d+|configure bgp\b/i
 const RE_ISIS = /router isis|isis enable|protocols isis|\bisis\s*\{/i
 const RE_OSPF = /router ospf\s|ospf area|protocols ospf/i
-const RE_HOSTNAME = /\bhostname\s+\S+|host-name\s+\S+/i
+const RE_HOSTNAME = /\bhostname\s+\S+|host-name\s+\S+|sysName\s+\S+/i
 const RE_MGMT = /MANAGEMENT|ntp server|ntp\s*\{|logging host|logging\s*\{|remote-server|snmp-server|gnmi-server/i
 const RE_ROUTING_DEVICE = /router bgp|router ospf|router isis|protocols (?:bgp|ospf|isis)|\bbgp\s*\{|\bisis\s*\{|\bospf\s*\{/i
 
