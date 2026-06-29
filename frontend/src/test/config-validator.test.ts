@@ -381,6 +381,16 @@ describe('config-validator', () => {
       expect(bgp.severity).toBe('pass')
     })
 
+    it('Juniper GPU fabric passes GPU QoS (V-09) — RoCEv2 lossless emitted', () => {
+      const devices = buildDeviceList({
+        useCase: 'gpu', scale: 'small', siteCode: 'T', vendorPrefs: ['Juniper'],
+      })
+      const configs = generateAllConfigs(devices, 'gpu')
+      const result = validateConfigs({ configs, devices, useCase: 'gpu' })
+      const qos = result.checks.find(c => c.id === 'V-09')!
+      expect(qos.severity).toBe('pass')
+    })
+
     it('multi-vendor design has zero false-positive failures', () => {
       for (const vendor of ['Nokia', 'Juniper', 'Arista']) {
         const devices = buildDeviceList({
