@@ -1152,7 +1152,7 @@ as vendor-correct INCREMENTAL deltas with matching ROLLBACK. Distinct from
 **Key exports:**
 - `CliFamily` (`ios`/`junos`/`nokia`/`fortios`/`panos`), `cliFamily(vendor)`, `FAMILY_LABEL`.
 - `ChangeOperation` / `ChangeFieldSpec` / `RenderResult` types; `CHANGE_CATALOG` + `getChangeOp(id)`.
-- Change ops: **bgp-neighbor**, **bgp-route-policy** (prefix-list + route-map/policy), **firewall-rule** (ios/junos ACL + fortios/panos NGFW policy), **vlan** (+ SVI), **static-route** (+ VRF). Each `render(family, params)` returns `{commands, rollback}`.
+- Change ops (7): **bgp-neighbor**, **bgp-route-policy** (prefix-list + route-map/policy), **firewall-rule** (ios/junos ACL + fortios/panos NGFW policy), **vlan** (+ SVI), **static-route** (+ VRF), **mgmt-server** (NTP/syslog/SNMP host), **interface-config** (description/admin-state/access-VLAN). Each `render(family, params)` returns `{commands, rollback}`.
 - `validateChangeParams(op, params)` — missing required field labels.
 - `buildChangeSet(op, params, devices): ChangeSet` — per-device delta + rollback scoped to the selected live devices, each marked `supported` by role+family; `summary` total/supported/byFamily.
 - `changeSetToScript(cs)` / `changeSetRollbackScript(cs)` — copy/paste push + rollback runbooks (supported devices only).

@@ -165,6 +165,53 @@ describe('vlan + static-route render', () => {
   })
 })
 
+// ── Management server ─────────────────────────────────────────────────────────
+describe('mgmt-server render', () => {
+  const op = getChangeOp('mgmt-server')!
+  it('ios: ntp/syslog/snmp each with no-rollback', () => {
+    expect(op.render('ios', { service: 'ntp', server: '10.0.0.100' }).commands[0]).toBe('ntp server 10.0.0.100')
+    expect(op.render('ios', { service: 'syslog', server: '10.0.0.100' }).commands[0]).toBe('logging host 10.0.0.100')
+    const snmp = op.render('ios', { service: 'snmp', server: '10.0.0.100' })
+    expect(snmp.commands[0]).toContain('snmp-server host 10.0.0.100')
+    expect(snmp.rollback[0].startsWith('no ')).toBe(true)
+  })
+  it('junos/nokia: set + delete rollback', () => {
+    const j = op.render('junos', { service: 'ntp', server: '10.0.0.100' })
+    expect(j.commands[0]).toBe('set system ntp server 10.0.0.100')
+    expect(j.rollback[0]).toBe('delete system ntp server 10.0.0.100')
+    const n = op.render('nokia', { service: 'syslog', server: '10.0.0.100' })
+    expect(n.commands[0]).toContain('set / system logging remote-server 10.0.0.100')
+    expect(n.rollback[0]).toContain('delete / system logging remote-server')
+  })
+})
+
+// ── Interface config ──────────────────────────────────────────────────────────
+describe('interface-config render', () => {
+  const op = getChangeOp('interface-config')!
+  it('ios: description + no shutdown + access vlan, rollback inverts', () => {
+    const r = op.render('ios', { iface: 'Gi1/0/1', description: 'uplink', admin_state: 'up', access_vlan: '120' })
+    const t = r.commands.join('\n')
+    expect(t).toContain('interface Gi1/0/1')
+    expect(t).toContain(' description uplink')
+    expect(t).toContain(' no shutdown')
+    expect(t).toContain(' switchport access vlan 120')
+    const rb = r.rollback.join('\n')
+    expect(rb).toContain(' no description')
+    expect(rb).toContain(' shutdown')          // inverse of no shutdown
+    expect(rb).toContain(' no switchport access vlan')
+  })
+  it('ios down state rollback brings it back up', () => {
+    const r = op.render('ios', { iface: 'Gi1/0/2', admin_state: 'down' })
+    expect(r.commands.join('\n')).toContain(' shutdown')
+    expect(r.rollback.join('\n')).toContain(' no shutdown')
+  })
+  it('junos: set description + disable handling', () => {
+    const r = op.render('junos', { iface: 'ge-0/0/1', description: 'x', admin_state: 'down' })
+    expect(r.commands.join('\n')).toContain('set interfaces ge-0/0/1 disable')
+    expect(r.rollback.join('\n')).toContain('delete interfaces ge-0/0/1 disable')
+  })
+})
+
 // ── Change set ───────────────────────────────────────────────────────────────
 describe('buildChangeSet', () => {
   const op = getChangeOp('bgp-neighbor')!
