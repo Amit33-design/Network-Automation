@@ -524,13 +524,20 @@ function checkNonEmptyConfigs(configs: Record<string, string>): ValidationCheck 
   }
 }
 
+// Loopback *interface* presence across vendor syntaxes — Cisco/Arista
+// `interface Loopback0`, Junos `interfaces lo0`, Nokia `interface system0`,
+// Cumulus `iface lo` / `auto lo`. Detects the interface even when the address
+// is a `<CHANGE-ME>` placeholder (which `extractLoopbacks` — numeric-IP only —
+// would miss), so a routing device with a templated loopback isn't false-warned.
+const RE_LOOPBACK_IFACE = /interface [Ll]oopback\d*|interfaces? lo0\b|interface system0|iface lo\b|auto lo\b/
+
 function checkLoopbackPresence(configs: Record<string, string>): ValidationCheck {
   const loopbacks = extractLoopbacks(configs)
   const routingDevices = Object.entries(configs).filter(
     ([, cfg]) => RE_ROUTING_DEVICE.test(cfg),
   )
   const missingLo = routingDevices
-    .filter(([host]) => !loopbacks.has(host))
+    .filter(([host, cfg]) => !loopbacks.has(host) && !RE_LOOPBACK_IFACE.test(cfg))
     .map(([host]) => host)
 
   if (missingLo.length > 0) {
@@ -544,12 +551,15 @@ function checkLoopbackPresence(configs: Record<string, string>): ValidationCheck
     }
   }
 
+  const withLoopback = routingDevices.filter(
+    ([host, cfg]) => loopbacks.has(host) || RE_LOOPBACK_IFACE.test(cfg),
+  ).length
   return {
     id: 'V-12',
     name: 'Loopback interfaces',
     category: 'Routing',
     severity: 'pass',
-    detail: `${loopbacks.size} device(s) with loopback interfaces configured`,
+    detail: `${withLoopback} routing device(s) with loopback interfaces configured`,
   }
 }
 
