@@ -24,6 +24,7 @@ import { RcaPanel } from '@/components/RcaPanel'
 import { LiveProgressFeed } from '@/components/LiveProgressFeed'
 import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory, INTERVAL_PRESETS, type WatcherConfig, type ScanType, type ScanAction, type ScanHistoryEntry } from '@/lib/scheduled-scans'
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
+import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2734,6 +2735,14 @@ export function Step6Deploy() {
     return allDevices.map(d => ({ name: d.name, role: d.role }))
   }, [deviceSource, netboxDevices, storeDevices, allDevices])
 
+  // R2: enterprise ZTP plan — identify every BOM device (vendor/model/role →
+  // platform + ZTP method) and pair it with its Day-N production config.
+  const ztpPlan: ZTPPlan | null = useMemo(() => {
+    if (storeDevices.length === 0) return null
+    return buildZTPPlan(storeDevices, storeConfigs)
+  }, [storeDevices, storeConfigs])
+  const [ztpDay0View, setZtpDay0View] = useState<string | null>(null)
+
   // Auto-tick demo metrics every 15 s when on monitor tab and backend offline
   useEffect(() => {
     if (tab !== 'monitor' || isLive) return
@@ -3410,6 +3419,108 @@ export function Step6Deploy() {
                 </Card>
               ))}
             </div>
+          )}
+
+          {ztpPlan && (
+            <Card>
+              <CardHeader>
+                <CardTitle>🏭 Enterprise ZTP Plan — vendor-aware identify &amp; provision</CardTitle>
+              </CardHeader>
+              <p className="text-xs text-gray-500 mb-3">
+                Each device is identified by vendor + hardware model + role, mapped to its
+                native ZTP mechanism, and bound to its Day-0 bootstrap and Day-N production config.
+              </p>
+
+              {/* Summary chips: ZTP method + role distribution */}
+              <div className="flex flex-wrap gap-2 mb-3">
+                {Object.entries(ztpPlan.summary.byMethod).map(([m, n]) => (
+                  <span key={m} className="px-2 py-1 rounded-full text-xs bg-blue-600/20 border border-blue-500/40 text-blue-300">
+                    {m}: {n}
+                  </span>
+                ))}
+                <span className="px-2 py-1 rounded-full text-xs bg-green-600/20 border border-green-500/40 text-green-300">
+                  Day-N config ready: {ztpPlan.summary.withDayN}/{ztpPlan.summary.total}
+                </span>
+              </div>
+
+              {/* Per-device identification table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-gray-500 border-b border-white/10">
+                      <th className="text-left py-1.5 px-2">Hostname</th>
+                      <th className="text-left py-1.5 px-2">Vendor</th>
+                      <th className="text-left py-1.5 px-2">Model</th>
+                      <th className="text-left py-1.5 px-2">Role</th>
+                      <th className="text-left py-1.5 px-2">Platform</th>
+                      <th className="text-left py-1.5 px-2">ZTP Method</th>
+                      <th className="text-left py-1.5 px-2">DHCP opt-60</th>
+                      <th className="text-left py-1.5 px-2">Day-N</th>
+                      <th className="text-left py-1.5 px-2">Day-0</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ztpPlan.entries.slice(0, 40).map(e => (
+                      <tr key={e.identity.id} className="border-b border-white/5 hover:bg-white/5">
+                        <td className="py-1.5 px-2 text-gray-200 font-medium">{e.identity.hostname}</td>
+                        <td className="py-1.5 px-2 text-gray-400">{e.identity.vendor}</td>
+                        <td className="py-1.5 px-2 text-gray-400">{e.identity.model}</td>
+                        <td className="py-1.5 px-2 text-gray-400">{e.identity.roleLabel}</td>
+                        <td className="py-1.5 px-2 text-gray-400">{e.identity.platform}</td>
+                        <td className="py-1.5 px-2"><span className="text-blue-300">{e.identity.method}</span></td>
+                        <td className="py-1.5 px-2 text-gray-500">{e.identity.dhcpVendorClass}</td>
+                        <td className="py-1.5 px-2">
+                          {e.hasDayN
+                            ? <span className="text-green-400">✓</span>
+                            : <span className="text-gray-600">—</span>}
+                        </td>
+                        <td className="py-1.5 px-2">
+                          <button
+                            className="text-blue-400 hover:underline cursor-pointer"
+                            onClick={() => setZtpDay0View(ztpDay0View === e.identity.id ? null : e.identity.id)}
+                          >
+                            {ztpDay0View === e.identity.id ? 'hide' : 'view'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {ztpPlan.entries.length > 40 && (
+                <p className="text-xs text-gray-600 mt-1">Showing first 40 of {ztpPlan.entries.length} devices.</p>
+              )}
+
+              {/* Day-0 viewer */}
+              {ztpDay0View && (() => {
+                const e = ztpPlan.entries.find(x => x.identity.id === ztpDay0View)
+                if (!e) return null
+                return (
+                  <div className="mt-3">
+                    <div className="text-xs text-gray-400 mb-1">
+                      Day-0 management-plane bootstrap — {e.identity.hostname} ({e.identity.method})
+                    </div>
+                    <pre className="bg-black/40 border border-white/10 rounded p-3 text-xs text-green-300 overflow-x-auto max-h-72">{e.day0}</pre>
+                    <button
+                      className="mt-1 text-xs text-blue-400 hover:underline cursor-pointer"
+                      onClick={() => { downloadBlob(`${e.identity.hostname}-day0.cfg`, e.day0); showToast('Day-0 config downloaded', 'success') }}
+                    >⬇ Download Day-0 config</button>
+                  </div>
+                )
+              })()}
+
+              {/* Artifact downloads */}
+              <div className="flex flex-wrap gap-2 mt-4">
+                <Button variant="secondary" className="text-xs"
+                  onClick={() => { downloadBlob('ztp-dhcpd.conf', generateDhcpConfig(ztpPlan.entries.map(e => e.identity), { ztpServerIp: '<CHANGE-ME-ztp-server-ip>' })); showToast('Multi-vendor DHCP config downloaded', 'success') }}>
+                  ⬇ DHCP config (option-60 multi-vendor)
+                </Button>
+                <Button variant="secondary" className="text-xs"
+                  onClick={() => { downloadBlob('ztp-plan.csv', ztpPlanToCsv(ztpPlan)); showToast('ZTP plan CSV downloaded', 'success') }}>
+                  ⬇ Provisioning manifest (CSV)
+                </Button>
+              </div>
+            </Card>
           )}
 
           {bomDevices.length > 0 && (
