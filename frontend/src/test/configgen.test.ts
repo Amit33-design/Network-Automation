@@ -815,3 +815,47 @@ describe('Arista campus config (EOS distribution/access)', () => {
     expect(cfg).toContain('CHANGE-ME')
   })
 })
+
+describe('Fortinet FortiSwitch campus config', () => {
+  it('distribution generates FortiSwitchOS config with VRRP + OSPF', () => {
+    const dev = makeDevice({ hostname: 'CAMPUS-DIST-A01', vendor: 'Fortinet', subLayer: 'distribution', model: 'FortiSwitch T1024E' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('config system global')
+    expect(cfg).toContain('config vrrp')
+    expect(cfg).toContain('config router ospf')
+    expect(cfg).toContain('config switch vlan')
+    // distribution is STP root-ish (low priority)
+    expect(cfg).toContain('set priority 4096')
+  })
+
+  it('access generates L2 FortiSwitchOS config with PoE + 802.1X', () => {
+    const dev = makeDevice({ hostname: 'CAMPUS-ACC-A01', vendor: 'Fortinet', subLayer: 'access', model: 'FortiSwitch 148F-POE' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('config switch interface')
+    expect(cfg).toContain('set poe-status enable')
+    expect(cfg).toContain('set security-mode 802.1X')
+    expect(cfg).toContain('set stp-bpdu-guard enabled')
+    // access does NOT run OSPF
+    expect(cfg).not.toContain('config router ospf')
+  })
+
+  it('does NOT fall through to the genericConfig stub', () => {
+    const dist = generateConfig(makeDevice({ vendor: 'Fortinet', subLayer: 'distribution', model: 'FortiSwitch T1024E' }), 0)
+    const acc = generateConfig(makeDevice({ vendor: 'Fortinet', subLayer: 'access', model: 'FortiSwitch 148F-POE' }), 1)
+    expect(dist).not.toContain('TODO: Add')
+    expect(acc).not.toContain('TODO: Add')
+  })
+
+  it('adds voice VLAN only when voice app type is selected', () => {
+    const withVoice = generateConfig(makeDevice({ vendor: 'Fortinet', subLayer: 'access' }), 0, 'campus', ['voice'])
+    const without = generateConfig(makeDevice({ vendor: 'Fortinet', subLayer: 'access' }), 0, 'campus', [])
+    expect(withVoice).toContain('set voice-vlan 20')
+    expect(without).not.toContain('set voice-vlan 20')
+  })
+
+  it('uses CHANGE-ME placeholders, no hardcoded secrets', () => {
+    const cfg = generateConfig(makeDevice({ vendor: 'Fortinet', subLayer: 'distribution' }), 0)
+    expect(cfg).toContain('<CHANGE-ME-admin-password>')
+    expect(cfg).toContain('<CHANGE-ME-snmp-auth-pass>')
+  })
+})

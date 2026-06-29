@@ -536,6 +536,15 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   system global hardening, admin, interfaces (mgmt/port1/port2), static
   route, DNS, syslog, NTP, SNMPv3, firewall policies (Allow-Outbound,
   Deny-Inbound), IPS sensor.
+- **`fortinetCampusConfig(dev, idx, appTypes = []): string`** *(Q2,
+  2026-06-29)* — FortiSwitchOS 7.x `config … end` for FortiSwitch
+  distribution/access (previously fell through to `genericConfig`).
+  Distribution: VLAN db, MSTP root (priority 4096), L3 SVIs with **VRRP**
+  first-hop redundancy, **OSPF** area 0 + BFD uplinks, FortiLink downlink
+  trunks. Access: L2-only (static default GW via dist VRRP VIP), PoE+ +
+  **802.1X** + BPDU-guard edge ports, uplink trunk. Voice VLAN (20) is
+  emitted only when `appTypes` includes `voice`. Shared: SNMPv3, syslog,
+  NTP, storm-control, LLDP.
 
 ### WAN
 - **`iosxeWanConfig(dev, idx): string`** — Cisco WAN-edge ROUTER (not a
@@ -730,8 +739,9 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   `iosxeCampusConfig(dev, idx, appTypes)`. Arista `distribution`/`access` →
   `aristaCampusConfig`. Juniper `distribution`/`access` →
   `juniperCampusConfig`; `firewall` → `juniperSrxConfig`; `wan-edge` →
-  `juniperWanConfig`. Nokia `spine`/`leaf` → `nokiaSrLinuxConfig`. The
-  Cisco/Arista spine and leaf
+  `juniperWanConfig`. Nokia `spine`/`leaf` → `nokiaSrLinuxConfig`. Fortinet
+  `firewall` → `fortinetFirewallConfig`; `distribution`/`access` →
+  `fortinetCampusConfig` (Q2). The Cisco/Arista spine and leaf
   branches (`nxosSpineConfig`, `nxosLeafConfig`, `aristaSpineConfig`,
   `aristaLeafConfig`) receive `allDevices` so they can compute
   topology-driven CLOS fabric links via

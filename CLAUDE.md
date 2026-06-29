@@ -831,6 +831,7 @@ config-gen tests must keep passing; add new tests alongside).
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | Q1 | Vendor-specific config generators + dispatch wiring — `nokiaSrLinuxConfig` (YANG-style: system, ISIS, BGP/EVPN, mac-vrf, VXLAN), `juniperCampusConfig` (EX dist: VLANs, VRRP, OSPF, RSTP; access: trunk, RSTP portfast), `juniperSrxConfig` (SRX: security zones TRUST/UNTRUST/DMZ, policies, IPS, NAT, HA cluster), `juniperWanConfig` (MX: OSPF, BGP, MPLS/LDP, BFD), `aristaCampusConfig` (EOS dist: VLANs, virtual-router, OSPF; access: switchport, RSTP); dispatch in `generateConfig()` updated; 15 new tests | [x] | configgen.ts: 5 new generators + dispatch routes; configgen.test.ts: 78→93 tests |
+| Q2 | Fortinet FortiSwitch campus config generator — the Q1/P1 catalog has FortiSwitch T1024E (distribution) + 148F-POE (access) and `VENDOR_PRODUCT_MAP.Fortinet.campus` assigns them, but `generateConfig()` only handled `Fortinet && firewall` → FortiSwitch campus devices fell through to the `genericConfig` TODO stub. Add `fortinetCampusConfig(dev, idx, appTypes)` (FortiSwitchOS 7.x `config … end`: system/admin/DNS/syslog/NTP/SNMPv3, VLAN db, MSTP, dist L3 SVIs+VRRP+OSPF/BFD, access L2 PoE+/802.1X/BPDU-guard, voice VLAN gated on `appTypes`, storm-control, LLDP); dispatch wired for distribution/access; 5 new tests | [x] | configgen.ts: `fortinetCampusConfig` + dispatch; configgen.test.ts: 93→98 tests |
 
 ---
 
