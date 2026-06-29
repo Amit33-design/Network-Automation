@@ -1306,10 +1306,29 @@ set interfaces et-0/0/1 mtu 9216
 ${v6Block}${roceBlock}`
 }
 
-function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], needsRoce = false): string {
+// Junos storage lossless block for DC fabrics carrying NVMe-oF/iSCSI/FCoE.
+// Priority-6 no-drop class via PFC (separate from RoCEv2 priority 3). Emitted
+// for the `storage` app type when the RoCE block isn't already present (the
+// RoCE block already defines a STORAGE no-loss class for GPU fabrics).
+function juniperStorageBlock(): string {
+  return `
+!
+# ── Storage lossless (NVMe-oF / iSCSI / FCoE — PFC priority 6 no-drop) ──────
+set class-of-service forwarding-classes class STORAGE queue-num 5 no-loss
+set class-of-service classifiers dscp STORAGE-DSCP forwarding-class STORAGE loss-priority low code-points 110000
+set class-of-service congestion-notification-profile STORAGE-PFC input dscp code-point 110000 pfc
+set class-of-service interfaces et-* unit 0 classifiers dscp STORAGE-DSCP
+set class-of-service interfaces et-* congestion-notification-profile STORAGE-PFC
+`
+}
+
+function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], needsRoce = false, appTypes: AppType[] = []): string {
   const leafAsn = 65001 + idx
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
   const roceBlock = needsRoce ? juniperRoceBlock() : ''
+  // Storage lossless only when the RoCE block (which already has a STORAGE
+  // class) isn't present, to avoid a duplicate forwarding-class definition.
+  const storageBlock = (!needsRoce && appTypes.includes('storage')) ? juniperStorageBlock() : ''
   const v6Block = ipv6 ? `
 !
 # ── IPv6 dual-stack underlay (IS-IS multi-topology) ────────────────────────
@@ -1399,7 +1418,7 @@ set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 then accept
 # ── MTU ───────────────────────────────────────────────────────────────────────
 set interfaces et-0/0/0 mtu 9216
 set interfaces et-0/0/1 mtu 9216
-${dciBlock}${v6Block}${roceBlock}`
+${dciBlock}${v6Block}${roceBlock}${storageBlock}`
 }
 
 // ── Cisco Firewall (Zone-Based / FTD intent) ──────────────────────────────────
@@ -2935,8 +2954,28 @@ configure virtual-network "VNI-10001" add vlan Data`}
 
 // ── Nokia SR Linux Config ───────────────────────────────────────────────────
 
-function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = []): string {
+function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], appTypes: AppType[] = []): string {
   const isSpine = dev.subLayer === 'spine'
+  // Storage lossless (NVMe-oF/iSCSI) — PFC priority-6 no-drop, leaf only.
+  const storageBlock = (!isSpine && appTypes.includes('storage')) ? `
+
+    # ── Storage lossless QoS (NVMe-oF / iSCSI — PFC priority 6 no-drop) ─────
+    qos {
+        forwarding-classes {
+            forwarding-class storage {
+                forwarding-class-index 6
+            }
+        }
+        interfaces {
+            interface ethernet-1/1 {
+                output {
+                    pfc {
+                        priority [ 6 ]
+                    }
+                }
+            }
+        }
+    }` : ''
   const asn = isSpine ? 65000 : 65001 + idx
   const lo0ip = isSpine ? `10.255.1.${idx + 1}` : `10.255.2.${idx + 1}`
   const role = isSpine ? 'Spine (Route-Reflector)' : 'Leaf (ToR / VTEP)'
@@ -3129,7 +3168,7 @@ ${bgpNeighbors}
             }
         }
     }
-${evpnBlock}
+${evpnBlock}${storageBlock}
 `
 }
 
@@ -4448,11 +4487,11 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
   if (v === 'Arista'    && (l === 'distribution' || l === 'access')) return aristaCampusConfig(dev, idx)
   if (v === 'Juniper'   && l === 'spine')                            return juniperSpineConfig(dev, idx, protoFeatures, needsRoce)
-  if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures, needsRoce)
+  if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures, needsRoce, appTypes)
   if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx)
   if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
   if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx)
-  if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite', protoFeatures)
+  if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite', protoFeatures, appTypes)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
   if (v === 'Fortinet'  && (l === 'distribution' || l === 'access')) return fortinetCampusConfig(dev, idx, appTypes)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)

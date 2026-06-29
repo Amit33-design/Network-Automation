@@ -351,6 +351,36 @@ describe('Juniper GPU RoCEv2 lossless fabric', () => {
   })
 })
 
+// Storage lossless (NVMe-oF/iSCSI) appType parity — Juniper + Nokia DC leaves
+// must emit a PFC priority-6 no-drop storage class when the storage app type
+// is set, matching nxosStorageBlock/aristaStorageBlock.
+describe('Storage lossless appType — Juniper + Nokia', () => {
+  it('Juniper leaf emits a storage class only when storage app type is set', () => {
+    const dev = makeDevice({ vendor: 'Juniper', subLayer: 'leaf' })
+    const withStorage = generateConfig(dev, 0, 'dc', ['storage'])
+    const without = generateConfig(dev, 0, 'dc', [])
+    expect(withStorage).toContain('STORAGE-PFC')
+    expect(withStorage).toContain('class STORAGE')
+    expect(without).not.toContain('STORAGE-PFC')
+  })
+
+  it('Juniper GPU leaf does not double-define STORAGE (RoCE block already has it)', () => {
+    const cfg = generateConfig(makeDevice({ vendor: 'Juniper', subLayer: 'leaf' }), 0, 'gpu', ['storage'])
+    // exactly one STORAGE forwarding-class definition
+    const count = (cfg.match(/forwarding-classes class STORAGE/g) ?? []).length
+    expect(count).toBe(1)
+  })
+
+  it('Nokia leaf emits storage PFC only when storage app type is set', () => {
+    const dev = makeDevice({ vendor: 'Nokia', subLayer: 'leaf' })
+    const withStorage = generateConfig(dev, 0, 'dc', ['storage'])
+    const without = generateConfig(dev, 0, 'dc', [])
+    expect(withStorage).toContain('forwarding-class storage')
+    expect(withStorage).toMatch(/pfc/i)
+    expect(without).not.toContain('forwarding-class storage')
+  })
+})
+
 // ── Enterprise upgrade A1/A2: MLAG / vPC HA-pair pairing ──────────────────────
 describe('vPC / MLAG HA-pair config (Enterprise upgrade A1/A2)', () => {
   it('NX-OS leaf pair (idx 0 & 1) share the same vPC domain', () => {
