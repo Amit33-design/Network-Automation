@@ -516,3 +516,90 @@ export function changeSetRollbackScript(cs: ChangeSet): string {
   }
   return lines.join('\n')
 }
+
+// ── Pre-flight safety analysis ──────────────────────────────────────────────
+
+export type ChangeWarnSeverity = 'info' | 'warn' | 'danger'
+
+export interface ChangeWarning {
+  severity: ChangeWarnSeverity
+  message: string
+  devices?: string[]
+}
+
+const FABRIC_ROLES = ['spine', 'leaf', 'core', 'super-spine', 'border']
+
+/**
+ * Pre-flight safety check on a change set, surfaced before the operator pushes.
+ * Flags skipped devices, unfilled `<CHANGE-ME>` placeholders, irreversible
+ * (no-rollback) changes, and a couple of genuinely risky patterns
+ * (shutting a fabric interface, a broad deny-any firewall rule).
+ */
+export function analyzeChangeSet(cs: ChangeSet): ChangeWarning[] {
+  const warnings: ChangeWarning[] = []
+  const supported = cs.devices.filter(d => d.supported)
+
+  // 1. Skipped devices (role/vendor not applicable).
+  const skipped = cs.devices.filter(d => !d.supported)
+  if (skipped.length) {
+    warnings.push({
+      severity: 'info',
+      message: `${skipped.length} selected device(s) will be skipped — ${cs.op.label} doesn't apply to their role/vendor.`,
+      devices: skipped.map(d => d.device.hostname),
+    })
+  }
+
+  // 2. Unfilled placeholders in the generated commands.
+  const withPlaceholder = supported
+    .filter(d => d.commands.some(c => c.includes('<CHANGE-ME')))
+    .map(d => d.device.hostname)
+  if (withPlaceholder.length) {
+    warnings.push({
+      severity: 'warn',
+      message: `Generated commands still contain <CHANGE-ME-*> placeholders — fill every parameter before deploying.`,
+      devices: withPlaceholder,
+    })
+  }
+
+  // 3. Irreversible — supported device with no rollback.
+  const noRollback = supported.filter(d => d.rollback.length === 0).map(d => d.device.hostname)
+  if (noRollback.length) {
+    warnings.push({
+      severity: 'danger',
+      message: `${noRollback.length} device(s) have no generated rollback — this change cannot be auto-reverted.`,
+      devices: noRollback,
+    })
+  }
+
+  // 4. Risky: shutting an interface on a fabric device may isolate it.
+  if (cs.op.id === 'interface-config' && (cs.params.admin_state ?? '').toLowerCase() === 'down') {
+    const fabric = supported
+      .filter(d => FABRIC_ROLES.some(r => (d.device.subLayer || '').toLowerCase().includes(r)))
+      .map(d => d.device.hostname)
+    if (fabric.length) {
+      warnings.push({
+        severity: 'danger',
+        message: `Admin-down on a fabric interface (${cs.params.iface}) can isolate a spine/leaf/core device — verify it's not an active uplink.`,
+        devices: fabric,
+      })
+    }
+  }
+
+  // 5. Risky: broad deny-any firewall rule could block management.
+  if (cs.op.id === 'firewall-rule'
+    && (cs.params.action ?? '').toLowerCase() === 'deny'
+    && isAny(cs.params.source) && isAny(cs.params.destination)) {
+    warnings.push({
+      severity: 'danger',
+      message: `Broad "deny any → any" rule — confirm it won't lock out management/SSH access.`,
+      devices: supported.map(d => d.device.hostname),
+    })
+  }
+
+  return warnings
+}
+
+function isAny(addr?: string): boolean {
+  const a = (addr ?? '').trim().toLowerCase()
+  return a === 'any' || a === '0.0.0.0/0' || a === ''
+}
