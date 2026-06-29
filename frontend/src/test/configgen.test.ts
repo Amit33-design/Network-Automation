@@ -250,6 +250,26 @@ describe('generateConfig — core functionality', () => {
     expect(cfg).toContain('set system host-name TST-LEAF-B01')
     expect(cfg).toContain('set protocols evpn')
   })
+
+  it('juniper SPINE gets a distinct spine config (not the leaf template)', () => {
+    const spine = generateConfig(makeDevice({ hostname: 'TST-SPINE-B01', vendor: 'Juniper', subLayer: 'spine' }), 0)
+    // spine identity + loopback in the spine range, not leaf
+    expect(spine).toContain('DC Spine')
+    expect(spine).toContain('10.255.1.1/32')
+    expect(spine).not.toContain('10.255.2.1/32')
+    // spine is the RR (AS 65000) peering DOWN to leaves, and is NOT a VTEP
+    expect(spine).toContain('set routing-options autonomous-system 65000')
+    expect(spine).toContain('set protocols bgp group LEAVES')
+    expect(spine).not.toContain('vtep-source-interface')
+  })
+
+  it('juniper leaf remains a VTEP with leaf loopback range', () => {
+    const leaf = generateConfig(makeDevice({ hostname: 'TST-LEAF-B01', vendor: 'Juniper', subLayer: 'leaf' }), 0)
+    expect(leaf).toContain('DC Leaf')
+    expect(leaf).toContain('10.255.2.1/32')
+    expect(leaf).toContain('vtep-source-interface lo0.0')
+    expect(leaf).toContain('set protocols bgp group SPINE-RR')
+  })
 })
 
 // ── Enterprise upgrade A1/A2: MLAG / vPC HA-pair pairing ──────────────────────

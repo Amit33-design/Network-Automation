@@ -517,11 +517,18 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   collector ingest).
 
 ### Juniper JunOS
-- **`juniperLeafConfig(dev, idx): string`** — set-style config, used for
-  BOTH `leaf` and `spine` (no separate Juniper spine generator exists
-  yet). `leafAsn = 65001+idx`, `lo0ip = 10.255.2.${idx+1}`. IS-IS level 2
-  with auth key, BGP group `SPINE-RR` (external), EVPN/VXLAN with
+- **`juniperLeafConfig(dev, idx): string`** — set-style **leaf** config
+  (`leaf` only since Q3). `leafAsn = 65001+idx`, `lo0ip = 10.255.2.${idx+1}`.
+  IS-IS level 2 with auth key, BGP group `SPINE-RR` (external, peers UP to
+  spines), EVPN/VXLAN VTEP with `vtep-source-interface lo0.0` +
   `vrf-target target:65000:1`.
+- **`juniperSpineConfig(dev, idx): string`** *(Q3, 2026-06-29)* — set-style
+  **spine** config (previously both spine+leaf wrongly used the leaf
+  template). Role "DC Spine (EVPN route-reflector / underlay)",
+  `lo0ip = 10.255.1.${idx+1}`, `autonomous-system 65000`, BGP group `LEAVES`
+  (external, multipath, `family evpn signaling`, peers DOWN to leaves with
+  per-leaf `peer-as`), IS-IS level 2. **Not a VTEP** — no
+  `vtep-source-interface`/`vrf-target`.
 
 ### Firewalls
 - **`ciscoFirewallConfig(dev, idx): string`** — IOS-XE Zone-Based Firewall:
@@ -737,7 +744,8 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   DC fabrics always get lossless QoS; Cisco/Arista only when
   `useCase==='gpu'`. Cisco `distribution`/`access` →
   `iosxeCampusConfig(dev, idx, appTypes)`. Arista `distribution`/`access` →
-  `aristaCampusConfig`. Juniper `distribution`/`access` →
+  `aristaCampusConfig`. Juniper `spine` → `juniperSpineConfig`, `leaf` →
+  `juniperLeafConfig` (split in Q3); `distribution`/`access` →
   `juniperCampusConfig`; `firewall` → `juniperSrxConfig`; `wan-edge` →
   `juniperWanConfig`. Nokia `spine`/`leaf` → `nokiaSrLinuxConfig`. Fortinet
   `firewall` → `fortinetFirewallConfig`; `distribution`/`access` →
