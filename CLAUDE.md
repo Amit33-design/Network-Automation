@@ -701,6 +701,7 @@ config-gen tests must keep passing; add new tests alongside).
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | D1 | HLD diagram + design summary reflect computed topology (MLAG pairs, FHRP VIPs, DCI links) once A1–A3 land | [x] (`e3492a7`) | `pairInfo()` + node annotations/peer-links in `HLDTopologyDiagram.tsx`; `genComputedTopology()` + summary card in `Step4NetworkDesign.tsx`; exported `haPairInfo`/`DCI_RT_ASN` from `configgen.ts` |
+| D2 | LLD diagram vendor-awareness — the LLD builders (`buildCampusLLD`, `buildWANLLD`) received the BOM `devices` array but ignored it (`_devices`) and hardcoded Cisco SKUs (C9500/C9300/ASR), so picking Juniper/Arista/Nokia showed wrong hardware in the Low-Level Design (inconsistent with the HLD, which already derives from BOM per E3). Add shared `bomRole(devices, subLayer, fallback)` helper; campus core/distribution/access/wan-edge + WAN PE routers now derive vendor/model/hostname from the BOM (fallback to the Cisco defaults only when the BOM lacks that role); 5 new tests | [x] | `LLDTopologyDiagram.tsx`; new `test/LLDTopologyDiagram.test.tsx` (5) |
 
 ### E. Dead-code / consistency cleanup (sourced 2026-06-18 — §20+§22 A–D exhausted)
 

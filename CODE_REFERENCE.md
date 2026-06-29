@@ -1759,12 +1759,12 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
 - Internal types: `LLDInterface` (name, ip, vlan?, mac?, speed?), `LLDNode` (id, hostname, model, tier, vendor, interfaces[], configLines[], services[], specs, haRole?, x/y/w/h, color/border/textColor, icon), `LLDLink` (id, from, to, fromPort, toPort, speed, vlan?, subnet?, protocol, isDashed?), `LLDZone` (id, label, sublabel, yStart/yEnd, fill, stroke), `CablingEntry` (server, serverPort, ipv4, switchPort, mgmtPort, vlan), `LLDTopo` (nodes, links, zones, cabling, title, subtitle, svgH)
 - Layout constants: `SVG_W=1400`, `LEFT_W=160`, `RIGHT_PAD=16`, `CONTENT_W = SVG_W - LEFT_W - RIGHT_PAD`
 - `TIER_STYLE` maps tier names (internet, dmz, internal, loadbalancer, server, application, database, wan, core, distribution, access, endpoint, spine, leaf, gpu, storage, oob, cloud, transit, spoke, branch) → `{ color, border, textColor }`
-- Helpers: `sty(tier)`, `xCenter(count, gap, nodeW)`, `mkNode(...)`, `mkLink(...)`, `lldLinkPath(n1, n2, isDashed?)`
+- Helpers: `sty(tier)`, `xCenter(count, gap, nodeW)`, `bomRole(devices, subLayer, fallback)` *(D2 — derives `{vendor(i), model(i), name(i), count}` for the i-th BOM device of a role so LLD nodes reflect the selected vendor, with Cisco-default fallback)*, `mkNode(...)`, `mkLink(...)`, `lldLinkPath(n1, n2, isDashed?)`
 - **7 per-use-case topology builders** (each returns `LLDTopo`):
   - `buildDCLLD` — Internet → Firewall HA (PA-5450) → Core/Edge routers → F5 LB cluster → 3× Web Servers → API GW + App Server + Database; mirrors the reference datacenter LLD image
-  - `buildCampusLLD` — WAN Edge (ASR pair) → Core VSS (C9500 HSRP) → 4× Distribution MLAG → 4× Access 802.1X/PoE+ → 5× Endpoints (PC, Phone, AP, Printer, Server)
+  - `buildCampusLLD` — WAN Edge pair → Core VSS (HSRP) → 4× Distribution MLAG → 4× Access 802.1X/PoE+ → 5× Endpoints (PC, Phone, AP, Printer, Server). **D2:** core/dist/access/wan-edge vendor+model+hostname derived from the BOM (Cisco SKUs are fallback only)
   - `buildGPULLD` — OOB MGMT → 2× GPU Spine (SN4800) → 4× GPU Leaf/ToR (SN4600C MLAG) → 4× DGX A100 servers → 2× NVMe-oF storage; PFC P3, ECN, DCQCN detail
-  - `buildWANLLD` — SP Backbone → HQ PE pair (BGP RR, MPLS, SR-MPLS) → 3× WAN CPE → 3× Branch routers → 3× Branch endpoints; QoS DSCP 6-class, L3VPN, SD-WAN
+  - `buildWANLLD` — SP Backbone → HQ PE pair (BGP RR, MPLS, SR-MPLS) → 3× WAN CPE → 3× Branch routers → 3× Branch endpoints; QoS DSCP 6-class, L3VPN, SD-WAN. **D2:** HQ PE-router vendor+model+hostname derived from the BOM `wan-edge` devices
   - `buildMultisiteLLD` — Site A + Site B with DCI GW pair, EVPN Type-5 stretched RT 65100, per-site spine/leaf/server with vPC domains
   - `buildMulticloudLLD` — On-prem spine pair → AWS DirectConnect + Azure ExpressRoute + GCP Cloud Interconnect → VPCs/VNets → Cloud workloads (EC2/AKS/GKE)
   - `buildAviatrixLLD` — DC Edge pair → Aviatrix Transit GWs (AWS/Azure/GCP) with multi-cloud peering → Spoke GWs with network segmentation → Cloud workloads
@@ -1777,6 +1777,8 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
 - Used by `Step4NetworkDesign.tsx` (LLD tab, added alongside HLD).
 - No external graph libraries (pure SVG/JSX) — per Implementation Rule 9.
 - Complements the HLD diagram: HLD shows network-wide topology flow; LLD shows per-device implementation detail.
+- **Tests:** `test/LLDTopologyDiagram.test.tsx` (5) — D2 vendor-awareness (campus dist/access + WAN PE derive from BOM; Cisco fallback when role absent).
+- **Remaining hardcoders (not yet BOM-derived):** `buildDCLLD` (app-tier FW/router/LB/server shape — no clean spine/leaf role mapping), `buildMultisiteLLD`, `buildMulticloudLLD` (cloud-native nodes), `buildAviatrixLLD`, `buildORANLLD` (partly derived). Future D-series work if multi-vendor parity is needed there.
 
 ---
 

@@ -127,6 +127,23 @@ function xCenter(count: number, gap: number, nodeW: number): number[] {
   return Array.from({ length: count }, (_, i) => start + i * (nodeW + gap))
 }
 
+// Derive the actual BOM hardware (vendor/model/hostname) for the i-th device
+// of a given role, so LLD nodes reflect the user's vendor selection instead of
+// a hardcoded Cisco model. Falls back to the supplied defaults when the BOM has
+// no device for that role (mirrors the GPU LLD / HLD vendor-derivation pattern).
+function bomRole(
+  devices: BOMDevice[], subLayer: string,
+  fallback: { vendor: string; model: string; name: (i: number) => string },
+) {
+  const matches = devices.filter(d => d.subLayer === subLayer)
+  return {
+    vendor: (i: number) => matches[i]?.vendor ?? fallback.vendor,
+    model: (i: number) => matches[i]?.model ?? fallback.model,
+    name: (i: number) => matches[i]?.hostname ?? fallback.name(i),
+    count: matches.length,
+  }
+}
+
 function mkNode(
   id: string, hostname: string, model: string, tier: string, vendor: string,
   x: number, y: number, w: number, h: number,
@@ -352,9 +369,15 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
 // ─── Campus LLD ───────────────────────────────────────────────────────────────
 
-function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
+function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const NW = 190
   const Y = { wan: 60, core: 200, dist: 370, access: 530, hosts: 700 }
+
+  // Reflect the BOM's actual vendor/model for the campus L2/L3 switching tiers.
+  const coreRole = bomRole(devices, 'core', { vendor: 'Cisco', model: 'C9500-32QC', name: i => `CORE-SW-0${i + 1}` })
+  const distRole = bomRole(devices, 'distribution', { vendor: 'Cisco', model: 'C9500-48Y4C', name: i => `DIST-SW-0${i + 1}` })
+  const accRole = bomRole(devices, 'access', { vendor: 'Cisco', model: 'C9300-48P', name: i => `ACC-SW-0${i + 1}` })
+  const wanRole = bomRole(devices, 'wan-edge', { vendor: 'Cisco', model: 'ASR-1001X', name: i => `WAN-RTR-0${i + 1}` })
 
   const zones: LLDZone[] = [
     { id: 'z-wan', label: 'WAN EDGE', sublabel: 'Dual ISP · BGP eBGP · BFD',
@@ -370,7 +393,7 @@ function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   ]
 
   const [w1x, w2x] = xCenter(2, 200, NW)
-  const wan1 = mkNode('wan1', 'WAN-RTR-01', 'ASR-1001X', 'wan', 'Cisco', w1x, Y.wan, NW, 100, {
+  const wan1 = mkNode('wan1', wanRole.name(0), wanRole.model(0), 'wan', wanRole.vendor(0), w1x, Y.wan, NW, 100, {
     haRole: 'active', icon: '🌐',
     interfaces: [
       { name: 'Gi0/0/0', ip: '203.0.113.1/30', vlan: 'ISP-A' },
@@ -380,7 +403,7 @@ function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     configLines: ['BGP AS65000', 'OSPF Area 0', 'BFD multihop'],
     services: ['BGP eBGP', 'OSPF', 'BFD'],
   })
-  const wan2 = mkNode('wan2', 'WAN-RTR-02', 'ASR-1001X', 'wan', 'Cisco', w2x, Y.wan, NW, 100, {
+  const wan2 = mkNode('wan2', wanRole.name(1), wanRole.model(1), 'wan', wanRole.vendor(1), w2x, Y.wan, NW, 100, {
     haRole: 'standby', icon: '🌐',
     interfaces: [
       { name: 'Gi0/0/0', ip: '198.51.100.1/30', vlan: 'ISP-B' },
@@ -392,7 +415,7 @@ function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   })
 
   const [c1x, c2x] = xCenter(2, 200, NW)
-  const core1 = mkNode('core1', 'CORE-SW-01', 'C9500-32QC', 'core', 'Cisco', c1x, Y.core, NW, 120, {
+  const core1 = mkNode('core1', coreRole.name(0), coreRole.model(0), 'core', coreRole.vendor(0), c1x, Y.core, NW, 120, {
     haRole: 'active', icon: '🏛',
     interfaces: [
       { name: 'Te1/0/1', ip: '10.0.0.2/30', vlan: 'WAN-uplink' },
@@ -403,7 +426,7 @@ function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     configLines: ['VSS Active', 'OSPF Area 0 DR', 'HSRP Priority 110', 'DHCP Server'],
     services: ['VSS', 'OSPF', 'HSRP', 'DHCP'],
   })
-  const core2 = mkNode('core2', 'CORE-SW-02', 'C9500-32QC', 'core', 'Cisco', c2x, Y.core, NW, 120, {
+  const core2 = mkNode('core2', coreRole.name(1), coreRole.model(1), 'core', coreRole.vendor(1), c2x, Y.core, NW, 120, {
     haRole: 'standby', icon: '🏛',
     interfaces: [
       { name: 'Te1/0/1', ip: '10.0.0.6/30', vlan: 'WAN-uplink' },
@@ -418,7 +441,7 @@ function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const distW = 180
   const [d1x, d2x, d3x, d4x] = xCenter(4, 20, distW)
   const dists = [d1x, d2x, d3x, d4x].map((x, i) => mkNode(
-    `dist${i+1}`, `DIST-SW-0${i+1}`, 'C9500-48Y4C', 'distribution', 'Cisco', x, Y.dist, distW, 110, {
+    `dist${i+1}`, distRole.name(i), distRole.model(i), 'distribution', distRole.vendor(i), x, Y.dist, distW, 110, {
       icon: '🔗',
       interfaces: [
         { name: 'Te1/0/1', ip: `10.0.${1+Math.floor(i/2)*2}.${i%2 === 0 ? 1 : 2}/31`, vlan: 'Core-uplink' },
@@ -438,7 +461,7 @@ function buildCampusLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const accW = 160
   const accXs = xCenter(4, 20, accW)
   const accs = accXs.map((x, i) => mkNode(
-    `acc${i+1}`, `ACC-SW-0${i+1}`, 'C9300-48P', 'access', 'Cisco', x, Y.access, accW, 120, {
+    `acc${i+1}`, accRole.name(i), accRole.model(i), 'access', accRole.vendor(i), x, Y.access, accW, 120, {
       icon: '🔌',
       interfaces: [
         { name: 'Gi0/1', ip: '—', vlan: 'Trunk to Dist' },
@@ -652,9 +675,12 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
 
 // ─── WAN LLD ──────────────────────────────────────────────────────────────────
 
-function buildWANLLD(_devices: BOMDevice[], sc: string): LLDTopo {
+function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const NW = 190
   const Y = { sp: 50, hub: 190, cpe: 370, branch: 530, ep: 680 }
+
+  // PE/CE routers reflect the BOM's actual WAN-edge vendor/model selection.
+  const wanRole = bomRole(devices, 'wan-edge', { vendor: 'Cisco', model: 'ASR-9001', name: i => `HQ-PE-RTR-0${i + 1}` })
 
   const zones: LLDZone[] = [
     { id: 'z-sp', label: 'SP BACKBONE', sublabel: 'MPLS / Internet Transit · BGP full-table',
@@ -681,7 +707,7 @@ function buildWANLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   })
 
   const [h1x, h2x] = xCenter(2, 200, NW)
-  const hub1 = mkNode('hub1', 'HQ-PE-RTR-01', 'ASR-9001', 'wan', 'Cisco', h1x, Y.hub, NW, 110, {
+  const hub1 = mkNode('hub1', wanRole.name(0), wanRole.model(0), 'wan', wanRole.vendor(0), h1x, Y.hub, NW, 110, {
     haRole: 'active', icon: '🔷',
     interfaces: [
       { name: 'Gi0/0/0', ip: '203.0.0.2/30', vlan: 'SP-uplink' },
@@ -691,7 +717,7 @@ function buildWANLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     configLines: ['BGP Route Reflector', 'MPLS PE · LDP', 'SR-MPLS Adj-SID', 'BFD multihop 50ms'],
     services: ['BGP RR', 'MPLS', 'SR-MPLS', 'BFD'],
   })
-  const hub2 = mkNode('hub2', 'HQ-PE-RTR-02', 'ASR-9001', 'wan', 'Cisco', h2x, Y.hub, NW, 110, {
+  const hub2 = mkNode('hub2', wanRole.name(1), wanRole.model(1), 'wan', wanRole.vendor(1), h2x, Y.hub, NW, 110, {
     haRole: 'standby', icon: '🔷',
     interfaces: [
       { name: 'Gi0/0/0', ip: '203.0.0.6/30', vlan: 'SP-uplink' },
