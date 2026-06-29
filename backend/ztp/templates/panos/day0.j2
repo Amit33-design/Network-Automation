@@ -1,0 +1,12 @@
+# ============================================================
+# NetDesign AI — Palo Alto PAN-OS DAY 0 (Panorama ZTP, management plane only)
+# Device : {{ hostname }}   Role: {{ role }}
+# Replace <CHANGE-ME-*> before production.
+# ============================================================
+set deviceconfig system hostname {{ hostname }}
+set mgt-config users admin permissions role-based superuser yes
+set mgt-config users admin password {{ admin_password }}
+set deviceconfig system ip-address {{ mgmt_ip }} netmask 255.255.255.0 default-gateway {{ mgmt_gw }}
+set deviceconfig system service disable-ssh no
+set deviceconfig system ntp-servers primary-ntp-server ntp-server-address {{ ntp_server }}
+set shared log-settings syslog ZTP server {{ syslog_server }}

@@ -12,7 +12,13 @@ import pytest
 
 from ztp.server import ZTPDevice, ztp_server
 
-PLATFORMS = ["nxos", "eos", "ios-xe", "junos"]
+# All platforms that now have a backend Day-0 template (R3 + R4).
+PLATFORMS = [
+    "nxos", "eos", "ios-xe", "junos", "iosxr", "srl",
+    "cumulus", "dellos10", "fortios", "arubaoscx", "exos", "panos",
+]
+# Templates that define a secondary `netdesign` admin account (original four).
+PLATFORMS_WITH_NETDESIGN = ["nxos", "eos", "ios-xe", "junos"]
 
 
 def _render(platform: str, extra: dict | None = None) -> str:
@@ -36,10 +42,23 @@ def test_no_hardcoded_credentials(platform):
 
 
 @pytest.mark.parametrize("platform", PLATFORMS)
-def test_changeme_placeholders_present(platform):
+def test_admin_placeholder_present(platform):
     cfg = _render(platform)
     assert "<CHANGE-ME-admin-password>" in cfg
+
+
+@pytest.mark.parametrize("platform", PLATFORMS_WITH_NETDESIGN)
+def test_netdesign_placeholder_present(platform):
+    cfg = _render(platform)
     assert "<CHANGE-ME-netdesign-password>" in cfg
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_renders_hostname_and_mgmt(platform):
+    cfg = _render(platform)
+    assert "T-" + platform in cfg
+    assert "10.0.0.11" in cfg          # mgmt_ip
+    assert "ssh" in cfg.lower()
 
 
 @pytest.mark.parametrize("platform", PLATFORMS)

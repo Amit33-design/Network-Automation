@@ -1,0 +1,15 @@
+# ============================================================
+# NetDesign AI — Extreme EXOS DAY 0 (ZTP+, management plane only)
+# Device : {{ hostname }}   Role: {{ role }}
+# Replace <CHANGE-ME-*> before production.
+# ============================================================
+configure snmp sysName "{{ hostname }}"
+create account admin admin encrypted "{{ admin_password }}"
+configure vlan Mgmt ipaddress {{ mgmt_ip }}/24
+configure iproute add default {{ mgmt_gw }} vr VR-Mgmt
+enable ssh2
+disable telnet
+configure ntp server add {{ ntp_server }} vr VR-Mgmt
+enable ntp
+configure syslog add {{ syslog_server }}:514 vr VR-Mgmt local0
+enable syslog

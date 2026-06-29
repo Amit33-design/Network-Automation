@@ -1,0 +1,15 @@
+# ============================================================
+# NetDesign AI — Nokia SR Linux DAY 0 ZTP (management plane only)
+# Device : {{ hostname }}   Role: {{ role }}
+# Replace <CHANGE-ME-*> before production.
+# ============================================================
+set / system name host-name {{ hostname }}
+set / system aaa authentication admin-user password {{ admin_password }}
+set / system ssh-server admin-state enable
+set / system gnmi-server admin-state enable network-instance mgmt
+set / interface mgmt0 admin-state enable subinterface 0 ipv4 address {{ mgmt_ip }}/24
+set / network-instance mgmt interface mgmt0.0
+set / network-instance mgmt static-routes route 0.0.0.0/0 next-hop-group mgmt-gw
+set / network-instance mgmt next-hop-groups group mgmt-gw nexthop 1 ip-address {{ mgmt_gw }}
+set / system ntp server {{ ntp_server }}
+set / system logging remote-server {{ syslog_server }}
