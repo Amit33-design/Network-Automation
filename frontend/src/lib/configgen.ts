@@ -2586,6 +2586,11 @@ interface mgmt 1/1/1
 !
 management route 0.0.0.0/0 <CHANGE-ME-mgmt-gw>
 !
+! ── Loopback (router-id / BGP / VTEP source) ─────────────────────────────────
+interface loopback 0
+  no shutdown
+  ip address <CHANGE-ME-loopback-ip>/32
+!
 ! ── NTP ─────────────────────────────────────────────────────────────────────
 ntp server <CHANGE-ME-ntp-primary>
 ntp server <CHANGE-ME-ntp-secondary>
