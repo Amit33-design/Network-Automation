@@ -1766,9 +1766,9 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
   - `buildCampusLLD` — WAN Edge pair → Core VSS (HSRP) → 4× Distribution MLAG → 4× Access 802.1X/PoE+ → 5× Endpoints (PC, Phone, AP, Printer, Server). **D2:** core/dist/access/wan-edge vendor+model+hostname derived from the BOM (Cisco SKUs are fallback only)
   - `buildGPULLD` — OOB MGMT → 2× GPU Spine (SN4800) → 4× GPU Leaf/ToR (SN4600C MLAG) → 4× DGX A100 servers → 2× NVMe-oF storage; PFC P3, ECN, DCQCN detail
   - `buildWANLLD` — SP Backbone → HQ PE pair (BGP RR, MPLS, SR-MPLS) → 3× WAN CPE → 3× Branch routers → 3× Branch endpoints; QoS DSCP 6-class, L3VPN, SD-WAN. **D2:** HQ PE-router vendor+model+hostname derived from the BOM `wan-edge` devices
-  - `buildMultisiteLLD` — Site A + Site B with DCI GW pair, EVPN Type-5 stretched RT 65100, per-site spine/leaf/server with vPC domains
-  - `buildMulticloudLLD` — On-prem spine pair → AWS DirectConnect + Azure ExpressRoute + GCP Cloud Interconnect → VPCs/VNets → Cloud workloads (EC2/AKS/GKE)
-  - `buildAviatrixLLD` — DC Edge pair → Aviatrix Transit GWs (AWS/Azure/GCP) with multi-cloud peering → Spoke GWs with network segmentation → Cloud workloads
+  - `buildMultisiteLLD` — Site A + Site B with DCI GW pair, EVPN Type-5 stretched RT 65100, per-site spine/leaf/server with vPC domains. **D4:** spine/leaf + DCI-gateway vendor+model derived from the BOM (site-specific hostnames kept; DCI follows wan-edge → spine vendor fallback)
+  - `buildMulticloudLLD` — On-prem spine pair → AWS DirectConnect + Azure ExpressRoute + GCP Cloud Interconnect → VPCs/VNets → Cloud workloads (EC2/AKS/GKE). **D4:** on-prem DC spine derived from the BOM (cloud nodes stay provider-native)
+  - `buildAviatrixLLD` — DC Edge pair → Aviatrix Transit GWs (AWS/Azure/GCP) with multi-cloud peering → Spoke GWs with network segmentation → Cloud workloads. **D4:** on-prem DC-edge routers derived from the BOM `wan-edge` (transit/spoke GWs stay Aviatrix-native)
   - Dispatched via `buildLLDTopology(devices, useCase, sc)`
 - **SVG rendering:** zone bands with left-column labels, larger device nodes (w=160-260, h=70-140) with interface IPs, config lines, port indicator dots, HA badges. Links show port labels at endpoints on hover with speed/protocol/VLAN/subnet
 - **Device-inspect panel:** clicking a node shows full interface table (name/IP/speed/VLAN/MAC), config snippet (green monospace), services/protocols chips, connected links list, specs
@@ -1778,8 +1778,8 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
 - Used by `Step4NetworkDesign.tsx` (LLD tab, added alongside HLD).
 - No external graph libraries (pure SVG/JSX) — per Implementation Rule 9.
 - Complements the HLD diagram: HLD shows network-wide topology flow; LLD shows per-device implementation detail.
-- **Tests:** `test/LLDTopologyDiagram.test.tsx` (5) — D2 vendor-awareness (campus dist/access + WAN PE derive from BOM; Cisco fallback when role absent).
-- **Remaining hardcoders (not yet BOM-derived):** `buildDCLLD` (app-tier FW/router/LB/server shape — no clean spine/leaf role mapping), `buildMultisiteLLD`, `buildMulticloudLLD` (cloud-native nodes), `buildAviatrixLLD`, `buildORANLLD` (partly derived). Future D-series work if multi-vendor parity is needed there.
+- **Tests:** `test/LLDTopologyDiagram.test.tsx` (9) — D2 vendor-awareness (campus dist/access + WAN PE) and D4 (multisite spine/leaf/DCI, multicloud on-prem spine, aviatrix DC-edge); Cisco fallback when role absent.
+- **Remaining hardcoders (not yet BOM-derived):** `buildDCLLD` (app-tier FW/router/LB/server shape — no clean spine/leaf role mapping; firewall/router could derive from BOM in future work), `buildORANLLD` (O-RAN nodes partly derived). All spine-leaf / campus / WAN / multisite / multicloud / aviatrix network-role nodes now derive from the BOM (D2 + D4).
 
 ---
 

@@ -800,9 +800,16 @@ function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
 // ─── Multisite LLD ────────────────────────────────────────────────────────────
 
-function buildMultisiteLLD(_devices: BOMDevice[], sc: string): LLDTopo {
+function buildMultisiteLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const NW = 180
   const Y = { dci: 50, spine: 190, leaf: 340, srv: 490 }
+
+  // Both sites share the BOM's fabric hardware; derive vendor/model from it
+  // (keep the site-specific hostnames). DCI gateways follow the BOM wan-edge,
+  // falling back to the spine vendor + a chassis SKU when none is present.
+  const spineRole = bomRole(devices, 'spine', { vendor: 'Cisco', model: 'N9K-C9508', name: i => `SPINE-0${i + 1}` })
+  const leafRole = bomRole(devices, 'leaf', { vendor: 'Cisco', model: 'N9K-C9332C', name: i => `LEAF-0${i + 1}` })
+  const dciRole = bomRole(devices, 'wan-edge', { vendor: spineRole.vendor(0), model: 'N9K-C9504', name: i => `DCI-GW-0${i + 1}` })
 
   const zones: LLDZone[] = [
     { id: 'z-dci', label: 'DCI INTERCONNECT', sublabel: 'EVPN Type-5 · RT 65100:<vni> · BGP multi-AS',
@@ -818,7 +825,7 @@ function buildMultisiteLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const siteASpineXs = xCenter(2, 40, NW)
   const siteBSpineXs = [siteASpineXs[0] + 480, siteASpineXs[1] + 480]
 
-  const dciGw1 = mkNode('dci1', 'DCI-GW-SITE-A', 'N9K-C9504', 'wan', 'Cisco',
+  const dciGw1 = mkNode('dci1', 'DCI-GW-SITE-A', dciRole.model(0), 'wan', dciRole.vendor(0),
     siteASpineXs[0] + NW/2, Y.dci, NW, 90, {
       icon: '🔗', haRole: 'active',
       interfaces: [
@@ -828,7 +835,7 @@ function buildMultisiteLLD(_devices: BOMDevice[], sc: string): LLDTopo {
       configLines: ['EVPN Type-5 stretched RT', 'RT 65100:10010 (L2)', 'RT 65100:50000 (L3)'],
       services: ['EVPN DCI', 'BGP Multi-AS'],
     })
-  const dciGw2 = mkNode('dci2', 'DCI-GW-SITE-B', 'N9K-C9504', 'wan', 'Cisco',
+  const dciGw2 = mkNode('dci2', 'DCI-GW-SITE-B', dciRole.model(0), 'wan', dciRole.vendor(0),
     siteBSpineXs[0] + NW/2, Y.dci, NW, 90, {
       icon: '🔗', haRole: 'active',
       interfaces: [
@@ -841,7 +848,7 @@ function buildMultisiteLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
   const mkSiteSpine = (site: string, xs: number[], baseIp: number) =>
     xs.map((x, i) => mkNode(
-      `${site}sp${i+1}`, `${site.toUpperCase()}-SPINE-0${i+1}`, 'N9K-C9508', 'spine', 'Cisco', x, Y.spine, NW, 100, {
+      `${site}sp${i+1}`, `${site.toUpperCase()}-SPINE-0${i+1}`, spineRole.model(i), 'spine', spineRole.vendor(i), x, Y.spine, NW, 100, {
         icon: '🔷',
         interfaces: [
           { name: `e1/1-4`, ip: `10.${baseIp}.0.${i*4}/31`, speed: '100G' },
@@ -855,7 +862,7 @@ function buildMultisiteLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const mkSiteLeaf = (site: string, baseIp: number) => {
     const xs = site === 'a' ? xCenter(2, 40, NW) : [siteASpineXs[0] + 480, siteASpineXs[1] + 480]
     return xs.map((x, i) => mkNode(
-      `${site}lf${i+1}`, `${site.toUpperCase()}-LEAF-0${i+1}`, 'N9K-C9332C', 'leaf', 'Cisco', x, Y.leaf, NW, 100, {
+      `${site}lf${i+1}`, `${site.toUpperCase()}-LEAF-0${i+1}`, leafRole.model(i), 'leaf', leafRole.vendor(i), x, Y.leaf, NW, 100, {
         icon: '🟢',
         interfaces: [
           { name: 'e1/1-2', ip: `10.${baseIp}.1.${i*4}/31`, speed: '25G' },
@@ -921,9 +928,13 @@ function buildMultisiteLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
 // ─── Multicloud LLD ───────────────────────────────────────────────────────────
 
-function buildMulticloudLLD(_devices: BOMDevice[], sc: string): LLDTopo {
+function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const NW = 180
   const Y = { onprem: 50, gw: 200, cloud: 380, workload: 530 }
+
+  // On-prem DC spine reflects the BOM (cloud GW/VPC/workload nodes stay
+  // provider-native — AWS/Azure/GCP are correct as-is).
+  const spineRole = bomRole(devices, 'spine', { vendor: 'Cisco', model: 'N9K-C9508', name: i => `DC-SPINE-0${i + 1}` })
 
   const zones: LLDZone[] = [
     { id: 'z-onprem', label: 'ON-PREMISES DC', sublabel: 'Spine-Leaf · VXLAN/EVPN · BGP',
@@ -937,7 +948,7 @@ function buildMulticloudLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   ]
 
   const [s1x, s2x] = xCenter(2, 200, NW)
-  const dcSpine1 = mkNode('dcsp1', 'DC-SPINE-01', 'N9K-C9508', 'spine', 'Cisco', s1x, Y.onprem, NW, 90, {
+  const dcSpine1 = mkNode('dcsp1', 'DC-SPINE-01', spineRole.model(0), 'spine', spineRole.vendor(0), s1x, Y.onprem, NW, 90, {
     icon: '🔷',
     interfaces: [
       { name: 'e1/1-4', ip: '10.1.0.x/31', speed: '100G' },
@@ -946,7 +957,7 @@ function buildMulticloudLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     configLines: ['IS-IS · BGP EVPN', 'VXLAN NVE overlay'],
     services: ['IS-IS', 'BGP EVPN', 'VXLAN'],
   })
-  const dcSpine2 = mkNode('dcsp2', 'DC-SPINE-02', 'N9K-C9508', 'spine', 'Cisco', s2x, Y.onprem, NW, 90, {
+  const dcSpine2 = mkNode('dcsp2', 'DC-SPINE-02', spineRole.model(1), 'spine', spineRole.vendor(1), s2x, Y.onprem, NW, 90, {
     icon: '🔷',
     interfaces: [
       { name: 'e1/1-4', ip: '10.1.1.x/31', speed: '100G' },
@@ -1053,9 +1064,13 @@ function buildMulticloudLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
 // ─── Aviatrix LLD ─────────────────────────────────────────────────────────────
 
-function buildAviatrixLLD(_devices: BOMDevice[], sc: string): LLDTopo {
+function buildAviatrixLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const NW = 180
   const Y = { onprem: 50, transit: 200, spoke: 370, workload: 520 }
+
+  // On-prem DC-edge routers reflect the BOM wan-edge selection (transit/spoke
+  // gateways stay Aviatrix-native — correct as-is).
+  const edgeRole = bomRole(devices, 'wan-edge', { vendor: 'Cisco', model: 'ASR-1002-HX', name: i => `DC-EDGE-RTR-0${i + 1}` })
 
   const zones: LLDZone[] = [
     { id: 'z-onprem', label: 'ON-PREMISES', sublabel: 'DC Edge · BGP · IPSec tunnel',
@@ -1069,7 +1084,7 @@ function buildAviatrixLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   ]
 
   const [e1x, e2x] = xCenter(2, 200, NW)
-  const edge1 = mkNode('edge1', 'DC-EDGE-RTR-01', 'ASR-1002-HX', 'wan', 'Cisco', e1x, Y.onprem, NW, 90, {
+  const edge1 = mkNode('edge1', 'DC-EDGE-RTR-01', edgeRole.model(0), 'wan', edgeRole.vendor(0), e1x, Y.onprem, NW, 90, {
     haRole: 'active', icon: '🔷',
     interfaces: [
       { name: 'Gi0/0/0', ip: '10.0.0.1/30', vlan: 'WAN' },
@@ -1079,7 +1094,7 @@ function buildAviatrixLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     configLines: ['BGP AS65000', 'IPSec IKEv2 tunnel', 'BFD over tunnel'],
     services: ['BGP', 'IPSec', 'BFD'],
   })
-  const edge2 = mkNode('edge2', 'DC-EDGE-RTR-02', 'ASR-1002-HX', 'wan', 'Cisco', e2x, Y.onprem, NW, 90, {
+  const edge2 = mkNode('edge2', 'DC-EDGE-RTR-02', edgeRole.model(1), 'wan', edgeRole.vendor(1), e2x, Y.onprem, NW, 90, {
     haRole: 'standby', icon: '🔷',
     interfaces: [
       { name: 'Gi0/0/0', ip: '10.0.0.5/30', vlan: 'WAN' },
