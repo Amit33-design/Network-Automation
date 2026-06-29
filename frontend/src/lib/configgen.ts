@@ -1273,9 +1273,19 @@ set interfaces et-0/0/1 mtu 9216
 `
 }
 
-function juniperLeafConfig(dev: BOMDevice, idx: number): string {
+function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false): string {
   const leafAsn = 65001 + idx
   const lo0ip   = `10.255.2.${idx + 1}`
+  // Multisite DCI: site-local VNIs use the auto/site RT; VNIs stretched across
+  // sites additionally carry the shared ${DCI_RT_ASN}:<vni> RT so only those
+  // VNIs are leaked over the DCI (mirrors the NX-OS/Arista A7 behavior).
+  const dciBlock = isMultisite ? `
+!
+# ── Multisite DCI: stretched RT ${DCI_RT_ASN}:<vni> on extended VNIs ────────
+set protocols evpn vni-options vni 10010 vrf-target target:${DCI_RT_ASN}:10010
+set switch-options vrf-target auto
+set routing-instances EVPN-L3 vrf-target target:${DCI_RT_ASN}:50000
+` : ''
 
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
@@ -1346,7 +1356,7 @@ set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 then accept
 # ── MTU ───────────────────────────────────────────────────────────────────────
 set interfaces et-0/0/0 mtu 9216
 set interfaces et-0/0/1 mtu 9216
-`
+${dciBlock}`
 }
 
 // ── Cisco Firewall (Zone-Based / FTD intent) ──────────────────────────────────
@@ -2868,11 +2878,19 @@ configure virtual-network "VNI-10001" add vlan Data`}
 
 // ── Nokia SR Linux Config ───────────────────────────────────────────────────
 
-function nokiaSrLinuxConfig(dev: BOMDevice, idx: number): string {
+function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false): string {
   const isSpine = dev.subLayer === 'spine'
   const asn = isSpine ? 65000 : 65001 + idx
   const lo0ip = isSpine ? `10.255.1.${idx + 1}` : `10.255.2.${idx + 1}`
   const role = isSpine ? 'Spine (Route-Reflector)' : 'Leaf (ToR / VTEP)'
+  // Multisite DCI: stretch the mac-vrf across sites with the shared
+  // ${DCI_RT_ASN}:<vni> route-target namespace (A7 parity with NX-OS/Arista).
+  const dciRt = isMultisite
+    ? `route-target {
+                        export-rt target:${DCI_RT_ASN}:10010
+                        import-rt target:${DCI_RT_ASN}:10010
+                    }`
+    : ''
 
   const bgpNeighbors = isSpine
     ? `            group leaf-peers {
@@ -2905,7 +2923,11 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number): string {
                     evi 1
                 }
             }
-            bgp-vpn { }
+            bgp-vpn {
+                bgp-instance 1 {
+                    ${dciRt}
+                }
+            }
         }
         vxlan-interface vxlan1.1 {
             type bridged
@@ -4349,11 +4371,11 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
   if (v === 'Arista'    && (l === 'distribution' || l === 'access')) return aristaCampusConfig(dev, idx)
   if (v === 'Juniper'   && l === 'spine')                            return juniperSpineConfig(dev, idx)
-  if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx)
+  if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite')
   if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx)
   if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
   if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx)
-  if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx)
+  if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite')
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
   if (v === 'Fortinet'  && (l === 'distribution' || l === 'access')) return fortinetCampusConfig(dev, idx, appTypes)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)
