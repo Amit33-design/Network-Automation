@@ -152,6 +152,7 @@ feature vn-segment-vlan-based
 feature nv overlay
 feature lldp
 feature lacp
+feature bfd
 feature telemetry
 !
 ! ── MANAGEMENT ──────────────────────────────────────────────────────────────────
@@ -231,6 +232,7 @@ router bgp ${spineAsn}
     remote-as ${spineAsn}
     update-source loopback0
     timers 3 9
+    bfd
     address-family ipv4 unicast
       route-reflector-client
       soft-reconfiguration inbound always
@@ -478,6 +480,7 @@ feature lacp
 feature vpc
 feature lldp
 feature telemetry
+feature bfd
 !
 username admin privilege 15 role network-admin password 5 <CHANGE-ME-admin-password>
 !
@@ -553,6 +556,7 @@ router bgp ${leafAsn}
     remote-as 65000
     update-source loopback0
     timers 3 9
+    bfd
     address-family ipv4 unicast
       soft-reconfiguration inbound always
     address-family l2vpn evpn
@@ -1290,6 +1294,7 @@ set protocols bgp group LEAVES multipath
 set protocols bgp group LEAVES family evpn signaling
 set protocols bgp group LEAVES family inet unicast
 set protocols bgp group LEAVES export LOOPBACKS-TO-BGP
+set protocols bgp group LEAVES bfd-liveness-detection minimum-interval 300 multiplier 3
 # One neighbor stanza per leaf (peer-as = that leaf's ASN, 65001+):
 set protocols bgp group LEAVES neighbor <CHANGE-ME-leaf1-lo0> peer-as <CHANGE-ME-leaf1-asn>
 set protocols bgp group LEAVES neighbor <CHANGE-ME-leaf2-lo0> peer-as <CHANGE-ME-leaf2-asn>
@@ -1401,6 +1406,7 @@ set protocols bgp group SPINE-RR multipath
 set protocols bgp group SPINE-RR export LOOPBACKS-TO-BGP
 set protocols bgp group SPINE-RR family evpn signaling
 set protocols bgp group SPINE-RR family inet unicast
+set protocols bgp group SPINE-RR bfd-liveness-detection minimum-interval 300 multiplier 3
 !
 # ── EVPN / VXLAN ─────────────────────────────────────────────────────────────
 set protocols evpn encapsulation vxlan
@@ -2945,6 +2951,7 @@ ${isSpine
   ? '# Spine: accept eBGP from all leaves\nconfigure bgp neighbor <CHANGE-ME-leaf-range> peer-group LEAVES remote-AS-number external'
   : '# Leaf: peer to spines\nconfigure bgp neighbor <CHANGE-ME-spine1-ip> peer-group SPINES remote-AS-number <CHANGE-ME-spine-asn>\nconfigure bgp neighbor <CHANGE-ME-spine2-ip> peer-group SPINES remote-AS-number <CHANGE-ME-spine-asn>'}
 configure bgp neighbor all timer 3 9
+configure bgp neighbor all bfd on
 enable bgp neighbor all
 #
 # ── Jumbo MTU (VXLAN 50B overhead → underlay must be jumbo) ───────────────────
@@ -3160,6 +3167,10 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
             bgp {
                 autonomous-system ${asn}
                 router-id ${lo0ip}
+                failure-detection {
+                    enable-bfd true
+                    fast-failover true
+                }
                 afi-safi evpn {
                     admin-state enable
                 }

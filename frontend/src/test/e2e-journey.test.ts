@@ -299,10 +299,21 @@ describe('E2E journey — vendor matrix (spine-leaf)', () => {
         // vendor should produce a hard validation FAIL (catches regressions
         // like the jumbo-MTU / GPU-QoS / BGP-presence gaps per vendor).
         const v = validateConfigs({ configs: p.configs, devices: p.devices, useCase: j.useCase })
+        const label = `${useCase}/${vendorPrefs.join('+') || 'Cisco'}`
         const fails = v.checks.filter(c => c.severity === 'fail')
         expect(
           fails.length,
-          `${useCase}/${vendorPrefs.join('+') || 'Cisco'}: validator FAILs — ${fails.map(f => `${f.id} ${f.detail}`).join(' | ')}`,
+          `${label}: validator FAILs — ${fails.map(f => `${f.id} ${f.detail}`).join(' | ')}`,
+        ).toBe(0)
+        // Checks the generated config fully controls must also be WARN-free for
+        // every vendor (locks in M3–M7: hostname, mgmt, loopback, BGP, single
+        // underlay, jumbo MTU, BFD). V-04 (placeholder peer IPs) is excluded —
+        // its CHANGE-ME cross-references warn by design across all vendors.
+        const CONTROLLED = new Set(['V-01', 'V-03', 'V-06', 'V-07', 'V-12', 'V-13', 'V-14'])
+        const warns = v.checks.filter(c => c.severity === 'warn' && CONTROLLED.has(c.id))
+        expect(
+          warns.length,
+          `${label}: unexpected validator WARNs — ${warns.map(w => `${w.id} ${w.detail}`).join(' | ')}`,
         ).toBe(0)
       })
     }
