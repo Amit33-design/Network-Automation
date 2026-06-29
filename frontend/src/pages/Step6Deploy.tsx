@@ -25,6 +25,7 @@ import { LiveProgressFeed } from '@/components/LiveProgressFeed'
 import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory, INTERVAL_PRESETS, type WatcherConfig, type ScanType, type ScanAction, type ScanHistoryEntry } from '@/lib/scheduled-scans'
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
+import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, FAMILY_LABEL } from '@/lib/config-update'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2743,6 +2744,14 @@ export function Step6Deploy() {
   }, [storeDevices, storeConfigs])
   const [ztpDay0View, setZtpDay0View] = useState<string | null>(null)
 
+  // Day-N incremental change-push: pick a change op, parameterize it, and
+  // generate per-vendor delta + rollback for the selected live devices.
+  const [changeOpId, setChangeOpId] = useState<string>(CHANGE_CATALOG[0].id)
+  const [changeParams, setChangeParams] = useState<Record<string, string>>({})
+  const [changeTargets, setChangeTargets] = useState<Set<string>>(new Set())
+  const [changeResult, setChangeResult] = useState<{ script: string; rollback: string; supported: number; total: number } | null>(null)
+  const changeOp = getChangeOp(changeOpId) ?? CHANGE_CATALOG[0]
+
   // Auto-tick demo metrics every 15 s when on monitor tab and backend offline
   useEffect(() => {
     if (tab !== 'monitor' || isLive) return
@@ -4363,6 +4372,125 @@ export function Step6Deploy() {
                 </div>
               )}
             </div>
+          </Card>
+
+          {/* L1: Day-N incremental change push (BGP/firewall/ACL/VLAN/route) */}
+          <Card>
+            <CardHeader><CardTitle>🔧 Push Incremental Change (Day-N)</CardTitle></CardHeader>
+            <p className="text-xs text-gray-500 mb-3">
+              After ZTP builds a device, push a targeted change — a BGP policy, firewall/ACL rule,
+              VLAN, or static route — to selected live devices. Generates the vendor-correct delta
+              <span className="text-gray-400"> and the matching rollback</span>.
+            </p>
+
+            <div className="flex flex-wrap gap-3 items-start">
+              {/* Change type */}
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Change type</label>
+                <select
+                  value={changeOpId}
+                  onChange={e => { setChangeOpId(e.target.value); setChangeParams({}); setChangeResult(null) }}
+                  className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
+                >
+                  {CHANGE_CATALOG.map(o => (
+                    <option key={o.id} value={o.id}>{o.icon} {o.label}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-600 mt-1 max-w-[220px]">{changeOp.description}</p>
+                <p className="text-[11px] text-gray-600 mt-0.5">
+                  Vendors: {changeOp.families.map(f => FAMILY_LABEL[f].split('/')[0]).join(', ')}
+                </p>
+              </div>
+
+              {/* Params */}
+              <div className="grid grid-cols-2 gap-2 flex-1 min-w-[280px]">
+                {changeOp.fields.map(f => (
+                  <div key={f.key}>
+                    <label className="text-xs text-gray-400 block mb-1">
+                      {f.label}{f.required ? ' *' : ''}
+                    </label>
+                    <input
+                      value={changeParams[f.key] ?? ''}
+                      placeholder={f.placeholder ?? f.default ?? ''}
+                      onChange={e => setChangeParams(p => ({ ...p, [f.key]: e.target.value }))}
+                      className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Target devices */}
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs text-gray-400">Target devices ({changeTargets.size} selected)</label>
+                <div className="flex gap-2">
+                  <button className="text-[11px] text-blue-400 hover:underline cursor-pointer"
+                    onClick={() => setChangeTargets(new Set(storeDevices.map(d => d.id)))}>select all</button>
+                  <button className="text-[11px] text-gray-400 hover:underline cursor-pointer"
+                    onClick={() => setChangeTargets(new Set())}>clear</button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                {storeDevices.map(d => {
+                  const sel = changeTargets.has(d.id)
+                  return (
+                    <button key={d.id}
+                      onClick={() => setChangeTargets(prev => { const n = new Set(prev); n.has(d.id) ? n.delete(d.id) : n.add(d.id); return n })}
+                      className={cn('px-2 py-1 rounded text-[11px] border transition-colors cursor-pointer',
+                        sel ? 'bg-blue-600/30 border-blue-500 text-blue-200' : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30')}>
+                      {d.hostname} <span className="text-gray-600">{d.vendor}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 mt-3 items-center">
+              <Button className="text-xs"
+                onClick={() => {
+                  const missing = validateChangeParams(changeOp, changeParams)
+                  if (missing.length) { showToast(`Fill required fields: ${missing.join(', ')}`, 'error'); return }
+                  const targets = storeDevices.filter(d => changeTargets.has(d.id))
+                  if (targets.length === 0) { showToast('Select at least one target device', 'error'); return }
+                  const cs = buildChangeSet(changeOp, changeParams, targets)
+                  setChangeResult({
+                    script: changeSetToScript(cs),
+                    rollback: changeSetRollbackScript(cs),
+                    supported: cs.summary.supported,
+                    total: cs.summary.total,
+                  })
+                  showToast(`Generated change for ${cs.summary.supported}/${cs.summary.total} device(s)`, 'success')
+                }}>
+                Generate change + rollback
+              </Button>
+              {changeResult && (
+                <>
+                  <Button variant="secondary" className="text-xs"
+                    onClick={() => { downloadBlob(`change-${changeOp.id}.txt`, changeResult.script); showToast('Change script downloaded', 'success') }}>
+                    ⬇ Push script
+                  </Button>
+                  <Button variant="secondary" className="text-xs"
+                    onClick={() => { downloadBlob(`rollback-${changeOp.id}.txt`, changeResult.rollback); showToast('Rollback runbook downloaded', 'success') }}>
+                    ⬇ Rollback runbook
+                  </Button>
+                  <span className="text-xs text-gray-500">{changeResult.supported}/{changeResult.total} device(s) supported</span>
+                </>
+              )}
+            </div>
+
+            {changeResult && (
+              <div className="grid md:grid-cols-2 gap-3 mt-3">
+                <div>
+                  <div className="text-xs text-gray-400 mb-1">Change (delta) — apply</div>
+                  <pre className="bg-black/40 border border-white/10 rounded p-3 text-xs text-green-300 overflow-x-auto max-h-72">{changeResult.script}</pre>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400 mb-1">Rollback (inverse)</div>
+                  <pre className="bg-black/40 border border-white/10 rounded p-3 text-xs text-amber-300 overflow-x-auto max-h-72">{changeResult.rollback}</pre>
+                </div>
+              </div>
+            )}
           </Card>
 
           {/* Config Drift Detection (G-A4) */}
