@@ -1061,9 +1061,18 @@ validation checks that parse config text and cross-reference with intent
 
 **Checks:** V-01 Single underlay (no IS-IS+OSPF mix), V-02 Duplicate router-IDs, V-03 BGP fabric presence, V-04 BGP peer reachability, V-05 No hardcoded secrets, V-06 Hostname config, V-07 Management plane, V-08 EVPN/VXLAN consistency, V-09 GPU QoS (PFC/ECN/DCQCN), V-10 Undefined ACL references, V-11 Non-empty configs, V-12 Loopback presence, V-13 BFD for fast failover.
 
+**Vendor-aware syntax detection (M3, 2026-06-29):** the detection regexes
+(`RE_BGP`, `RE_ISIS`, `RE_OSPF`, `RE_HOSTNAME`, `RE_MGMT`, `RE_ROUTING_DEVICE`)
+recognize Cisco/Arista/IOS-XR CLI, **Juniper Junos** `set` syntax
+(`host-name`, `protocols bgp/ospf/isis`, `autonomous-system`, `lo0`), and
+**Nokia SR Linux** YANG `{ }` blocks (`bgp {`, `isis {`, `autonomous-system`,
+`gnmi-server`, `interface system0`). `extractLoopbacks()` parses Cisco
+`Loopback0`, Junos `lo0`, and Nokia `system0` loopback addresses. This
+prevents false V-03/V-06/V-07 failures on multi-vendor designs.
+
 **Types:** `ValidationCheck`, `ValidationResult`, `ValidateInput`, `CheckSeverity`.
 
-- **Tests**: 24 in `test/config-validator.test.ts`.
+- **Tests**: 31 in `test/config-validator.test.ts` (7 vendor-aware M3 tests using real generated Nokia/Juniper/Arista configs).
 
 ## Frontend — `lib/containerlab.ts` (Containerlab topology export — N1)
 
@@ -1333,7 +1342,7 @@ alert groups (core vs. GPU-only), and Grafana dashboard JSON validity/panels
 
 #### `hooks/useZTP.ts`
 - `useRunZTP()` — `useMutation<ZTPResult, Error, ZTPRequest>` where `ZTPRequest = { fail_device?, fail_at? }`; POSTs `/api/ztp/run` via local `postJSON`. Returns `ZTPResult`.
-- **Fallback:** `Step6Deploy.tsx`/`Step4ZTP.tsx` call `runZTP`; on error/demo, `Step6Deploy.tsx` falls back to local `simulateZTPResult(simDevices, failDevice, failAt)` — implements the state machine described in CLAUDE.md §11 (`REGISTERED → ... → ONLINE | FAILED`), returns `ZTPResult` with per-device events + summary.
+- **Fallback:** `Step6Deploy.tsx` calls `runZTP`; on error/demo, falls back to local `simulateZTPResult(simDevices, failDevice, failAt)` — implements the state machine described in CLAUDE.md §11 (`REGISTERED → ... → ONLINE | FAILED`), returns `ZTPResult` with per-device events + summary.
 
 **General note:** All three simulate* functions (`simulateMonitoringMetrics`, `simulateZTPResult`, `simulateChecksResult`) are defined **inline in `pages/Step6Deploy.tsx`** (lines ~883, ~968, ~1030 respectively), not in the `hooks/` or `lib/` directories — hooks themselves contain no simulation logic, just live-API mutation/query wrappers.
 
@@ -1397,14 +1406,15 @@ case 6: return <Step6Deploy />
 | 5 | `Step3Config.tsx` | Config Generation |
 | 6 | `Step6Deploy.tsx` | Deploy & Validate |
 
-#### ⚠ Legacy/unused files (NOT imported by App.tsx)
+#### Legacy/unused files — removed (E1, commit f86ace8)
 
-- **`frontend/src/pages/Step4ZTP.tsx`** — older standalone ZTP demo page (lab topology + fault injection via `useRunZTP`). Superseded by the `ztp` sub-tab in `Step6Deploy.tsx`. Only referenced by `frontend/src/test/e2e-features.test.ts`.
-- **`frontend/src/pages/Step5Checks.tsx`** — older standalone pre/post-checks demo page (`useRunChecks`). Superseded by the `checks` sub-tab in `Step6Deploy.tsx`. Only referenced by `e2e-features.test.ts`.
-- **`frontend/src/pages/Step6Monitor.tsx`** — older standalone monitoring demo page (`usePollMonitoring`). Superseded by the `monitor` sub-tab in `Step6Deploy.tsx`. Only referenced by `e2e-features.test.ts`.
-- **`frontend/src/components/wizard/WizardNav.tsx`** — a horizontal step-nav bar (steps 1-6, click to jump). Not rendered by `App.tsx` (the `Sidebar` handles nav instead). Only referenced by `e2e-features.test.ts`.
-
-These four files appear to be retained purely so `e2e-features.test.ts` can smoke-test that the modules export valid components — they are dead code from the user's perspective. Safe to leave as-is or remove in a future cleanup pass (not currently tracked as a gap in CLAUDE.md §20).
+The former standalone demo pages `Step4ZTP.tsx`, `Step5Checks.tsx`,
+`Step6Monitor.tsx`, and the `WizardNav.tsx` step-nav bar were **deleted** in
+tracker item E1 (CLAUDE.md §22 group E). They were superseded by the
+`Step6Deploy.tsx` sub-tabs (ztp/checks/monitor) and the `Sidebar` deep-nav.
+`e2e-features.test.ts` was updated to assert the real live page set. The live
+hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
+— still consumed by `Step6Deploy.tsx`.
 
 #### Other important top-level observations
 
@@ -1765,7 +1775,7 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 - Renders capacity summary line, animated `<circle>` packets via `<animateMotion>`/`<mpath>`, zone bands, device nodes, bottom legend
 
 **Notes:**
-- Still actively used — imported by `frontend/src/pages/Step4ZTP.tsx` (legacy) and `frontend/src/pages/Step6Deploy.tsx` (ZTP tab's lab topology, line ~2255).
+- Still actively used — imported by `frontend/src/pages/Step6Deploy.tsx` (ZTP tab's lab topology, line ~2255).
 - NOT used by `Step2Design.tsx`/`Step4NetworkDesign.tsx` (those use `HLDTopologyDiagram`).
 - Key difference from HLD version: no use-case awareness, no clickable flow scenarios, no device-inspect panel, no "Primary Path Only" toggle — purely a static role-based layered view with fixed zone ordering/connections. Both files coexist intentionally: `TopologyDiagram` = lightweight reference diagram for ZTP/Deploy contexts; `HLDTopologyDiagram` = rich design-review diagram for Steps 3/4.
 
@@ -1981,7 +1991,7 @@ These four files appear to be retained purely so `e2e-features.test.ts` can smok
 ### Summary of Key Cross-File Relationships
 
 - **`useAppStore` (Zustand)** is the single source of truth; almost every page reads/writes a slice of it. `Step2Design.tsx` and `Step4NetworkDesign.tsx` both call `buildBOM()` and sync results into `devices` via a `useMemo`-side-effect anti-pattern.
-- **`HLDTopologyDiagram`** (new, rich, use-case-aware) is used in Step 3 (`Step2Design.tsx`) and Step 4 (`Step4NetworkDesign.tsx`). **`TopologyDiagram`** (old, simple, zone-based) is used only in `Step6Deploy.tsx`'s ZTP tab and the legacy `Step4ZTP.tsx`.
+- **`HLDTopologyDiagram`** (new, rich, use-case-aware) is used in Step 3 (`Step2Design.tsx`) and Step 4 (`Step4NetworkDesign.tsx`). **`TopologyDiagram`** (old, simple, zone-based) is used only in `Step6Deploy.tsx`'s ZTP tab.
 - **Simulation functions** (`simulateZTPResult`, `simulateChecksResult`, `simulateMonitoringMetrics`) all live inside `Step6Deploy.tsx` and are gated by `useBackendMode().isLive` — this is the actual implementation of CLAUDE.md §3's "Demo Mode."
 
 ---

@@ -62,15 +62,39 @@ function extractLoopbacks(configs: Record<string, string>): Map<string, string[]
   const loopbacks = new Map<string, string[]>()
   for (const [host, cfg] of Object.entries(configs)) {
     const ips: string[] = []
+    // Cisco / Arista / IOS-XR — `interface Loopback0` … `ip address X`
     const loMatch = cfg.match(/interface [Ll]oopback\d+[\s\S]*?(?=\ninterface |\n!|\n$)/g) ?? []
     for (const block of loMatch) {
       const ipMatch = block.match(/ip address\s+(\d+\.\d+\.\d+\.\d+)/)
       if (ipMatch) ips.push(ipMatch[1])
     }
-    if (ips.length > 0) loopbacks.set(host, ips)
+    // Juniper Junos — `set interfaces lo0 unit 0 family inet address X/32`
+    const junosLo = cfg.match(/interfaces lo0[\s\S]*?address\s+(\d+\.\d+\.\d+\.\d+)/g) ?? []
+    for (const m of junosLo) {
+      const ip = m.match(/address\s+(\d+\.\d+\.\d+\.\d+)/)
+      if (ip) ips.push(ip[1])
+    }
+    // Nokia SR Linux — `interface system0 { … address X/32 }`
+    const srlLo = cfg.match(/interface system0[\s\S]*?address\s+(\d+\.\d+\.\d+\.\d+)/g) ?? []
+    for (const m of srlLo) {
+      const ip = m.match(/address\s+(\d+\.\d+\.\d+\.\d+)/)
+      if (ip) ips.push(ip[1])
+    }
+    if (ips.length > 0) loopbacks.set(host, [...new Set(ips)])
   }
   return loopbacks
 }
+
+// Vendor-agnostic syntax detectors — Cisco/Arista/IOS-XR CLI, Juniper Junos
+// `set` style, and Nokia SR Linux YANG `{ }` blocks all express the same
+// concepts with different keywords. These regexes recognize all three so the
+// validator doesn't false-fail multi-vendor designs.
+const RE_BGP = /router bgp\s+\d+|protocols bgp|\bbgp\s*\{|autonomous-system\s+\d+/i
+const RE_ISIS = /router isis|isis enable|protocols isis|\bisis\s*\{/i
+const RE_OSPF = /router ospf\s|ospf area|protocols ospf/i
+const RE_HOSTNAME = /\bhostname\s+\S+|host-name\s+\S+/i
+const RE_MGMT = /MANAGEMENT|ntp server|ntp\s*\{|logging host|logging\s*\{|remote-server|snmp-server|gnmi-server/i
+const RE_ROUTING_DEVICE = /router bgp|router ospf|router isis|protocols (?:bgp|ospf|isis)|\bbgp\s*\{|\bisis\s*\{|\bospf\s*\{/i
 
 // ── Validation checks ─────────────────────────────────────────────────────────
 
@@ -78,8 +102,8 @@ function checkSingleUnderlay(
   configs: Record<string, string>,
   useCase: UseCase | '',
 ): ValidationCheck {
-  const hasISIS = hostnamesWithPattern(configs, /router isis|isis enable/i)
-  const hasOSPF = hostnamesWithPattern(configs, /router ospf\s|ospf area/i)
+  const hasISIS = hostnamesWithPattern(configs, RE_ISIS)
+  const hasOSPF = hostnamesWithPattern(configs, RE_OSPF)
   const bothDevices = hasISIS.filter(h => hasOSPF.includes(h))
 
   if (bothDevices.length > 0) {
@@ -163,7 +187,7 @@ function checkBGPPresence(
   configs: Record<string, string>,
   useCase: UseCase | '',
 ): ValidationCheck {
-  const hasBGP = hostnamesWithPattern(configs, /router bgp\s+\d+/i)
+  const hasBGP = hostnamesWithPattern(configs, RE_BGP)
   const fabricUseCases: (UseCase | '')[] = ['dc', 'gpu', 'multisite', 'multicloud', 'aviatrix']
 
   if (fabricUseCases.includes(useCase) && hasBGP.length === 0) {
@@ -287,7 +311,7 @@ function checkHostnameConsistency(
 ): ValidationCheck {
   const missing: string[] = []
   for (const [host, cfg] of Object.entries(configs)) {
-    const hasHostname = /hostname\s+\S+/i.test(cfg)
+    const hasHostname = RE_HOSTNAME.test(cfg)
     if (!hasHostname) missing.push(host)
   }
 
@@ -316,7 +340,7 @@ function checkHostnameConsistency(
 function checkManagementBlock(configs: Record<string, string>): ValidationCheck {
   const missingMgmt: string[] = []
   for (const [host, cfg] of Object.entries(configs)) {
-    const hasMgmt = /MANAGEMENT|ntp server|logging host|snmp-server/i.test(cfg)
+    const hasMgmt = RE_MGMT.test(cfg)
     if (!hasMgmt) missingMgmt.push(host)
   }
 
@@ -500,7 +524,7 @@ function checkNonEmptyConfigs(configs: Record<string, string>): ValidationCheck 
 function checkLoopbackPresence(configs: Record<string, string>): ValidationCheck {
   const loopbacks = extractLoopbacks(configs)
   const routingDevices = Object.entries(configs).filter(
-    ([, cfg]) => /router bgp|router ospf|router isis/i.test(cfg),
+    ([, cfg]) => RE_ROUTING_DEVICE.test(cfg),
   )
   const missingLo = routingDevices
     .filter(([host]) => !loopbacks.has(host))
