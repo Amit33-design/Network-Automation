@@ -1202,10 +1202,34 @@ interface profile GPU-PORT
 
 // ── Juniper QFX ───────────────────────────────────────────────────────────────
 
+// Junos RoCEv2 / DCB lossless block for GPU/AI fabrics — PFC on the RDMA
+// no-loss forwarding class (priority 3 / DSCP 26), ECN via WRED drop-profile,
+// and a guaranteed-bandwidth scheduler. Mirrors the NX-OS/Arista lossless
+// intent so a Juniper GPU fabric passes validator V-09 and is deployable.
+function juniperRoceBlock(): string {
+  return `
+!
+# ── RoCEv2 / DCB lossless fabric (PFC pri-3 no-drop · ECN · DCQCN) ──────────
+set class-of-service forwarding-classes class RDMA queue-num 3 no-loss
+set class-of-service forwarding-classes class STORAGE queue-num 5 no-loss
+set class-of-service classifiers dscp RDMA-DSCP forwarding-class RDMA loss-priority low code-points 011010
+set class-of-service congestion-notification-profile RDMA-PFC input dscp code-point 011010 pfc
+set class-of-service drop-profiles ECN-WRED interpolate fill-level [ 70 90 ] drop-probability [ 0 100 ]
+set class-of-service schedulers RDMA-SCHED transmit-rate percent 60
+set class-of-service schedulers RDMA-SCHED explicit-congestion-notification
+set class-of-service schedulers RDMA-SCHED drop-profile-map loss-priority low protocol any drop-profile ECN-WRED
+set class-of-service scheduler-maps RDMA-MAP forwarding-class RDMA scheduler RDMA-SCHED
+set class-of-service interfaces et-* unit 0 classifiers dscp RDMA-DSCP
+set class-of-service interfaces et-* congestion-notification-profile RDMA-PFC
+set class-of-service interfaces et-* scheduler-map RDMA-MAP
+`
+}
+
 // Juniper QFX spine — IS-IS underlay + eBGP EVPN route-reflection to leaves.
 // A spine is NOT a VTEP: no switch-options vtep-source / vrf-target here.
-function juniperSpineConfig(dev: BOMDevice, idx: number, protoFeatures: string[] = []): string {
+function juniperSpineConfig(dev: BOMDevice, idx: number, protoFeatures: string[] = [], needsRoce = false): string {
   const lo0ip = `10.255.1.${idx + 1}`
+  const roceBlock = needsRoce ? juniperRoceBlock() : ''
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
   const v6Block = ipv6 ? `
 !
@@ -1279,12 +1303,13 @@ set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 then accept
 # ── MTU (jumbo for VXLAN overhead) ─────────────────────────────────────────
 set interfaces et-0/0/0 mtu 9216
 set interfaces et-0/0/1 mtu 9216
-${v6Block}`
+${v6Block}${roceBlock}`
 }
 
-function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = []): string {
+function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], needsRoce = false): string {
   const leafAsn = 65001 + idx
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
+  const roceBlock = needsRoce ? juniperRoceBlock() : ''
   const v6Block = ipv6 ? `
 !
 # ── IPv6 dual-stack underlay (IS-IS multi-topology) ────────────────────────
@@ -1374,7 +1399,7 @@ set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 then accept
 # ── MTU ───────────────────────────────────────────────────────────────────────
 set interfaces et-0/0/0 mtu 9216
 set interfaces et-0/0/1 mtu 9216
-${dciBlock}${v6Block}`
+${dciBlock}${v6Block}${roceBlock}`
 }
 
 // ── Cisco Firewall (Zone-Based / FTD intent) ──────────────────────────────────
@@ -4398,8 +4423,8 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
   if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
   if (v === 'Arista'    && (l === 'distribution' || l === 'access')) return aristaCampusConfig(dev, idx)
-  if (v === 'Juniper'   && l === 'spine')                            return juniperSpineConfig(dev, idx, protoFeatures)
-  if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures)
+  if (v === 'Juniper'   && l === 'spine')                            return juniperSpineConfig(dev, idx, protoFeatures, needsRoce)
+  if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures, needsRoce)
   if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx)
   if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
   if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx)

@@ -534,7 +534,10 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   `vtep-source-interface`/`vrf-target`. **Q5:** when `protoFeatures` includes
   `IPv6 Dual-Stack`, adds `family inet6` on lo0 + fabric ports and
   `set protocols isis topologies ipv6-unicast` (same block in
-  `juniperLeafConfig`).
+  `juniperLeafConfig`). **Q6:** when `needsRoce` (GPU fabric), both spine and
+  leaf append `juniperRoceBlock()` — Junos CoS RoCEv2 lossless (RDMA no-loss
+  forwarding-class, DSCP-26 PFC `congestion-notification-profile`, ECN WRED
+  drop-profile, 60%-BW scheduler) so Juniper GPU fabrics pass validator V-09.
 
 ### Firewalls
 - **`ciscoFirewallConfig(dev, idx): string`** — IOS-XE Zone-Based Firewall:

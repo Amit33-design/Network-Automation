@@ -328,6 +328,29 @@ describe('IPv6 dual-stack underlay — Juniper + Nokia', () => {
   })
 })
 
+// GPU RoCEv2 lossless parity (V-09) — Juniper GPU leaf/spine must emit
+// PFC + ECN + RDMA, not just Cisco/Arista/Dell/NVIDIA.
+describe('Juniper GPU RoCEv2 lossless fabric', () => {
+  it('Juniper leaf in a GPU fabric emits PFC + ECN + RDMA', () => {
+    const leaf = generateConfig(makeDevice({ vendor: 'Juniper', subLayer: 'leaf' }), 0, 'gpu')
+    expect(leaf).toMatch(/pfc/i)
+    expect(leaf).toMatch(/explicit-congestion-notification/i)
+    expect(leaf).toContain('class RDMA')
+    expect(leaf).toContain('no-loss')
+  })
+
+  it('Juniper spine in a GPU fabric emits the lossless block', () => {
+    const spine = generateConfig(makeDevice({ vendor: 'Juniper', subLayer: 'spine' }), 0, 'gpu')
+    expect(spine).toMatch(/pfc/i)
+    expect(spine).toContain('RDMA-PFC')
+  })
+
+  it('Juniper DC (non-GPU) leaf does NOT emit the lossless block', () => {
+    const leaf = generateConfig(makeDevice({ vendor: 'Juniper', subLayer: 'leaf' }), 0, 'dc')
+    expect(leaf).not.toContain('RDMA-PFC')
+  })
+})
+
 // ── Enterprise upgrade A1/A2: MLAG / vPC HA-pair pairing ──────────────────────
 describe('vPC / MLAG HA-pair config (Enterprise upgrade A1/A2)', () => {
   it('NX-OS leaf pair (idx 0 & 1) share the same vPC domain', () => {
