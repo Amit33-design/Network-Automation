@@ -279,6 +279,13 @@ function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string
   const nLeaves = Math.min(Math.max(leafDevs.length, 4), 8)
   const spineModel = spineDevs[0]?.model ?? 'N9K-C9508'
   const leafModel  = leafDevs[0]?.model  ?? 'N9K-C9332C'
+  // Firewall + WAN-edge reflect the BOM vendor/model instead of hardcoded SKUs.
+  const fwDevs   = devices.filter(d => d.subLayer === 'firewall')
+  const fwModel  = fwDevs[0]?.model  ?? 'PA-5450'
+  const fwVendor = fwDevs[0]?.vendor ?? 'Palo Alto'
+  const wanDevs   = devices.filter(d => d.subLayer === 'wan-edge')
+  const wanModel  = wanDevs[0]?.model  ?? 'ASR-1002-HX'
+  const wanVendor = wanDevs[0]?.vendor ?? 'Cisco'
 
   // Layer Y-centers
   const Y: Record<string, number> = {
@@ -306,16 +313,16 @@ function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string
 
   // WAN routers (always 2 for HA)
   const [wx1, wx2] = xCentered(2, 240)
-  const wan1 = mkNode('wan1','WAN-RTR-01','ASR-1002-HX','wan-edge','Cisco','10.255.0.1','10.0.0.1',wx1,Y.wan,
+  const wan1 = mkNode('wan1','WAN-RTR-01',wanModel,'wan-edge',wanVendor,'10.255.0.1','10.0.0.1',wx1,Y.wan,
     { haRole:'active', asn:'65000', features:['BGP eBGP','BFD','ECMP','RPKI'] })
-  const wan2 = mkNode('wan2','WAN-RTR-02','ASR-1002-HX','wan-edge','Cisco','10.255.0.2','10.0.0.2',wx2,Y.wan,
+  const wan2 = mkNode('wan2','WAN-RTR-02',wanModel,'wan-edge',wanVendor,'10.255.0.2','10.0.0.2',wx2,Y.wan,
     { haRole:'standby', asn:'65000', features:['BGP eBGP','BFD','ECMP','RPKI'] })
 
   // Corp firewalls (HA pair)
   const [fx1, fx2] = xCentered(2, 240)
-  const cfw1 = mkNode('cfw1','CORP-FW-01','PA-5450','corp-fw','Palo Alto','10.255.0.11','10.0.0.11',fx1,Y.corpfw,
+  const cfw1 = mkNode('cfw1','CORP-FW-01',fwModel,'corp-fw',fwVendor,'10.255.0.11','10.0.0.11',fx1,Y.corpfw,
     { haRole:'active', features:['NGFW','IPS','URL-Filter','TLS-Decrypt','App-ID'] })
-  const cfw2 = mkNode('cfw2','CORP-FW-02','PA-5450','corp-fw','Palo Alto','10.255.0.12','10.0.0.12',fx2,Y.corpfw,
+  const cfw2 = mkNode('cfw2','CORP-FW-02',fwModel,'corp-fw',fwVendor,'10.255.0.12','10.0.0.12',fx2,Y.corpfw,
     { haRole:'standby', features:['NGFW','HA-Sync','State-Sync'] })
 
   // Edge / Perimeter firewalls
@@ -475,6 +482,16 @@ function buildCampusTopology(devices: BOMDevice[], underlay: string, sc: string)
   const nAccess = Math.min(Math.max(accessDevs.length, 6), 10)
   const distModel   = distDevs[0]?.model ?? 'C9500-48Y4C'
   const accessModel = accessDevs[0]?.model ?? 'C9300-48P'
+  // Firewall / WAN-edge / core reflect the BOM vendor/model when present.
+  const fwDevs    = devices.filter(d => d.subLayer === 'firewall')
+  const fwModel   = fwDevs[0]?.model  ?? 'PA-3430'
+  const fwVendor  = fwDevs[0]?.vendor ?? 'Palo Alto'
+  const wanDevs   = devices.filter(d => d.subLayer === 'wan-edge')
+  const wanModel  = wanDevs[0]?.model  ?? 'ASR-1001X'
+  const wanVendor = wanDevs[0]?.vendor ?? 'Cisco'
+  const coreDevs   = devices.filter(d => d.subLayer === 'core')
+  const coreModel  = coreDevs[0]?.model  ?? 'C9500-32QC'
+  const coreVendor = coreDevs[0]?.vendor ?? 'Cisco'
 
   const Y: Record<string, number> = {
     internet: 72, wan: 192, fw: 312, core: 432, dist: 552, access: 672, hosts: 800,
@@ -497,19 +514,19 @@ function buildCampusTopology(devices: BOMDevice[], underlay: string, sc: string)
   const inet = mkNode('inet','INTERNET','Dual-ISP','internet','ISP','—','—', icx - NW/2 + CONTENT_W/2 - NW, Y.internet,
     { isCloud:true, features:['BGP ISP-A (AS64512)', 'BGP ISP-B (AS64513)'] })
   const [wx1, wx2] = xCentered(2, 240)
-  const wan1 = mkNode('wan1','WAN-RTR-01','ASR-1001X','wan-edge','Cisco','10.255.0.1','10.0.0.1',wx1,Y.wan,
+  const wan1 = mkNode('wan1','WAN-RTR-01',wanModel,'wan-edge',wanVendor,'10.255.0.1','10.0.0.1',wx1,Y.wan,
     { haRole:'active', asn:'65000', features:['BGP eBGP','OSPF Area 0','BFD'] })
-  const wan2 = mkNode('wan2','WAN-RTR-02','ASR-1001X','wan-edge','Cisco','10.255.0.2','10.0.0.2',wx2,Y.wan,
+  const wan2 = mkNode('wan2','WAN-RTR-02',wanModel,'wan-edge',wanVendor,'10.255.0.2','10.0.0.2',wx2,Y.wan,
     { haRole:'standby', asn:'65000', features:['BGP eBGP','OSPF Area 0','BFD'] })
   const [fw1x, fw2x] = xCentered(2, 240)
-  const fw1 = mkNode('fw1','CORP-FW-01','PA-3430','corp-fw','Palo Alto','10.255.0.11','10.0.0.11',fw1x,Y.fw,
+  const fw1 = mkNode('fw1','CORP-FW-01',fwModel,'corp-fw',fwVendor,'10.255.0.11','10.0.0.11',fw1x,Y.fw,
     { haRole:'active', features:['NGFW','IPS','URL-Filter','App-ID','802.1X NAC'] })
-  const fw2 = mkNode('fw2','CORP-FW-02','PA-3430','corp-fw','Palo Alto','10.255.0.12','10.0.0.12',fw2x,Y.fw,
+  const fw2 = mkNode('fw2','CORP-FW-02',fwModel,'corp-fw',fwVendor,'10.255.0.12','10.0.0.12',fw2x,Y.fw,
     { haRole:'standby', features:['NGFW','HA-Sync'] })
   const [c1x, c2x] = xCentered(2, 240)
-  const core1 = mkNode('core1','CORE-SW-01','C9500-32QC','core','Cisco','10.255.0.21','10.0.0.21',c1x,Y.core,
+  const core1 = mkNode('core1','CORE-SW-01',coreModel,'core',coreVendor,'10.255.0.21','10.0.0.21',c1x,Y.core,
     { haRole:'active', features:['VSS','OSPF Area0','HSRP','DHCP-Server','VLAN trunk'] })
-  const core2 = mkNode('core2','CORE-SW-02','C9500-32QC','core','Cisco','10.255.0.22','10.0.0.22',c2x,Y.core,
+  const core2 = mkNode('core2','CORE-SW-02',coreModel,'core',coreVendor,'10.255.0.22','10.0.0.22',c2x,Y.core,
     { haRole:'standby', features:['VSS member','OSPF Area0','HSRP standby'] })
 
   const distGap = nDist <= 4 ? 60 : 28
@@ -780,10 +797,15 @@ function buildWANTopology(devices: BOMDevice[], underlay: string, sc: string): T
   const isp = mkNode('isp','SP-BACKBONE','MPLS/Internet','internet','ISP','—','—', ispX, Y.isp,
     { isCloud:true, features:['MPLS L3VPN','Internet Transit','BGP full-table'] })
 
+  // HQ PE routers reflect the BOM's WAN-edge vendor/model selection.
+  const wanDevs   = devices.filter(d => d.subLayer === 'wan-edge')
+  const hubModel  = wanDevs[0]?.model  ?? 'ASR-9001'
+  const hubVendor = wanDevs[0]?.vendor ?? 'Cisco'
+
   const [hub1x, hub2x] = xCentered(2, 200)
-  const hub1 = mkNode('hub1','HQ-PE-RTR-01','ASR-9001','wan-edge','Cisco','10.0.0.1','10.0.0.1',hub1x,Y.hub,
+  const hub1 = mkNode('hub1','HQ-PE-RTR-01',hubModel,'wan-edge',hubVendor,'10.0.0.1','10.0.0.1',hub1x,Y.hub,
     { haRole:'active', asn:'65000', features:['BGP RR','MPLS PE','SR-MPLS','BFD'] })
-  const hub2 = mkNode('hub2','HQ-PE-RTR-02','ASR-9001','wan-edge','Cisco','10.0.0.2','10.0.0.2',hub2x,Y.hub,
+  const hub2 = mkNode('hub2','HQ-PE-RTR-02',hubModel,'wan-edge',hubVendor,'10.0.0.2','10.0.0.2',hub2x,Y.hub,
     { haRole:'standby', asn:'65000', features:['BGP RR standby','MPLS PE','SR-MPLS'] })
 
   const wanXs = xCentered(nBranches, 40)

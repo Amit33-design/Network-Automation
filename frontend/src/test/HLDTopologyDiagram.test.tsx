@@ -7,8 +7,15 @@ import {
   HEALTH_LABEL,
   type HLDNode,
 } from '@/components/HLDTopologyDiagram'
+import type { BOMDevice } from '@/types'
 
 afterEach(() => cleanup())
+
+const bomDev = (overrides: Partial<BOMDevice>): BOMDevice => ({
+  id: overrides.hostname ?? 'd', hostname: 'H', role: 'leaf', subLayer: 'leaf',
+  model: 'M', vendor: 'Cisco', count: 1, unitPrice: 0, totalPrice: 0,
+  speed: '10G', ports: 48, uplinks: 4, features: [], ...overrides,
+})
 
 function makeNode(overrides: Partial<HLDNode> = {}): HLDNode {
   return {
@@ -148,5 +155,55 @@ describe('HLDTopologyDiagram — computed topology (D1)', () => {
     render(<HLDTopologyDiagram devices={[]} useCase="campus" underlayProtocol="ospf" />)
     fireEvent.click(screen.getByText('ACC-SW-001'))
     expect(screen.getByText(/MEC uplink: Port-channel1 → DIST-SW-01 \(vPC pair #1\)/)).toBeInTheDocument()
+  })
+})
+
+// HLD vendor-awareness (D2 follow-up): firewall / wan-edge / core nodes must
+// reflect the BOM vendor/model, not hardcoded Cisco/Palo Alto SKUs.
+describe('HLDTopologyDiagram — vendor-aware firewall / WAN / core', () => {
+  it('DC HLD shows the BOM firewall + wan-edge model/vendor', () => {
+    const devices = [
+      bomDev({ hostname: 'SPINE-01', subLayer: 'spine', vendor: 'Arista', model: '7050CX3' }),
+      bomDev({ hostname: 'FW-01', subLayer: 'firewall', vendor: 'Fortinet', model: 'FortiGate 600F' }),
+      bomDev({ hostname: 'WAN-01', subLayer: 'wan-edge', vendor: 'Juniper', model: 'MX204' }),
+    ]
+    const { container } = render(<HLDTopologyDiagram devices={devices} useCase="dc" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('FortiGate 600F')
+    expect(text).toContain('MX204')
+    expect(text).not.toContain('PA-5450')      // hardcoded FW default gone
+    expect(text).not.toContain('ASR-1002-HX')  // hardcoded WAN default gone
+  })
+
+  it('DC HLD falls back to Palo Alto / Cisco when BOM lacks fw/wan', () => {
+    const devices = [bomDev({ hostname: 'SPINE-01', subLayer: 'spine', vendor: 'Cisco', model: 'N9K' })]
+    const { container } = render(<HLDTopologyDiagram devices={devices} useCase="dc" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('PA-5450')
+    expect(text).toContain('ASR-1002-HX')
+  })
+
+  it('Campus HLD shows the BOM firewall + core model from the BOM', () => {
+    const devices = [
+      bomDev({ hostname: 'DIST-01', subLayer: 'distribution', vendor: 'Juniper', model: 'EX4650' }),
+      bomDev({ hostname: 'FW-01', subLayer: 'firewall', vendor: 'Fortinet', model: 'FortiGate 100F' }),
+      bomDev({ hostname: 'CORE-01', subLayer: 'core', vendor: 'Arista', model: '7280R3' }),
+    ]
+    const { container } = render(<HLDTopologyDiagram devices={devices} useCase="campus" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('FortiGate 100F')
+    expect(text).toContain('7280R3')
+    expect(text).not.toContain('PA-3430')
+  })
+
+  it('WAN HLD shows the BOM wan-edge model for the HQ PE routers', () => {
+    const devices = [
+      bomDev({ hostname: 'PE-01', subLayer: 'wan-edge', vendor: 'Juniper', model: 'MX304' }),
+      bomDev({ hostname: 'PE-02', subLayer: 'wan-edge', vendor: 'Juniper', model: 'MX304' }),
+    ]
+    const { container } = render(<HLDTopologyDiagram devices={devices} useCase="wan" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('MX304')
+    expect(text).not.toContain('ASR-9001')
   })
 })

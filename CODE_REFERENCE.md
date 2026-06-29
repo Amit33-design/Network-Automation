@@ -1675,6 +1675,7 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
   (3-digit `LEAF-001`/`ACC-SW-001` vs 2-digit `DIST-SW-01`/`GPU-LEAF-01`), so
   no string formula is assumed.
 - **Per-use-case topology builders** (each returns `Topo`): `buildDCTopology(devices, underlay, overlay, sc, useCase='dc')` (used for `dc`, `multisite`, `multicloud`, `aviatrix`), `buildCampusTopology(devices, underlay, sc)`, `buildGPUTopology(devices, sc)`, `buildWANTopology(devices, underlay, sc)` — dispatched via `buildTopology(devices, useCase, underlay, overlay, sc)`
+- **Vendor-awareness (E3 + D3):** spine/leaf/dist/access (E3) **and** firewall / wan-edge / campus-core (D3, 2026-06-29) node vendor+model are derived from the BOM `devices` (e.g. `devices.filter(d => d.subLayer === 'firewall')[0]?.model ?? 'PA-5450'`). Hardcoded Cisco/Palo-Alto SKUs are fallback only (when the BOM lacks that role). So selecting Fortinet/Juniper/etc. shows the correct firewall + routers, consistent with the LLD (D2). Tests in `test/HLDTopologyDiagram.test.tsx`.
 - **D1 computed-topology annotations** (2026-06-11), all derived in-builder via `pairInfo()`:
   - DC/multisite/multicloud/aviatrix leaves (`buildDCTopology`) and GPU ToR
     leaves (`buildGPUTopology`): adjacent leaf pairs get `mlagPairId` +
