@@ -404,6 +404,16 @@ describe('config-validator', () => {
       expect(mtu.devices).toContain('LEAF-01')
     })
 
+    it('V-12: NVIDIA Cumulus loopback (iface lo + placeholder IP) is not false-warned', () => {
+      const devices = buildDeviceList({
+        useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['NVIDIA'],
+      })
+      const configs = generateAllConfigs(devices, 'dc')
+      const result = validateConfigs({ configs, devices, useCase: 'dc' })
+      const lo = result.checks.find(c => c.id === 'V-12')!
+      expect(lo.severity, lo.detail).not.toBe('warn')
+    })
+
     it('V-03: BGP detected for vendors that use a <CHANGE-ME-asn> placeholder', () => {
       // NVIDIA Cumulus / Dell OS10 emit `router bgp <CHANGE-ME-asn>` (no digit);
       // Extreme uses `configure bgp AS-number` — all must register as BGP.
