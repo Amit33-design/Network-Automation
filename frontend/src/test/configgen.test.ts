@@ -299,6 +299,35 @@ describe('Multisite DCI route-targets — Juniper + Nokia', () => {
   })
 })
 
+// IPv6 dual-stack underlay parity (A6) — Juniper + Nokia must honor the
+// 'IPv6 Dual-Stack' protoFeature, not just Cisco/Arista.
+describe('IPv6 dual-stack underlay — Juniper + Nokia', () => {
+  const v6 = ['IPv6 Dual-Stack']
+  it('Juniper spine adds inet6 loopback + IS-IS ipv6-unicast only when selected', () => {
+    const dev = makeDevice({ vendor: 'Juniper', subLayer: 'spine' })
+    const on = generateConfig(dev, 0, 'dc', [], [], v6)
+    const off = generateConfig(dev, 0, 'dc', [], [], [])
+    expect(on).toContain('family inet6 address')
+    expect(on).toContain('topologies ipv6-unicast')
+    expect(off).not.toContain('family inet6')
+  })
+
+  it('Juniper leaf adds inet6 dual-stack when selected', () => {
+    const on = generateConfig(makeDevice({ vendor: 'Juniper', subLayer: 'leaf' }), 0, 'dc', [], [], v6)
+    expect(on).toContain('family inet6 address')
+    expect(on).toContain('topologies ipv6-unicast')
+  })
+
+  it('Nokia leaf adds system0 ipv6 + IS-IS ipv6-unicast when selected', () => {
+    const dev = makeDevice({ vendor: 'Nokia', subLayer: 'leaf' })
+    const on = generateConfig(dev, 0, 'dc', [], [], v6)
+    const off = generateConfig(dev, 0, 'dc', [], [], [])
+    expect(on).toContain('ipv6-unicast {')
+    expect(on).toContain('<CHANGE-ME-system0-v6>/128')
+    expect(off).not.toContain('ipv6-unicast {')
+  })
+})
+
 // ── Enterprise upgrade A1/A2: MLAG / vPC HA-pair pairing ──────────────────────
 describe('vPC / MLAG HA-pair config (Enterprise upgrade A1/A2)', () => {
   it('NX-OS leaf pair (idx 0 & 1) share the same vPC domain', () => {
