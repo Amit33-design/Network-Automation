@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { validateConfigs, validationReportText } from '@/lib/config-validator'
+import { buildDeviceList } from '@/lib/bom'
+import { generateAllConfigs } from '@/lib/configgen'
 import type { BOMDevice } from '@/types'
 
 const device = (hostname: string, vendor = 'Cisco'): BOMDevice => ({
@@ -307,6 +309,91 @@ describe('config-validator', () => {
       }
       const result = validateConfigs({ configs, devices: [], useCase: 'oran' })
       expect(result.checks.length).toBeGreaterThan(0)
+    })
+  })
+
+  // M3 — validator must recognize non-Cisco syntax (Juniper Junos `set`,
+  // Nokia SR Linux YANG `{ }`) and not false-fail multi-vendor designs.
+  describe('vendor-aware syntax detection (M3)', () => {
+    const check = (result: ReturnType<typeof validateConfigs>, id: string) =>
+      result.checks.find(c => c.id === id)!
+
+    it('Nokia SR Linux DC fabric: BGP detected (no false V-03 fail)', () => {
+      const devices = buildDeviceList({
+        useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['Nokia'],
+      })
+      const configs = generateAllConfigs(devices, 'dc')
+      const result = validateConfigs({ configs, devices, useCase: 'dc' })
+      const bgp = check(result, 'V-03')
+      expect(bgp.severity).not.toBe('fail')
+      expect(bgp.severity).toBe('pass')
+    })
+
+    it('Nokia SR Linux DC fabric: management plane detected (no false V-07 warn)', () => {
+      const devices = buildDeviceList({
+        useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['Nokia'],
+      })
+      const configs = generateAllConfigs(devices, 'dc')
+      const result = validateConfigs({ configs, devices, useCase: 'dc' })
+      const mgmt = check(result, 'V-07')
+      expect(mgmt.severity).toBe('pass')
+    })
+
+    it('Nokia SR Linux DC fabric: IS-IS underlay detected', () => {
+      const devices = buildDeviceList({
+        useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['Nokia'],
+      })
+      const configs = generateAllConfigs(devices, 'dc')
+      const result = validateConfigs({ configs, devices, useCase: 'dc' })
+      const underlay = check(result, 'V-01')
+      expect(underlay.severity).toBe('pass')
+      expect(underlay.detail).toMatch(/IS-IS/)
+    })
+
+    it('Juniper campus: host-name recognized as hostname (no false V-06 warn)', () => {
+      const devices = buildDeviceList({
+        useCase: 'campus', scale: 'medium', siteCode: 'T', vendorPrefs: ['Juniper'],
+      })
+      const configs = generateAllConfigs(devices, 'campus')
+      const result = validateConfigs({ configs, devices, useCase: 'campus' })
+      const hn = check(result, 'V-06')
+      expect(hn.severity).toBe('pass')
+    })
+
+    it('Juniper campus: OSPF underlay detected via Junos protocols syntax', () => {
+      const devices = buildDeviceList({
+        useCase: 'campus', scale: 'medium', siteCode: 'T', vendorPrefs: ['Juniper'],
+      })
+      const configs = generateAllConfigs(devices, 'campus')
+      const result = validateConfigs({ configs, devices, useCase: 'campus' })
+      const underlay = check(result, 'V-01')
+      expect(underlay.severity).toBe('pass')
+    })
+
+    it('Juniper WAN: BGP detected via Junos autonomous-system syntax', () => {
+      const devices = buildDeviceList({
+        useCase: 'wan', scale: 'small', siteCode: 'T', vendorPrefs: ['Juniper'],
+      })
+      const configs = generateAllConfigs(devices, 'wan')
+      const result = validateConfigs({ configs, devices, useCase: 'wan' })
+      const bgp = check(result, 'V-03')
+      // WAN is not a fabric use case, but BGP should still be detected → pass
+      expect(bgp.severity).toBe('pass')
+    })
+
+    it('multi-vendor design has zero false-positive failures', () => {
+      for (const vendor of ['Nokia', 'Juniper', 'Arista']) {
+        const devices = buildDeviceList({
+          useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: [vendor],
+        })
+        if (devices.length === 0) continue
+        const configs = generateAllConfigs(devices, 'dc')
+        const result = validateConfigs({ configs, devices, useCase: 'dc' })
+        expect(
+          result.summary.fail,
+          `${vendor} DC produced ${result.summary.fail} validation failure(s)`,
+        ).toBe(0)
+      }
     })
   })
 })
