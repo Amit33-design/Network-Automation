@@ -306,10 +306,9 @@ describe('E2E journey — vendor matrix (spine-leaf)', () => {
           `${label}: validator FAILs — ${fails.map(f => `${f.id} ${f.detail}`).join(' | ')}`,
         ).toBe(0)
         // Checks the generated config fully controls must also be WARN-free for
-        // every vendor (locks in M3–M7: hostname, mgmt, loopback, BGP, single
-        // underlay, jumbo MTU, BFD). V-04 (placeholder peer IPs) is excluded —
-        // its CHANGE-ME cross-references warn by design across all vendors.
-        const CONTROLLED = new Set(['V-01', 'V-03', 'V-06', 'V-07', 'V-12', 'V-13', 'V-14'])
+        // every vendor (locks in M3–M9: hostname, mgmt, loopback, BGP presence
+        // + peer reachability, single underlay, jumbo MTU, BFD).
+        const CONTROLLED = new Set(['V-01', 'V-03', 'V-04', 'V-06', 'V-07', 'V-12', 'V-13', 'V-14'])
         const warns = v.checks.filter(c => c.severity === 'warn' && CONTROLLED.has(c.id))
         expect(
           warns.length,
