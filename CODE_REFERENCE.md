@@ -1139,8 +1139,25 @@ management-plane Day-0 + the role-matched Day-N production config).
   (by BOM id from `generateAllConfigs`); `summary` byVendor/byMethod/byRole +
   `withDayN`. `ztpPlanToCsv(plan)` — provisioning manifest CSV.
 - **Tests**: 39 in `test/ztp.test.ts`.
-- **Status**: engine + tests done (R1). Not yet wired into the Step 6 ZTP tab
-  (R2) or ported to `backend/ztp` (R3) — see CLAUDE.md §22 group R.
+- **Status**: R1 engine + R2 Step-6 wiring + R3/R4 backend port all done — backend renders Day-0 for all 12 platforms with `<CHANGE-ME>` secrets + option-60 DHCP. See CLAUDE.md §22 group R.
+
+## Frontend — `lib/config-update.ts` (Day-N incremental change engine — S1)
+
+**Purpose:** After ZTP builds a device, push **subsequent targeted changes**
+to already-live devices — a BGP policy, firewall/ACL rule, VLAN, static route —
+as vendor-correct INCREMENTAL deltas with matching ROLLBACK. Distinct from
+`policies.ts` (full-config placeholder snippets) and drift remediation
+(reactive): this is proactive, parameterized, and reversible.
+
+**Key exports:**
+- `CliFamily` (`ios`/`junos`/`nokia`/`fortios`/`panos`), `cliFamily(vendor)`, `FAMILY_LABEL`.
+- `ChangeOperation` / `ChangeFieldSpec` / `RenderResult` types; `CHANGE_CATALOG` + `getChangeOp(id)`.
+- Change ops: **bgp-neighbor**, **bgp-route-policy** (prefix-list + route-map/policy), **firewall-rule** (ios/junos ACL + fortios/panos NGFW policy), **vlan** (+ SVI), **static-route** (+ VRF). Each `render(family, params)` returns `{commands, rollback}`.
+- `validateChangeParams(op, params)` — missing required field labels.
+- `buildChangeSet(op, params, devices): ChangeSet` — per-device delta + rollback scoped to the selected live devices, each marked `supported` by role+family; `summary` total/supported/byFamily.
+- `changeSetToScript(cs)` / `changeSetRollbackScript(cs)` — copy/paste push + rollback runbooks (supported devices only).
+- **UI**: Day-2 Ops tab "🔧 Push Incremental Change (Day-N)" card — change picker + dynamic param form + device multi-select + side-by-side delta/rollback preview + downloads.
+- **Tests**: 19 in `test/config-update.test.ts`.
 
 ## Frontend — `lib/containerlab.ts` (Containerlab topology export — N1)
 

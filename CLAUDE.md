@@ -866,6 +866,23 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### S. Day-N incremental config change tool (sourced 2026-06-29)
+
+> User-requested: after ZTP builds a device, a tool to push **subsequent**
+> targeted config changes to already-live devices (a BGP policy, a firewall
+> policy, an ACL, a VLAN, a static route …). Audit confirmed this "incremental
+> policy push" was the one **missing** Day-2 capability — `policies.ts` renders
+> full-config placeholder snippets (no rollback, not parameterized), and
+> drift remediation is reactive-only. The new tool is proactive, parameterized,
+> per-vendor, and reversible.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| S1 | Day-N change engine (`lib/config-update.ts`) — `CHANGE_CATALOG` of parameterized change ops (bgp-neighbor, bgp-route-policy[prefix-list+route-map], firewall-rule[ACL/zone], vlan, static-route), each with per-CLI-family forward + **rollback** generation. `cliFamily(vendor)` (ios/junos/nokia/fortios/panos). `buildChangeSet(op, params, devices)` scopes to selected live devices, marks each supported by role+family, summary byFamily; `changeSetToScript`/`changeSetRollbackScript` push + rollback runbooks; `validateChangeParams`. firewall-rule covers ios/junos ACL + **fortios/panos NGFW** policy. 19 tests in `test/config-update.test.ts` | [x] | new `lib/config-update.ts` + `test/config-update.test.ts` (19) |
+| S2 | Wire into Day-2 Ops tab — "🔧 Push Incremental Change (Day-N)" card: change-type picker + dynamic param form, multi-select target devices (from BOM, select-all/clear), "Generate change + rollback" → side-by-side delta vs rollback panes, download push script + rollback runbook, per-device supported count + required-field validation | [x] | `Step6Deploy.tsx` (change-op state + card); tsc + build green; 1064 tests |
+
+---
+
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
 
 ### Purpose
