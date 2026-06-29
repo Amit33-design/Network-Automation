@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { runComplianceScan, exportComplianceReport } from '../lib/compliance-scan'
+import type { ComplianceScanResult } from '../lib/compliance-scan'
+import { buildDeviceList } from '../lib/bom'
+import { generateAllConfigs } from '../lib/configgen'
 import type { AppState } from '../types'
 
 const BASE_STATE: AppState = {
@@ -212,5 +215,65 @@ describe('exportComplianceReport', () => {
     for (const c of result.controls) {
       expect(md).toContain(c.id)
     }
+  })
+
+  // Vendor-aware config-text checks — the scanner must recognize Juniper Junos
+  // and Nokia SR Linux syntax, not just Cisco CLI, or it false-fails the
+  // SSH/syslog/NTP controls on non-Cisco designs (mirrors validator M3).
+  describe('vendor-aware config checks', () => {
+    const stateWith = (
+      vendor: string, useCase: AppState['useCase'], compliance: AppState['compliance'],
+    ): AppState => {
+      const devices = buildDeviceList({
+        useCase, scale: 'small', siteCode: 'TST', vendorPrefs: [vendor],
+      })
+      const configs = generateAllConfigs(devices, useCase)
+      return { ...BASE_STATE, vendorPrefs: [vendor], useCase, devices, configs, compliance }
+    }
+    const control = (r: ComplianceScanResult, id: string) => r.controls.find(c => c.id === id)
+
+    it('Nokia DC: SSH v2 (PCI-2.3) detected via ssh-server', () => {
+      const r = runComplianceScan(stateWith('Nokia', 'dc', ['PCI']))
+      expect(control(r, 'PCI-2.3')?.status).toBe('pass')
+    })
+
+    it('Nokia DC: syslog (PCI-6.1) detected via logging block', () => {
+      const r = runComplianceScan(stateWith('Nokia', 'dc', ['PCI']))
+      expect(control(r, 'PCI-6.1')?.status).toBe('pass')
+    })
+
+    it('Nokia DC: NTP (PCI-10.1) detected via ntp block', () => {
+      const r = runComplianceScan(stateWith('Nokia', 'dc', ['PCI']))
+      expect(control(r, 'PCI-10.1')?.status).toBe('pass')
+    })
+
+    it('Juniper campus: SSH v2 (PCI-2.3) detected via protocol-version v2', () => {
+      const r = runComplianceScan(stateWith('Juniper', 'campus', ['PCI']))
+      expect(control(r, 'PCI-2.3')?.status).toBe('pass')
+    })
+
+    it('Juniper campus: syslog + NTP detected', () => {
+      const r = runComplianceScan(stateWith('Juniper', 'campus', ['PCI']))
+      expect(control(r, 'PCI-6.1')?.status).toBe('pass')
+      expect(control(r, 'PCI-10.1')?.status).toBe('pass')
+    })
+
+    it('Juniper WAN: FedRAMP SSH (FDRP-AC-17) + audit (FDRP-AU-2) pass', () => {
+      const r = runComplianceScan(stateWith('Juniper', 'wan', ['FedRAMP']))
+      expect(control(r, 'FDRP-AC-17')?.status).toBe('pass')
+      expect(control(r, 'FDRP-AU-2')?.status).toBe('pass')
+    })
+
+    it('no false config-text FAILs for Nokia/Juniper PCI scan', () => {
+      for (const [vendor, uc] of [['Nokia', 'dc'], ['Juniper', 'campus']] as const) {
+        const r = runComplianceScan(stateWith(vendor, uc, ['PCI']))
+        const ssh = control(r, 'PCI-2.3')
+        const log = control(r, 'PCI-6.1')
+        const ntp = control(r, 'PCI-10.1')
+        expect(ssh?.status, `${vendor} SSH`).not.toBe('fail')
+        expect(log?.status, `${vendor} syslog`).not.toBe('fail')
+        expect(ntp?.status, `${vendor} NTP`).not.toBe('fail')
+      }
+    })
   })
 })

@@ -27,6 +27,17 @@ export interface ComplianceScanResult {
 
 type ControlChecker = (state: AppState, configs: Record<string, string>, devices: BOMDevice[]) => ComplianceControl
 
+// Vendor-agnostic config detectors — recognize Cisco/Arista/IOS-XR CLI,
+// Juniper Junos `set` syntax, and Nokia SR Linux YANG `{ }` blocks so the
+// scanner doesn't false-fail non-Cisco designs (mirrors config-validator M3).
+//   SSH v2 only:  Cisco `ip ssh version 2` / `transport input ssh`,
+//                 Juniper `protocol-version v2`, Nokia `ssh-server`
+//   Syslog:       Cisco `logging host`, Juniper `syslog`, Nokia `logging {` / `remote-server`
+//   NTP:          Cisco/Juniper `ntp server`, Nokia `ntp {`
+const RE_SSH_V2 = /transport\s+input\s+ssh|ssh\s+version\s+2|protocol-version\s+v2|ssh-server/i
+const RE_SYSLOG = /logging\s+(?:server|host|remote)|syslog|remote-server|logging\s*\{/i
+const RE_NTP = /ntp\s+server|ntp\s+source|ntp\s*\{/i
+
 function hasInConfigs(configs: Record<string, string>, pattern: RegExp): boolean {
   return Object.values(configs).some(c => pattern.test(c))
 }
@@ -56,7 +67,7 @@ const PCI_CONTROLS: ControlChecker[] = [
   (_state, configs) => ({
     id: 'PCI-2.3', framework: 'PCI', category: 'Encryption',
     requirement: 'SSH v2 only — no Telnet',
-    ...hasInConfigs(configs, /ssh.*version\s*2|transport\s+input\s+ssh/i)
+    ...hasInConfigs(configs, RE_SSH_V2)
       ? { status: 'pass', detail: 'SSH v2 enforced in device configs' }
       : Object.values(configs).length === 0
         ? { status: 'na', detail: 'No configs generated yet' }
@@ -65,7 +76,7 @@ const PCI_CONTROLS: ControlChecker[] = [
   (_state, configs) => ({
     id: 'PCI-6.1', framework: 'PCI', category: 'Logging',
     requirement: 'Syslog forwarding to central collector',
-    ...hasInConfigs(configs, /logging\s+(server|host|remote)|syslog/i)
+    ...hasInConfigs(configs, RE_SYSLOG)
       ? { status: 'pass', detail: 'Syslog logging configured' }
       : Object.values(configs).length === 0
         ? { status: 'na', detail: 'No configs generated yet' }
@@ -83,7 +94,7 @@ const PCI_CONTROLS: ControlChecker[] = [
   (_state, configs) => ({
     id: 'PCI-10.1', framework: 'PCI', category: 'Monitoring',
     requirement: 'NTP synchronized for audit trails',
-    ...hasInConfigs(configs, /ntp\s+server|ntp\s+source/i)
+    ...hasInConfigs(configs, RE_NTP)
       ? { status: 'pass', detail: 'NTP configured in device configs' }
       : Object.values(configs).length === 0
         ? { status: 'na', detail: 'No configs generated yet' }
@@ -201,7 +212,7 @@ const FEDRAMP_CONTROLS: ControlChecker[] = [
   (_state, configs) => ({
     id: 'FDRP-AC-17', framework: 'FedRAMP', category: 'Remote Access',
     requirement: 'Remote access via encrypted channel only',
-    ...hasInConfigs(configs, /ssh.*version\s*2|transport\s+input\s+ssh/i)
+    ...hasInConfigs(configs, RE_SSH_V2)
       ? { status: 'pass', detail: 'SSH v2 only for remote management' }
       : Object.values(configs).length === 0
         ? { status: 'na', detail: 'No configs generated yet' }
@@ -222,7 +233,7 @@ const FEDRAMP_CONTROLS: ControlChecker[] = [
   (_state, configs) => ({
     id: 'FDRP-AU-2', framework: 'FedRAMP', category: 'Audit',
     requirement: 'Audit event logging',
-    ...hasInConfigs(configs, /logging|syslog/i)
+    ...hasInConfigs(configs, RE_SYSLOG)
       ? { status: 'pass', detail: 'Syslog/logging configured for audit trail' }
       : Object.values(configs).length === 0
         ? { status: 'na', detail: 'No configs generated yet' }
