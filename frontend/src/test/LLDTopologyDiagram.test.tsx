@@ -72,4 +72,51 @@ describe('LLDTopologyDiagram — vendor-aware (D2)', () => {
     expect(text).toContain('Arista 750')
     expect(text).toContain('Arista 720XP')
   })
+
+  it('multisite LLD derives spine/leaf model from the BOM', () => {
+    const devices = [
+      dev({ hostname: 'SP-01', subLayer: 'spine', vendor: 'Arista', model: '7280R3' }),
+      dev({ hostname: 'SP-02', subLayer: 'spine', vendor: 'Arista', model: '7280R3' }),
+      dev({ hostname: 'LF-01', subLayer: 'leaf', vendor: 'Arista', model: '7050SX3' }),
+      dev({ hostname: 'LF-02', subLayer: 'leaf', vendor: 'Arista', model: '7050SX3' }),
+    ]
+    const { container } = render(<LLDTopologyDiagram devices={devices} useCase="multisite" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('7280R3')
+    expect(text).toContain('7050SX3')
+    expect(text).not.toContain('N9K-C9508')
+    expect(text).not.toContain('N9K-C9332C')
+  })
+
+  it('multisite LLD falls back to Cisco N9K when BOM lacks fabric devices', () => {
+    const { container } = render(<LLDTopologyDiagram devices={[]} useCase="multisite" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('N9K-C9508')
+    expect(text).toContain('N9K-C9332C')
+  })
+
+  it('multicloud LLD derives on-prem spine from the BOM', () => {
+    const devices = [
+      dev({ hostname: 'SP-01', subLayer: 'spine', vendor: 'Juniper', model: 'QFX5220' }),
+      dev({ hostname: 'SP-02', subLayer: 'spine', vendor: 'Juniper', model: 'QFX5220' }),
+    ]
+    const { container } = render(<LLDTopologyDiagram devices={devices} useCase="multicloud" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('QFX5220')
+    // cloud providers stay provider-native
+    expect(text).toContain('AWS')
+  })
+
+  it('aviatrix LLD derives on-prem DC-edge from the BOM wan-edge', () => {
+    const devices = [
+      dev({ hostname: 'EDGE-01', subLayer: 'wan-edge', vendor: 'Juniper', model: 'MX240' }),
+      dev({ hostname: 'EDGE-02', subLayer: 'wan-edge', vendor: 'Juniper', model: 'MX240' }),
+    ]
+    const { container } = render(<LLDTopologyDiagram devices={devices} useCase="aviatrix" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('MX240')
+    expect(text).not.toContain('ASR-1002-HX')
+    // transit/spoke gateways stay Aviatrix-native
+    expect(text).toContain('Aviatrix')
+  })
 })
