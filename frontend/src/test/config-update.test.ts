@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   cliFamily, getChangeOp, CHANGE_CATALOG, validateChangeParams,
-  buildChangeSet, changeSetToScript, changeSetRollbackScript,
+  buildChangeSet, changeSetToScript, changeSetRollbackScript, analyzeChangeSet,
 } from '@/lib/config-update'
 import type { BOMDevice } from '@/types'
 
@@ -248,5 +248,50 @@ describe('buildChangeSet', () => {
     expect(push).not.toContain('AC-01')     // unsupported excluded
     expect(rb).toContain('no neighbor 10.0.0.2')
     expect(rb).toContain('delete protocols bgp group EXTERNAL neighbor 10.0.0.2')
+  })
+})
+
+// ── Pre-flight safety analysis ──────────────────────────────────────────────
+describe('analyzeChangeSet', () => {
+  const sp = (o: Partial<BOMDevice>) => dev({ subLayer: 'spine', role: 'spine', ...o })
+
+  it('flags skipped (unsupported) devices as info', () => {
+    const cs = buildChangeSet(getChangeOp('bgp-neighbor')!,
+      { local_as: '65000', peer_ip: '10.0.0.2', remote_as: '65010' },
+      [sp({ id: 's', hostname: 'SP-01' }), dev({ id: 'a', hostname: 'AC-01', subLayer: 'access', role: 'access' })])
+    const w = analyzeChangeSet(cs)
+    const info = w.find(x => x.severity === 'info')!
+    expect(info.message).toMatch(/skipped/i)
+    expect(info.devices).toContain('AC-01')
+  })
+
+  it('warns on unfilled <CHANGE-ME> placeholders', () => {
+    const cs = buildChangeSet(getChangeOp('bgp-neighbor')!,
+      { peer_ip: '10.0.0.2', remote_as: '65010' }, [sp({ id: 's', hostname: 'SP-01' })])
+    const w = analyzeChangeSet(cs)
+    expect(w.some(x => x.severity === 'warn' && /CHANGE-ME/.test(x.message))).toBe(true)
+  })
+
+  it('danger: admin-down on a fabric interface', () => {
+    const cs = buildChangeSet(getChangeOp('interface-config')!,
+      { iface: 'Et1', admin_state: 'down' }, [sp({ id: 's', hostname: 'SP-01' })])
+    const w = analyzeChangeSet(cs)
+    expect(w.some(x => x.severity === 'danger' && /isolate/i.test(x.message))).toBe(true)
+  })
+
+  it('danger: broad deny any → any firewall rule', () => {
+    const cs = buildChangeSet(getChangeOp('firewall-rule')!,
+      { name: 'BLOCK', action: 'deny', protocol: 'ip', source: 'any', destination: 'any' },
+      [sp({ id: 's', hostname: 'FW-01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall' })])
+    const w = analyzeChangeSet(cs)
+    expect(w.some(x => x.severity === 'danger' && /lock out|deny/i.test(x.message))).toBe(true)
+  })
+
+  it('clean change (all params filled, reversible) yields no danger/warn', () => {
+    const cs = buildChangeSet(getChangeOp('static-route')!,
+      { prefix: '10.50.0.0/24', next_hop: '10.0.0.1' }, [sp({ id: 's', hostname: 'SP-01' })])
+    const w = analyzeChangeSet(cs)
+    expect(w.some(x => x.severity === 'danger')).toBe(false)
+    expect(w.some(x => x.severity === 'warn')).toBe(false)
   })
 })

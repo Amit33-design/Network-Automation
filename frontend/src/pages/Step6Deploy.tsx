@@ -25,7 +25,7 @@ import { LiveProgressFeed } from '@/components/LiveProgressFeed'
 import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory, INTERVAL_PRESETS, type WatcherConfig, type ScanType, type ScanAction, type ScanHistoryEntry } from '@/lib/scheduled-scans'
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
-import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, FAMILY_LABEL } from '@/lib/config-update'
+import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2749,7 +2749,7 @@ export function Step6Deploy() {
   const [changeOpId, setChangeOpId] = useState<string>(CHANGE_CATALOG[0].id)
   const [changeParams, setChangeParams] = useState<Record<string, string>>({})
   const [changeTargets, setChangeTargets] = useState<Set<string>>(new Set())
-  const [changeResult, setChangeResult] = useState<{ script: string; rollback: string; supported: number; total: number } | null>(null)
+  const [changeResult, setChangeResult] = useState<{ script: string; rollback: string; supported: number; total: number; warnings: ChangeWarning[] } | null>(null)
   const changeOp = getChangeOp(changeOpId) ?? CHANGE_CATALOG[0]
 
   // Auto-tick demo metrics every 15 s when on monitor tab and backend offline
@@ -4459,6 +4459,7 @@ export function Step6Deploy() {
                     rollback: changeSetRollbackScript(cs),
                     supported: cs.summary.supported,
                     total: cs.summary.total,
+                    warnings: analyzeChangeSet(cs),
                   })
                   showToast(`Generated change for ${cs.summary.supported}/${cs.summary.total} device(s)`, 'success')
                 }}>
@@ -4478,6 +4479,26 @@ export function Step6Deploy() {
                 </>
               )}
             </div>
+
+            {changeResult && changeResult.warnings.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                {changeResult.warnings.map((w, i) => (
+                  <div key={i} className={cn(
+                    'text-xs rounded px-3 py-2 border',
+                    w.severity === 'danger' ? 'bg-red-500/10 border-red-500/40 text-red-300'
+                      : w.severity === 'warn' ? 'bg-yellow-500/10 border-yellow-500/40 text-yellow-300'
+                      : 'bg-blue-500/10 border-blue-500/40 text-blue-300')}>
+                    <span className="font-semibold mr-1">
+                      {w.severity === 'danger' ? '⛔' : w.severity === 'warn' ? '⚠️' : 'ℹ️'}
+                    </span>
+                    {w.message}
+                    {w.devices && w.devices.length > 0 && (
+                      <span className="text-gray-500"> ({w.devices.slice(0, 5).join(', ')}{w.devices.length > 5 ? '…' : ''})</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {changeResult && (
               <div className="grid md:grid-cols-2 gap-3 mt-3">

@@ -1156,6 +1156,7 @@ as vendor-correct INCREMENTAL deltas with matching ROLLBACK. Distinct from
 - `validateChangeParams(op, params)` — missing required field labels.
 - `buildChangeSet(op, params, devices): ChangeSet` — per-device delta + rollback scoped to the selected live devices, each marked `supported` by role+family; `summary` total/supported/byFamily.
 - `changeSetToScript(cs)` / `changeSetRollbackScript(cs)` — copy/paste push + rollback runbooks (supported devices only).
+- `analyzeChangeSet(cs): ChangeWarning[]` (S4) — pre-flight safety check (info/warn/danger): skipped devices, unfilled `<CHANGE-ME>` placeholders, irreversible (no-rollback) changes, admin-down on a fabric interface, broad `deny any→any` firewall rule. Rendered as a warning banner in the Day-2 Ops card.
 - **UI**: Day-2 Ops tab "🔧 Push Incremental Change (Day-N)" card — change picker + dynamic param form + device multi-select + side-by-side delta/rollback preview + downloads.
 - **Tests**: 19 in `test/config-update.test.ts`.
 
