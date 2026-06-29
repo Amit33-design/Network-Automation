@@ -48,12 +48,21 @@ function extractRouterIds(configs: Record<string, string>): Map<string, string[]
   return ridMap
 }
 
+// A config line that is a comment in any supported vendor syntax — `!`
+// (Cisco/Arista/Dell), `#` (Nokia/Cumulus/Junos/Fortinet headers), `//`.
+// Commented-out example lines (e.g. `! neighbor 10.255.2.1 inherit ...`) must
+// NOT be parsed as live config, or they produce phantom BGP peers.
+function isCommentLine(line: string): boolean {
+  const t = line.trimStart()
+  return t.startsWith('!') || t.startsWith('#') || t.startsWith('//')
+}
+
 function extractBgpNeighborIPs(cfg: string): string[] {
   const ips: string[] = []
-  const pattern = /neighbor\s+(\d+\.\d+\.\d+\.\d+)/g
-  let m: RegExpExecArray | null
-  while ((m = pattern.exec(cfg)) !== null) {
-    if (!ips.includes(m[1])) ips.push(m[1])
+  for (const line of cfg.split('\n')) {
+    if (isCommentLine(line)) continue
+    const m = line.match(/neighbor\s+(\d+\.\d+\.\d+\.\d+)/)
+    if (m && !ips.includes(m[1])) ips.push(m[1])
   }
   return ips
 }

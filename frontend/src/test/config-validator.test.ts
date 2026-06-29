@@ -404,6 +404,30 @@ describe('config-validator', () => {
       expect(mtu.devices).toContain('LEAF-01')
     })
 
+    it('V-04: commented-out example neighbor lines are not parsed as live peers', () => {
+      // NX-OS spine emits `! neighbor 10.255.2.1 inherit peer ...` as docs;
+      // the validator must not treat that as an unreachable live peer.
+      const configs = {
+        'SPINE-01': 'hostname SPINE-01\nrouter bgp 65000\n router-id 10.255.1.1\n template peer LEAF\n  remote-as 65001\n ! neighbor 10.255.2.1 inherit peer LEAF\ninterface Loopback0\n ip address 10.255.1.1/32\nntp server 1.1.1.1\nlogging host 1.1.1.2\nusername a secret <CHANGE-ME>',
+      }
+      const result = validateConfigs({ configs, devices: [device('SPINE-01')], useCase: 'dc' })
+      const v04 = result.checks.find(c => c.id === 'V-04')!
+      expect(v04.severity).not.toBe('warn')
+    })
+
+    it('V-04: real generated fabrics have no phantom BGP peers', () => {
+      for (const vendor of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks']) {
+        const devices = buildDeviceList({
+          useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: vendor === 'Cisco' ? [] : [vendor],
+        })
+        if (devices.length === 0) continue
+        const configs = generateAllConfigs(devices, 'dc')
+        const result = validateConfigs({ configs, devices, useCase: 'dc' })
+        const v04 = result.checks.find(c => c.id === 'V-04')!
+        expect(v04.severity, `${vendor}: ${v04.detail}`).not.toBe('warn')
+      }
+    })
+
     it('V-06: Extreme EXOS sysName is recognized as the hostname', () => {
       const devices = buildDeviceList({
         useCase: 'dc', scale: 'small', siteCode: 'T', vendorPrefs: ['Extreme Networks'],
