@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest'
 import { buildBOM, buildCabling, buildOptics, validateBOM, computeTCO } from '@/lib/bom'
 import { computeRackLayout } from '@/components/RackElevation'
 import { generateAllConfigs } from '@/lib/configgen'
+import { validateConfigs } from '@/lib/config-validator'
 import type { BOMDevice, UseCase } from '@/types'
 
 const NON_NETWORK = new Set(['gpu-compute', 'cloud-gw', 'cloud-transit'])
@@ -233,7 +234,9 @@ const SCALES = ['small', 'medium', 'large'] as const
 const SPEEDS = ['25G', '100G', '400G']
 const OVERSUBS = [1, 3]
 const ENDPOINTS = [128, 512, 1024, 2048]
-const VENDOR_SETS: string[][] = [[], ['Arista'], ['NVIDIA'], ['Juniper']]
+const VENDOR_SETS: string[][] = [
+  [], ['Arista'], ['NVIDIA'], ['Juniper'], ['Nokia'], ['Dell EMC'], ['Extreme Networks'],
+]
 
 describe('E2E journey — universal invariants across full matrix', () => {
   for (const useCase of USE_CASES) {
@@ -291,6 +294,16 @@ describe('E2E journey — vendor matrix (spine-leaf)', () => {
         const p = runPipeline(j)
         assertUniversalInvariants(j, p)
         assertCapacityInvariant(j, p)
+        assertConfigCorrectness(j, p)
+        // The generated fabric must be clean per the static validator — no
+        // vendor should produce a hard validation FAIL (catches regressions
+        // like the jumbo-MTU / GPU-QoS / BGP-presence gaps per vendor).
+        const v = validateConfigs({ configs: p.configs, devices: p.devices, useCase: j.useCase })
+        const fails = v.checks.filter(c => c.severity === 'fail')
+        expect(
+          fails.length,
+          `${useCase}/${vendorPrefs.join('+') || 'Cisco'}: validator FAILs — ${fails.map(f => `${f.id} ${f.detail}`).join(' | ')}`,
+        ).toBe(0)
       })
     }
   }

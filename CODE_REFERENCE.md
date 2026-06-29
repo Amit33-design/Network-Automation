@@ -1100,9 +1100,11 @@ validation checks that parse config text and cross-reference with intent
 recognize Cisco/Arista/IOS-XR CLI, **Juniper Junos** `set` syntax
 (`host-name`, `protocols bgp/ospf/isis`, `autonomous-system`, `lo0`), and
 **Nokia SR Linux** YANG `{ }` blocks (`bgp {`, `isis {`, `autonomous-system`,
-`gnmi-server`, `interface system0`). `extractLoopbacks()` parses Cisco
-`Loopback0`, Junos `lo0`, and Nokia `system0` loopback addresses. This
-prevents false V-03/V-06/V-07 failures on multi-vendor designs.
+`gnmi-server`, `interface system0`). `RE_BGP` also matches `router bgp` with a
+`<CHANGE-ME-asn>` placeholder operand (NVIDIA Cumulus/Dell) and Extreme
+`configure bgp` (I3). `extractLoopbacks()` parses Cisco `Loopback0`, Junos
+`lo0`, and Nokia `system0` loopback addresses. This prevents false
+V-03/V-06/V-07 failures on multi-vendor designs.
 
 **Types:** `ValidationCheck`, `ValidationResult`, `ValidateInput`, `CheckSeverity`.
 
