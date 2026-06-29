@@ -2627,6 +2627,10 @@ ${isSpine ? `  ! ── Spine: accept all leaf peers ─────────
 interface virtual-network 1
   vxlan-vni 10001
 !
+! ── Jumbo MTU on fabric uplinks (VXLAN 50B overhead) ─────────────────────────
+interface range ethernet 1/1/1-1/1/${dev.ports}
+  mtu 9216
+!
 ${isGpu ? `! ── RoCEv2 / DCB / ECN — Full Lossless Fabric (OS10) ───────────────────────
 !   Priority 3 → RoCEv2/RDMA (lossless, PFC no-drop)
 !   Priority 6 → Storage/NVMe-oF (lossless, PFC no-drop)
@@ -2785,6 +2789,12 @@ iface mgmt inet dhcp
   gateway <CHANGE-ME-mgmt-gw>
   vrf mgmt
 
+# Jumbo MTU on fabric uplinks — VXLAN adds 50B; underlay must be jumbo or
+# encapsulated frames are dropped/fragmented.
+auto swp1-${dev.ports}
+iface swp1-${dev.ports}
+  mtu 9216
+
 # /etc/frr/frr.conf  (FRRouting)
 frr version 9.1
 frr defaults datacenter
@@ -2912,6 +2922,10 @@ ${isSpine
   : '# Leaf: peer to spines\nconfigure bgp neighbor <CHANGE-ME-spine1-ip> peer-group SPINES remote-AS-number <CHANGE-ME-spine-asn>\nconfigure bgp neighbor <CHANGE-ME-spine2-ip> peer-group SPINES remote-AS-number <CHANGE-ME-spine-asn>'}
 configure bgp neighbor all timer 3 9
 enable bgp neighbor all
+#
+# ── Jumbo MTU (VXLAN 50B overhead → underlay must be jumbo) ───────────────────
+enable jumbo-frame ports all
+configure jumbo-frame-size 9216
 #
 # VXLAN / EVPN
 create virtual-network "VNI-10001" vxlan vni 10001
@@ -3050,6 +3064,16 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
                 address ${lo0ip}/32 { }
             }${sys0v6}
         }
+    }
+
+    # Jumbo MTU on fabric uplinks — VXLAN adds 50B; underlay must be jumbo.
+    interface ethernet-1/1 {
+        admin-state enable
+        mtu 9232
+    }
+    interface ethernet-1/2 {
+        admin-state enable
+        mtu 9232
     }
 
     network-instance mgmt {
