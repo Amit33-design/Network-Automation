@@ -1110,6 +1110,38 @@ V-03/V-06/V-07 failures on multi-vendor designs.
 
 - **Tests**: 34 in `test/config-validator.test.ts` (7 vendor-aware M3 tests + M5 jumbo-MTU tests, using real generated multi-vendor configs).
 
+## Frontend — `lib/ztp.ts` (Enterprise ZTP engine — R1)
+
+**Purpose:** Make ZTP work like a standard enterprise tool for ANY vendor —
+identify the device (vendor/hardware/role), pick the correct per-vendor ZTP
+mechanism + DHCP classification, and push the right config (vendor-correct
+management-plane Day-0 + the role-matched Day-N production config).
+
+**Key exports:**
+- Types: `ZTPPlatform` (12), `ZTPMethod`, `ZTPVendorProfile`, `ZTPIdentity`,
+  `Day0Opts`, `DhcpOpts`, `ZTPPlanEntry`, `ZTPPlan`.
+- `ZTP_VENDOR_PROFILES: Record<ZTPPlatform, ZTPVendorProfile>` — per-platform
+  ZTP method (POAP/PnP/ZTP/eZTP/FortiZTP/Aruba-ZTP/ZTP+/Panorama-ZTP), DHCP
+  option-60 vendor-class, boot protocol (http/https/tftp), redirect mechanism.
+- `ztpPlatform(dev)` — vendor+model → platform; **Cisco is model-aware**
+  (Nexus→nxos/POAP, Catalyst/ISR→ios-xe/PnP, ASR9k/NCS→iosxr/ZTP).
+- `ztpRole(dev)` → `{role,label}`; `identifyDevice(dev): ZTPIdentity`.
+- `ztpBootFile(platform, hostname)` — DHCP boot-file path per platform.
+- `generateDay0Config(id, opts)` — **management-plane-only** Day-0 bootstrap
+  for all 12 platforms (hostname, mgmt IP/GW, SSH v2, NTP, syslog, callback;
+  `<CHANGE-ME-*>` secrets). Per §11: NO production config. (Fixes the backend
+  Day-0 templates' hardcoded `ChangeMe!`/`NetDesignZTP1!` credentials.)
+- `generateDhcpConfig(ids, opts)` — ISC dhcpd.conf with one option-60 class
+  per distinct vendor-class (true multi-vendor auto-classification) + IOS-XE
+  option-43 PnP redirect + per-subnet pool.
+- `buildZTPPlan(devices, configs, day0Opts): ZTPPlan` — identifies every
+  device, generates its Day-0, and pairs it with its Day-N production config
+  (by BOM id from `generateAllConfigs`); `summary` byVendor/byMethod/byRole +
+  `withDayN`. `ztpPlanToCsv(plan)` — provisioning manifest CSV.
+- **Tests**: 39 in `test/ztp.test.ts`.
+- **Status**: engine + tests done (R1). Not yet wired into the Step 6 ZTP tab
+  (R2) or ported to `backend/ztp` (R3) — see CLAUDE.md §22 group R.
+
 ## Frontend — `lib/containerlab.ts` (Containerlab topology export — N1)
 
 **Purpose:** Generates containerlab YAML topology files from BOM devices +
