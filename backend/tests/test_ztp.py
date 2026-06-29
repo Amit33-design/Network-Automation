@@ -41,7 +41,8 @@ class TestBootFilenameTftp:
         assert _boot_filename(platform, "sw-01", tftp=True) == expected
 
     def test_unknown_platform_returns_per_device_config(self):
-        filename = _boot_filename("junos", "leaf-99", tftp=True)
+        # a platform with no TFTP boot script falls back to its rendered config
+        filename = _boot_filename("vyos", "leaf-99", tftp=True)
         assert filename == "configs/leaf-99.cfg"
 
     def test_tftp_paths_differ_from_http_paths(self):
@@ -144,8 +145,12 @@ class TestGenerateDhcpConfigTftp:
         assert "TFTP" in config
 
     def test_tftp_mode_omits_pnp_option_43(self, devices, dhcp_kwargs):
+        # In TFTP mode the PnP option-43 vendor-encapsulated redirect must not
+        # be emitted (the `ciscopnp` option-60 class name itself is fine — it's
+        # the vendor-class the device legitimately advertises).
         config = generate_dhcp_config(devices=devices, tftp=True, **dhcp_kwargs)
-        assert "ciscopnp" not in config
+        assert "vendor-encapsulated-options" not in config
+        assert "5A;K4;B2" not in config
 
     def test_http_mode_unaffected(self, devices, dhcp_kwargs):
         config = generate_dhcp_config(devices=devices, **dhcp_kwargs)

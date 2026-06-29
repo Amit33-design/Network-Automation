@@ -9,21 +9,21 @@
 system {
     host-name {{ hostname }};
     root-authentication {
-        encrypted-password "$6$ChangeMe!";
+        encrypted-password "{{ admin_password }}";
     }
     login {
         user admin {
             uid 2000;
             class super-user;
             authentication {
-                encrypted-password "$6$ChangeMe!";
+                encrypted-password "{{ admin_password }}";
             }
         }
         user netdesign {
             uid 2001;
             class super-user;
             authentication {
-                encrypted-password "$6$NetDesignZTP1!";
+                encrypted-password "{{ netdesign_password }}";
             }
         }
     }
@@ -37,7 +37,7 @@ system {
         }
     }
     syslog {
-        host 10.100.0.100 {
+        host {{ syslog_server }} {
             any notice;
         }
         file messages {
@@ -45,7 +45,7 @@ system {
         }
     }
     ntp {
-        server 10.100.0.1;
+        server {{ ntp_server }};
     }
 }
 
