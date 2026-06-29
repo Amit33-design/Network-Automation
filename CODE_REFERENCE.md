@@ -938,10 +938,15 @@ controls. Replaces the static "Compliance Audit" placeholder in Day-2 Ops.
 - Config-aware: controls that check `configs` use `hasInConfigs` /
   `allConfigsHave` regex matchers; return `na` status when no configs
   generated yet.
+- **Vendor-aware detectors (M4, 2026-06-29):** `RE_SSH_V2`, `RE_SYSLOG`,
+  `RE_NTP` recognize Cisco CLI, Juniper Junos (`protocol-version v2`,
+  `syslog`), and Nokia SR Linux (`ssh-server`, `logging {`, `ntp {`) so the
+  SSH/syslog/NTP controls (PCI-2.3, PCI-6.1, PCI-10.1, FDRP-AC-17, FDRP-AU-2)
+  don't false-fail — and skew the score — on non-Cisco designs.
 - **UI**: Day-2 Ops tab "Compliance Scanner" card with "Run Compliance Scan"
   button, score badge (green ≥80 / yellow ≥60 / red), framework-grouped
   control list with status pills, and "Export Report" button.
-- **Tests**: 22 in `test/compliance-scan.test.ts`.
+- **Tests**: 29 in `test/compliance-scan.test.ts` (7 vendor-aware M4 tests using real generated Nokia/Juniper configs).
 
 ## Frontend — `lib/capacity-planning.ts` (Capacity Planning — H3)
 
