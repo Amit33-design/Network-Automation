@@ -25,12 +25,39 @@ from typing import Any
 # G-A6: filenames relative to the ztp-tftp / ztp-files static file root
 # (ZTP_FILES_DIR, exported via POST /ztp/export-files)
 _TFTP_MAP = {
-    "nxos":   "scripts/nxos_poap.py",
-    "nxos9k": "scripts/nxos_poap.py",
-    "eos":    "scripts/eos_ztp.py",
-    "ios-xe": "scripts/ios_xe_pnp.py",
-    "iosxe":  "scripts/ios_xe_pnp.py",
-    "ios_xe": "scripts/ios_xe_pnp.py",
+    "nxos":      "scripts/nxos_poap.py",
+    "nxos9k":    "scripts/nxos_poap.py",
+    "eos":       "scripts/eos_ztp.py",
+    "ios-xe":    "scripts/ios_xe_pnp.py",
+    "iosxe":     "scripts/ios_xe_pnp.py",
+    "ios_xe":    "scripts/ios_xe_pnp.py",
+    "iosxr":     "scripts/iosxr_ztp.sh",
+    "junos":     "scripts/junos_ztp.slax",
+    "srl":       "scripts/srl_ztp.json",
+    "cumulus":   "scripts/cumulus_ztp.sh",
+    "dellos10":  "scripts/os10_ztd.py",
+}
+
+
+# DHCP option 60 (vendor-class-identifier) advertised per platform — used to
+# classify booting devices and serve the correct boot file per vendor. Mirrors
+# frontend lib/ztp.ts ZTP_VENDOR_PROFILES so demo and live agree.
+_VENDOR_CLASS = {
+    "nxos":      "Cisco-POAP",
+    "nxos9k":    "Cisco-POAP",
+    "ios-xe":    "ciscopnp",
+    "iosxe":     "ciscopnp",
+    "ios_xe":    "ciscopnp",
+    "iosxr":     "PXEClient:Arch",
+    "eos":       "Arista",
+    "junos":     "Juniper",
+    "srl":       "Nokia-SRLinux",
+    "cumulus":   "cumulus-linux",
+    "dellos10":  "Dell-OS10",
+    "fortios":   "FortiGate",
+    "arubaoscx": "ArubaInstantOn",
+    "exos":      "Extreme",
+    "panos":     "PaloAltoNetworks",
 }
 
 
@@ -139,6 +166,34 @@ def generate_dhcp_config(
             "}}",
             "",
         ]
+
+    # Option-60 vendor classes — classify booting devices by their advertised
+    # vendor-class-identifier and serve the correct per-vendor boot file. This
+    # is what makes ZTP work for a mixed-vendor fleet without per-MAC config.
+    seen_classes: set[str] = set()
+    for dev in devices:
+        platform = (dev.get("platform", "ios-xe") or "ios-xe").lower()
+        vclass = _VENDOR_CLASS.get(platform)
+        if not vclass or vclass in seen_classes:
+            continue
+        seen_classes.add(vclass)
+        safe = "".join(c if c.isalnum() else "-" for c in vclass)
+        boot = _boot_filename(platform, "device", tftp=tftp)
+        lines.append(f"# {platform} → option-60 class")
+        lines.append(f"class \"{safe}\" {{")
+        lines.append(
+            f"  match if substring(option vendor-class-identifier, 0, "
+            f"{len(vclass)}) = \"{vclass}\";"
+        )
+        if not tftp and platform in ("ios-xe", "iosxe", "ios_xe"):
+            lines.append(f"  option vendor-class-identifier \"ciscopnp\";")
+            lines.append(
+                f"  option vendor-encapsulated-options \"5A;K4;B2;I{ztp_server_ip};J80\";"
+            )
+        lines.append(f"  filename \"{boot}\";")
+        lines.append(f"  next-server {ztp_server_ip};")
+        lines.append("}")
+        lines.append("")
 
     # Per-device host stanzas
     for dev in devices:

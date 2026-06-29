@@ -286,10 +286,17 @@ class ZTPServer:
                 "role":        dev.role,
                 "mgmt_ip":     dev.mgmt_ip,
                 "mgmt_mask":   dev.mgmt_mask,
-                "mgmt_gw":     dev.mgmt_gw,
+                "mgmt_gw":     dev.mgmt_gw or "<CHANGE-ME-mgmt-gw>",
                 "loopback_ip": dev.loopback_ip or dev.mgmt_ip,
                 "bgp_asn":     dev.bgp_asn,
                 "vlans":       dev.vlans,
+                # Secrets + shared services — NEVER hardcode. Use <CHANGE-ME-*>
+                # placeholders unless the registration supplied real values via
+                # `extra` (which overrides these defaults through the spread).
+                "admin_password":      "<CHANGE-ME-admin-password>",
+                "netdesign_password":  "<CHANGE-ME-netdesign-password>",
+                "ntp_server":          "<CHANGE-ME-ntp-ip>",
+                "syslog_server":       "<CHANGE-ME-syslog-ip>",
                 **dev.extra,
             }
             base = tpl.render(**ctx)

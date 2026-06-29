@@ -22,8 +22,8 @@ aaa authentication login default local
 aaa authorization exec default local if-authenticated
 !
 ! --- Local admin (CHANGE BEFORE PRODUCTION)
-username admin privilege 15 algorithm-type sha256 secret ChangeMe!
-username netdesign privilege 15 algorithm-type sha256 secret NetDesignZTP1!
+username admin privilege 15 algorithm-type sha256 secret {{ admin_password }}
+username netdesign privilege 15 algorithm-type sha256 secret {{ netdesign_password }}
 !
 ! --- Disable unsafe services
 no ip http server
@@ -69,10 +69,10 @@ line con 0
  logging synchronous
 !
 ! --- NTP (will be updated by full config)
-ntp server 10.100.0.1 prefer
+ntp server {{ ntp_server }} prefer
 !
 ! --- Syslog
-logging host 10.100.0.100
+logging host {{ syslog_server }}
 logging trap informational
 !
 ! --- Banner

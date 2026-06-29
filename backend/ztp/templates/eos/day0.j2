@@ -9,8 +9,8 @@
 hostname {{ hostname }}
 
 !-- Local users
-username admin privilege 15 role network-admin secret sha512 $6$ChangeMe!
-username netdesign privilege 15 role network-admin secret sha512 $6$NetDesignZTP1!
+username admin privilege 15 role network-admin secret {{ admin_password }}
+username netdesign privilege 15 role network-admin secret {{ netdesign_password }}
 
 !-- Management interface
 interface Management1
@@ -36,10 +36,10 @@ management ssh
    no shutdown
 
 !-- NTP
-ntp server 10.100.0.1 prefer
+ntp server {{ ntp_server }} prefer
 
 !-- Syslog
-logging host 10.100.0.100 514
+logging host {{ syslog_server }} 514
 
 !-- LLDP
 lldp run

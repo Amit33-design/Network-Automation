@@ -15,13 +15,13 @@ feature ssh
 !-- Disable telnet
 no feature telnet
 
-!-- Local admin (CHANGE BEFORE PRODUCTION)
-username admin password ChangeMe! role network-admin
-username netdesign password NetDesignZTP1! role network-admin
+!-- Local admin (replace placeholders before production)
+username admin password {{ admin_password }} role network-admin
+username netdesign password {{ netdesign_password }} role network-admin
 
 !-- Management VRF
 vrf context management
-  ip route 0.0.0.0/0 {{ mgmt_gw if mgmt_gw else '10.100.0.1' }}
+  ip route 0.0.0.0/0 {{ mgmt_gw }}
 
 !-- Management interface
 interface mgmt0
@@ -37,10 +37,10 @@ interface loopback0
   no shutdown
 
 !-- NTP
-ntp server {{ '10.100.0.1' }} use-vrf management prefer
+ntp server {{ ntp_server }} use-vrf management prefer
 
 !-- Syslog
-logging server {{ '10.100.0.100' }} 6 use-vrf management
+logging server {{ syslog_server }} 6 use-vrf management
 
 !-- SSH keys
 no ip domain-lookup
