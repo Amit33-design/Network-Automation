@@ -26,7 +26,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
-import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts, recordAvailability, availabilityReport, type AvailabilityAcc } from '@/lib/monitoring'
+import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts, recordAvailability, availabilityReport, updateAlertHistory, ackAlert, alertHistoryList, type AvailabilityAcc, type AlertHistory } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2553,7 +2553,9 @@ export function Step6Deploy() {
   const sparkRef = useRef<Record<string, number[]>>({})
   const cpuHistRef = useRef<Record<string, number[]>>({})
   const availRef = useRef<AvailabilityAcc>({})
+  const alertHistRef = useRef<AlertHistory>({})
   const [monCorrelate, setMonCorrelate] = useState(true)
+  const [showAlertHistory, setShowAlertHistory] = useState(false)
   const [, setAvailTick] = useState(0)
 
   function handlePoll(failDevices?: Record<string, string[]>) {
@@ -2925,7 +2927,9 @@ export function Step6Deploy() {
     if (!_monMetrics) return
     const roles: Record<string, string> = {}
     for (const d of simDevices) roles[d.name] = d.role
-    availRef.current = recordAvailability(availRef.current, evaluateFleet(_monMetrics, { roles }))
+    const fleet = evaluateFleet(_monMetrics, { roles })
+    availRef.current = recordAvailability(availRef.current, fleet)
+    alertHistRef.current = updateAlertHistory(alertHistRef.current, fleet.alerts, _monMetrics.timestamp)
     setAvailTick(t => t + 1)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_monMetrics?.timestamp])
@@ -4323,6 +4327,47 @@ export function Step6Deploy() {
                           )}
                         </div>
                       )}
+
+                      {/* ── Alert history (session) + acknowledge ──────────── */}
+                      {(() => {
+                        const hist = alertHistoryList(alertHistRef.current)
+                        if (hist.length === 0) return null
+                        const activeUnacked = hist.filter(e => e.clearedAt === null && !e.acked).length
+                        return (
+                          <div className="mt-3 border-t border-white/10 pt-2">
+                            <button
+                              className="text-xs text-gray-400 hover:text-gray-200 cursor-pointer"
+                              onClick={() => setShowAlertHistory(s => !s)}
+                            >
+                              {showAlertHistory ? '▾' : '▸'} Alert history (session) — {hist.length} event(s)
+                              {activeUnacked > 0 && <span className="ml-1 text-orange-400">· {activeUnacked} unacked</span>}
+                            </button>
+                            {showAlertHistory && (
+                              <div className="mt-2 space-y-1 max-h-60 overflow-y-auto">
+                                {hist.slice(0, 40).map(e => (
+                                  <div key={e.key} className="flex items-center gap-2 text-[11px] px-2 py-1 rounded bg-white/[0.02] border border-white/5">
+                                    <span className={cn('px-1 rounded',
+                                      e.clearedAt === null ? 'bg-red-500/20 text-red-300' : 'bg-gray-500/20 text-gray-400')}>
+                                      {e.clearedAt === null ? 'ACTIVE' : 'cleared'}
+                                    </span>
+                                    <span className="text-gray-300">{e.device}</span>
+                                    <span className="text-gray-500 truncate flex-1">{e.message}</span>
+                                    <span className="text-gray-600" title={`first ${e.firstSeen}`}>×{e.count}</span>
+                                    {e.clearedAt === null && (
+                                      e.acked
+                                        ? <span className="text-green-400">✓ ack</span>
+                                        : <button
+                                            className="text-blue-400 hover:underline cursor-pointer"
+                                            onClick={() => { alertHistRef.current = ackAlert(alertHistRef.current, e.key); setAvailTick(t => t + 1) }}
+                                          >ack</button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </Card>
                   )
                 })()}

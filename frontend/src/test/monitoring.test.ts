@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   evaluateDevice, evaluateFleet, alertsToText, METRIC_THRESHOLDS, forecastMetric, correlateAlerts,
   recordAvailability, availabilityReport, type AvailabilityAcc,
+  updateAlertHistory, ackAlert, alertHistoryList, type AlertHistory,
 } from '@/lib/monitoring'
 import type { DeviceMetrics, MetricsSummary } from '@/types'
 
@@ -200,5 +201,61 @@ describe('availability / SLA tracking', () => {
     const r = availabilityReport({})
     expect(r.fleetPct).toBe(100)
     expect(r.samples).toBe(0)
+  })
+})
+
+describe('alert history + acknowledge', () => {
+  const alertsAt = (cpu: number) => evaluateFleet(
+    { timestamp: 't', devices: { 'SP-01': m({ cpu_util: cpu }) } }, { roles: { 'SP-01': 'spine' } }).alerts
+
+  it('creates an entry on first fire and bumps count while firing', () => {
+    let h: AlertHistory = {}
+    h = updateAlertHistory(h, alertsAt(95), '2026-06-29T00:00:00Z')
+    h = updateAlertHistory(h, alertsAt(96), '2026-06-29T00:00:15Z')
+    const e = h['SP-01|cpu_util']
+    expect(e.count).toBe(2)
+    expect(e.firstSeen).toBe('2026-06-29T00:00:00Z')
+    expect(e.lastSeen).toBe('2026-06-29T00:00:15Z')
+    expect(e.clearedAt).toBeNull()
+  })
+
+  it('sets clearedAt when the alert stops firing', () => {
+    let h: AlertHistory = {}
+    h = updateAlertHistory(h, alertsAt(95), 't1')
+    h = updateAlertHistory(h, alertsAt(20), 't2')   // healthy now → no alert
+    const e = h['SP-01|cpu_util']
+    expect(e.clearedAt).toBe('t1')                  // cleared at last-seen
+  })
+
+  it('re-fire after clear resets lifecycle (new firstSeen, ack cleared)', () => {
+    let h: AlertHistory = {}
+    h = updateAlertHistory(h, alertsAt(95), 't1')
+    h = ackAlert(h, 'SP-01|cpu_util')
+    h = updateAlertHistory(h, alertsAt(20), 't2')   // cleared
+    h = updateAlertHistory(h, alertsAt(95), 't3')   // re-fired
+    const e = h['SP-01|cpu_util']
+    expect(e.firstSeen).toBe('t3')
+    expect(e.clearedAt).toBeNull()
+    expect(e.acked).toBe(false)
+  })
+
+  it('ackAlert is idempotent and preserved while firing', () => {
+    let h: AlertHistory = {}
+    h = updateAlertHistory(h, alertsAt(95), 't1')
+    h = ackAlert(h, 'SP-01|cpu_util')
+    h = ackAlert(h, 'SP-01|cpu_util')               // idempotent
+    h = updateAlertHistory(h, alertsAt(96), 't2')   // still firing
+    expect(h['SP-01|cpu_util'].acked).toBe(true)
+  })
+
+  it('alertHistoryList puts active before cleared', () => {
+    let h: AlertHistory = {}
+    h = updateAlertHistory(h, alertsAt(95), 't1')                  // SP-01 active
+    // a separate device that clears
+    const lf = evaluateFleet({ timestamp: 't', devices: { 'LF-01': m({ mem_util: 95 }) } }, { roles: { 'LF-01': 'leaf' } }).alerts
+    h = updateAlertHistory(h, [...alertsAt(95), ...lf], 't2')
+    h = updateAlertHistory(h, alertsAt(95), 't3')                 // LF-01 cleared, SP-01 active
+    const list = alertHistoryList(h)
+    expect(list[0].clearedAt).toBeNull()                          // active first
   })
 })

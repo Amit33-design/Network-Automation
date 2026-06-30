@@ -211,6 +211,81 @@ export function alertsToText(fleet: FleetHealth): string {
   return lines.join('\n')
 }
 
+// ── Alert history + acknowledge (session-scoped) ─────────────────────────────
+// Track each alert's lifecycle across ticks (first seen → last seen → cleared)
+// with an ack flag, so the NOC has a history rather than only a point-in-time
+// snapshot. Keyed by device|metric. Pure reducer (caller holds the map).
+
+export interface AlertHistoryEntry {
+  key: string
+  device: string
+  metric: string
+  severity: AlertSeverity
+  message: string
+  firstSeen: string
+  lastSeen: string
+  clearedAt: string | null   // set when the alert stops firing
+  count: number              // ticks observed firing
+  acked: boolean
+}
+
+export type AlertHistory = Record<string, AlertHistoryEntry>
+
+const alertKey = (a: MonAlert): string => `${a.device}|${a.metric}`
+
+/**
+ * Fold the current tick's alerts into the running history (pure):
+ *  - new alert → create entry (firstSeen = nowIso),
+ *  - still firing → bump lastSeen/severity/message/count, clearedAt = null,
+ *  - previously firing, now gone → set clearedAt (once).
+ * Ack state is preserved across updates.
+ */
+export function updateAlertHistory(prev: AlertHistory, alerts: MonAlert[], nowIso: string): AlertHistory {
+  const next: AlertHistory = {}
+  const active = new Set<string>()
+
+  // Carry forward existing entries.
+  for (const [k, e] of Object.entries(prev)) next[k] = { ...e }
+
+  for (const a of alerts) {
+    const k = alertKey(a)
+    active.add(k)
+    const e = next[k]
+    if (e && e.clearedAt === null) {
+      next[k] = { ...e, lastSeen: nowIso, severity: a.severity, message: a.message, count: e.count + 1 }
+    } else {
+      // brand new, or re-fired after a clear (reset lifecycle, keep ack=false)
+      next[k] = {
+        key: k, device: a.device, metric: a.metric, severity: a.severity, message: a.message,
+        firstSeen: nowIso, lastSeen: nowIso, clearedAt: null, count: 1, acked: false,
+      }
+    }
+  }
+
+  // Anything previously active but not in this tick → cleared.
+  for (const [k, e] of Object.entries(next)) {
+    if (!active.has(k) && e.clearedAt === null) next[k] = { ...e, clearedAt: e.lastSeen }
+  }
+
+  return next
+}
+
+/** Mark an alert acknowledged (idempotent, pure). */
+export function ackAlert(history: AlertHistory, key: string): AlertHistory {
+  const e = history[key]
+  if (!e || e.acked) return history
+  return { ...history, [key]: { ...e, acked: true } }
+}
+
+/** Entries sorted for display: active-first, then most-recent, severity-ranked. */
+export function alertHistoryList(history: AlertHistory): AlertHistoryEntry[] {
+  const rank: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 }
+  return Object.values(history).sort((a, b) =>
+    (a.clearedAt === null ? 0 : 1) - (b.clearedAt === null ? 0 : 1) ||
+    rank[a.severity] - rank[b.severity] ||
+    b.lastSeen.localeCompare(a.lastSeen))
+}
+
 // ── SLA / availability tracking ──────────────────────────────────────────────
 // Accumulate per-device up/down samples across monitoring ticks to derive an
 // availability % (uptime). A device counts as "up" when healthy or degraded;
