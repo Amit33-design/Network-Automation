@@ -211,6 +211,57 @@ export function alertsToText(fleet: FleetHealth): string {
   return lines.join('\n')
 }
 
+// ── SLA / availability tracking ──────────────────────────────────────────────
+// Accumulate per-device up/down samples across monitoring ticks to derive an
+// availability % (uptime). A device counts as "up" when healthy or degraded;
+// only `down` (control-plane isolated / CPU pegged) subtracts from uptime.
+
+export interface AvailabilityAcc {
+  [device: string]: { up: number; total: number }
+}
+
+/** Fold one fleet evaluation into the running availability accumulator (pure). */
+export function recordAvailability(acc: AvailabilityAcc, fleet: FleetHealth): AvailabilityAcc {
+  const next: AvailabilityAcc = { ...acc }
+  for (const d of fleet.devices) {
+    const cur = next[d.device] ?? { up: 0, total: 0 }
+    next[d.device] = {
+      up: cur.up + (d.status === 'down' ? 0 : 1),
+      total: cur.total + 1,
+    }
+  }
+  return next
+}
+
+export interface DeviceAvailability {
+  device: string
+  pct: number      // 0-100, rounded to 2 dp
+  samples: number
+  down: number
+}
+
+export interface AvailabilityReport {
+  devices: DeviceAvailability[]   // sorted worst-first
+  fleetPct: number                // mean availability across devices
+  samples: number                 // ticks observed (max across devices)
+}
+
+/** Summarize the accumulator into per-device + fleet availability. */
+export function availabilityReport(acc: AvailabilityAcc): AvailabilityReport {
+  const devices: DeviceAvailability[] = Object.entries(acc).map(([device, c]) => ({
+    device,
+    pct: c.total ? Math.round((c.up / c.total) * 10000) / 100 : 100,
+    samples: c.total,
+    down: c.total - c.up,
+  })).sort((a, b) => a.pct - b.pct || b.down - a.down)
+
+  const fleetPct = devices.length
+    ? Math.round((devices.reduce((s, d) => s + d.pct, 0) / devices.length) * 100) / 100
+    : 100
+  const samples = devices.reduce((m, d) => Math.max(m, d.samples), 0)
+  return { devices, fleetPct, samples }
+}
+
 // ── Alert correlation / grouping ────────────────────────────────────────────
 // Collapse a noisy flat alert list into a few correlated events with a
 // root-cause hint, so the NOC sees "fleet-wide BGP loss" rather than 12 rows.

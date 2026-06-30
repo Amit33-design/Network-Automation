@@ -26,7 +26,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
-import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts } from '@/lib/monitoring'
+import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts, recordAvailability, availabilityReport, type AvailabilityAcc } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2552,7 +2552,9 @@ export function Step6Deploy() {
   // Sparkline history: last 8 ticks of throughput per device
   const sparkRef = useRef<Record<string, number[]>>({})
   const cpuHistRef = useRef<Record<string, number[]>>({})
+  const availRef = useRef<AvailabilityAcc>({})
   const [monCorrelate, setMonCorrelate] = useState(true)
+  const [, setAvailTick] = useState(0)
 
   function handlePoll(failDevices?: Record<string, string[]>) {
     poll(failDevices ? { fail_devices: failDevices } : {}, {
@@ -2916,6 +2918,17 @@ export function Step6Deploy() {
     return () => clearInterval(id)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, isLive, simDevices.length])
+
+  // T5: accumulate per-device availability (SLA uptime) once per metrics sample.
+  const _monMetrics = isLive ? liveMetrics : demoMetrics
+  useEffect(() => {
+    if (!_monMetrics) return
+    const roles: Record<string, string> = {}
+    for (const d of simDevices) roles[d.name] = d.role
+    availRef.current = recordAvailability(availRef.current, evaluateFleet(_monMetrics, { roles }))
+    setAvailTick(t => t + 1)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_monMetrics?.timestamp])
 
   // ── Expanded state for grouped checks display ──────────────────────────────
   const [expandedCheckDevices, setExpandedCheckDevices] = useState<Set<string>>(new Set())
@@ -4236,6 +4249,19 @@ export function Step6Deploy() {
                         <span className="px-2 py-1 rounded-full text-xs bg-yellow-600/20 border border-yellow-500/40 text-yellow-300">{fs.degraded} degraded</span>
                         <span className="px-2 py-1 rounded-full text-xs bg-red-600/20 border border-red-500/40 text-red-300">{fs.down} down</span>
                         <span className="px-2 py-1 rounded-full text-xs bg-orange-600/20 border border-orange-500/40 text-orange-300">{fs.critical} critical · {fs.warning} warning</span>
+                        {(() => {
+                          const av = availabilityReport(availRef.current)
+                          if (av.samples === 0) return null
+                          const cls = av.fleetPct >= 99.9 ? 'text-green-300 border-green-500/40 bg-green-600/20'
+                            : av.fleetPct >= 99 ? 'text-yellow-300 border-yellow-500/40 bg-yellow-600/20'
+                            : 'text-red-300 border-red-500/40 bg-red-600/20'
+                          return (
+                            <span className={cn('px-2 py-1 rounded-full text-xs border', cls)}
+                              title={`Session SLA over ${av.samples} samples · worst: ${av.devices[0]?.device ?? '—'} ${av.devices[0]?.pct ?? 100}%`}>
+                              SLA {av.fleetPct}%
+                            </span>
+                          )
+                        })()}
                         {fleet.alerts.length > 0 && (
                           <div className="ml-auto flex items-center gap-3">
                             <button
