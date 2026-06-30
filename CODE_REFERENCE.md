@@ -1160,6 +1160,21 @@ as vendor-correct INCREMENTAL deltas with matching ROLLBACK. Distinct from
 - **UI**: Day-2 Ops tab "🔧 Push Incremental Change (Day-N)" card — change picker + dynamic param form + device multi-select + side-by-side delta/rollback preview + downloads.
 - **Tests**: 19 in `test/config-update.test.ts`.
 
+## Frontend — `lib/monitoring.ts` (Monitoring analysis / alerting — T1)
+
+**Purpose:** Turn a sampled `MetricsSummary` into a real NOC view — threshold
+alerts + per-device health + fleet rollup — client-side, so it works in demo
+mode (not just live `/api/alerts`).
+
+**Key exports:**
+- Types: `HealthStatus` (healthy/degraded/down), `AlertSeverity` (critical/warning/info), `MetricThreshold`, `MonAlert`, `DeviceHealthEval`, `FleetHealth`.
+- `METRIC_THRESHOLDS` — default warn+critical per metric (cpu_util 75/90, mem_util 80/92, interface_errors_in/out 5/50, pfc_drops 50/200); tunable via the `thresholds` arg.
+- `evaluateDevice(device, role, metrics, thresholds?)` — per-device health + severity-ranked alerts. A routing device (name/role hints) with `bgp_sessions_up === 0` → **down** (control-plane isolated); `cpu_util ≥ 99` → **down**; any threshold breach → degraded.
+- `evaluateFleet(summary, {roles?, thresholds?})` — fleet rollup (`healthy`/`degraded`/`down` + `critical`/`warning` counts) + all alerts sorted critical-first.
+- `alertsToText(fleet)` — plain-text NOC alert feed for download.
+- **UI**: Step 6 Monitoring tab "🔔 Active Alerts & Fleet Health" card (health chips + severity-colored feed + export), computed from live/demo metrics each tick.
+- **Tests**: 12 in `test/monitoring.test.ts`.
+
 ## Frontend — `lib/containerlab.ts` (Containerlab topology export — N1)
 
 **Purpose:** Generates containerlab YAML topology files from BOM devices +

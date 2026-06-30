@@ -26,6 +26,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
+import { evaluateFleet, alertsToText } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -4214,6 +4215,55 @@ export function Step6Deploy() {
                     <div className="text-xs text-gray-500 mt-1">Interface Errors</div>
                   </Card>
                 </div>
+
+                {/* ── Active Alerts + fleet health (computed from metrics) ──── */}
+                {(() => {
+                  const roles: Record<string, string> = {}
+                  for (const d of simDevices) roles[d.name] = d.role
+                  const fleet = evaluateFleet(metrics, { roles })
+                  const fs = fleet.summary
+                  return (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>🔔 Active Alerts &amp; Fleet Health</CardTitle>
+                      </CardHeader>
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        <span className="px-2 py-1 rounded-full text-xs bg-green-600/20 border border-green-500/40 text-green-300">{fs.healthy} healthy</span>
+                        <span className="px-2 py-1 rounded-full text-xs bg-yellow-600/20 border border-yellow-500/40 text-yellow-300">{fs.degraded} degraded</span>
+                        <span className="px-2 py-1 rounded-full text-xs bg-red-600/20 border border-red-500/40 text-red-300">{fs.down} down</span>
+                        <span className="px-2 py-1 rounded-full text-xs bg-orange-600/20 border border-orange-500/40 text-orange-300">{fs.critical} critical · {fs.warning} warning</span>
+                        {fleet.alerts.length > 0 && (
+                          <button
+                            className="ml-auto text-xs text-blue-400 hover:underline cursor-pointer"
+                            onClick={() => { downloadBlob('active-alerts.txt', alertsToText(fleet)); showToast('Alert feed downloaded', 'success') }}
+                          >⬇ Export alert feed</button>
+                        )}
+                      </div>
+                      {fleet.alerts.length === 0 ? (
+                        <div className="text-xs text-green-400 border border-green-500/20 bg-green-500/5 rounded px-3 py-2">
+                          ✅ No active alerts — all devices within thresholds.
+                        </div>
+                      ) : (
+                        <div className="space-y-1 max-h-60 overflow-y-auto">
+                          {fleet.alerts.slice(0, 30).map((a, i) => (
+                            <div key={i} className={cn(
+                              'text-xs rounded px-3 py-1.5 border flex items-center gap-2',
+                              a.severity === 'critical' ? 'bg-red-500/10 border-red-500/40 text-red-300'
+                                : a.severity === 'warning' ? 'bg-yellow-500/10 border-yellow-500/40 text-yellow-300'
+                                : 'bg-blue-500/10 border-blue-500/40 text-blue-300')}>
+                              <span className="font-semibold">{a.severity === 'critical' ? 'CRIT' : a.severity === 'warning' ? 'WARN' : 'INFO'}</span>
+                              <span className="text-gray-200 font-medium">{a.device}</span>
+                              <span className="text-gray-400">{a.message}</span>
+                            </div>
+                          ))}
+                          {fleet.alerts.length > 30 && (
+                            <p className="text-[11px] text-gray-600">+{fleet.alerts.length - 30} more…</p>
+                          )}
+                        </div>
+                      )}
+                    </Card>
+                  )
+                })()}
 
                 {/* ── Per-device metric cards ───────────────────────────────── */}
                 <div>

@@ -1,0 +1,99 @@
+import { describe, it, expect } from 'vitest'
+import {
+  evaluateDevice, evaluateFleet, alertsToText, METRIC_THRESHOLDS,
+} from '@/lib/monitoring'
+import type { DeviceMetrics, MetricsSummary } from '@/types'
+
+const m = (o: Partial<DeviceMetrics> = {}): DeviceMetrics => ({
+  cpu_util: 20, mem_util: 40, interface_errors_in: 0, interface_errors_out: 0,
+  bgp_sessions_up: 3, bgp_prefixes_received: 500, pfc_drops: 0, throughput_mbps: 1000, ...o,
+})
+
+describe('evaluateDevice', () => {
+  it('healthy when all metrics are within thresholds', () => {
+    const d = evaluateDevice('SPINE-01', 'spine', m())
+    expect(d.status).toBe('healthy')
+    expect(d.alerts).toHaveLength(0)
+  })
+
+  it('warning CPU → degraded with a warning alert', () => {
+    const d = evaluateDevice('SPINE-01', 'spine', m({ cpu_util: 80 }))
+    expect(d.status).toBe('degraded')
+    const a = d.alerts.find(x => x.metric === 'cpu_util')!
+    expect(a.severity).toBe('warning')
+    expect(a.threshold).toBe(75)
+  })
+
+  it('critical memory → degraded with a critical alert', () => {
+    const d = evaluateDevice('LF-01', 'leaf', m({ mem_util: 95 }))
+    expect(d.status).toBe('degraded')
+    expect(d.alerts.some(a => a.metric === 'mem_util' && a.severity === 'critical')).toBe(true)
+  })
+
+  it('routing device with 0 BGP sessions → down (control plane isolated)', () => {
+    const d = evaluateDevice('SPINE-01', 'spine', m({ bgp_sessions_up: 0 }))
+    expect(d.status).toBe('down')
+    expect(d.alerts.some(a => a.metric === 'bgp_sessions_up' && a.severity === 'critical')).toBe(true)
+  })
+
+  it('access device with 0 BGP sessions is NOT down (no BGP expected)', () => {
+    const d = evaluateDevice('ACC-01', 'access', m({ bgp_sessions_up: 0 }))
+    expect(d.status).toBe('healthy')
+    expect(d.alerts).toHaveLength(0)
+  })
+
+  it('CPU pegged at 99 → down', () => {
+    const d = evaluateDevice('SPINE-01', 'spine', m({ cpu_util: 99 }))
+    expect(d.status).toBe('down')
+  })
+
+  it('PFC drops over critical → degraded with alert', () => {
+    const d = evaluateDevice('GPU-LEAF-01', 'leaf', m({ pfc_drops: 250 }))
+    expect(d.alerts.some(a => a.metric === 'pfc_drops' && a.severity === 'critical')).toBe(true)
+  })
+
+  it('interface errors warn vs critical boundaries', () => {
+    expect(evaluateDevice('X', 'spine', m({ interface_errors_in: 6 })).alerts[0].severity).toBe('warning')
+    expect(evaluateDevice('X', 'spine', m({ interface_errors_in: 60 })).alerts[0].severity).toBe('critical')
+  })
+
+  it('honors custom thresholds', () => {
+    const d = evaluateDevice('X', 'spine', m({ cpu_util: 50 }),
+      METRIC_THRESHOLDS.map(t => t.metric === 'cpu_util' ? { ...t, warn: 40, critical: 45 } : t))
+    expect(d.alerts.some(a => a.metric === 'cpu_util' && a.severity === 'critical')).toBe(true)
+  })
+})
+
+describe('evaluateFleet', () => {
+  const summary = (): MetricsSummary => ({
+    timestamp: '2026-06-29T00:00:00Z',
+    devices: {
+      'SP-01': m(),                                  // healthy
+      'LF-01': m({ cpu_util: 80 }),                  // degraded (warn)
+      'LF-02': m({ bgp_sessions_up: 0 }),            // down (routing, no bgp)
+      'AC-01': m({ bgp_sessions_up: 0 }),            // access (role via map), healthy
+    },
+  })
+
+  it('rolls up health + alert counts, sorted most-severe-first', () => {
+    const f = evaluateFleet(summary(), { roles: { 'SP-01': 'spine', 'LF-01': 'leaf', 'LF-02': 'leaf', 'AC-01': 'access' } })
+    expect(f.summary.total).toBe(4)
+    expect(f.summary.down).toBe(1)        // LF-02
+    expect(f.summary.degraded).toBe(1)    // LF-01
+    expect(f.summary.healthy).toBe(2)     // SP-01, AC-01
+    expect(f.summary.critical).toBeGreaterThanOrEqual(1)
+    expect(f.alerts[0].severity).toBe('critical')   // sorted critical-first
+  })
+
+  it('infers routing role from the device name when roles map absent', () => {
+    const f = evaluateFleet({ timestamp: 't', devices: { 'DC-SPINE-09': m({ bgp_sessions_up: 0 }) } })
+    expect(f.summary.down).toBe(1)        // name contains "spine" → routing
+  })
+
+  it('alertsToText lists critical alerts and a clean message when none', () => {
+    const f = evaluateFleet({ timestamp: 't', devices: { 'SP-01': m() } }, { roles: { 'SP-01': 'spine' } })
+    expect(alertsToText(f)).toContain('No active alerts')
+    const f2 = evaluateFleet({ timestamp: 't', devices: { 'SP-01': m({ cpu_util: 95 }) } }, { roles: { 'SP-01': 'spine' } })
+    expect(alertsToText(f2)).toMatch(/\[CRIT\] SP-01: CPU/)
+  })
+})

@@ -886,6 +886,20 @@ config-gen tests must keep passing; add new tests alongside).
 | S4 | Pre-flight safety analysis for the Day-N change — `analyzeChangeSet(cs)` returns `ChangeWarning[]` (info/warn/danger) before the operator pushes: skipped (unsupported) devices, unfilled `<CHANGE-ME>` placeholders in the generated commands, **irreversible** changes (supported device with no rollback), and two genuinely-risky patterns — admin-down on a fabric (spine/leaf/core) interface, and a broad `deny any → any` firewall rule. Surfaced as a severity-colored warning banner in the Day-2 Ops change card before the delta/rollback preview. 5 new tests | [x] | `config-update.ts` (`analyzeChangeSet`/`ChangeWarning`) + `Step6Deploy.tsx` banner; `config-update.test.ts` 24→29; 1074 tests, build green |
 | S5 (backend) | Backend parity for the Day-N change tool — `backend/change_update.py` mirrors the frontend engine (same 7 ops × ios/junos/nokia/fortios/panos forward+rollback, `build_change_set`, `analyze_change_set`, `validate_change_params`, `CHANGE_CATALOG`); new `GET /api/change/catalog` + `POST /api/change/preview` (generation only, like /api/drift/remediate — returns per-device delta+rollback + pre-flight warnings + summary). 16 pytest in `test_change_update.py` | [x] | `backend/change_update.py` + `main.py` endpoints; backend pytest 16 (108 with ztp suites) |
 
+### T. Monitoring engine — computed alerting + fleet health (sourced 2026-06-29)
+
+> A full audit of the monitoring engine found it "feature-rich but data-
+> limited": the demo Monitoring tab sampled per-device metrics each tick but
+> only drew gauges — it never *analyzed* them into alerts/health. Real
+> alerting only existed in live mode (`/api/alerts`, telemetry-gated) or as
+> hardcoded lab alerts. Top quick win: client-side threshold alerting + health
+> that works in demo mode (the app's emphasis), with tunable thresholds.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| T1 | Monitoring analysis/alerting engine (`lib/monitoring.ts`) — turns a `MetricsSummary` into a NOC view: `METRIC_THRESHOLDS` (cpu/mem/iface-errors/pfc, warn+critical, tunable), `evaluateDevice(name, role, m, thresholds?)` → per-device health (healthy/degraded/down) + severity-ranked `MonAlert[]` (routing device with 0 BGP sessions → down/control-plane-isolated; cpu≥99 → down), `evaluateFleet(summary, {roles, thresholds})` → fleet rollup + sorted alert list, `alertsToText` NOC feed export. Pure + 12 tests | [x] | new `lib/monitoring.ts` + `test/monitoring.test.ts` (12) |
+| T2 | Wire into the Monitoring tab — "🔔 Active Alerts & Fleet Health" card computes `evaluateFleet(metrics, {roles})` from the live/demo metrics each tick: health chips (healthy/degraded/down + critical/warning counts), severity-colored alert feed (sorted critical-first), and an "Export alert feed" download. Works in demo mode (previously alert-less) | [x] | `Step6Deploy.tsx` monitor tab; tsc + build green; 1086 tests |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
