@@ -1172,8 +1172,9 @@ mode (not just live `/api/alerts`).
 - `evaluateDevice(device, role, metrics, thresholds?)` — per-device health + severity-ranked alerts. A routing device (name/role hints) with `bgp_sessions_up === 0` → **down** (control-plane isolated); `cpu_util ≥ 99` → **down**; any threshold breach → degraded.
 - `evaluateFleet(summary, {roles?, thresholds?})` — fleet rollup (`healthy`/`degraded`/`down` + `critical`/`warning` counts) + all alerts sorted critical-first.
 - `alertsToText(fleet)` — plain-text NOC alert feed for download.
-- **UI**: Step 6 Monitoring tab "🔔 Active Alerts & Fleet Health" card (health chips + severity-colored feed + export), computed from live/demo metrics each tick.
-- **Tests**: 12 in `test/monitoring.test.ts`.
+- `forecastMetric(history, limit, flatEps?)` (T3) — least-squares linear regression over a metric's per-tick history → `{slope, trend: rising/falling/flat, etaTicks}` (ticks-to-limit when rising). Powers the monitor tab's "↗ CPU ~Nt to 90%" capacity-trend badge (per-device CPU history in `cpuHistRef`).
+- **UI**: Step 6 Monitoring tab "🔔 Active Alerts & Fleet Health" card (health chips + severity-colored feed + export) + per-device capacity-trend badge, computed from live/demo metrics each tick.
+- **Tests**: 16 in `test/monitoring.test.ts`.
 
 ## Frontend — `lib/containerlab.ts` (Containerlab topology export — N1)
 

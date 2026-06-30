@@ -26,7 +26,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
-import { evaluateFleet, alertsToText } from '@/lib/monitoring'
+import { evaluateFleet, alertsToText, forecastMetric } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2551,6 +2551,7 @@ export function Step6Deploy() {
   const [demoMetrics, setDemoMetrics] = useState<MetricsSummary | null>(null)
   // Sparkline history: last 8 ticks of throughput per device
   const sparkRef = useRef<Record<string, number[]>>({})
+  const cpuHistRef = useRef<Record<string, number[]>>({})
 
   function handlePoll(failDevices?: Record<string, string[]>) {
     poll(failDevices ? { fail_devices: failDevices } : {}, {
@@ -2905,6 +2906,8 @@ export function Step6Deploy() {
         Object.entries(m.devices).forEach(([name, dm]) => {
           if (!sparkRef.current[name]) sparkRef.current[name] = []
           sparkRef.current[name] = [...sparkRef.current[name].slice(-7), dm.throughput_mbps]
+          if (!cpuHistRef.current[name]) cpuHistRef.current[name] = []
+          cpuHistRef.current[name] = [...cpuHistRef.current[name].slice(-11), dm.cpu_util]
         })
         return next
       })
@@ -4271,6 +4274,7 @@ export function Step6Deploy() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {devEntries.map(({ name, metrics: dm }) => {
                       const spark = sparkRef.current[name] ?? [dm.throughput_mbps]
+                      const cpuFc = forecastMetric(cpuHistRef.current[name] ?? [], 90)
                       const cpuColor = dm.cpu_util > 80 ? '#EF4444' : dm.cpu_util > 60 ? '#F59E0B' : '#22C55E'
                       const memColor = dm.mem_util > 85 ? '#EF4444' : dm.mem_util > 70 ? '#F59E0B' : '#60A5FA'
                       const hasErrors = (dm.interface_errors_in + dm.interface_errors_out) > 10
@@ -4288,6 +4292,11 @@ export function Step6Deploy() {
                               <div className="text-[10px] text-gray-500 mt-0.5">
                                 {dm.bgp_sessions_up > 0 ? `${dm.bgp_sessions_up} BGP peers · ${dm.bgp_prefixes_received.toLocaleString()} pfx` : 'L2 device'}
                               </div>
+                              {cpuFc.trend === 'rising' && cpuFc.etaTicks !== null && cpuFc.etaTicks <= 12 && (
+                                <div className="text-[10px] text-amber-400 mt-0.5" title="Capacity trend (linear forecast)">
+                                  ↗ CPU ~{cpuFc.etaTicks}t to 90%
+                                </div>
+                              )}
                             </div>
                             <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
                               dm.cpu_util > 80 ? 'text-red-300 bg-red-500/15' : 'text-green-400 bg-green-500/10'}`}>

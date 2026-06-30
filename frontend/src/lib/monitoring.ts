@@ -154,6 +154,43 @@ export function evaluateFleet(
   }
 }
 
+// ── Capacity trending / forecast ────────────────────────────────────────────
+
+export interface MetricForecast {
+  /** Least-squares slope in metric-units per tick. */
+  slope: number
+  trend: 'rising' | 'falling' | 'flat'
+  /** Ticks until the metric reaches `limit` if rising toward it, else null. */
+  etaTicks: number | null
+}
+
+/**
+ * Linear-regression forecast over a metric's recent history (one value per
+ * tick). Used for capacity trending — e.g. "CPU rising, ~6 ticks to 90%".
+ */
+export function forecastMetric(history: number[], limit: number, flatEps = 0.2): MetricForecast {
+  const n = history.length
+  if (n < 3) return { slope: 0, trend: 'flat', etaTicks: null }
+
+  // Least-squares slope with x = 0..n-1.
+  const xMean = (n - 1) / 2
+  const yMean = history.reduce((s, v) => s + v, 0) / n
+  let num = 0, den = 0
+  for (let i = 0; i < n; i++) {
+    num += (i - xMean) * (history[i] - yMean)
+    den += (i - xMean) ** 2
+  }
+  const slope = den === 0 ? 0 : num / den
+  const trend: MetricForecast['trend'] = slope > flatEps ? 'rising' : slope < -flatEps ? 'falling' : 'flat'
+
+  let etaTicks: number | null = null
+  const current = history[n - 1]
+  if (trend === 'rising' && current < limit) {
+    etaTicks = Math.max(1, Math.ceil((limit - current) / slope))
+  }
+  return { slope: Math.round(slope * 100) / 100, trend, etaTicks }
+}
+
 /** Export the active alerts as a plain-text NOC feed (most severe first). */
 export function alertsToText(fleet: FleetHealth): string {
   const lines = [
