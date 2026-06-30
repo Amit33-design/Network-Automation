@@ -1007,6 +1007,60 @@ async def api_config_remediate(
 
 
 # ---------------------------------------------------------------------------
+# Day-N incremental change push (S-series) — generate per-vendor delta +
+# rollback for a parameterized change scoped to selected live devices.
+# Generation only (like /api/drift/remediate); does not push to devices.
+# ---------------------------------------------------------------------------
+
+class ChangeTargetDevice(BaseModel):
+    hostname: str
+    vendor:   str = "Cisco"
+    subLayer: str = ""
+    role:     str = ""
+
+
+class ChangePreviewRequest(BaseModel):
+    op_id:   str
+    params:  dict[str, Any] = {}
+    devices: list[ChangeTargetDevice] = []
+
+
+@app.get("/api/change/catalog")
+def api_change_catalog(user: dict = Depends(require_permission("designs:read"))):
+    """List the Day-N change operations + their parameter fields."""
+    from change_update import CHANGE_CATALOG
+    return {"ops": CHANGE_CATALOG}
+
+
+@app.post("/api/change/preview")
+async def api_change_preview(
+    body: ChangePreviewRequest,
+    user: dict = Depends(require_permission("configs:generate")),
+):
+    """
+    Generate the vendor-correct incremental delta + rollback for a Day-N change
+    (BGP policy, firewall/ACL rule, VLAN, static route, mgmt server, interface
+    config) scoped to the selected devices, plus pre-flight safety warnings.
+    Generation only — does not push.
+    """
+    try:
+        from change_update import build_change_set, analyze_change_set, validate_change_params
+        missing = validate_change_params(body.op_id, body.params)
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Missing required fields: {', '.join(missing)}")
+        cs = build_change_set(body.op_id, body.params, [d.model_dump() for d in body.devices])
+        warnings = analyze_change_set(cs, body.op_id, cs["params"])
+        return {**cs, "warnings": warnings}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        log.exception("Change preview generation failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Phase 4: RCA analysis
 # ---------------------------------------------------------------------------
 
