@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   evaluateDevice, evaluateFleet, alertsToText, METRIC_THRESHOLDS, forecastMetric, correlateAlerts,
+  recordAvailability, availabilityReport, type AvailabilityAcc,
 } from '@/lib/monitoring'
 import type { DeviceMetrics, MetricsSummary } from '@/types'
 
@@ -165,5 +166,39 @@ describe('correlateAlerts', () => {
   it('no alerts → no events', () => {
     const fleet = evaluateFleet({ timestamp: 't', devices: { 'SP-01': m() } }, { roles: { 'SP-01': 'spine' } })
     expect(correlateAlerts(fleet)).toHaveLength(0)
+  })
+})
+
+describe('availability / SLA tracking', () => {
+  const roles = { 'SP-01': 'spine', 'SP-02': 'spine' }
+  const fleetAt = (sp1Bgp: number) => evaluateFleet(
+    { timestamp: 't', devices: { 'SP-01': m({ bgp_sessions_up: sp1Bgp }), 'SP-02': m() } },
+    { roles })
+
+  it('accumulates up/total per device across ticks', () => {
+    let acc: AvailabilityAcc = {}
+    acc = recordAvailability(acc, fleetAt(3))   // SP-01 up
+    acc = recordAvailability(acc, fleetAt(0))   // SP-01 down (routing, 0 bgp)
+    acc = recordAvailability(acc, fleetAt(3))   // SP-01 up
+    expect(acc['SP-01']).toEqual({ up: 2, total: 3 })
+    expect(acc['SP-02']).toEqual({ up: 3, total: 3 })
+  })
+
+  it('availabilityReport computes pct, sorts worst-first, and rolls up fleet', () => {
+    let acc: AvailabilityAcc = {}
+    for (const b of [3, 0, 3, 3]) acc = recordAvailability(acc, fleetAt(b))  // SP-01 down 1/4
+    const r = availabilityReport(acc)
+    expect(r.samples).toBe(4)
+    expect(r.devices[0].device).toBe('SP-01')      // worst first
+    expect(r.devices[0].pct).toBe(75)              // 3/4 up
+    expect(r.devices[0].down).toBe(1)
+    expect(r.devices[1].pct).toBe(100)             // SP-02 always up
+    expect(r.fleetPct).toBe(87.5)                  // (75 + 100) / 2
+  })
+
+  it('empty accumulator → 100% fleet, 0 samples', () => {
+    const r = availabilityReport({})
+    expect(r.fleetPct).toBe(100)
+    expect(r.samples).toBe(0)
   })
 })
