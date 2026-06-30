@@ -210,3 +210,100 @@ export function alertsToText(fleet: FleetHealth): string {
   }
   return lines.join('\n')
 }
+
+// ── Alert correlation / grouping ────────────────────────────────────────────
+// Collapse a noisy flat alert list into a few correlated events with a
+// root-cause hint, so the NOC sees "fleet-wide BGP loss" rather than 12 rows.
+
+export interface CorrelatedEvent {
+  id: string
+  title: string
+  severity: AlertSeverity
+  scope: 'fleet' | 'device' | 'single'
+  devices: string[]
+  members: MonAlert[]
+  rootCauseHint?: string
+}
+
+const METRIC_LABEL: Record<string, string> = {
+  cpu_util: 'High CPU', mem_util: 'High memory',
+  interface_errors_in: 'Interface errors (in)', interface_errors_out: 'Interface errors (out)',
+  pfc_drops: 'PFC drops', bgp_sessions_up: 'BGP sessions down',
+}
+
+const FLEET_HINT: Record<string, string> = {
+  bgp_sessions_up: 'Multiple devices lost BGP — check route-reflectors/spines or a shared underlay fault',
+  cpu_util: 'Fleet-wide high CPU — possible control-plane event (route churn / scan / DDoS)',
+  mem_util: 'Fleet-wide high memory — possible leak after a common change/image',
+  interface_errors_in: 'Widespread interface errors — check a shared optics/cabling/SFP batch',
+  interface_errors_out: 'Widespread interface errors — check a shared optics/cabling/SFP batch',
+  pfc_drops: 'Fleet-wide PFC drops — RoCEv2 congestion / PFC storm across the fabric',
+}
+
+function maxSev(alerts: MonAlert[]): AlertSeverity {
+  return alerts.some(a => a.severity === 'critical') ? 'critical'
+    : alerts.some(a => a.severity === 'warning') ? 'warning' : 'info'
+}
+
+/**
+ * Correlate the fleet's flat alert list into grouped events:
+ *  1. fleet-wide  — the same metric breached on ≥ `fleetMin` devices,
+ *  2. device-level — a single device with ≥2 (remaining) alerts,
+ *  3. single      — everything else, passed through.
+ * Each event carries the collapsed member alerts + a root-cause hint.
+ */
+export function correlateAlerts(fleet: FleetHealth, fleetMin = 3): CorrelatedEvent[] {
+  const events: CorrelatedEvent[] = []
+  const claimed = new Set<MonAlert>()
+
+  // 1. Fleet-wide: same metric across many devices.
+  const byMetric = new Map<string, MonAlert[]>()
+  for (const a of fleet.alerts) (byMetric.get(a.metric) ?? byMetric.set(a.metric, []).get(a.metric)!).push(a)
+  for (const [metric, list] of byMetric) {
+    const devices = [...new Set(list.map(a => a.device))]
+    if (devices.length >= fleetMin) {
+      list.forEach(a => claimed.add(a))
+      events.push({
+        id: `fleet:${metric}`,
+        title: `Fleet-wide: ${METRIC_LABEL[metric] ?? metric} on ${devices.length} devices`,
+        severity: maxSev(list), scope: 'fleet', devices, members: list,
+        rootCauseHint: FLEET_HINT[metric],
+      })
+    }
+  }
+
+  // 2. Device-level: a device with ≥2 remaining alerts.
+  const remaining = fleet.alerts.filter(a => !claimed.has(a))
+  const byDevice = new Map<string, MonAlert[]>()
+  for (const a of remaining) (byDevice.get(a.device) ?? byDevice.set(a.device, []).get(a.device)!).push(a)
+  for (const [device, list] of byDevice) {
+    if (list.length >= 2) {
+      list.forEach(a => claimed.add(a))
+      const metrics = new Set(list.map(a => a.metric))
+      let hint: string | undefined
+      if (metrics.has('bgp_sessions_up')) hint = 'Control plane down on this device — triage first'
+      else if (metrics.has('cpu_util') && metrics.has('mem_util')) hint = 'Resource exhaustion (CPU + memory) on this device'
+      events.push({
+        id: `device:${device}`,
+        title: `${device}: ${list.length} correlated issues (${[...metrics].map(m => METRIC_LABEL[m] ?? m).join(', ')})`,
+        severity: maxSev(list), scope: 'device', devices: [device], members: list,
+        rootCauseHint: hint,
+      })
+    }
+  }
+
+  // 3. Singletons.
+  for (const a of fleet.alerts) {
+    if (claimed.has(a)) continue
+    events.push({
+      id: `single:${a.device}:${a.metric}`,
+      title: `${a.device}: ${a.message}`,
+      severity: a.severity, scope: 'single', devices: [a.device], members: [a],
+    })
+  }
+
+  const rank: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 }
+  const scopeRank: Record<CorrelatedEvent['scope'], number> = { fleet: 0, device: 1, single: 2 }
+  return events.sort((a, b) =>
+    rank[a.severity] - rank[b.severity] || scopeRank[a.scope] - scopeRank[b.scope])
+}

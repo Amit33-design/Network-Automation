@@ -1173,6 +1173,7 @@ mode (not just live `/api/alerts`).
 - `evaluateFleet(summary, {roles?, thresholds?})` — fleet rollup (`healthy`/`degraded`/`down` + `critical`/`warning` counts) + all alerts sorted critical-first.
 - `alertsToText(fleet)` — plain-text NOC alert feed for download.
 - `forecastMetric(history, limit, flatEps?)` (T3) — least-squares linear regression over a metric's per-tick history → `{slope, trend: rising/falling/flat, etaTicks}` (ticks-to-limit when rising). Powers the monitor tab's "↗ CPU ~Nt to 90%" capacity-trend badge (per-device CPU history in `cpuHistRef`).
+- `correlateAlerts(fleet, fleetMin=3): CorrelatedEvent[]` (T4) — collapses the flat alert list into grouped events with a root-cause hint: **fleet-wide** (same metric on ≥`fleetMin` devices), **device-level** (a device with ≥2 alerts), **single** (passthrough); sorted critical-first then fleet→device→single. Surfaced via the monitor tab's "◉ Correlate" toggle.
 - **UI**: Step 6 Monitoring tab "🔔 Active Alerts & Fleet Health" card (health chips + severity-colored feed + export) + per-device capacity-trend badge, computed from live/demo metrics each tick.
 - **Tests**: 16 in `test/monitoring.test.ts`.
 
