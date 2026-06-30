@@ -26,7 +26,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
-import { evaluateFleet, alertsToText, forecastMetric } from '@/lib/monitoring'
+import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2552,6 +2552,7 @@ export function Step6Deploy() {
   // Sparkline history: last 8 ticks of throughput per device
   const sparkRef = useRef<Record<string, number[]>>({})
   const cpuHistRef = useRef<Record<string, number[]>>({})
+  const [monCorrelate, setMonCorrelate] = useState(true)
 
   function handlePoll(failDevices?: Record<string, string[]>) {
     poll(failDevices ? { fail_devices: failDevices } : {}, {
@@ -4236,17 +4237,49 @@ export function Step6Deploy() {
                         <span className="px-2 py-1 rounded-full text-xs bg-red-600/20 border border-red-500/40 text-red-300">{fs.down} down</span>
                         <span className="px-2 py-1 rounded-full text-xs bg-orange-600/20 border border-orange-500/40 text-orange-300">{fs.critical} critical · {fs.warning} warning</span>
                         {fleet.alerts.length > 0 && (
-                          <button
-                            className="ml-auto text-xs text-blue-400 hover:underline cursor-pointer"
-                            onClick={() => { downloadBlob('active-alerts.txt', alertsToText(fleet)); showToast('Alert feed downloaded', 'success') }}
-                          >⬇ Export alert feed</button>
+                          <div className="ml-auto flex items-center gap-3">
+                            <button
+                              className={cn('text-xs cursor-pointer', monCorrelate ? 'text-blue-400' : 'text-gray-500 hover:text-gray-300')}
+                              onClick={() => setMonCorrelate(c => !c)}
+                            >{monCorrelate ? '◉' : '○'} Correlate</button>
+                            <button
+                              className="text-xs text-blue-400 hover:underline cursor-pointer"
+                              onClick={() => { downloadBlob('active-alerts.txt', alertsToText(fleet)); showToast('Alert feed downloaded', 'success') }}
+                            >⬇ Export alert feed</button>
+                          </div>
                         )}
                       </div>
                       {fleet.alerts.length === 0 ? (
                         <div className="text-xs text-green-400 border border-green-500/20 bg-green-500/5 rounded px-3 py-2">
                           ✅ No active alerts — all devices within thresholds.
                         </div>
-                      ) : (
+                      ) : monCorrelate ? (() => {
+                        const events = correlateAlerts(fleet)
+                        return (
+                          <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                            <div className="text-[11px] text-gray-500">{events.length} correlated event(s) from {fleet.alerts.length} alerts</div>
+                            {events.slice(0, 25).map(ev => (
+                              <div key={ev.id} className={cn(
+                                'text-xs rounded px-3 py-2 border',
+                                ev.severity === 'critical' ? 'bg-red-500/10 border-red-500/40 text-red-300'
+                                  : ev.severity === 'warning' ? 'bg-yellow-500/10 border-yellow-500/40 text-yellow-300'
+                                  : 'bg-blue-500/10 border-blue-500/40 text-blue-300')}>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold">{ev.severity === 'critical' ? 'CRIT' : ev.severity === 'warning' ? 'WARN' : 'INFO'}</span>
+                                  <span className={cn('text-[10px] px-1 rounded uppercase',
+                                    ev.scope === 'fleet' ? 'bg-purple-500/30 text-purple-200'
+                                      : ev.scope === 'device' ? 'bg-cyan-500/30 text-cyan-200' : 'bg-white/10 text-gray-400')}>{ev.scope}</span>
+                                  <span className="text-gray-200 font-medium">{ev.title}</span>
+                                  {ev.members.length > 1 && <span className="text-gray-500">×{ev.members.length}</span>}
+                                </div>
+                                {ev.rootCauseHint && (
+                                  <div className="text-[11px] text-gray-400 mt-0.5">💡 {ev.rootCauseHint}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })() : (
                         <div className="space-y-1 max-h-60 overflow-y-auto">
                           {fleet.alerts.slice(0, 30).map((a, i) => (
                             <div key={i} className={cn(

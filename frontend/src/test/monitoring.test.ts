@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  evaluateDevice, evaluateFleet, alertsToText, METRIC_THRESHOLDS, forecastMetric,
+  evaluateDevice, evaluateFleet, alertsToText, METRIC_THRESHOLDS, forecastMetric, correlateAlerts,
 } from '@/lib/monitoring'
 import type { DeviceMetrics, MetricsSummary } from '@/types'
 
@@ -118,5 +118,52 @@ describe('evaluateFleet', () => {
     expect(alertsToText(f)).toContain('No active alerts')
     const f2 = evaluateFleet({ timestamp: 't', devices: { 'SP-01': m({ cpu_util: 95 }) } }, { roles: { 'SP-01': 'spine' } })
     expect(alertsToText(f2)).toMatch(/\[CRIT\] SP-01: CPU/)
+  })
+})
+
+describe('correlateAlerts', () => {
+  const roles = (names: string[]) => Object.fromEntries(names.map(n => [n, 'spine']))
+
+  it('collapses the same metric across many devices into one fleet-wide event', () => {
+    const devices = Object.fromEntries(['SP-01', 'SP-02', 'LF-01', 'LF-02'].map(n => [n, m({ cpu_util: 95 })]))
+    const fleet = evaluateFleet({ timestamp: 't', devices }, { roles: roles(Object.keys(devices)) })
+    const events = correlateAlerts(fleet)
+    const fleetEvt = events.find(e => e.scope === 'fleet')!
+    expect(fleetEvt.title).toMatch(/Fleet-wide: High CPU on 4 devices/)
+    expect(fleetEvt.members).toHaveLength(4)
+    expect(fleetEvt.rootCauseHint).toMatch(/control-plane/i)
+  })
+
+  it('groups a single device with multiple issues into a device-level event', () => {
+    const fleet = evaluateFleet(
+      { timestamp: 't', devices: { 'SP-01': m({ cpu_util: 95, mem_util: 95 }) } },
+      { roles: { 'SP-01': 'spine' } })
+    const events = correlateAlerts(fleet)
+    const dev = events.find(e => e.scope === 'device')!
+    expect(dev.devices).toEqual(['SP-01'])
+    expect(dev.members.length).toBeGreaterThanOrEqual(2)
+    expect(dev.rootCauseHint).toMatch(/resource exhaustion/i)
+  })
+
+  it('device control-plane-down hint when bgp is among the device issues', () => {
+    const fleet = evaluateFleet(
+      { timestamp: 't', devices: { 'SP-01': m({ cpu_util: 95, bgp_sessions_up: 0 }) } },
+      { roles: { 'SP-01': 'spine' } })
+    const dev = correlateAlerts(fleet).find(e => e.scope === 'device')!
+    expect(dev.rootCauseHint).toMatch(/control plane down/i)
+  })
+
+  it('passes isolated alerts through as single events, sorted critical-first', () => {
+    const fleet = evaluateFleet(
+      { timestamp: 't', devices: { 'SP-01': m({ cpu_util: 80 }), 'LF-09': m({ mem_util: 95 }) } },
+      { roles: { 'SP-01': 'spine', 'LF-09': 'leaf' } })
+    const events = correlateAlerts(fleet)
+    expect(events.every(e => e.scope === 'single')).toBe(true)
+    expect(events[0].severity).toBe('critical')   // LF-09 mem critical before SP-01 cpu warning
+  })
+
+  it('no alerts → no events', () => {
+    const fleet = evaluateFleet({ timestamp: 't', devices: { 'SP-01': m() } }, { roles: { 'SP-01': 'spine' } })
+    expect(correlateAlerts(fleet)).toHaveLength(0)
   })
 })
