@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  evaluateDevice, evaluateFleet, alertsToText, METRIC_THRESHOLDS,
+  evaluateDevice, evaluateFleet, alertsToText, METRIC_THRESHOLDS, forecastMetric,
 } from '@/lib/monitoring'
 import type { DeviceMetrics, MetricsSummary } from '@/types'
 
@@ -88,6 +88,29 @@ describe('evaluateFleet', () => {
   it('infers routing role from the device name when roles map absent', () => {
     const f = evaluateFleet({ timestamp: 't', devices: { 'DC-SPINE-09': m({ bgp_sessions_up: 0 }) } })
     expect(f.summary.down).toBe(1)        // name contains "spine" → routing
+  })
+
+  it('forecastMetric: rising series gives a positive slope + ETA to limit', () => {
+    const f = forecastMetric([50, 55, 60, 65, 70], 90)
+    expect(f.trend).toBe('rising')
+    expect(f.slope).toBeGreaterThan(0)
+    expect(f.etaTicks).toBe(4)   // 70→90 at ~5/tick
+  })
+
+  it('forecastMetric: flat series → flat, no ETA', () => {
+    const f = forecastMetric([60, 60, 61, 60, 60], 90)
+    expect(f.trend).toBe('flat')
+    expect(f.etaTicks).toBeNull()
+  })
+
+  it('forecastMetric: falling series → falling, no ETA', () => {
+    const f = forecastMetric([80, 70, 60, 50, 40], 90)
+    expect(f.trend).toBe('falling')
+    expect(f.etaTicks).toBeNull()
+  })
+
+  it('forecastMetric: too few samples → flat', () => {
+    expect(forecastMetric([90, 95], 90).trend).toBe('flat')
   })
 
   it('alertsToText lists critical alerts and a clean message when none', () => {
