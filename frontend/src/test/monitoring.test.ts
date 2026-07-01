@@ -3,6 +3,7 @@ import {
   evaluateDevice, evaluateFleet, alertsToText, METRIC_THRESHOLDS, forecastMetric, correlateAlerts,
   recordAvailability, availabilityReport, type AvailabilityAcc,
   updateAlertHistory, ackAlert, alertHistoryList, type AlertHistory,
+  simulateInterfaces, analyzeInterfaces, type InterfaceMetric,
 } from '@/lib/monitoring'
 import type { DeviceMetrics, MetricsSummary } from '@/types'
 
@@ -257,5 +258,70 @@ describe('alert history + acknowledge', () => {
     h = updateAlertHistory(h, alertsAt(95), 't3')                 // LF-01 cleared, SP-01 active
     const list = alertHistoryList(h)
     expect(list[0].clearedAt).toBeNull()                          // active first
+  })
+})
+
+describe('per-interface drill-down (T7)', () => {
+  it('is deterministic for the same device + tick', () => {
+    const a = simulateInterfaces('SP-01', 'spine', 5)
+    const b = simulateInterfaces('SP-01', 'spine', 5)
+    expect(a).toEqual(b)
+  })
+
+  it('role-aware naming and speed (access Gi @1G, spine Eth @400G, leaf @100G)', () => {
+    expect(simulateInterfaces('AC-01', 'access', 1)[0].name).toMatch(/^Gi1\/0\/1$/)
+    expect(simulateInterfaces('AC-01', 'access', 1)[0].speedGbps).toBe(1)
+    expect(simulateInterfaces('SP-01', 'spine', 1)[0].name).toMatch(/^Eth1\/1$/)
+    expect(simulateInterfaces('SP-01', 'spine', 1)[0].speedGbps).toBe(400)
+    expect(simulateInterfaces('LF-01', 'leaf', 1)[0].speedGbps).toBe(100)
+  })
+
+  it('pins the device aggregate errors onto exactly one culprit port', () => {
+    const ifaces = simulateInterfaces('LF-01', 'leaf', 3, { errorsIn: 42, errorsOut: 7 })
+    const withErrors = ifaces.filter(f => f.errorsIn > 0 || f.errorsOut > 0)
+    expect(withErrors).toHaveLength(1)
+    expect(withErrors[0].errorsIn).toBe(42)
+    expect(withErrors[0].errorsOut).toBe(7)
+    // and the culprit port is stable across ticks
+    const later = simulateInterfaces('LF-01', 'leaf', 9, { errorsIn: 10 })
+    expect(later.find(f => f.errorsIn > 0)!.name).toBe(withErrors[0].name)
+  })
+
+  it('analyzeInterfaces: down port → critical, clean ports → no issues', () => {
+    const down: InterfaceMetric = {
+      name: 'Eth1/3', operUp: false, speedGbps: 100,
+      utilInPct: 0, utilOutPct: 0, errorsIn: 0, errorsOut: 0, crcErrors: 0, discards: 0,
+    }
+    const clean: InterfaceMetric = { ...down, name: 'Eth1/1', operUp: true, utilInPct: 20, utilOutPct: 15 }
+    const r = analyzeInterfaces([down, clean])
+    expect(r.downCount).toBe(1)
+    expect(r.upCount).toBe(1)
+    expect(r.issues[0].severity).toBe('critical')
+    expect(r.issues[0].message).toMatch(/DOWN/)
+  })
+
+  it('analyzeInterfaces: CRC + congestion thresholds', () => {
+    const base: InterfaceMetric = {
+      name: 'Eth1/1', operUp: true, speedGbps: 100,
+      utilInPct: 10, utilOutPct: 10, errorsIn: 0, errorsOut: 0, crcErrors: 0, discards: 0,
+    }
+    const crcWarn = analyzeInterfaces([{ ...base, crcErrors: 60 }])
+    expect(crcWarn.issues.some(i => i.severity === 'warning' && /CRC/.test(i.message))).toBe(true)
+    const crcCrit = analyzeInterfaces([{ ...base, crcErrors: 250 }])
+    expect(crcCrit.issues.some(i => i.severity === 'critical' && /CRC/.test(i.message))).toBe(true)
+    const cong = analyzeInterfaces([{ ...base, utilInPct: 96 }])
+    expect(cong.issues.some(i => i.severity === 'critical' && /congested/.test(i.message))).toBe(true)
+    const warm = analyzeInterfaces([{ ...base, utilOutPct: 88 }])
+    expect(warm.issues.some(i => i.severity === 'warning' && /capacity/.test(i.message))).toBe(true)
+  })
+
+  it('issues are sorted critical-first', () => {
+    const base: InterfaceMetric = {
+      name: 'Eth1/1', operUp: true, speedGbps: 100,
+      utilInPct: 88, utilOutPct: 10, errorsIn: 0, errorsOut: 0, crcErrors: 0, discards: 0,
+    }
+    const down: InterfaceMetric = { ...base, name: 'Eth1/2', operUp: false, utilInPct: 0 }
+    const r = analyzeInterfaces([base, down])
+    expect(r.issues[0].severity).toBe('critical')
   })
 })

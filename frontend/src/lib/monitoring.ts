@@ -433,3 +433,146 @@ export function correlateAlerts(fleet: FleetHealth, fleetMin = 3): CorrelatedEve
   return events.sort((a, b) =>
     rank[a.severity] - rank[b.severity] || scopeRank[a.scope] - scopeRank[b.scope])
 }
+
+// ── Per-interface drill-down (T7) ────────────────────────────────────────────
+// The device-level model only carries AGGREGATE interface errors, so the NOC
+// can't see WHICH port is the problem. This models a deterministic set of
+// interfaces per device (same device+tick → same output), distributes the
+// device's aggregate error counters onto a "culprit" port, and analyzes each
+// interface into up/degraded/down with actionable issues.
+
+export interface InterfaceMetric {
+  name: string
+  operUp: boolean
+  speedGbps: number
+  utilInPct: number
+  utilOutPct: number
+  errorsIn: number
+  errorsOut: number
+  crcErrors: number
+  discards: number
+}
+
+export interface InterfaceIssue {
+  iface: string
+  severity: AlertSeverity
+  message: string
+}
+
+export interface InterfaceAnalysis {
+  issues: InterfaceIssue[]     // sorted most-severe first
+  upCount: number
+  downCount: number
+}
+
+// Self-contained deterministic PRNG (FNV-1a hash + sine fract) so the lib
+// stays pure and the drill-down is stable for a given device + tick.
+function hashStr(s: string): number {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+function prand(seed: number, tick: number): number {
+  const x = Math.sin((seed % 100000) * 12.9898 + tick * 78.233) * 43758.5453
+  return x - Math.floor(x)
+}
+
+/** Aggregate hints from the device-level sample so the drill-down agrees
+ *  with the card (the device's error counters land on real ports). */
+export interface InterfaceAggHint {
+  errorsIn?: number
+  errorsOut?: number
+  throughputMbps?: number
+}
+
+/**
+ * Deterministically model a device's interfaces for one tick. Role-aware
+ * naming/speed (access → Gi1/0/N @1G, leaf → Eth1/N @100G, spine → Eth1/N
+ * @400G). A port occasionally goes oper-down and stays down for ~8 ticks;
+ * aggregate error counters are pinned to one deterministic culprit port.
+ */
+export function simulateInterfaces(
+  device: string,
+  role: string,
+  tick: number,
+  agg: InterfaceAggHint = {},
+  portCount = 8,
+): InterfaceMetric[] {
+  const r = role.toLowerCase()
+  const isAccess = r.includes('access')
+  const isSpine = r.includes('spine') || r.includes('core')
+  const prefix = isAccess ? 'Gi1/0/' : 'Eth1/'
+  const speedGbps = isAccess ? 1 : isSpine ? 400 : 100
+
+  const devSeed = hashStr(device)
+  const culprit = devSeed % portCount           // port that owns the aggregate errors
+  const ifaces: InterfaceMetric[] = []
+
+  for (let i = 0; i < portCount; i++) {
+    const seed = devSeed + i * 97
+    // Sticky oper-down: re-rolled every 8 ticks so a down port stays down a while.
+    const operUp = prand(seed + 7, Math.floor(tick / 8)) <= 0.97
+
+    // Utilization: split the device throughput across up ports + variance.
+    const share = agg.throughputMbps
+      ? (agg.throughputMbps / portCount) / (speedGbps * 1000) * 100
+      : 15
+    const congested = prand(seed + 3, tick) > 0.93
+    const base = Math.min(99, share * (0.5 + prand(seed + 1, tick)))
+    const utilIn = operUp ? Math.round(Math.min(99, congested ? 88 + prand(seed + 4, tick) * 11 : base) * 10) / 10 : 0
+    const utilOut = operUp ? Math.round(Math.min(99, base * (0.6 + prand(seed + 2, tick) * 0.8)) * 10) / 10 : 0
+
+    const isCulprit = i === culprit
+    ifaces.push({
+      name: `${prefix}${i + 1}`,
+      operUp,
+      speedGbps,
+      utilInPct: utilIn,
+      utilOutPct: utilOut,
+      errorsIn: isCulprit ? (agg.errorsIn ?? 0) : 0,
+      errorsOut: isCulprit ? (agg.errorsOut ?? 0) : 0,
+      crcErrors: isCulprit && (agg.errorsIn ?? 0) > 0 ? Math.floor((agg.errorsIn ?? 0) * 0.6) : 0,
+      discards: congested ? Math.floor(prand(seed + 5, tick) * 40) : 0,
+    })
+  }
+  return ifaces
+}
+
+/** Analyze modeled interfaces into per-port issues + an up/down summary. */
+export function analyzeInterfaces(ifaces: InterfaceMetric[]): InterfaceAnalysis {
+  const issues: InterfaceIssue[] = []
+  let upCount = 0
+
+  for (const f of ifaces) {
+    if (!f.operUp) {
+      issues.push({ iface: f.name, severity: 'critical', message: `${f.name} operationally DOWN` })
+      continue
+    }
+    upCount++
+    if (f.crcErrors >= 200) {
+      issues.push({ iface: f.name, severity: 'critical', message: `${f.name}: ${f.crcErrors} CRC errors — replace optic/cable` })
+    } else if (f.crcErrors >= 50) {
+      issues.push({ iface: f.name, severity: 'warning', message: `${f.name}: ${f.crcErrors} CRC errors — check optic/cable` })
+    }
+    const util = Math.max(f.utilInPct, f.utilOutPct)
+    if (util >= 95) {
+      issues.push({ iface: f.name, severity: 'critical', message: `${f.name}: ${util}% utilization — congested` })
+    } else if (util >= 85) {
+      issues.push({ iface: f.name, severity: 'warning', message: `${f.name}: ${util}% utilization — approaching capacity` })
+    }
+    if (f.discards >= 30) {
+      issues.push({ iface: f.name, severity: 'warning', message: `${f.name}: ${f.discards} discards — queue drops` })
+    }
+    if ((f.errorsIn + f.errorsOut) >= 50 && f.crcErrors < 50) {
+      issues.push({ iface: f.name, severity: 'warning', message: `${f.name}: ${f.errorsIn + f.errorsOut} interface errors` })
+    }
+  }
+
+  const rank: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 }
+  issues.sort((a, b) => rank[a.severity] - rank[b.severity])
+  return { issues, upCount, downCount: ifaces.length - upCount }
+}

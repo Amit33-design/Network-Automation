@@ -26,7 +26,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
-import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts, recordAvailability, availabilityReport, updateAlertHistory, ackAlert, alertHistoryList, type AvailabilityAcc, type AlertHistory } from '@/lib/monitoring'
+import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts, recordAvailability, availabilityReport, updateAlertHistory, ackAlert, alertHistoryList, simulateInterfaces, analyzeInterfaces, type AvailabilityAcc, type AlertHistory } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
@@ -2556,6 +2556,7 @@ export function Step6Deploy() {
   const alertHistRef = useRef<AlertHistory>({})
   const [monCorrelate, setMonCorrelate] = useState(true)
   const [showAlertHistory, setShowAlertHistory] = useState(false)
+  const [expandedIfaceDevice, setExpandedIfaceDevice] = useState<string | null>(null)
   const [, setAvailTick] = useState(0)
 
   function handlePoll(failDevices?: Record<string, string[]>) {
@@ -4427,7 +4428,70 @@ export function Step6Deploy() {
                                 PFC: {dm.pfc_drops}
                               </span>
                             )}
+                            <button
+                              className="ml-auto px-1.5 py-0.5 rounded text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 cursor-pointer"
+                              onClick={() => setExpandedIfaceDevice(expandedIfaceDevice === name ? null : name)}
+                            >
+                              {expandedIfaceDevice === name ? '▾ ports' : '▸ ports'}
+                            </button>
                           </div>
+
+                          {/* T7: per-interface drill-down */}
+                          {expandedIfaceDevice === name && (() => {
+                            const role = simDevices.find(d => d.name === name)?.role ?? ''
+                            const ifaces = simulateInterfaces(name, role, monitorTick, {
+                              errorsIn: dm.interface_errors_in,
+                              errorsOut: dm.interface_errors_out,
+                              throughputMbps: dm.throughput_mbps,
+                            })
+                            const ia = analyzeInterfaces(ifaces)
+                            return (
+                              <div className="mt-3 border-t border-white/10 pt-2">
+                                <div className="text-[10px] text-gray-500 mb-1">
+                                  {ia.upCount}/{ifaces.length} ports up
+                                  {ia.downCount > 0 && <span className="text-red-400"> · {ia.downCount} down</span>}
+                                  {ia.issues.length > 0 && <span className="text-yellow-400"> · {ia.issues.length} issue(s)</span>}
+                                </div>
+                                <table className="w-full text-[10px]">
+                                  <thead>
+                                    <tr className="text-gray-600">
+                                      <th className="text-left py-0.5">Port</th>
+                                      <th className="text-right py-0.5">In%</th>
+                                      <th className="text-right py-0.5">Out%</th>
+                                      <th className="text-right py-0.5">Errs</th>
+                                      <th className="text-right py-0.5">CRC</th>
+                                      <th className="text-right py-0.5">Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {ifaces.map(f => {
+                                      const util = Math.max(f.utilInPct, f.utilOutPct)
+                                      const rowCls = !f.operUp ? 'text-red-400'
+                                        : util >= 95 || f.crcErrors >= 200 ? 'text-red-300'
+                                        : util >= 85 || f.crcErrors >= 50 || (f.errorsIn + f.errorsOut) >= 50 ? 'text-yellow-300'
+                                        : 'text-gray-400'
+                                      return (
+                                        <tr key={f.name} className={rowCls}>
+                                          <td className="py-0.5 font-mono">{f.name}</td>
+                                          <td className="py-0.5 text-right">{f.operUp ? f.utilInPct : '—'}</td>
+                                          <td className="py-0.5 text-right">{f.operUp ? f.utilOutPct : '—'}</td>
+                                          <td className="py-0.5 text-right">{f.errorsIn + f.errorsOut || '·'}</td>
+                                          <td className="py-0.5 text-right">{f.crcErrors || '·'}</td>
+                                          <td className="py-0.5 text-right">{f.operUp ? 'up' : 'DOWN'}</td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                                {ia.issues.slice(0, 3).map((iss, i) => (
+                                  <div key={i} className={cn('text-[10px] mt-0.5',
+                                    iss.severity === 'critical' ? 'text-red-400' : 'text-yellow-400')}>
+                                    ⚠ {iss.message}
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          })()}
                         </div>
                       )
                     })}
