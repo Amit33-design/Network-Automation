@@ -20,6 +20,7 @@ import { buildBOM, buildCabling, buildOptics, validateBOM, computeTCO } from '@/
 import { computeRackLayout } from '@/components/RackElevation'
 import { generateAllConfigs } from '@/lib/configgen'
 import { validateConfigs } from '@/lib/config-validator'
+import { buildZTPPlan, generateDhcpConfig } from '@/lib/ztp'
 import type { BOMDevice, UseCase } from '@/types'
 
 const NON_NETWORK = new Set(['gpu-compute', 'cloud-gw', 'cloud-transit'])
@@ -176,6 +177,51 @@ function assertConfigCorrectness(j: Journey, p: ReturnType<typeof runPipeline>) 
   }
 }
 
+/** I4 — the enterprise ZTP plan (R-series) must hold for EVERY produced design:
+ *  every device identifies to a real ZTP mechanism, gets a clean Day-0, and is
+ *  paired with its Day-N production config. Locks in R1-R4 across the matrix. */
+function assertZTPPlanInvariants(j: Journey, p: ReturnType<typeof runPipeline>) {
+  const ctx = `${j.useCase}/${j.scale}/${j.vendorPrefs.join('+') || 'default'}`
+  const plan = buildZTPPlan(p.devices, p.configs)
+
+  // One plan entry per BOM device.
+  expect(plan.entries.length, `${ctx}: ZTP plan missing devices`).toBe(p.devices.length)
+
+  for (const e of plan.entries) {
+    const id = e.identity
+    // 1. Fully identified: platform, mechanism, DHCP class, boot file.
+    expect(id.platform, `${ctx}: ${id.hostname} has no ZTP platform`).toBeTruthy()
+    expect(id.method, `${ctx}: ${id.hostname} has no ZTP method`).toBeTruthy()
+    expect(id.dhcpVendorClass, `${ctx}: ${id.hostname} has no DHCP vendor-class`).toBeTruthy()
+    expect(id.bootFile, `${ctx}: ${id.hostname} has no boot file`).toBeTruthy()
+
+    // 2. Day-0 is a real management-plane bootstrap: identifies the host,
+    //    carries placeholder secrets, and contains NO production config.
+    expect(e.day0.length, `${ctx}: ${id.hostname} Day-0 empty`).toBeGreaterThan(50)
+    expect(e.day0, `${ctx}: ${id.hostname} Day-0 missing hostname`).toContain(id.hostname)
+    expect(e.day0, `${ctx}: ${id.hostname} Day-0 has hardcoded cred`).not.toMatch(/ChangeMe!|NetDesignZTP1!/)
+    expect(e.day0, `${ctx}: ${id.hostname} Day-0 leaks production BGP`).not.toMatch(/\brouter bgp\b/i)
+
+    // 3. "Push the right config": every network device that got a Day-N
+    //    production config must be paired to it by BOM id.
+    const hasConfig = Boolean(p.configs[id.id]?.trim())
+    expect(e.hasDayN, `${ctx}: ${id.hostname} Day-N pairing mismatch`).toBe(hasConfig)
+    if (hasConfig) expect(e.dayNConfigId).toBe(id.id)
+  }
+
+  // 4. Summary agrees with reality.
+  const paired = plan.entries.filter(e => e.hasDayN).length
+  expect(plan.summary.withDayN, `${ctx}: withDayN summary drift`).toBe(paired)
+
+  // 5. The multi-vendor DHCP config classifies every vendor present.
+  const dhcp = generateDhcpConfig(plan.entries.map(e => e.identity))
+  const classes = new Set(plan.entries.map(e => e.identity.dhcpVendorClass))
+  for (const vclass of classes) {
+    expect(dhcp, `${ctx}: DHCP config missing option-60 class for ${vclass}`)
+      .toContain(vclass.replace(/[^A-Za-z0-9]/g, '-'))
+  }
+}
+
 /** The capacity invariant that was MISSED: the fabric must host the endpoints. */
 function assertCapacityInvariant(j: Journey, p: ReturnType<typeof runPipeline>) {
   const ctx = `${j.useCase}/${j.totalEndpoints}ep/${j.bandwidthPerServer}/${j.oversubscription}:1`
@@ -254,6 +300,7 @@ describe('E2E journey — universal invariants across full matrix', () => {
           assertRolePresence(j, p)
           assertCapacityInvariant(j, p)
           assertConfigCorrectness(j, p)
+          assertZTPPlanInvariants(j, p)
         })
       }
     }
@@ -295,6 +342,7 @@ describe('E2E journey — vendor matrix (spine-leaf)', () => {
         assertUniversalInvariants(j, p)
         assertCapacityInvariant(j, p)
         assertConfigCorrectness(j, p)
+        assertZTPPlanInvariants(j, p)
         // The generated fabric must be clean per the static validator — no
         // vendor should produce a hard validation FAIL (catches regressions
         // like the jumbo-MTU / GPU-QoS / BGP-presence gaps per vendor).
