@@ -918,6 +918,25 @@ VNI" tabs.
   IP Addresses CSV) via `downloadCsv()` in `Step4NetworkDesign.tsx`.
 - **Tests**: 13 in `test/ipam.test.ts`.
 
+## Frontend — `lib/netbox-dcim.ts` (DCIM cable-plant export — F2)
+
+**Purpose:** Companion to `lib/ipam.ts` for the physical layer. Turns the BOM
+devices + computed cabling into NetBox/Nautobot-importable `dcim.device` /
+`dcim.interface` / `dcim.cable` CSVs, so the spine↔leaf (and edge/border) cable
+plant lands in NetBox DCIM. Pure + deterministic (no component imports).
+
+**Key exports:**
+- Interfaces: `DcimEndpoint {device, iface}`, `DcimCable {a, b, cableType, speed, lengthM}`, `NetBoxDcimExport {devicesCsv, interfacesCsv, cablesCsv, cableCount}`.
+- `expandCablePlan(devices, cabling): DcimCable[]` — pure mirror of `RackElevation.buildCableSchedule`; expands each aggregate `CableLink` (by `fromLayer`/`toLayer`) into concrete device×device runs, allocating UNIQUE sequential per-device interface names (`Ethernet1/N`); falls back to aggregate labels when a layer is absent from the BOM.
+- `netboxInterfaceType(speed)` — speed → NetBox interface type (400G→`400gbase-x-qsfpdd`, 100G→`100gbase-x-qsfp28`, 40G→`qsfpp`, 25G→`sfp28`, 10G→`sfpp`, 1G→`1000base-t`, else `other`).
+- `netboxCableType(cableType)` — DAC/twinax→`dac-passive`, AOC→`aoc`, SMF/fiber→`smf`, MMF→`mmf`, Cat/RJ45→`cat6`.
+- `toNetBoxDeviceCsv(devices, siteName?)` — `dcim.device` CSV (`name,device_role,manufacturer,device_type,site,status`; role slugified; de-duped by name).
+- `toNetBoxInterfaceCsv(cables)` — `dcim.interface` CSV (`device,name,type,enabled`; union of all cable endpoints, de-duped by device+name).
+- `toNetBoxCableCsv(cables)` — `dcim.cable` CSV (NetBox 4.x `side_a_device,side_a_type,side_a_name,side_b_device,side_b_type,side_b_name,type,status,length,length_unit`; `side_*_type = dcim.interface`).
+- `buildNetBoxDcimExport(devices, cabling, siteName?): NetBoxDcimExport`.
+- **UI**: Step 4 "IP Plan" tab has a "NetBox / Nautobot DCIM Cable Plant" card with 3 download buttons (Devices / Interfaces / Cables CSV) via `downloadCsv()`; the card shows the cable count.
+- **Tests**: 9 in `test/netbox-dcim.test.ts`.
+
 ## Frontend — `lib/design-export.ts` (Design export/import — H1)
 
 **Purpose:** Serialize the full wizard state to a portable JSON document and

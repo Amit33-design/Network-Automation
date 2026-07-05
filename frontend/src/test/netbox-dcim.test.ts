@@ -1,0 +1,125 @@
+import { describe, it, expect } from 'vitest'
+import {
+  expandCablePlan,
+  toNetBoxDeviceCsv,
+  toNetBoxInterfaceCsv,
+  toNetBoxCableCsv,
+  buildNetBoxDcimExport,
+  netboxInterfaceType,
+  netboxCableType,
+} from '@/lib/netbox-dcim'
+import type { BOMDevice, CableLink } from '@/types'
+
+function dev(p: Partial<BOMDevice>): BOMDevice {
+  return {
+    id: p.hostname || 'x', hostname: '', role: 'leaf', subLayer: 'leaf',
+    model: 'N9K-C93180YC', vendor: 'Cisco', count: 1, unitPrice: 0, totalPrice: 0,
+    speed: '100G', ports: 48, features: [], ...p,
+  }
+}
+
+const devices: BOMDevice[] = [
+  dev({ hostname: 'IAD-SPINE-01', role: 'spine', subLayer: 'spine', speed: '400G' }),
+  dev({ hostname: 'IAD-SPINE-02', role: 'spine', subLayer: 'spine', speed: '400G' }),
+  dev({ hostname: 'IAD-LEAF-01', role: 'leaf', subLayer: 'leaf', speed: '100G' }),
+  dev({ hostname: 'IAD-LEAF-02', role: 'leaf', subLayer: 'leaf', speed: '100G' }),
+]
+
+const cabling: CableLink[] = [{
+  id: 'c1', fromLayer: 'leaf', toLayer: 'spine',
+  fromDevice: 'leaf', toDevice: 'spine',
+  cableType: 'DAC', speed: '100G', lengthM: 3, quantity: 4,
+  pricePerUnit: 50, totalPrice: 200,
+}]
+
+describe('expandCablePlan', () => {
+  it('expands the aggregate link into leaf×spine concrete runs with unique per-device interfaces', () => {
+    const cables = expandCablePlan(devices, cabling)
+    expect(cables.length).toBe(4) // 2 leaves × 2 spines
+
+    // Every interface on a given device is unique.
+    const seen = new Set<string>()
+    for (const c of cables) {
+      for (const ep of [c.a, c.b]) {
+        const key = `${ep.device} ${ep.iface}`
+        expect(seen.has(key)).toBe(false)
+        seen.add(key)
+        expect(ep.iface).toMatch(/^Ethernet1\/\d+$/)
+      }
+    }
+    // Each leaf has 2 uplinks (to the 2 spines); each spine has 2 downlinks.
+    expect(cables.filter(c => c.a.device === 'IAD-LEAF-01').length).toBe(2)
+    expect(cables.filter(c => c.b.device === 'IAD-SPINE-01').length).toBe(2)
+  })
+
+  it('falls back to aggregate labels when a layer is absent from the BOM', () => {
+    const orphan: CableLink[] = [{ ...cabling[0], fromLayer: 'core', toLayer: 'nowhere', fromDevice: 'CORE-01', toDevice: 'EDGE-01' }]
+    const cables = expandCablePlan(devices, orphan)
+    expect(cables.length).toBe(1)
+    expect(cables[0].a.device).toBe('CORE-01')
+    expect(cables[0].b.device).toBe('EDGE-01')
+  })
+})
+
+describe('CSV emitters', () => {
+  it('device CSV has the NetBox header and one active row per device', () => {
+    const csv = toNetBoxDeviceCsv(devices, 'Ashburn')
+    const lines = csv.trim().split('\n')
+    expect(lines[0]).toBe('name,device_role,manufacturer,device_type,site,status')
+    expect(lines.length).toBe(1 + 4)
+    expect(lines[1]).toContain('IAD-SPINE-01,spine,Cisco,N9K-C93180YC,Ashburn,active')
+  })
+
+  it('interface CSV de-dups by (device, name) and maps speed to a NetBox type', () => {
+    const cables = expandCablePlan(devices, cabling)
+    const csv = toNetBoxInterfaceCsv(cables)
+    const lines = csv.trim().split('\n')
+    expect(lines[0]).toBe('device,name,type,enabled')
+    // 4 cables × 2 endpoints = 8 unique interfaces (2 per leaf, 2 per spine).
+    expect(lines.length).toBe(1 + 8)
+    // Leaf interfaces are 100G; spine endpoints inherit the run speed (100G).
+    expect(csv).toContain('IAD-LEAF-01,Ethernet1/1,100gbase-x-qsfp28,true')
+  })
+
+  it('cable CSV uses side_a/side_b interface endpoints + mapped cable type + length', () => {
+    const cables = expandCablePlan(devices, cabling)
+    const csv = toNetBoxCableCsv(cables)
+    const lines = csv.trim().split('\n')
+    expect(lines[0]).toBe('side_a_device,side_a_type,side_a_name,side_b_device,side_b_type,side_b_name,type,status,length,length_unit')
+    expect(lines[1]).toContain('dcim.interface')
+    expect(lines[1]).toContain('dac-passive')
+    expect(lines[1]).toMatch(/,3,m$/)
+  })
+})
+
+describe('enum mappings', () => {
+  it('netboxInterfaceType', () => {
+    expect(netboxInterfaceType('400G')).toBe('400gbase-x-qsfpdd')
+    expect(netboxInterfaceType('100G')).toBe('100gbase-x-qsfp28')
+    expect(netboxInterfaceType('25G')).toBe('25gbase-x-sfp28')
+    expect(netboxInterfaceType('1G')).toBe('1000base-t')
+    expect(netboxInterfaceType('weird')).toBe('other')
+  })
+  it('netboxCableType', () => {
+    expect(netboxCableType('DAC')).toBe('dac-passive')
+    expect(netboxCableType('AOC')).toBe('aoc')
+    expect(netboxCableType('SMF fiber')).toBe('smf')
+    expect(netboxCableType('Cat6')).toBe('cat6')
+  })
+})
+
+describe('buildNetBoxDcimExport', () => {
+  it('bundles all three CSVs + cable count', () => {
+    const out = buildNetBoxDcimExport(devices, cabling)
+    expect(out.cableCount).toBe(4)
+    expect(out.devicesCsv).toContain('name,device_role')
+    expect(out.interfacesCsv).toContain('device,name,type,enabled')
+    expect(out.cablesCsv).toContain('side_a_device')
+  })
+
+  it('handles an empty design without throwing', () => {
+    const out = buildNetBoxDcimExport([], [])
+    expect(out.cableCount).toBe(0)
+    expect(out.devicesCsv.trim()).toBe('name,device_role,manufacturer,device_type,site,status')
+  })
+})
