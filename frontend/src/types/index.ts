@@ -267,10 +267,13 @@ export interface Alert {
 
 export interface RcaHypothesis {
   rank: number
-  cause: string
-  confidence: number
+  rootCause: string
+  confidence: number          // 0..1
   evidence: string[]
-  remediation: string
+  blastRadius: string[]
+  remediationSteps: string[]
+  automationAvailable: boolean
+  automationPlaybook?: string | null
 }
 
 // ── Troubleshooting Tooling Engine (G-A19) ──────────────────────────────────────

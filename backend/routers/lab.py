@@ -275,8 +275,13 @@ def lab_alerts() -> list[dict[str, Any]]:
 
 
 # ── RCA (lab flavour) ─────────────────────────────────────────────────────────
+#
+# NOTE: served at /api/lab/rca (not /api/rca/analyze). The canonical
+# /api/rca/analyze route is the real correlation engine (backend/rca/engine.py,
+# wired in main.py) — this static demo stub used to shadow it because the lab
+# router is registered first and Starlette matches in registration order.
 
-@router.post("/api/rca/analyze")
+@router.post("/api/lab/rca")
 def lab_rca(body: dict[str, Any] = {}) -> list[dict[str, Any]]:
     symptom = body.get("symptom", "")
     devices  = body.get("devices", [])

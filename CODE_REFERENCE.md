@@ -78,7 +78,7 @@ coloProvider, dcEdgeVendor, bgpAsn, orgCidr, aviatrixOptions`), and
 
 **Observability**
 - `Alert` — `{ id, device, severity: critical|warning|info, summary, detail?, timestamp, resolved }`.
-- `RcaHypothesis` — `{ rank, cause, confidence, evidence[], remediation }`.
+- `RcaHypothesis` — `{ rank, rootCause, confidence(0..1), evidence[], blastRadius[], remediationSteps[], automationAvailable, automationPlaybook? }` (rich shape — matches the real backend engine `backend/rca/engine.py`, group U).
 
 **Intent NLP parser (G-A1)**
 - `IntentParseResult` — `{ use_case, app_types[], scale, redundancy, compliance[], org_name, org_size, budget_tier, vendor_prefs[], industry, primary_contact, confidence, notes, source: 'ai'|'heuristic' }`. Mirrors `backend/intent_ai.RESPONSE_SCHEMA` + `source`.
@@ -1394,7 +1394,7 @@ alert groups (core vs. GPU-only), and Grafana dashboard JSON validity/panels
 - `saveSettings(patch: Partial<BackendSettings>)` — merges into `localStorage['nd_backend_settings']`
 - `login(username, password): Promise<{token, role}>` — POST `{baseUrl}/api/auth/token`; saves token via `saveSettings`
 - `fetchAlerts(): Promise<Alert[]>` — GET `/api/alerts`
-- `runRca(symptom, affectedDevices, designId?): Promise<RcaHypothesis[]>` — POST `/api/rca/analyze` with `{symptom, affected_devices, design_id}`
+- `runRca(symptom, affectedDevices, designId?): Promise<RcaHypothesis[]>` — POST `/api/rca/analyze` with `{symptom, affected_devices, design_id}`; result passed through `normalizeRcaResponse()` (`lib/rca.ts`) so both the real engine (rich snake_case) and the legacy stub shape map onto the canonical `RcaHypothesis` (group U)
 - `parseIntent(description: string): Promise<IntentParseResult>` — POST `/api/intent/parse` with `{description}` (G-A1)
 - `checkConfigDrift(configs: Record<string,string>, deploymentId?: string): Promise<ConfigDriftResponse>` — POST `/api/drift/config` with `{configs, deployment_id}` (G-A4)
 - `generateRemediation(devices: RemediationDeviceInput[]): Promise<ConfigRemediationResponse>` — POST `/api/drift/remediate` with `{devices}` (G-A16)
@@ -1431,7 +1431,7 @@ alert groups (core vs. GPU-only), and Grafana dashboard JSON validity/panels
 - **Fallback:** `Step6Deploy.tsx` and `Step6Monitor.tsx` call `usePollMonitoring().mutate`; on error/demo, `Step6Deploy.tsx` falls back to local `simulateMonitoringMetrics(simDevices, tick)` returning a `MonitoringResult`-shaped object, polled on a local interval (`monitorTick`).
 
 #### `hooks/useRca.ts`
-- `useRunRca()` — `useMutation<RcaHypothesis[], Error, RcaRequest>` where `RcaRequest = { symptom, devices: string[], designId? }`; `mutationFn` calls `runRca(symptom, devices, designId)` from `api/client.ts` → POST `/api/rca/analyze`. Returns `RcaHypothesis[]`. No simulation fallback defined in this file (consumed by `RcaPanel`/`TroubleshootingEngine`).
+- `useRunRca()` — `useMutation<RcaHypothesis[], Error, RcaRequest>` where `RcaRequest = { symptom, devices: string[], designId?, design? }`; `mutationFn` runs the client-side `analyzeRca()` (`lib/rca.ts`) in demo mode (`!isLiveMode()`) and `runRca(...)` (real backend engine) in live mode — parity with every other Step 6 feature (§3). Returns `RcaHypothesis[]` (consumed by `RcaPanel`).
 
 #### `hooks/useIntentParse.ts` (G-A1)
 - `useIntentParse()` — `useMutation<IntentParseResult, Error, string>`; `mutationFn` calls `parseIntent(description)` from `api/client.ts` → POST `/api/intent/parse`. Returns `IntentParseResult` (`source: 'ai'|'heuristic'`). Consumed by `Step1UseCase.tsx`'s free-text "Describe Your Network" card. No client-side simulation — requires a live backend (`useBackendMode().isLive`); the Parse button is disabled otherwise.
@@ -1943,14 +1943,23 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
 **Purpose:** Form-driven Root Cause Analysis panel — submits symptom + optional device list to `useRunRca` (TanStack Query mutation), renders ranked hypothesis cards.
 
 **Key exports / structure:**
-- `export function RcaPanel({ deviceNames? })` — uses `useRunRca()` and `isLiveMode()`
+- `export function RcaPanel({ deviceNames? })` — uses `useRunRca()`, `isLiveMode()`, and reads `devices`/`useCase`/`overlayProtocols`/`underlayProtocol` from `useAppStore` to build the `design` state (device roles → blast-radius adjacency, protocols/use-case → hypothesis confidence). Works in demo mode.
 - `ConfidenceBar({ value })` — colored progress bar (red ≥75%, yellow ≥50%, blue otherwise)
-- `HypothesisCard({ h })` — rank badge, cause, confidence bar, evidence bullets, remediation callout (`RcaHypothesis`)
+- `HypothesisCard({ h })` — rank badge, `rootCause`, confidence bar, evidence bullets, blast-radius chips, numbered remediation steps, automation-playbook affordance (`RcaHypothesis` rich shape)
 
 **Notes:**
-- "configure backend" placeholder when `!isLiveMode()`; textarea for symptom + toggleable device-name chips.
+- No longer gated on live mode — runs the client-side RCA engine in demo mode (banner note); textarea for symptom + toggleable device chips (from prop or the store BOM).
 - "Run RCA" disabled while pending or symptom empty; "Clear" calls `reset()`.
-- Only referenced from `e2e-features.test.ts` — **not yet mounted in any page**.
+- Mounted in Step6Deploy's Deploy-tab observability panel (RCA tab, L1).
+
+#### `frontend/src/lib/rca.ts` (group U)
+**Purpose:** Client-side RCA engine (demo-mode parity with the real backend engine) + live-response normalizer.
+
+**Key exports:**
+- `analyzeRca(input: RcaInput): RcaHypothesis[]` — 5 keyword/design-driven hypothesis checkers (BGP session loss, PFC/RDMA deadlock, EVPN/VXLAN overlay, underlay/IGP, recent deployment change), each producing a rich hypothesis; dedups by `rootCause` (keep max confidence), ranks by descending confidence, and returns a generic `Undetermined Root Cause` fallback when nothing matches (never empty). Blast radius = 2-hop expansion over a role-based adjacency (spine↔leaf full mesh + edge/border→aggregation).
+- `normalizeRcaResponse(raw: unknown): RcaHypothesis[]` — maps a live `/api/rca/analyze` response onto the canonical `RcaHypothesis`, tolerant of BOTH the real engine (snake_case `root_cause`/`blast_radius`/`remediation_steps`/`automation_*`) and the legacy stub (`cause`/`remediation:string`); assigns ranks by descending confidence when the backend omits them.
+- Types: `RcaInput`, `RcaDesignState`, `RcaDesignDevice`.
+- Tests: `test/rca.test.ts` (14).
 
 ---
 
