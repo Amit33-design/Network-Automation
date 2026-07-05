@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRunRca } from '@/hooks/useRca'
 import { isLiveMode } from '@/api/client'
+import { useAppStore } from '@/store/useAppStore'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import type { RcaHypothesis } from '@/types'
@@ -9,7 +10,7 @@ function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100)
   const color = pct >= 75 ? 'bg-red-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-blue-500'
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 w-28">
       <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
@@ -24,7 +25,7 @@ function HypothesisCard({ h }: { h: RcaHypothesis }) {
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           <Badge variant="neutral" className="text-xs">#{h.rank}</Badge>
-          <span className="font-semibold text-gray-200 text-sm">{h.cause}</span>
+          <span className="font-semibold text-gray-200 text-sm">{h.rootCause}</span>
         </div>
         <ConfidenceBar value={h.confidence} />
       </div>
@@ -40,19 +41,71 @@ function HypothesisCard({ h }: { h: RcaHypothesis }) {
         </ul>
       )}
 
-      <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2">
-        <span className="text-xs font-medium text-blue-400">Remediation: </span>
-        <span className="text-xs text-gray-300">{h.remediation}</span>
+      {h.blastRadius.length > 0 && (
+        <div className="space-y-1">
+          <span className="text-[11px] uppercase tracking-wide text-gray-500">
+            Blast radius · {h.blastRadius.length} device{h.blastRadius.length !== 1 ? 's' : ''}
+          </span>
+          <div className="flex flex-wrap gap-1">
+            {h.blastRadius.map(d => (
+              <span key={d} className="px-1.5 py-0.5 rounded text-[11px] bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                {d}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2 space-y-1">
+        <span className="text-xs font-medium text-blue-400">Remediation</span>
+        <ol className="space-y-0.5">
+          {h.remediationSteps.map((step, i) => (
+            <li key={i} className="text-xs text-gray-300 flex items-start gap-1.5">
+              <span className="text-blue-500/70 shrink-0 tabular-nums">{i + 1}.</span>
+              {step}
+            </li>
+          ))}
+        </ol>
       </div>
+
+      {h.automationAvailable && (
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-xs font-medium text-emerald-400">⚙️ Automated remediation available</div>
+            {h.automationPlaybook && (
+              <div className="text-[11px] text-gray-400 truncate font-mono">{h.automationPlaybook}</div>
+            )}
+          </div>
+          <Button type="button" variant="ghost" className="text-xs shrink-0" disabled title="Demo — playbook run is a live-mode action">
+            ▶ Run playbook
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
 
-export function RcaPanel({ deviceNames = [] }: { deviceNames?: string[] }) {
+export function RcaPanel({ deviceNames }: { deviceNames?: string[] }) {
   const [symptom, setSymptom]   = useState('')
   const [selected, setSelected] = useState<string[]>([])
   const { mutate, data, isPending, isError, error, reset } = useRunRca()
   const liveMode = isLiveMode()
+
+  const storeDevices      = useAppStore(s => s.devices)
+  const useCase           = useAppStore(s => s.useCase)
+  const overlayProtocols  = useAppStore(s => s.overlayProtocols)
+  const underlayProtocol  = useAppStore(s => s.underlayProtocol)
+
+  const devicePool = useMemo(
+    () => (deviceNames && deviceNames.length ? deviceNames : storeDevices.map(d => d.hostname).filter(Boolean)),
+    [deviceNames, storeDevices],
+  )
+
+  const design = useMemo(() => ({
+    useCase,
+    protocols: [...(overlayProtocols || []), ...(underlayProtocol ? [underlayProtocol] : [])],
+    devices: storeDevices.map(d => ({ hostname: d.hostname, role: d.role, subLayer: d.subLayer })),
+  }), [useCase, overlayProtocols, underlayProtocol, storeDevices])
 
   function toggleDevice(name: string) {
     setSelected(prev =>
@@ -63,22 +116,17 @@ export function RcaPanel({ deviceNames = [] }: { deviceNames?: string[] }) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!symptom.trim()) return
-    mutate({ symptom: symptom.trim(), devices: selected })
-  }
-
-  if (!liveMode) {
-    return (
-      <div className="rounded-xl border border-white/10 bg-white/5 p-6 text-center">
-        <p className="text-sm text-gray-500">
-          Configure a backend URL in settings to enable RCA analysis.
-        </p>
-      </div>
-    )
+    mutate({ symptom: symptom.trim(), devices: selected, design })
   }
 
   return (
     <div className="space-y-4">
       <form onSubmit={handleSubmit} className="space-y-3">
+        {!liveMode && (
+          <p className="text-[11px] text-gray-500">
+            Demo mode — running the client-side RCA engine. Configure a backend URL to correlate live telemetry.
+          </p>
+        )}
         <div>
           <label className="text-xs text-gray-400 block mb-1">Symptom description</label>
           <textarea
@@ -92,13 +140,13 @@ export function RcaPanel({ deviceNames = [] }: { deviceNames?: string[] }) {
           />
         </div>
 
-        {deviceNames.length > 0 && (
+        {devicePool.length > 0 && (
           <div>
             <label className="text-xs text-gray-400 block mb-1">
               Affected devices (optional)
             </label>
             <div className="flex flex-wrap gap-1.5">
-              {deviceNames.map(name => (
+              {devicePool.map(name => (
                 <button
                   key={name}
                   type="button"
@@ -135,7 +183,7 @@ export function RcaPanel({ deviceNames = [] }: { deviceNames?: string[] }) {
       {data && data.length > 0 && (
         <div className="space-y-3">
           <h4 className="text-sm font-semibold text-gray-300">
-            {data.length} Root Cause Hypothesis{data.length !== 1 ? 'es' : ''}
+            {data.length} Root Cause Hypothes{data.length !== 1 ? 'es' : 'is'}
           </h4>
           {data.map(h => <HypothesisCard key={h.rank} h={h} />)}
         </div>

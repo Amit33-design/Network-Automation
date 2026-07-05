@@ -909,6 +909,27 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### U. RCA engine — demo-mode parity + rich output + un-shadow (sourced 2026-07-05)
+
+> Audit found the RCA feature had two coupled defects. (1) **Route
+> shadowing**: `backend/routers/lab.py` registers a static 3-hypothesis stub
+> at `/api/rca/analyze` *before* the real correlation engine (`backend/rca/
+> engine.py`, `@app.post` at `main.py:1083`) — Starlette matches in
+> registration order, so the stub wins and the real `RCAEngine` (blast-radius,
+> multi-step remediation, automation playbooks) is dead code. (2) **No demo
+> mode**: unlike every other Step 6 feature (§3 — the app is fully functional
+> without a backend), `RcaPanel` short-circuited to "configure a backend URL"
+> when `!isLive`, and the frontend `RcaHypothesis` type only modeled the
+> stub's flat `{rank,cause,remediation}` shape — the engine's rich output was
+> discarded even in live mode.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| U1 | Client-side RCA engine + rich output — new `lib/rca.ts` (`analyzeRca(input)` mirroring the backend's 5 hypothesis checkers: BGP session loss, PFC/RDMA deadlock, EVPN/VXLAN overlay, underlay/IGP, recent-change; keyword + design-state driven, deterministic blast-radius from role adjacency, dedup+rank, generic fallback) + `normalizeRcaResponse()` mapping BOTH the real engine (snake_case) and the legacy stub shape → the canonical rich `RcaHypothesis`. Rich `RcaHypothesis` type (`rootCause/confidence/evidence/blastRadius/remediationSteps/automationAvailable/automationPlaybook`); `client.runRca` normalizes; `useRunRca` falls back to `analyzeRca` in demo mode; `RcaPanel` renders blast-radius chips + remediation steps + automation playbook affordance and works in demo mode. Tests in `test/rca.test.ts` | [x] | `lib/rca.ts` + `types/index.ts` + `api/client.ts` + `hooks/useRca.ts` + `components/RcaPanel.tsx`; `test/rca.test.ts` (14); 1125 tests, tsc + build green |
+| U2 | Un-shadow the real engine — rename the `lab.py` stub route to `/api/lab/rca` so `/api/rca/analyze` resolves to the real `RCAEngine` (`main.py:1083`); backend suite stays green | [x] | `backend/routers/lab.py` (`@router.post("/api/lab/rca")`); backend lab/rca pytest 21 pass (pre-existing unrelated `test_config_gen.py` failures untouched) |
+
+---
+
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
 
 ### Purpose

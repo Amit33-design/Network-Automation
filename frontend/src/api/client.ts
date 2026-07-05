@@ -105,18 +105,23 @@ export const postUserActivity  = (activity: Omit<UserActivity, 'id'>) => post<nu
 // ── Observability ─────────────────────────────────────────────────────────────
 
 import type { Alert, RcaHypothesis } from '@/types'
+import { normalizeRcaResponse } from '@/lib/rca'
 
 export const fetchAlerts = () => get<Alert[]>('/api/alerts')
 
-export const runRca = (
+export const runRca = async (
   symptom: string,
   affectedDevices: string[],
   designId?: string,
-) => post<RcaHypothesis[]>('/api/rca/analyze', {
-  symptom,
-  affected_devices: affectedDevices,
-  design_id: designId,
-})
+): Promise<RcaHypothesis[]> => {
+  // Tolerate both the real engine (rich snake_case) and the legacy stub shape.
+  const raw = await post<unknown>('/api/rca/analyze', {
+    symptom,
+    affected_devices: affectedDevices,
+    design_id: designId,
+  })
+  return normalizeRcaResponse(raw)
+}
 
 // ── Troubleshooting Tooling Engine (G-A19) ────────────────────────────────────
 
