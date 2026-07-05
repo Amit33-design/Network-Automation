@@ -9,6 +9,7 @@ import { RackElevation } from '@/components/RackElevation'
 import { formatUSD, cn } from '@/lib/utils'
 import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import { genIPBlocks, genIPRows, genVLANs, genVNIs, buildNetBoxIpamExport } from '@/lib/ipam'
+import { buildNetBoxDcimExport } from '@/lib/netbox-dcim'
 import { downloadDesignJSON, downloadDesignMarkdown, validateDesignImport, applyDesignImport } from '@/lib/design-export'
 import { computeCapacityPlan } from '@/lib/capacity-planning'
 import { buildContainerlabTopology, topologyToYAML } from '@/lib/containerlab'
@@ -955,6 +956,32 @@ export function Step4NetworkDesign() {
                   const x = buildNetBoxIpamExport(useCase, totalEndpoints, numSites, generatedDevices)
                   downloadCsv(x.ipAddressesCsv, `netbox-ip-addresses-${useCase || 'network'}`)
                 }}>↓ IP Addresses CSV</Button>
+              </div>
+            </div>
+          </Card>
+          {/* NetBox DCIM cable-plant export (F2) */}
+          <Card>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-300">NetBox / Nautobot DCIM Cable Plant</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Bulk-import CSVs for the physical layer — devices, interfaces, and the spine↔leaf cable plant
+                  {cablingData.length > 0 && ` (${buildNetBoxDcimExport(generatedDevices, cablingData, siteCode).cableCount} cables)`}.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => {
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode)
+                  downloadCsv(x.devicesCsv, `netbox-devices-${useCase || 'network'}`)
+                }}>↓ Devices CSV</Button>
+                <Button variant="secondary" onClick={() => {
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode)
+                  downloadCsv(x.interfacesCsv, `netbox-interfaces-${useCase || 'network'}`)
+                }}>↓ Interfaces CSV</Button>
+                <Button variant="secondary" onClick={() => {
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode)
+                  downloadCsv(x.cablesCsv, `netbox-cables-${useCase || 'network'}`)
+                }}>↓ Cables CSV</Button>
               </div>
             </div>
           </Card>
