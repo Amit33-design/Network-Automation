@@ -1169,7 +1169,7 @@ mode (not just live `/api/alerts`).
 **Key exports:**
 - Types: `HealthStatus` (healthy/degraded/down), `AlertSeverity` (critical/warning/info), `MetricThreshold`, `MonAlert`, `DeviceHealthEval`, `FleetHealth`.
 - `METRIC_THRESHOLDS` — default warn+critical per metric (cpu_util 75/90, mem_util 80/92, interface_errors_in/out 5/50, pfc_drops 50/200); tunable via the `thresholds` arg.
-- `evaluateDevice(device, role, metrics, thresholds?)` — per-device health + severity-ranked alerts. A routing device (name/role hints) with `bgp_sessions_up === 0` → **down** (control-plane isolated); `cpu_util ≥ 99` → **down**; any threshold breach → degraded.
+- `evaluateDevice(device, role, metrics, thresholds?, expectsBgp?)` — per-device health + severity-ranked alerts. A routing device (name/role hints, or `expectsBgp` override) with `bgp_sessions_up === 0` → **down** (control-plane isolated); `cpu_util ≥ 99` → **down**; any threshold breach → degraded. `HLDTopologyDiagram.simulateNodeHealth` (C4) delegates its status+alerts here for a single source of truth.
 - `evaluateFleet(summary, {roles?, thresholds?})` — fleet rollup (`healthy`/`degraded`/`down` + `critical`/`warning` counts) + all alerts sorted critical-first.
 - `alertsToText(fleet)` — plain-text NOC alert feed for download.
 - `forecastMetric(history, limit, flatEps?)` (T3) — least-squares linear regression over a metric's per-tick history → `{slope, trend: rising/falling/flat, etaTicks}` (ticks-to-limit when rising). Powers the monitor tab's "↗ CPU ~Nt to 90%" capacity-trend badge (per-device CPU history in `cpuHistRef`).

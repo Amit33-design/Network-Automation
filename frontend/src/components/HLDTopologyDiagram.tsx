@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react'
-import type { BOMDevice } from '@/types'
+import type { BOMDevice, DeviceMetrics } from '@/types'
 import { formatUptime } from '@/lib/utils'
 import { DCI_RT_ASN } from '@/lib/configgen'
+import { evaluateDevice } from '@/lib/monitoring'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -183,28 +184,32 @@ export function simulateNodeHealth(node: HLDNode): NodeHealth {
   const bgpSessionsUp = HEALTH_BGP_LAYERS.has(node.layer) ? Math.floor(2 + r4 * 4) : 0
   const uptimeSec = Math.floor(3600 * (4 + r2 * 2000))
 
-  const alerts: string[] = []
-  let status: HealthStatus = 'healthy'
-  if (cpu > 85 || pfcDrops > 200) {
-    status = 'down'
-    if (cpu > 85) alerts.push(`CPU utilization critical: ${cpu.toFixed(0)}%`)
-    if (pfcDrops > 200) alerts.push(`PFC watchdog triggered: ${pfcDrops} drops`)
-  } else if (cpu > 65 || ifaceErrors > 8 || pfcDrops > 100) {
-    status = 'degraded'
-    if (cpu > 65) alerts.push(`CPU utilization elevated: ${cpu.toFixed(0)}%`)
-    if (ifaceErrors > 8) alerts.push(`Interface error rate high: ${ifaceErrors}/min`)
-    if (pfcDrops > 100) alerts.push(`RoCEv2 CNP rate high: ${pfcDrops} drops`)
+  // Status + alerts come from the SHARED monitoring engine (lib/monitoring.ts)
+  // so the design-time overlay and the Step 6 Monitoring tab agree on health
+  // semantics (thresholds, control-plane-down, cpu-pegged). This overlay only
+  // owns the deterministic metric *generation*; `expectsBgp` is passed
+  // explicitly because we know exactly which layers run BGP.
+  const dm: DeviceMetrics = {
+    cpu_util: Math.round(cpu * 10) / 10,
+    mem_util: Math.round(mem * 10) / 10,
+    interface_errors_in: ifaceErrors,
+    interface_errors_out: 0,
+    bgp_sessions_up: bgpSessionsUp,
+    bgp_prefixes_received: bgpSessionsUp * 300,
+    pfc_drops: pfcDrops,
+    throughput_mbps: 0,
   }
+  const ev = evaluateDevice(node.label, node.layer, dm, undefined, HEALTH_BGP_LAYERS.has(node.layer))
 
   return {
-    status,
-    cpu: Math.round(cpu * 10) / 10,
-    mem: Math.round(mem * 10) / 10,
+    status: ev.status,
+    cpu: dm.cpu_util,
+    mem: dm.mem_util,
     uptimeSec,
     bgpSessionsUp,
     ifaceErrors,
     pfcDrops,
-    alerts,
+    alerts: ev.alerts.map(a => a.message),
   }
 }
 

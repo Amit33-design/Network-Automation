@@ -60,6 +60,18 @@ describe('evaluateDevice', () => {
     expect(evaluateDevice('X', 'spine', m({ interface_errors_in: 60 })).alerts[0].severity).toBe('critical')
   })
 
+  it('expectsBgp=true forces the control-plane rule regardless of name/role', () => {
+    // "FW-01"/"firewall" has no routing hint, but the caller knows it runs BGP.
+    const d = evaluateDevice('FW-01', 'firewall', m({ bgp_sessions_up: 0 }), METRIC_THRESHOLDS, true)
+    expect(d.status).toBe('down')
+  })
+
+  it('expectsBgp=false suppresses the rule even when the name matches a hint', () => {
+    // "EDGE-FW-01" matches the "edge" hint, but this layer does not run BGP.
+    const d = evaluateDevice('EDGE-FW-01', 'edge-fw', m({ bgp_sessions_up: 0 }), METRIC_THRESHOLDS, false)
+    expect(d.status).toBe('healthy')
+  })
+
   it('honors custom thresholds', () => {
     const d = evaluateDevice('X', 'spine', m({ cpu_util: 50 }),
       METRIC_THRESHOLDS.map(t => t.metric === 'cpu_util' ? { ...t, warn: 40, critical: 45 } : t))

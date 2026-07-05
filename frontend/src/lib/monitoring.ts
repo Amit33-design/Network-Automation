@@ -80,12 +80,16 @@ function isRoutingDevice(name: string, role: string): boolean {
   return ROUTING_HINTS.some(h => s.includes(h))
 }
 
-/** Evaluate one device's metrics → health + alerts. */
+/** Evaluate one device's metrics → health + alerts.
+ *  `expectsBgp` overrides the name/role heuristic for the control-plane-down
+ *  rule (callers like the HLD health overlay know exactly which layers run
+ *  BGP — an `edge-fw` name would otherwise false-match the "edge" hint). */
 export function evaluateDevice(
   device: string,
   role: string,
   m: DeviceMetrics,
   thresholds: MetricThreshold[] = METRIC_THRESHOLDS,
+  expectsBgp?: boolean,
 ): DeviceHealthEval {
   const alerts: MonAlert[] = []
 
@@ -105,7 +109,8 @@ export function evaluateDevice(
 
   // Control-plane down: a routing device with zero BGP sessions up.
   let controlPlaneDown = false
-  if (isRoutingDevice(device, role) && m.bgp_sessions_up === 0) {
+  const routing = expectsBgp ?? isRoutingDevice(device, role)
+  if (routing && m.bgp_sessions_up === 0) {
     controlPlaneDown = true
     alerts.push({
       device, metric: 'bgp_sessions_up', severity: 'critical', value: 0, threshold: 1,
