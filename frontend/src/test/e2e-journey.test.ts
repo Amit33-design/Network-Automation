@@ -21,6 +21,8 @@ import { computeRackLayout } from '@/components/RackElevation'
 import { generateAllConfigs } from '@/lib/configgen'
 import { validateConfigs } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig } from '@/lib/ztp'
+import { buildNetBoxDcimExport, netboxRackPosition } from '@/lib/netbox-dcim'
+import { computeCapacityPlan } from '@/lib/capacity-planning'
 import type { BOMDevice, UseCase } from '@/types'
 
 const NON_NETWORK = new Set(['gpu-compute', 'cloud-gw', 'cloud-transit'])
@@ -255,6 +257,94 @@ function assertCapacityInvariant(j: Journey, p: ReturnType<typeof runPipeline>) 
   }
 }
 
+/** F2/F3 — the NetBox DCIM export must be structurally sound for EVERY design:
+ *  every BOM device exported, cable rows match the expanded plan, every cable
+ *  endpoint's interface exists, rack placements are within bounds and
+ *  non-overlapping, and the device CSV references only real racks. */
+function assertDcimExportInvariants(j: Journey, p: ReturnType<typeof runPipeline>) {
+  const ctx = `${j.useCase}/${j.scale}/${j.vendorPrefs.join('+') || 'default'}`
+  const x = buildNetBoxDcimExport(p.devices, p.cabling, j.siteCode, p.racks)
+
+  const rows = (csv: string) => csv.trim().split('\n').slice(1)
+
+  // 1. One device row per unique hostname; every BOM device present.
+  const deviceRows = rows(x.devicesCsv)
+  const exportedNames = new Set(deviceRows.map(r => r.split(',')[0]))
+  for (const d of p.devices) {
+    const name = d.hostname || d.model
+    expect(exportedNames.has(name), `${ctx}: ${name} missing from device CSV`).toBe(true)
+  }
+
+  // 2. Cable rows match the expanded plan count.
+  expect(rows(x.cablesCsv).length, `${ctx}: cable CSV row drift`).toBe(x.cableCount)
+
+  // 3. Every cable endpoint's interface exists in the interface CSV.
+  const ifaceKeys = new Set(rows(x.interfacesCsv).map(r => {
+    const [device, name] = r.split(',')
+    return `${device} ${name}`
+  }))
+  for (const r of rows(x.cablesCsv)) {
+    const c = r.split(',')
+    expect(ifaceKeys.has(`${c[0]} ${c[2]}`), `${ctx}: cable side_a ${c[0]} ${c[2]} not in interface CSV`).toBe(true)
+    expect(ifaceKeys.has(`${c[3]} ${c[5]}`), `${ctx}: cable side_b ${c[3]} ${c[5]} not in interface CSV`).toBe(true)
+  }
+
+  // 4. Rack export: count matches, positions in bounds, no U overlap per rack,
+  //    and every rack referenced by a device row exists.
+  expect(x.rackCount, `${ctx}: rackCount drift`).toBe(p.racks.length)
+  const rackLabels = new Set(p.racks.map(r => r.label))
+  for (const rack of p.racks) {
+    const occupied = new Set<number>()
+    for (const slot of rack.slots) {
+      const pos = netboxRackPosition(slot, rack.totalU)
+      expect(pos, `${ctx}: ${rack.label} position ${pos} below rack`).toBeGreaterThanOrEqual(1)
+      expect(pos + slot.heightU - 1, `${ctx}: ${rack.label} position ${pos}+${slot.heightU}U above rack`).toBeLessThanOrEqual(rack.totalU)
+      for (let u = pos; u < pos + slot.heightU; u++) {
+        expect(occupied.has(u), `${ctx}: ${rack.label} U${u} double-booked`).toBe(false)
+        occupied.add(u)
+      }
+    }
+  }
+  for (const r of deviceRows) {
+    const cells = r.split(',')
+    const rackCell = cells[6]
+    if (rackCell) expect(rackLabels.has(rackCell), `${ctx}: device row references unknown rack ${rackCell}`).toBe(true)
+  }
+}
+
+/** H6 — the capacity plan must AGREE with the BOM's own sizing. The fabric is
+ *  built to the requested oversubscription target; when the leaf SKU cannot
+ *  physically carry enough uplinks the BOM knowingly degrades and validateBOM
+ *  emits an 'oversubscription' warning (H4). So at year 0 either the effective
+ *  ratio honors the target, or the validator flagged the degradation — a
+ *  SILENT breach means the two capacity views have drifted apart. */
+function assertCapacityPlanInvariants(j: Journey, p: ReturnType<typeof runPipeline>) {
+  const ctx = `${j.useCase}/${j.totalEndpoints}ep/${j.bandwidthPerServer}/${j.oversubscription}:1`
+  const plan = computeCapacityPlan(p.devices, j.totalEndpoints, 0.2, 5, {
+    bandwidthPerServer: j.bandwidthPerServer, oversubTarget: j.oversubscription,
+  })
+
+  // Year 0 mirrors the design inputs; growth is monotonic.
+  expect(plan.projections[0].endpoints, `${ctx}: year-0 endpoint drift`).toBe(j.totalEndpoints)
+  for (let i = 1; i < plan.projections.length; i++) {
+    expect(plan.projections[i].endpoints).toBeGreaterThanOrEqual(plan.projections[i - 1].endpoints)
+  }
+
+  if (SPINE_LEAF_CASES.has(j.useCase)) {
+    // Spine-leaf BOMs always carry uplinks → the bandwidth model must engage.
+    expect(plan.hasBandwidthModel, `${ctx}: bandwidth model inactive on a fabric`).toBe(true)
+    const os0 = plan.projections[0].effectiveOversub
+    expect(os0, `${ctx}: no effective oversub computed`).not.toBeNull()
+    if (os0! > j.oversubscription + 0.01) {
+      const flagged = p.issues.some(i => i.category === 'oversubscription')
+      expect(flagged,
+        `${ctx}: year-0 oversub ${os0!.toFixed(2)}:1 exceeds the ${j.oversubscription}:1 target ` +
+        `but validateBOM raised no oversubscription warning — capacity views disagree`,
+      ).toBe(true)
+    }
+  }
+}
+
 /** Use-case-specific role presence. */
 function assertRolePresence(j: Journey, p: ReturnType<typeof runPipeline>) {
   const layers = new Set(p.devices.map(d => d.subLayer))
@@ -301,6 +391,8 @@ describe('E2E journey — universal invariants across full matrix', () => {
           assertCapacityInvariant(j, p)
           assertConfigCorrectness(j, p)
           assertZTPPlanInvariants(j, p)
+          assertDcimExportInvariants(j, p)
+          assertCapacityPlanInvariants(j, p)
         })
       }
     }
@@ -322,6 +414,7 @@ describe('E2E journey — port speed × oversubscription matrix (spine-leaf)', (
             assertUniversalInvariants(j, p)
             assertCapacityInvariant(j, p)
             assertConfigCorrectness(j, p)
+            assertCapacityPlanInvariants(j, p)
           })
         }
       }
@@ -343,6 +436,7 @@ describe('E2E journey — vendor matrix (spine-leaf)', () => {
         assertCapacityInvariant(j, p)
         assertConfigCorrectness(j, p)
         assertZTPPlanInvariants(j, p)
+        assertDcimExportInvariants(j, p)
         // The generated fabric must be clean per the static validator — no
         // vendor should produce a hard validation FAIL (catches regressions
         // like the jumbo-MTU / GPU-QoS / BGP-presence gaps per vendor).
