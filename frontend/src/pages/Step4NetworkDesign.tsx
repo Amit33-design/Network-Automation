@@ -756,8 +756,9 @@ export function Step4NetworkDesign() {
   // H3: Capacity planning
   const [growthRate, setGrowthRate] = useState(20)
   const capacityPlan = useMemo(
-    () => computeCapacityPlan(generatedDevices, totalEndpoints, growthRate / 100, 5),
-    [generatedDevices, totalEndpoints, growthRate]
+    () => computeCapacityPlan(generatedDevices, totalEndpoints, growthRate / 100, 5,
+      { bandwidthPerServer, oversubTarget: oversubscription }),
+    [generatedDevices, totalEndpoints, growthRate, bandwidthPerServer, oversubscription]
   )
 
   // M-27: Summary
@@ -1683,7 +1684,9 @@ export function Step4NetworkDesign() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/10 bg-white/5">
-                        {['Year', 'Endpoints', 'Port Capacity', 'Leaf Util %', 'Status'].map(h => (
+                        {['Year', 'Endpoints', 'Port Capacity', 'Leaf Util %',
+                          ...(capacityPlan.hasBandwidthModel ? ['Offered Load', `Oversub (target ${capacityPlan.oversubTarget}:1)`] : []),
+                          'Status'].map(h => (
                           <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase">{h}</th>
                         ))}
                       </tr>
@@ -1716,6 +1719,25 @@ export function Step4NetworkDesign() {
                               </span>
                             </div>
                           </td>
+                          {capacityPlan.hasBandwidthModel && (
+                            <>
+                              <td className="px-4 py-2 text-gray-400 font-mono text-xs">
+                                {p.offeredGbps !== null && (p.offeredGbps >= 1000
+                                  ? `${(p.offeredGbps / 1000).toFixed(1)} Tbps`
+                                  : `${Math.round(p.offeredGbps)} Gbps`)}
+                              </td>
+                              <td className="px-4 py-2">
+                                <span className={cn(
+                                  'text-xs font-mono font-semibold',
+                                  p.oversubStatus === 'ok' ? 'text-green-400'
+                                    : p.oversubStatus === 'warn' ? 'text-yellow-400'
+                                    : 'text-red-400'
+                                )}>
+                                  {p.effectiveOversub !== null && `${p.effectiveOversub.toFixed(1)}:1`}
+                                </span>
+                              </td>
+                            </>
+                          )}
                           <td className="px-4 py-2">
                             <span className={cn(
                               'text-xs font-semibold rounded px-2 py-0.5',
