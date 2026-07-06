@@ -25,4 +25,10 @@ if [ -d "$FRONTEND_DIR" ]; then
   npm install --no-audit --no-fund
 fi
 
+# ── Backend test dependency fix ──
+# The container's system `cryptography` package is missing its `_cffi_backend`
+# native module, which breaks all JWT/auth tests (pyo3 PanicException on
+# import). Installing cffi repairs it (idempotent, fast when present).
+pip install --quiet cffi 2>/dev/null || true
+
 echo "Frontend deps ready. Run tests with: cd frontend && npm test"
