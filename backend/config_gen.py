@@ -225,9 +225,41 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
         for i, ul in enumerate(uplinks_raw)
     ]
 
-    # GPU/RoCEv2 context variables
-    roce_enabled  = any(x in (protocols + overlay) for x in ("rocev2", "roce_v2", "roce"))
+    # GPU/RoCEv2 context variables — a GPU fabric is lossless by definition
+    # (§6 rule 5), so roce is on for GPU use cases even when the protocol list
+    # doesn't carry an explicit roce keyword (the frontend usually doesn't).
+    roce_enabled  = (
+        use_case in ("gpu", "ai_fabric", "gpu_cluster")
+        or any(x in (protocols + overlay) for x in ("rocev2", "roce_v2", "roce"))
+    )
     ecn_threshold = state.get("ecn_threshold", 100_000_000)  # 100 MB default
+    pfc_queues    = state.get("pfc_queues", [3])             # RoCEv2 no-drop priority
+
+    # EVPN/VXLAN overlay flags — evpn keyword or a fabric use case
+    proto_blob = " ".join(str(p).lower() for p in (protocols + overlay))
+    bgp_evpn = "evpn" in proto_blob or use_case in ("dc", "datacenter", "dc_fabric", "gpu", "hybrid")
+    vxlan_vni_base = int(state.get("vxlanVniBase", state.get("vxlan_vni_base", 10000)))
+
+    # Spine RR loopbacks for leaf BGP sessions (nxos/leaf.j2, junos/generic.j2).
+    # Prefer the IP plan's spine entries; otherwise mirror the per-device
+    # loopback scheme above (device i → 10.0.i.i) so the leaf's RR neighbors
+    # point at the loopbacks the spine configs actually get.
+    plan_spines = [d for d in devices_list if "spine" in str(d.get("role", "")).lower()]
+    if plan_spines:
+        spine_ips = [d.get("loopback", f"10.0.{i}.{i}") for i, d in enumerate(plan_spines, 1)]
+    else:
+        num_spine = int(state.get("numSpine", state.get("num_spine", 2)))
+        spine_ips = [f"10.0.{i}.{i}" for i in range(1, num_spine + 1)]
+
+    # Campus access-layer security context (ios_xe/access.j2)
+    security = [str(s).lower() for s in state.get("security", [])]
+    dot1x_enabled = any("802.1x" in s or "dot1x" in s for s in security)
+    dai_enabled   = bool(state.get("dai_enabled", use_case == "campus"))
+    dhcp_snooping = bool(state.get("dhcp_snooping", use_case == "campus"))
+    voice_vlan    = next(
+        (v.get("id") for v in state.get("vlans", []) if "voice" in str(v.get("name", "")).lower()),
+        state.get("voice_vlan", 20),
+    )
 
     return {
         "hostname":        hostname,
@@ -237,6 +269,7 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
         "index":           index,
         "loopback_ip":     loopback_ip,
         "mgmt_ip":         mgmt_ip,
+        "mgmt_mask":       state.get("mgmt_mask", "255.255.255.0"),
         "bgp_asn":         bgp_asn,
         "underlay":        underlay,
         "protocols":       protocols,
@@ -245,9 +278,17 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
         "bandwidth_gbps":  bandwidth,
         "endpoint_count":  ep_count,
         "uplinks":         uplinks,
+        "spine_ips":       spine_ips,
+        "bgp_evpn":        bgp_evpn,
+        "vxlan_vni_base":  vxlan_vni_base,
         "roce_enabled":    roce_enabled,
         "ecn_threshold":   ecn_threshold,
+        "pfc_queues":      pfc_queues,
         "dcqcn":           any(x in (protocols + overlay) for x in ("dcqcn", "ecn_dcqcn", "ecn")),
+        "dot1x_enabled":   dot1x_enabled,
+        "dai_enabled":     dai_enabled,
+        "dhcp_snooping":   dhcp_snooping,
+        "voice_vlan":      voice_vlan,
         "vlans":           state.get("vlans", []),
         # Policy flags (default all enabled)
         "include_security_hardening": state.get("include_security_hardening", True),

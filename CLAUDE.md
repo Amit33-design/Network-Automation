@@ -934,6 +934,23 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### V. Backend config-gen repair — green suite (sourced 2026-07-06)
+
+> The backend pytest suite had 21 standing failures on `main`, masking real
+> regressions. 8 were environment (`cryptography` missing `_cffi_backend` in
+> the web container → all JWT/auth tests panic). 13 were `test_config_gen.py`
+> drift — and investigating exposed a REAL production bug: `_build_device_
+> context` stopped supplying variables the Jinja2 templates reference
+> (StrictUndefined), so `/api/generate-configs` returned "! CONFIG GENERATION
+> ERROR" comments instead of configs for NX-OS leaf, IOS-XE access, and
+> IOS-XE distribution.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| V1 | Repair the backend config-gen context + tests → whole suite green — `_build_device_context` now supplies `spine_ips` (IP-plan spine loopbacks by role, else the `10.0.i.i` scheme — leaf RR sessions point at the loopbacks spines actually get), `voice_vlan` (from VLAN list by name), `dot1x_enabled` (security list), `dai_enabled`/`dhcp_snooping` (campus default), `mgmt_mask`, plus the documented contract flags `bgp_evpn`, `vxlan_vni_base`, `pfc_queues`, and `roce_enabled` now true for GPU use cases per §6.5 (qos_policy already OR'd `uc=="gpu"`). Tests updated where behavior intentionally changed (hostname `DC-SPINE-01` w/o org prefix; empty `selectedProducts` → default-sizing fallback; dash not underscore in hostname filters). Session-start hook installs `cffi` to fix the auth-test env panic. Backend suite 321 passed/21 failed → **342 passed/0 failed**. Follow-up noted: `ios_xe/firewall.j2` doesn't exist → `fw` devices get a stub comment | [x] | `backend/config_gen.py` + `backend/tests/test_config_gen.py` (27 pass) + `.claude/hooks/session-start.sh` |
+
+---
+
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
 
 ### Purpose

@@ -89,9 +89,10 @@ def gpu_state():
 class TestBuildDeviceContext:
 
     def test_hostname_format(self, dc_state):
+        # Hostname is LAYER-NN (uppercased, zero-padded); the org name is in
+        # the config header, not the hostname.
         ctx = _build_device_context(dc_state, "dc-spine", 1)
-        assert "TESTCORP" in ctx["hostname"]
-        assert "DC_SPINE" in ctx["hostname"]
+        assert ctx["hostname"] == "DC-SPINE-01"
         assert ctx["index"] == 1
 
     def test_hostname_index_increments(self, dc_state):
@@ -174,10 +175,15 @@ class TestGenerateAllConfigs:
             assert isinstance(cfg, str), f"{hostname} config is not a string"
             assert len(cfg) > 50, f"{hostname} config is suspiciously short"
 
-    def test_empty_selected_products_returns_empty(self, dc_state):
+    def test_empty_selected_products_falls_back_to_default_sizing(self, dc_state):
+        # _derive_layers ignores selectedProducts: without an ipPlan device
+        # list it falls back to use-case sizing (2 spine + 4 leaf + fw for dc),
+        # so callers that never send selectedProducts still get configs.
         dc_state["selectedProducts"] = {}
         result = generate_all_configs(dc_state)
-        assert result == {}
+        assert len(result) >= 6
+        assert sum(1 for h in result if "SPINE" in h.upper()) == 2
+        assert sum(1 for h in result if "LEAF" in h.upper()) == 4
 
     def test_campus_config_contains_hostname(self, campus_state):
         result = generate_all_configs(campus_state)
@@ -187,14 +193,14 @@ class TestGenerateAllConfigs:
 
     def test_campus_access_config_has_vlan_section(self, campus_state):
         result = generate_all_configs(campus_state)
-        access_configs = {k: v for k, v in result.items() if "CAMPUS_ACCESS" in k}
+        access_configs = {k: v for k, v in result.items() if "CAMPUS-ACCESS" in k}
         assert len(access_configs) > 0
         for hostname, cfg in access_configs.items():
             assert "vlan" in cfg.lower(), f"No VLAN config in {hostname}"
 
     def test_dc_spine_config_has_bgp(self, dc_state):
         result = generate_all_configs(dc_state)
-        spine_configs = {k: v for k, v in result.items() if "DC_SPINE" in k}
+        spine_configs = {k: v for k, v in result.items() if "DC-SPINE" in k}
         assert len(spine_configs) > 0
         for hostname, cfg in spine_configs.items():
             assert "bgp" in cfg.lower(), f"No BGP config in {hostname}"
@@ -202,7 +208,7 @@ class TestGenerateAllConfigs:
     def test_gpu_tor_config_is_json_like(self, gpu_state):
         """SONiC TOR config should be JSON (config_db format)."""
         result = generate_all_configs(gpu_state)
-        tor_configs = {k: v for k, v in result.items() if "GPU_TOR" in k}
+        tor_configs = {k: v for k, v in result.items() if "GPU-TOR" in k}
         assert len(tor_configs) > 0
         for hostname, cfg in tor_configs.items():
             assert "{" in cfg, f"SONiC config for {hostname} doesn't look like JSON"
