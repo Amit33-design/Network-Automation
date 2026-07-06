@@ -996,25 +996,39 @@ controls. Replaces the static "Compliance Audit" placeholder in Day-2 Ops.
   control list with status pills, and "Export Report" button.
 - **Tests**: 29 in `test/compliance-scan.test.ts` (7 vendor-aware M4 tests using real generated Nokia/Juniper configs).
 
-## Frontend — `lib/capacity-planning.ts` (Capacity Planning — H3)
+## Frontend — `lib/capacity-planning.ts` (Capacity Planning — H3 + H6)
 
 **Purpose:** Projects endpoint growth over N years against the current
 leaf-spine BOM, computing per-year utilization (leaf port + spine uplink)
-with status thresholds (ok / warn / critical / exceeded). Produces
-capacity-breach year predictions and actionable recommendations
-(over-provisioned, expansion needed, spine-tier saturation).
+with status thresholds (ok / warn / critical / exceeded), plus a bandwidth /
+oversubscription model (H6): offered load grows with endpoints while uplink
+capacity is fixed, so the effective oversubscription ratio drifts past the
+design target long before ports run out. Produces capacity-breach year
+predictions and actionable recommendations (over-provisioned, expansion
+needed, spine-tier saturation, oversubscription drift).
 
 **Key exports:**
 - `GrowthProjection` — per-year record: `{ year, endpoints, leafUtilization,
-  spineUtilization, portCapacity, portsUsed, status }`.
+  spineUtilization, portCapacity, portsUsed, status, offeredGbps,
+  effectiveOversub, oversubStatus }` (last 3 null when the bandwidth model
+  is inactive).
+- `CapacityOpts` — `{ bandwidthPerServer?: string|number, oversubTarget? }`.
 - `CapacityPlan` — full result: `{ currentEndpoints, growthRate, projections,
-  maxCapacityYear, warnYear, recommendations }`.
-- `computeCapacityPlan(devices, currentEndpoints, growthRate?, years?)` —
-  pure function; filters BOM for leaf/spine roles, derives port capacity,
-  runs compound growth projection.
+  maxCapacityYear, warnYear, recommendations, hasBandwidthModel,
+  oversubTarget, oversubExceededYear, uplinkCapacityGbps }`.
+- `computeCapacityPlan(devices, currentEndpoints, growthRate?, years?, opts?)`
+  — pure function; filters BOM for leaf/spine roles, derives port capacity,
+  runs compound growth projection. With `opts.bandwidthPerServer` set and
+  leaf uplinks in the BOM: per-year `offeredGbps = endpoints × bw`,
+  `effectiveOversub = offered ÷ (totalLeafUplinks × spine fabric speed)`,
+  status ok ≤ target, warn ≤ 1.5× target, critical beyond.
+- `parseSpeedGbps(speed)` — '400G'→400, '1T'→1000, '100M'→0.1, number
+  pass-through, 0 on garbage.
 - **UI**: Step 4 "Summary" tab "Capacity Planning" card with interactive
-  growth-rate selector and year-by-year projection table.
-- **Tests**: 15 in `test/capacity-planning.test.ts`.
+  growth-rate selector and year-by-year projection table; passes the store's
+  `bandwidthPerServer` + `oversubscription` and adds "Offered Load" +
+  "Oversub (target N:1)" color-coded columns when the model is active.
+- **Tests**: 24 in `test/capacity-planning.test.ts`.
 
 ## Frontend — `lib/rollback.ts` (Closed-loop auto-rollback — K1)
 
