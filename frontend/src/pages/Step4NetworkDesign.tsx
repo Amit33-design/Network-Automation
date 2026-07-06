@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import { LLDTopologyDiagram } from '@/components/LLDTopologyDiagram'
-import { RackElevation } from '@/components/RackElevation'
+import { RackElevation, computeRackLayout } from '@/components/RackElevation'
 import { formatUSD, cn } from '@/lib/utils'
 import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import { genIPBlocks, genIPRows, genVLANs, genVNIs, buildNetBoxIpamExport } from '@/lib/ipam'
@@ -960,19 +960,22 @@ export function Step4NetworkDesign() {
               </div>
             </div>
           </Card>
-          {/* NetBox DCIM cable-plant export (F2) */}
+          {/* NetBox DCIM cable-plant + rack export (F2 + F3) */}
           <Card>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-gray-300">NetBox / Nautobot DCIM Cable Plant</h3>
+                <h3 className="text-sm font-semibold text-gray-300">NetBox / Nautobot DCIM Cable Plant & Racks</h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Bulk-import CSVs for the physical layer — devices, interfaces, and the spine↔leaf cable plant
-                  {cablingData.length > 0 && ` (${buildNetBoxDcimExport(generatedDevices, cablingData, siteCode).cableCount} cables)`}.
+                  Bulk-import CSVs for the physical layer — devices (with rack positions), interfaces, cables, and racks
+                  {cablingData.length > 0 && (() => {
+                    const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices))
+                    return ` (${x.cableCount} cables, ${x.rackCount ?? 0} racks)`
+                  })()}.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => {
-                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode)
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices))
                   downloadCsv(x.devicesCsv, `netbox-devices-${useCase || 'network'}`)
                 }}>↓ Devices CSV</Button>
                 <Button variant="secondary" onClick={() => {
@@ -983,6 +986,10 @@ export function Step4NetworkDesign() {
                   const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode)
                   downloadCsv(x.cablesCsv, `netbox-cables-${useCase || 'network'}`)
                 }}>↓ Cables CSV</Button>
+                <Button variant="secondary" onClick={() => {
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices))
+                  if (x.racksCsv) downloadCsv(x.racksCsv, `netbox-racks-${useCase || 'network'}`)
+                }}>↓ Racks CSV</Button>
               </div>
             </div>
           </Card>

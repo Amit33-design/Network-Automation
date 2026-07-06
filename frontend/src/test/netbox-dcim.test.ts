@@ -123,3 +123,59 @@ describe('buildNetBoxDcimExport', () => {
     expect(out.devicesCsv.trim()).toBe('name,device_role,manufacturer,device_type,site,status')
   })
 })
+
+// ── F3: rack + device-position export ──────────────────────────────────────────
+
+import { toNetBoxRackCsv, netboxRackPosition, type RackExport } from '@/lib/netbox-dcim'
+
+const racks: RackExport[] = [{
+  label: 'Rack A', totalU: 42,
+  slots: [
+    { startU: 1, heightU: 1, device: { hostname: 'IAD-SPINE-01', model: 'X' } },
+    { startU: 2, heightU: 2, device: { hostname: 'IAD-LEAF-01', model: 'Y' } },
+  ],
+}, {
+  label: 'Rack B', totalU: 42,
+  slots: [{ startU: 1, heightU: 1, device: { hostname: 'IAD-LEAF-02', model: 'Y' } }],
+}]
+
+describe('rack export (F3)', () => {
+  it('netboxRackPosition converts top-counted startU to bottom-counted NetBox position', () => {
+    // Top slot (startU 1, 1U) in a 42U rack occupies U42 from the bottom.
+    expect(netboxRackPosition(racks[0].slots[0], 42)).toBe(42)
+    // 2U device at top-U2..U3 occupies bottom U40-41 → lowest = 40.
+    expect(netboxRackPosition(racks[0].slots[1], 42)).toBe(40)
+  })
+
+  it('toNetBoxRackCsv emits one dcim.rack row per rack', () => {
+    const csv = toNetBoxRackCsv(racks, 'Ashburn')
+    const lines = csv.trim().split('\n')
+    expect(lines[0]).toBe('name,site,status,u_height')
+    expect(lines.length).toBe(3)
+    expect(lines[1]).toBe('Rack A,Ashburn,active,42')
+  })
+
+  it('device CSV gains rack/position/face columns when racks are provided', () => {
+    const csv = toNetBoxDeviceCsv(devices, 'Ashburn', racks)
+    const lines = csv.trim().split('\n')
+    expect(lines[0]).toBe('name,device_role,manufacturer,device_type,site,status,rack,position,face')
+    expect(lines.find(l => l.startsWith('IAD-SPINE-01'))).toContain('Rack A,42,front')
+    expect(lines.find(l => l.startsWith('IAD-LEAF-02'))).toContain('Rack B,42,front')
+    // Device not placed in any rack → empty placement cells.
+    expect(lines.find(l => l.startsWith('IAD-SPINE-02'))).toMatch(/active,,,$/)
+  })
+
+  it('device CSV keeps the original header without racks (backward compatible)', () => {
+    const csv = toNetBoxDeviceCsv(devices, 'Ashburn')
+    expect(csv.trim().split('\n')[0]).toBe('name,device_role,manufacturer,device_type,site,status')
+  })
+
+  it('buildNetBoxDcimExport bundles racksCsv + rackCount when racks given', () => {
+    const out = buildNetBoxDcimExport(devices, cabling, 'Ashburn', racks)
+    expect(out.rackCount).toBe(2)
+    expect(out.racksCsv).toContain('Rack A')
+    // and omits them when not
+    const bare = buildNetBoxDcimExport(devices, cabling, 'Ashburn')
+    expect(bare.racksCsv).toBeUndefined()
+  })
+})
