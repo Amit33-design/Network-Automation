@@ -20,6 +20,12 @@ Allowed tools: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`, `We
 > function-by-function reference for the entire codebase (frontend +
 > backend) — read it first in any new session to understand what exists
 > and where, before grepping/reading source files from scratch.
+>
+> 📚 **Technical guide**: [`docs/TECHNICAL_GUIDE.md`](./docs/TECHNICAL_GUIDE.md)
+> — current architecture, engine map, frontend/backend parity pattern,
+> testing strategy, gotchas/tribal knowledge (§7 there), and extension
+> recipes. [`AGENTS.md`](./AGENTS.md) is the condensed operating manual
+> for any coding agent (reading order, commands, hard rules).
 
 **Active branch**: `main`
 **Stack**: React 19 + TypeScript 6 + Vite 8 + Tailwind CSS v4 + Zustand 5 + TanStack Query v5
