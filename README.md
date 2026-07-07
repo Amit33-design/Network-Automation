@@ -7,7 +7,7 @@
 **Intent-Driven Network Automation**
 
 [![Live App](https://img.shields.io/badge/Live-netdesignai.com-00b4d8?style=for-the-badge&logo=vercel)](https://netdesignai.com)
-[![Tests](https://img.shields.io/badge/Tests-166_frontend_+_121_backend_passing-22c55e?style=for-the-badge&logo=vitest)](frontend/src/test)
+[![Tests](https://img.shields.io/badge/Tests-1148_frontend_+_346_backend_passing-22c55e?style=for-the-badge&logo=vitest)](frontend/src/test)
 [![Stack](https://img.shields.io/badge/React_19_+_TypeScript-3B82F6?style=for-the-badge&logo=react)](frontend)
 [![License](https://img.shields.io/badge/License-NDAL_v1.0-f59e0b?style=for-the-badge)](LICENSE)
 
@@ -395,6 +395,12 @@ Network-Automation/
 ---
 
 ## Development Guide
+
+> 📚 **Start here for contributions (humans and AI agents):**
+> - [`AGENTS.md`](AGENTS.md) — operating manual: reading order, commands, hard rules, workflow
+> - [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md) — current architecture, engine map, testing strategy, gotchas, extension recipes
+> - [`CODE_REFERENCE.md`](CODE_REFERENCE.md) — function-by-function code map
+> - [`CLAUDE.md`](CLAUDE.md) — domain rules + the work tracker (single source of truth for in-flight work)
 
 ### Adding a New Use Case
 1. Add to `UseCase` union in `frontend/src/types/index.ts`

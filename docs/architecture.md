@@ -1,5 +1,11 @@
 # NetDesign AI — Architecture
 
+> ⚠️ **This document describes the ASPIRATIONAL SaaS architecture** (Clerk,
+> Stripe, Pinecone, Celery, Vault, …) — a target-state design, not the current
+> implementation. For accurate, current technical documentation see
+> [`TECHNICAL_GUIDE.md`](./TECHNICAL_GUIDE.md) (architecture + workflow +
+> gotchas) and [`../CODE_REFERENCE.md`](../CODE_REFERENCE.md) (symbol map).
+
 ## System overview
 
 ```
