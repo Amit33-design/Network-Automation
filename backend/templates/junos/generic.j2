@@ -9,13 +9,13 @@ system {
     domain-name {{ org | lower | replace(' ', '.') }}.local;
     time-zone UTC;
     root-authentication {
-        encrypted-password "$6$ChangeMe"; ## SECRET
+        encrypted-password "<CHANGE-ME-root-password-hash>"; ## SECRET
     }
     login {
         user admin {
             class super-user;
             authentication {
-                encrypted-password "$6$ChangeMe";
+                encrypted-password "<CHANGE-ME-root-password-hash>";
             }
         }
     }

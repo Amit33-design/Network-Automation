@@ -14,14 +14,14 @@ system {
     time-zone UTC;
     authentication-order [ password ];
     root-authentication {
-        encrypted-password "$6$ChangeMe"; # replace with mkpasswd output
+        encrypted-password "<CHANGE-ME-root-password-hash>"; # replace with mkpasswd output
     }
     login {
         user admin {
             uid 2000;
             class super-user;
             authentication {
-                encrypted-password "$6$ChangeMe";
+                encrypted-password "<CHANGE-ME-root-password-hash>";
             }
         }
     }
@@ -100,7 +100,7 @@ protocols {
             }
         }
 {% endfor %}
-        level 2 { authentication-type md5; authentication-key "ChangeMe!"; }
+        level 2 { authentication-type md5; authentication-key "<CHANGE-ME-isis-auth-key>"; }
         export ISIS-EXPORT;
     }
 {% else %}
@@ -183,8 +183,8 @@ snmp {
         usm {
             local-engine {
                 user ndai-ro {
-                    authentication-sha { authentication-password "ChangeMe!"; }
-                    privacy-aes128 { privacy-password "ChangeMe!"; }
+                    authentication-sha { authentication-password "<CHANGE-ME-snmp-auth-key>"; }
+                    privacy-aes128 { privacy-password "<CHANGE-ME-snmp-priv-key>"; }
                 }
             }
         }

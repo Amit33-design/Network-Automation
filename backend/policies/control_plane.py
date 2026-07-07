@@ -265,7 +265,7 @@ def _ios_xe_copp(ctx: dict) -> str:
         "!-- BGP authentication — HMAC-SHA-256 key-chain",
         "key chain KEY-CHAIN-BGP",
         " key 1",
-        "  key-string BGP-SECRET-CHANGEME",
+        "  key-string <CHANGE-ME-bgp-key>",
         "  cryptographic-algorithm hmac-sha-256",
         "  accept-lifetime local 00:00:00 Jan 1 2024 infinite",
         "  send-lifetime    local 00:00:00 Jan 1 2024 infinite",
@@ -308,7 +308,7 @@ def _ios_xe_copp(ctx: dict) -> str:
             "!-- OSPF SHA-256 authentication (IOS-XE 16.x+)",
             "key chain KEY-CHAIN-OSPF",
             " key 1",
-            "  key-string OSPF-SECRET-CHANGEME",
+            "  key-string <CHANGE-ME-ospf-key>",
             "  cryptographic-algorithm hmac-sha-256",
             "  accept-lifetime local 00:00:00 Jan 1 2024 infinite",
             "  send-lifetime    local 00:00:00 Jan 1 2024 infinite",
@@ -326,7 +326,7 @@ def _ios_xe_copp(ctx: dict) -> str:
             lines += [
                 f"interface {iface}",
                 " ip ospf authentication key-chain KEY-CHAIN-OSPF",
-                " ip ospf message-digest-key 1 sha256 OSPF-SECRET-CHANGEME",
+                " ip ospf message-digest-key 1 sha256 <CHANGE-ME-ospf-key>",
                 " ip ospf authentication message-digest",
                 "!",
             ]
@@ -337,7 +337,7 @@ def _ios_xe_copp(ctx: dict) -> str:
             "!-- IS-IS HMAC-MD5 authentication",
             "key chain KEY-CHAIN-ISIS",
             " key 1",
-            "  key-string ISIS-SECRET-CHANGEME",
+            "  key-string <CHANGE-ME-isis-key>",
             "  cryptographic-algorithm hmac-md5",
             "  accept-lifetime local 00:00:00 Jan 1 2024 infinite",
             "  send-lifetime    local 00:00:00 Jan 1 2024 infinite",
@@ -361,7 +361,7 @@ def _ios_xe_copp(ctx: dict) -> str:
             "!-- EIGRP HMAC-SHA-256 authentication (named EIGRP)",
             "key chain KEY-CHAIN-EIGRP",
             " key 1",
-            "  key-string EIGRP-SECRET-CHANGEME",
+            "  key-string <CHANGE-ME-eigrp-key>",
             "  cryptographic-algorithm hmac-sha-256",
             "!",
             "router eigrp NAMED-EIGRP",
@@ -558,7 +558,7 @@ def _nxos_copp(ctx: dict) -> str:
             "!",
             "interface Ethernet1/1",
             " ip ospf authentication message-digest",
-            " ip ospf message-digest-key 1 md5 3 OSPF-SECRET-CHANGEME",
+            " ip ospf message-digest-key 1 md5 3 <CHANGE-ME-ospf-key>",
             "!",
         ]
 
@@ -652,7 +652,7 @@ def _eos_copp(ctx: dict) -> str:
         lines += [
             "! OSPF SHA-512 auth (EOS)",
             "router ospf 1",
-            "   area 0 authentication ipsec spi 256 sha1 passphrase OSPF-SECRET-CHANGEME",
+            "   area 0 authentication ipsec spi 256 sha1 passphrase <CHANGE-ME-ospf-key>",
             "!",
         ]
 
@@ -767,7 +767,7 @@ def _junos_copp(ctx: dict) -> str:
     if "is-is" in " ".join(protocols).lower():
         lines += [
             "# IS-IS authentication",
-            "set protocols isis level 2 authentication-key ISIS-SECRET-CHANGEME",
+            "set protocols isis level 2 authentication-key <CHANGE-ME-isis-key>",
             "set protocols isis level 2 authentication-type md5",
             "set protocols isis interface ge-0/0/1 level 2 authentication-key ISIS-SECRET",
             "#",

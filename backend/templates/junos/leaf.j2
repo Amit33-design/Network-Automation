@@ -14,13 +14,13 @@ system {
     domain-name netdesignai.local;
     time-zone UTC;
     root-authentication {
-        encrypted-password "$6$ChangeMe";
+        encrypted-password "<CHANGE-ME-root-password-hash>";
     }
     login {
         user admin {
             uid 2000;
             class super-user;
-            authentication { encrypted-password "$6$ChangeMe"; }
+            authentication { encrypted-password "<CHANGE-ME-root-password-hash>"; }
         }
     }
     services {
@@ -229,8 +229,8 @@ snmp {
         usm {
             local-engine {
                 user ndai-ro {
-                    authentication-sha { authentication-password "ChangeMe!"; }
-                    privacy-aes128 { privacy-password "ChangeMe!"; }
+                    authentication-sha { authentication-password "<CHANGE-ME-snmp-auth-key>"; }
+                    privacy-aes128 { privacy-password "<CHANGE-ME-snmp-priv-key>"; }
                 }
             }
         }
