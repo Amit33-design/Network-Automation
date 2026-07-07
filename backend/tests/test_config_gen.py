@@ -274,3 +274,48 @@ class TestTemplateRendering:
         rendered = _render("junos", "generic.j2", ctx)
         assert "host-name" in rendered or "hostname" in rendered
         assert "routing-options" in rendered
+
+# ─────────────────────────────────────────────────────────────
+# V2: perimeter firewall template + no-hardcoded-secrets sweep
+# ─────────────────────────────────────────────────────────────
+
+class TestFirewallDevice:
+
+    def test_fw_template_renders(self, dc_state):
+        ctx = _build_device_context(dc_state, "fw", 1)
+        ctx["platform"] = "ios-xe"
+        rendered = _render("ios_xe", "firewall.j2", ctx)
+        assert "not found" not in rendered.lower()
+        assert "CONFIG GENERATION ERROR" not in rendered
+        assert "hostname FW-01" in rendered
+        assert "OUTSIDE-UNTRUSTED-WAN" in rendered
+        assert "<CHANGE-ME-admin-password>" in rendered
+
+    def test_fw_device_gets_full_config_with_zbf(self, dc_state):
+        """fwModel=perimeter → the fw device must get a real base config AND
+        the appended ZBF policy (include_firewall_policy defaults on for fw)."""
+        result = generate_all_configs(dc_state)
+        fw_configs = {k: v for k, v in result.items() if k.startswith("FW-")}
+        assert len(fw_configs) > 0
+        for hostname, cfg in fw_configs.items():
+            assert "not found" not in cfg.lower(), f"{hostname} still uses missing template"
+            assert "zone security" in cfg, f"{hostname} missing ZBF zones"
+            assert "zone-pair" in cfg, f"{hostname} missing ZBF zone-pairs"
+
+    def test_non_fw_device_has_no_zbf(self, dc_state):
+        result = generate_all_configs(dc_state)
+        spine = next(v for k, v in result.items() if "SPINE" in k)
+        assert "zone-pair" not in spine
+
+
+class TestNoHardcodedSecrets:
+
+    def test_rendered_configs_carry_no_hardcoded_credentials(self, dc_state, campus_state, gpu_state):
+        """§6 rule 3: all credentials must be <CHANGE-ME-*> placeholders.
+        Sweeps every rendered device config across the three use cases."""
+        import re
+        forbidden = re.compile(r"ChangeMe|NetDesignZTP", re.IGNORECASE)
+        for state in (dc_state, campus_state, gpu_state):
+            for hostname, cfg in generate_all_configs(state).items():
+                m = forbidden.search(cfg)
+                assert m is None, f"hardcoded credential '{m.group()}' in {hostname}"

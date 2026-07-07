@@ -20,7 +20,7 @@ aaa authentication login default local
 aaa authorization exec default local if-authenticated
 aaa accounting exec default start-stop local
 
-username admin privilege 15 algorithm-type sha256 secret ChangeMe!
+username admin privilege 15 algorithm-type sha256 secret <CHANGE-ME-admin-password>
 service password-encryption
 no service tcp-small-servers
 no service udp-small-servers
@@ -84,7 +84,7 @@ router bgp {{ bgp_asn }}
  ! ── ISP upstream neighbor ────────────────────────────────────────────────
  neighbor 203.0.113.1 remote-as 65001
  neighbor 203.0.113.1 description ISP-UPLINK
- neighbor 203.0.113.1 password ChangeMe!
+ neighbor 203.0.113.1 password <CHANGE-ME-bgp-password>
  neighbor 203.0.113.1 timers 10 30
  neighbor 203.0.113.1 ebgp-multihop 2
  !
@@ -167,8 +167,8 @@ crypto ikev2 policy IKEv2-POL
 crypto ikev2 keyring KEYRING-VPN
  peer REMOTE-SITE
   address 0.0.0.0 0.0.0.0
-  pre-shared-key local  ChangeMe!
-  pre-shared-key remote ChangeMe!
+  pre-shared-key local  <CHANGE-ME-ipsec-psk>
+  pre-shared-key remote <CHANGE-ME-ipsec-psk>
 
 crypto ikev2 profile IKEv2-PROFILE
  match identity remote address 0.0.0.0
@@ -205,7 +205,7 @@ logging host 10.100.0.200
 
 ! ── SNMP v3 ──────────────────────────────────────────────────────────────────
 snmp-server group NETDESIGN-RO v3 priv
-snmp-server user ndai-ro NETDESIGN-RO v3 auth sha ChangeMe! priv aes 128 ChangeMe!
+snmp-server user ndai-ro NETDESIGN-RO v3 auth sha <CHANGE-ME-snmp-auth-key> priv aes 128 <CHANGE-ME-snmp-priv-key>
 snmp-server location {{ org }} WAN Edge
 snmp-server contact noc@{{ org | lower | replace(' ', '.') }}.local
 snmp-server host 10.100.0.200 version 3 priv ndai-ro

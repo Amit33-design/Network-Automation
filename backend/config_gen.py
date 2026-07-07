@@ -303,7 +303,9 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
         "include_qos":                state.get("include_qos",                True),
         "include_static_routing":     state.get("include_static_routing",     True),
         "include_wireless":           state.get("include_wireless",           False),
-        "include_firewall_policy":    state.get("include_firewall_policy",    False),
+        # A dedicated fw device without its firewall policy is just a router —
+        # default the policy ON for the fw layer (generator gates other layers).
+        "include_firewall_policy":    state.get("include_firewall_policy",    layer == "fw"),
         # Full state dict (for policy generators that need broader context)
         "_state":          state,
     }

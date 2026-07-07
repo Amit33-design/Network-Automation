@@ -241,7 +241,7 @@ def _ios_xe_hardening(ctx: dict) -> str:
         "!-- NTP AUTHENTICATION",
         "!-- ─────────────────────────────────────────────────────────",
         "ntp authenticate",
-        "ntp authentication-key 1 md5 NTP-SECRET-CHANGEME",
+        "ntp authentication-key 1 md5 <CHANGE-ME-ntp-key>",
         "ntp trusted-key 1",
         f"ntp server {ntp_server} key 1 prefer",
         "ntp source GigabitEthernet0/0/5",
@@ -267,12 +267,12 @@ def _ios_xe_hardening(ctx: dict) -> str:
         "!-- PASSWORD + PRIVILEGE HARDENING",
         "!-- ─────────────────────────────────────────────────────────",
         "service password-encryption",
-        "enable algorithm-type scrypt secret ENABLE-SECRET-CHANGEME",
+        "enable algorithm-type scrypt secret <CHANGE-ME-enable-secret>",
         " remark Use type-9 (scrypt) — strongest available",
         "security passwords min-length 12",
         "!",
-        "username admin privilege 15 algorithm-type scrypt secret ADMIN-SECRET-CHANGEME",
-        "username readonly privilege 5 algorithm-type scrypt secret READONLY-CHANGEME",
+        "username admin privilege 15 algorithm-type scrypt secret <CHANGE-ME-admin-password>",
+        "username readonly privilege 5 algorithm-type scrypt secret <CHANGE-ME-readonly-password>",
         "!",
         "!-- AAA new-model must be configured (see aaa_policy.py)",
         "aaa new-model",
@@ -480,12 +480,12 @@ def _nxos_hardening(ctx: dict) -> str:
         "!",
 
         "!-- Privilege escalation protection",
-        "username admin password 0 CHANGEME role network-admin",
+        "username admin password 0 <CHANGE-ME-admin-password> role network-admin",
         " remark Use TACACS+ for production — local user as fallback only",
         "!",
 
         "!-- Enable password encryption",
-        "username admin password 5 HASHED-CHANGEME",
+        "username admin password 5 <CHANGE-ME-password-hash>",
         "!",
 
         "!-- AAA / TACACS+ (refer to aaa_policy.py for full config)",
@@ -496,7 +496,7 @@ def _nxos_hardening(ctx: dict) -> str:
 
         "!-- NTP authentication",
         "ntp authenticate",
-        "ntp authentication-key 1 md5 NTP-SECRET-CHANGEME",
+        "ntp authentication-key 1 md5 <CHANGE-ME-ntp-key>",
         "ntp trusted-key 1",
         f"ntp server {ntp_server} key 1 use-vrf management",
         "!",
@@ -613,7 +613,7 @@ def _eos_hardening(ctx: dict) -> str:
 
         "! NTP authentication",
         "ntp authenticate",
-        "ntp authentication-key 1 sha1 NTP-SECRET-CHANGEME",
+        "ntp authentication-key 1 sha1 <CHANGE-ME-ntp-key>",
         "ntp trusted-key 1",
         f"ntp server {ntp_server} iburst key 1 vrf MGMT",
         "!",
@@ -732,7 +732,7 @@ def _junos_hardening(ctx: dict) -> str:
 
         "# NTP authentication",
         f"set system ntp server {ntp_server} version 4",
-        "set system ntp authentication-key 1 type md5 value NTP-SECRET-CHANGEME",
+        "set system ntp authentication-key 1 type md5 value <CHANGE-ME-ntp-key>",
         "set system ntp trusted-key 1",
         "#",
 
