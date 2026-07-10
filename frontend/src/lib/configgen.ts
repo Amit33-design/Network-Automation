@@ -120,6 +120,15 @@ line vty 0 15
 function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const spineAsn = 65000
   const routerId = `10.255.1.${idx + 1}`
+  // Real eBGP leaf peers derived from the fabric (leaf lo0 = 10.255.2.(i+1),
+  // leaf ASN = 65001+i — matches nxosLeafConfig). eBGP EVPN: per-leaf remote-as,
+  // NO route-reflector-client (RR is iBGP-only).
+  const leafPeerLines = allDevices
+    .map((d, i) => ({ d, i }))
+    .filter(x => x.d.subLayer === 'leaf')
+    .map(x => `  neighbor 10.255.2.${x.i + 1}\n    inherit peer LEAF-PEER\n    remote-as ${65001 + x.i}\n    description ${x.d.hostname || `LEAF-${x.i + 1}`}`)
+    .join('\n')
+  const spineBgpNeighbors = leafPeerLines || '  ! No leaves in fabric — add: neighbor <leaf-lo0>\\n    inherit peer LEAF-PEER\\n    remote-as <leaf-asn>'
   const isisNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:1::${idx + 1}`
@@ -166,9 +175,9 @@ banner motd ^
 *******************************************************************************
 ^
 !
-username admin privilege 15 role network-admin password 5 <CHANGE-ME-admin-password>
+username admin password <CHANGE-ME-admin-password> role network-admin
 !
-aaa new-model
+feature tacacs+
 tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
 tacacs-server host <CHANGE-ME-tacacs-secondary-ip> key <CHANGE-ME-tacacs-key>
 aaa group server tacacs+ TACACS-GROUP
@@ -228,20 +237,20 @@ router bgp ${spineAsn}
   address-family l2vpn evpn
     retain route-target all
   !
-  template peer LEAF-RR-CLIENT
-    remote-as ${spineAsn}
+  ! eBGP EVPN spine — peer template holds the common config; each leaf
+  ! neighbor sets its own remote-as (unique leaf ASN). No route-reflector-
+  ! client (that is iBGP-only; this is an eBGP Clos fabric per RFC 7938).
+  template peer LEAF-PEER
     update-source loopback0
     timers 3 9
     bfd
     address-family ipv4 unicast
-      route-reflector-client
       soft-reconfiguration inbound always
     address-family l2vpn evpn
-      route-reflector-client
       send-community both
   !
-  ! Add one neighbor entry per leaf:
-  ! neighbor 10.255.2.1 inherit peer LEAF-RR-CLIENT
+  ! ── Leaf eBGP peers (auto-generated from the fabric) ──────────────────────
+${spineBgpNeighbors}
 !
 ! ── SPINE FABRIC INTERFACES (topology-driven from BOM port-math) ────────────
 ${fabricLinks}
@@ -442,6 +451,14 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
+  // Real spine eBGP peers derived from the fabric (spine lo0 = 10.255.1.(i+1),
+  // spine ASN = 65000 — matches nxosSpineConfig).
+  const spinePeerLines = allDevices
+    .map((d, i) => ({ d, i }))
+    .filter(x => x.d.subLayer === 'spine')
+    .map(x => `  neighbor 10.255.1.${x.i + 1}\n    inherit peer SPINE-PEER\n    description ${x.d.hostname || `SPINE-${x.i + 1}`}`)
+    .join('\n')
+  const leafBgpNeighbors = spinePeerLines || '  ! No spines in fabric — add: neighbor <spine-lo0>\\n    inherit peer SPINE-PEER'
   const isisNet  = `49.0001.0102.5501.${String(idx + 1).padStart(4, '0')}.00`
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:2::${idx + 1}`
@@ -482,9 +499,9 @@ feature lldp
 feature telemetry
 feature bfd
 !
-username admin privilege 15 role network-admin password 5 <CHANGE-ME-admin-password>
+username admin password <CHANGE-ME-admin-password> role network-admin
 !
-aaa new-model
+feature tacacs+
 tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
 tacacs-server host <CHANGE-ME-tacacs-secondary-ip> key <CHANGE-ME-tacacs-key>
 aaa group server tacacs+ TACACS-GROUP
@@ -519,6 +536,25 @@ vrf context TENANT-A
 vlan 10
   name SERVERS
   vn-segment 10010
+vlan 900
+  name L3VNI-TENANT-A
+  vn-segment 50000
+!
+! ── ANYCAST GATEWAY (distributed default gateway on every leaf) ──────────────
+fabric forwarding anycast-gateway-mac 0000.0aaa.0001
+!
+! Tenant SVI — same anycast IP on every leaf (edit subnet per tenant/VNI).
+interface Vlan10
+  no shutdown
+  vrf member TENANT-A
+  ip address <CHANGE-ME-tenant-anycast-gw>/24
+  fabric forwarding mode anycast-gateway
+!
+! L3VNI core SVI — inter-VNI (symmetric IRB) routing for VRF TENANT-A.
+interface Vlan900
+  no shutdown
+  vrf member TENANT-A
+  ip forward
 !
 ! ── LOOPBACKS ────────────────────────────────────────────────────────────────
 interface loopback0
@@ -552,7 +588,7 @@ router bgp ${leafAsn}
     maximum-paths ibgp 64
   address-family l2vpn evpn
   !
-  template peer SPINE-RR
+  template peer SPINE-PEER
     remote-as 65000
     update-source loopback0
     timers 3 9
@@ -562,8 +598,8 @@ router bgp ${leafAsn}
     address-family l2vpn evpn
       send-community both
   !
-  ! neighbor <CHANGE-ME-spine1-loopback0> inherit peer SPINE-RR
-  ! neighbor <CHANGE-ME-spine2-loopback0> inherit peer SPINE-RR
+  ! ── Spine eBGP peers (auto-generated from the fabric) ─────────────────────
+${leafBgpNeighbors}
 !
 ! ── VXLAN NVE (VTEP) ─────────────────────────────────────────────────────────
 interface nve1
