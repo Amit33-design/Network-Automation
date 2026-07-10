@@ -958,6 +958,22 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### W. Design diff / change review (sourced 2026-07-07)
+
+> §23 sourcing priority 4 (richer change review). H1 serializes a full design
+> (`DesignExport`: intent + requirements + BOM + configs) and imports it, but
+> there is no way to **compare two designs** — e.g. a saved baseline vs. the
+> current working design — before re-deploying. Enterprise change review needs
+> a field-level diff (what intent/requirements changed), a BOM delta
+> (added/removed/changed devices, cost delta), and a per-device config diff
+> (unified hunks) so an operator can see exactly what a redeploy will change.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| W1 | Design diff engine — new `lib/design-diff.ts` (`diffDesigns(a, b)` over two `DesignExport`s → `{intentChanges, requirementChanges, bomDelta, configDelta, summary}`): field-level intent/requirements changes (added/removed/changed w/ before→after), BOM delta by device id (added/removed/changed + capex delta), per-device **LCS-based unified config diff** (added/removed/modified files w/ line-level hunks, long unchanged runs elided w/ context), `diffToMarkdown` report. Wired into Step 4 Summary tab "Compare Designs (Change Review)" card (upload a baseline JSON → summary chips + intent/requirement tables + BOM delta + colored config hunks + download .md report). Pure + 10 tests | [x] | `lib/design-diff.ts` + `test/design-diff.test.ts` (10) + `Step4NetworkDesign.tsx`; 1158 tests, tsc + build green |
+
+---
+
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
 
 ### Purpose

@@ -10,7 +10,8 @@ import { formatUSD, cn } from '@/lib/utils'
 import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import { genIPBlocks, genIPRows, genVLANs, genVNIs, buildNetBoxIpamExport } from '@/lib/ipam'
 import { buildNetBoxDcimExport } from '@/lib/netbox-dcim'
-import { downloadDesignJSON, downloadDesignMarkdown, validateDesignImport, applyDesignImport } from '@/lib/design-export'
+import { downloadDesignJSON, downloadDesignMarkdown, validateDesignImport, applyDesignImport, serializeDesign } from '@/lib/design-export'
+import { diffDesigns, diffToMarkdown, type DesignDiff } from '@/lib/design-diff'
 import { computeCapacityPlan } from '@/lib/capacity-planning'
 import { buildContainerlabTopology, topologyToYAML } from '@/lib/containerlab'
 import type { DesignExport } from '@/lib/design-export'
@@ -698,6 +699,8 @@ export function Step4NetworkDesign() {
   const [summaryCopied, setSummaryCopied] = useState(false)
   const [mermaidCopied, setMermaidCopied] = useState(false)
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [designDiff, setDesignDiff] = useState<DesignDiff | null>(null)
+  const [diffError, setDiffError] = useState<string | null>(null)
   const svgRef = useRef<HTMLDivElement>(null)
   const lldRef = useRef<HTMLDivElement>(null)
 
@@ -1861,6 +1864,168 @@ export function Step4NetworkDesign() {
             <p className="text-xs text-gray-500 mt-2">
               Export your full design as JSON (re-importable) or as a Markdown report for documentation and change management reviews.
             </p>
+          </Card>
+
+          {/* W1: Compare Designs (change review) */}
+          <Card>
+            <h3 className="text-sm font-semibold text-gray-300 mb-1">Compare Designs (Change Review)</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Upload a previously-exported design JSON as the <strong>baseline</strong> — see exactly what changed
+              vs. the current working design (intent, requirements, BOM, per-device configs) before you redeploy.
+            </p>
+            <div className="flex flex-wrap gap-3 mb-3">
+              <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-cyan-500/40 bg-cyan-600/20 text-cyan-300 text-sm font-medium hover:bg-cyan-600/30 transition-colors cursor-pointer">
+                Upload Baseline JSON
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    const reader = new FileReader()
+                    reader.onload = () => {
+                      try {
+                        const baseline = JSON.parse(reader.result as string)
+                        const check = validateDesignImport(baseline)
+                        if (!check.ok) { setDiffError(check.error!); setDesignDiff(null); return }
+                        const current = serializeDesign(useAppStore.getState() as AppState)
+                        setDesignDiff(diffDesigns(baseline as DesignExport, current))
+                        setDiffError(null)
+                      } catch {
+                        setDiffError('Failed to parse JSON file'); setDesignDiff(null)
+                      }
+                    }
+                    reader.readAsText(file)
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+              {designDiff && (
+                <button
+                  onClick={() => {
+                    const md = diffToMarkdown(designDiff)
+                    const blob = new Blob([md], { type: 'text/markdown' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url; a.download = `change-review-${siteCode || useCase || 'design'}.md`; a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-white/15 bg-white/5 text-gray-300 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  ↓ Change Report (.md)
+                </button>
+              )}
+            </div>
+
+            {diffError && (
+              <div className="p-3 rounded-lg text-sm border bg-red-900/30 border-red-700/50 text-red-300">{diffError}</div>
+            )}
+
+            {designDiff && !designDiff.summary.hasChanges && (
+              <div className="p-3 rounded-lg text-sm border bg-green-900/30 border-green-700/50 text-green-300">
+                No changes — the baseline and current design are identical.
+              </div>
+            )}
+
+            {designDiff && designDiff.summary.hasChanges && (
+              <div className="space-y-4">
+                {/* Summary chips */}
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="px-2 py-1 rounded bg-white/5 border border-white/10 text-gray-300">
+                    Intent: {designDiff.summary.intentChanged}
+                  </span>
+                  <span className="px-2 py-1 rounded bg-white/5 border border-white/10 text-gray-300">
+                    Requirements: {designDiff.summary.requirementsChanged}
+                  </span>
+                  <span className="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+                    Devices +{designDiff.summary.devicesAdded} / -{designDiff.summary.devicesRemoved} / ~{designDiff.summary.devicesChanged}
+                  </span>
+                  <span className="px-2 py-1 rounded bg-blue-500/10 border border-blue-500/20 text-blue-300">
+                    Configs +{designDiff.summary.configsAdded} / -{designDiff.summary.configsRemoved} / ~{designDiff.summary.configsModified}
+                  </span>
+                  <span className={cn(
+                    'px-2 py-1 rounded border',
+                    designDiff.summary.capexDelta > 0 ? 'bg-red-500/10 border-red-500/20 text-red-300'
+                      : designDiff.summary.capexDelta < 0 ? 'bg-green-500/10 border-green-500/20 text-green-300'
+                      : 'bg-white/5 border-white/10 text-gray-300',
+                  )}>
+                    CapEx {designDiff.summary.capexDelta >= 0 ? '+' : ''}{formatUSD(designDiff.summary.capexDelta)}
+                  </span>
+                </div>
+
+                {/* Field change tables */}
+                {[
+                  { title: 'Intent changes', rows: designDiff.intentChanges },
+                  { title: 'Requirement changes', rows: designDiff.requirementChanges },
+                ].filter(s => s.rows.length > 0).map(section => (
+                  <div key={section.title}>
+                    <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">{section.title}</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead><tr className="border-b border-white/10 text-gray-400">
+                          <th className="px-2 py-1 text-left">Field</th><th className="px-2 py-1 text-left">Before</th><th className="px-2 py-1 text-left">After</th>
+                        </tr></thead>
+                        <tbody>
+                          {section.rows.map(c => (
+                            <tr key={c.field} className="border-b border-white/5">
+                              <td className="px-2 py-1 text-gray-300 font-mono">{c.field}</td>
+                              <td className="px-2 py-1 text-red-300/80 font-mono">{c.before || '—'}</td>
+                              <td className="px-2 py-1 text-green-300/80 font-mono">{c.after || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+
+                {/* BOM delta */}
+                {designDiff.bomDelta.length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">BOM delta</div>
+                    <div className="space-y-1">
+                      {designDiff.bomDelta.map(d => (
+                        <div key={d.id} className="text-xs text-gray-300">
+                          <span className={cn('font-mono',
+                            d.status === 'added' ? 'text-emerald-400' : d.status === 'removed' ? 'text-red-400' : 'text-yellow-400')}>
+                            {d.status === 'added' ? '＋' : d.status === 'removed' ? '－' : '~'} {d.hostname}
+                          </span>
+                          {d.status === 'changed'
+                            ? <span className="text-gray-500"> — {d.changes.map(c => `${c.field}: ${c.before}→${c.after}`).join(', ')}</span>
+                            : <span className="text-gray-500"> — {formatUSD(d.status === 'added' ? d.priceAfter : d.priceBefore)}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Config delta (unified diff) */}
+                {designDiff.configDelta.length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">Config delta</div>
+                    <div className="space-y-3">
+                      {designDiff.configDelta.map(c => (
+                        <div key={c.id}>
+                          <div className="text-xs text-gray-400 mb-1 font-mono">
+                            {c.id} <span className={cn(c.status === 'added' ? 'text-emerald-400' : c.status === 'removed' ? 'text-red-400' : 'text-yellow-400')}>({c.status}, +{c.addedLines}/-{c.removedLines})</span>
+                          </div>
+                          {c.hunks.length > 0 && (
+                            <pre className="bg-black/40 border border-white/10 rounded-lg p-3 text-[11px] font-mono overflow-x-auto whitespace-pre leading-relaxed">
+                              {c.hunks.map((h, i) => (
+                                <div key={i} className={h.sign === '+' ? 'text-green-400' : h.sign === '-' ? 'text-red-400' : 'text-gray-500'}>
+                                  {h.sign}{h.text}
+                                </div>
+                              ))}
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
 
           {/* Printable text version */}
