@@ -136,12 +136,12 @@ describe('generateHostnames at large scale (regression: leaf > 52)', () => {
 })
 
 describe('Clos spine count for high-density GPU fabrics', () => {
-  it('NVIDIA 2048 GPUs @ 100G 1:1 oversub → 14 spines (not 3)', () => {
+  it('NVIDIA 2048 GPUs @ 100G 1:1 oversub → 8 spines (uplink-capped)', () => {
     // SN4600C leaf: 64 ports - 8 uplinks = 56 downlinks, 100G
     // SN5600 spine: 64 ports, 400G
     // rawLeaves = ceil(2048/56) = 37 → 38; capPerLeaf = 56*100 = 5600
-    // rawUplinks = ceil(5600/1/400) = 14; spinesByFanout = ceil(38/64) = 1
-    // spineCount = max(14, 1, 2) = 14
+    // rawUplinks = ceil(5600/1/400) = 14 → capped at the SKU's 8 uplink ports
+    // portSupply = ceil(38*8/64) = 5; spineCount = max(8, 5, 2) = 8
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'large', siteCode: 'GPU',
       totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
@@ -150,28 +150,29 @@ describe('Clos spine count for high-density GPU fabrics', () => {
     const spines = devices.filter(d => d.subLayer === 'spine')
     const leaves = devices.filter(d => d.subLayer === 'leaf')
     expect(leaves.length).toBe(38)
-    expect(spines.length).toBe(14)
+    expect(spines.length).toBe(8)
   })
 
-  it('Cisco 2048 GPUs @ 100G 1:1 oversub → 8 spines', () => {
-    // NX-9332C leaf: 32-2 = 30 downlinks, 100G
+  it('Cisco 2048 GPUs @ 100G 1:1 oversub → 9 spines (port supply governs)', () => {
+    // NX-9332C leaf: 32-8 = 24 downlinks, 100G
     // NX-9364C spine: 64 ports, 400G
-    // rawLeaves = ceil(2048/30) = 69 → 70; cap = 30*100 = 3000
-    // rawUplinks = ceil(3000/1/400) = 8; fanout = ceil(70/64) = 2
-    // spineCount = max(8, 2, 2) = 8
+    // rawLeaves = ceil(2048/24) = 86; cap = 24*100 = 2400
+    // rawUplinks = ceil(2400/1/400) = 6 (≤ 8 SKU uplinks)
+    // portSupply = ceil(86*6/64) = 9; spineCount = max(6, 9, 2) = 9
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'large', siteCode: 'GPU',
       totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
     })
     const spines = devices.filter(d => d.subLayer === 'spine')
     const leaves = devices.filter(d => d.subLayer === 'leaf')
-    expect(leaves.length).toBe(70)
-    expect(spines.length).toBe(8)
+    expect(leaves.length).toBe(86)
+    expect(spines.length).toBe(9)
   })
 
-  it('Arista 2048 GPUs @ 100G 1:1 oversub → 8 spines', () => {
-    // 7050CX3 leaf: 32-2 = 30 downlinks, 100G
+  it('Arista 2048 GPUs @ 100G 1:1 oversub → 11 spines (48-port spine)', () => {
+    // 7050CX3 leaf: 32-8 = 24 downlinks, 100G
     // 7800R3 spine: 48 ports, 400G
+    // rawUplinks = 6; portSupply = ceil(86*6/48) = 11 → max(6, 11, 2) = 11
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'large', siteCode: 'GPU',
       totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
@@ -179,12 +180,13 @@ describe('Clos spine count for high-density GPU fabrics', () => {
     })
     const spines = devices.filter(d => d.subLayer === 'spine')
     const leaves = devices.filter(d => d.subLayer === 'leaf')
-    expect(leaves.length).toBe(70)
-    expect(spines.length).toBe(8)
+    expect(leaves.length).toBe(86)
+    expect(spines.length).toBe(11)
   })
 
   it('3:1 oversub needs fewer spines than 1:1', () => {
-    // Cisco NX-9332C/9364C: cap = 3000; rawUplinks = ceil(3000/3/400) = 3
+    // Cisco NX-9332C (24 downlinks): cap = 2400; rawUplinks = ceil(2400/3/400) = 2
+    // portSupply = ceil(86*2/64) = 3 → spineCount = max(2, 3, 2) = 3
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'large', siteCode: 'GPU',
       totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 3,
@@ -193,42 +195,40 @@ describe('Clos spine count for high-density GPU fabrics', () => {
     expect(spines.length).toBe(3)
   })
 
-  it('spine fan-out constraint applies when leaves exceed spine port count', () => {
-    // With 70 Cisco leaves and 64-port spines, fan-out = ceil(70/64) = 2
-    // With 25G BW and 3:1 oversub, rawUplinks = ceil(750/3/400) = 1
-    // spineCount = max(1, 2, 2) = 2 (fan-out forces at least 2)
+  it('spine port-supply constraint applies when leaf uplinks exceed spine capacity', () => {
+    // 86 Cisco leaves × 2 uplinks (25G/3:1 floor) = 172 links on 64-port
+    // spines → ceil(172/64) = 3 spines (redundancy floor is 2)
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'large', siteCode: 'GPU',
       totalEndpoints: 2048, bandwidthPerServer: '25G', oversubscription: 3,
     })
     const spines = devices.filter(d => d.subLayer === 'spine')
-    expect(spines.length).toBe(2)
+    expect(spines.length).toBe(3)
   })
 
   it('smaller GPU fabric (256 GPUs) produces correct spine count at 1:1', () => {
     // NVIDIA SN4600C: downlinks = 56; leaves = ceil(256/56) = 5 → 6
-    // cap = 56*100 = 5600; rawUplinks = ceil(5600/1/400) = 14
-    // fanout = ceil(6/64) = 1; spines = max(14, 1, 2) = 14
+    // cap = 56*100 = 5600; rawUplinks = ceil(5600/1/400) = 14 → capped at 8
+    // portSupply = ceil(6*8/64) = 1; spines = max(8, 1, 2) = 8
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'medium', siteCode: 'GPU',
       totalEndpoints: 256, bandwidthPerServer: '100G', oversubscription: 1,
       vendorPrefs: ['NVIDIA'],
     })
     const spines = devices.filter(d => d.subLayer === 'spine')
-    expect(spines.length).toBe(14)
+    expect(spines.length).toBe(8)
   })
 
-  it('leaf uplinks reflect actual topology, not raw SKU spec', () => {
-    // Cisco NX-9332C has 2 physical uplinks, but with 8 spines
-    // actual uplinks = min(8, 2) = 2
+  it('leaf uplinks reflect bandwidth need, capped by the SKU', () => {
+    // Cisco NX-9332C: rawUplinks = ceil(2400/1/400) = 6 ≤ 8 SKU ports → 6
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'large', siteCode: 'GPU',
       totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
     })
     const leaves = devices.filter(d => d.subLayer === 'leaf')
     const spines = devices.filter(d => d.subLayer === 'spine')
-    expect(spines.length).toBe(8)
-    expect(leaves[0].uplinks).toBe(Math.min(spines.length, 2))
+    expect(spines.length).toBe(9)
+    expect(leaves[0].uplinks).toBe(6)
   })
 
   it('NVIDIA leaf uplinks capped at physical ports when spines exceed', () => {
@@ -242,8 +242,9 @@ describe('Clos spine count for high-density GPU fabrics', () => {
     expect(leaves[0].uplinks).toBe(8)
   })
 
-  it('leaf uplinks equal spine count when spines fit within SKU ports', () => {
-    // Cisco NX-9332C, 3:1 oversub → 3 spines, SKU has 2 uplinks → min(3,2) = 2
+  it('leaf uplinks follow the bandwidth need at 3:1 (redundancy floor 2)', () => {
+    // Cisco NX-9332C, 3:1 → rawUplinks = ceil(2400/3/400) = 2 → uplinks 2;
+    // port supply ceil(86*2/64) = 3 spines
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'large', siteCode: 'GPU',
       totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 3,
@@ -448,31 +449,34 @@ describe('Port speed × GPU host count matrix', () => {
     label: string; endpoints: number; bw: string; oversub: number;
     expectedLeaves: number; expectedSpines: number; expectedServers: number;
   }> = [
-    // 25G BW, 3:1 oversub (common enterprise)
+    // Cisco NX-9332C leaf: 24 downlinks / 8 uplink ports; NX-9364C spine: 64×400G.
+    // spines = max(uplinksPerLeaf, ceil(leaves×uplinks / 64), 2)
+
+    // 25G BW, 3:1 oversub (common enterprise) — uplinks floor at 2 for redundancy
     { label: '1024 GPU, 25G, 3:1', endpoints: 1024, bw: '25G', oversub: 3,
-      expectedLeaves: 36, expectedSpines: 2, expectedServers: 128 },
+      expectedLeaves: 44, expectedSpines: 2, expectedServers: 128 },
     { label: '2048 GPU, 25G, 3:1', endpoints: 2048, bw: '25G', oversub: 3,
-      expectedLeaves: 70, expectedSpines: 2, expectedServers: 256 },
+      expectedLeaves: 86, expectedSpines: 3, expectedServers: 256 },
     { label: '4096 GPU, 25G, 3:1', endpoints: 4096, bw: '25G', oversub: 3,
-      expectedLeaves: 138, expectedSpines: 3, expectedServers: 512 },
+      expectedLeaves: 172, expectedSpines: 6, expectedServers: 512 },
 
-    // 100G BW, 1:1 oversub (GPU/HPC)
+    // 100G BW, 1:1 oversub (GPU/HPC) — rawUplinks = ceil(2400/400) = 6
     { label: '1024 GPU, 100G, 1:1', endpoints: 1024, bw: '100G', oversub: 1,
-      expectedLeaves: 36, expectedSpines: 8, expectedServers: 128 },
+      expectedLeaves: 44, expectedSpines: 6, expectedServers: 128 },
     { label: '2048 GPU, 100G, 1:1', endpoints: 2048, bw: '100G', oversub: 1,
-      expectedLeaves: 70, expectedSpines: 8, expectedServers: 256 },
+      expectedLeaves: 86, expectedSpines: 9, expectedServers: 256 },
     { label: '4096 GPU, 100G, 1:1', endpoints: 4096, bw: '100G', oversub: 1,
-      expectedLeaves: 138, expectedSpines: 8, expectedServers: 512 },
+      expectedLeaves: 172, expectedSpines: 17, expectedServers: 512 },
 
-    // 400G BW, 1:1 oversub (ultra-high bandwidth)
+    // 400G BW, 1:1 (ultra-high bandwidth) — wants 24 uplinks, capped at SKU's 8
     { label: '1024 GPU, 400G, 1:1', endpoints: 1024, bw: '400G', oversub: 1,
-      expectedLeaves: 36, expectedSpines: 30, expectedServers: 128 },
+      expectedLeaves: 44, expectedSpines: 8, expectedServers: 128 },
     { label: '2048 GPU, 400G, 1:1', endpoints: 2048, bw: '400G', oversub: 1,
-      expectedLeaves: 70, expectedSpines: 30, expectedServers: 256 },
+      expectedLeaves: 86, expectedSpines: 11, expectedServers: 256 },
 
-    // 100G BW, 3:1 oversub (balanced)
+    // 100G BW, 3:1 oversub (balanced) — rawUplinks = 2, port supply → 3
     { label: '2048 GPU, 100G, 3:1', endpoints: 2048, bw: '100G', oversub: 3,
-      expectedLeaves: 70, expectedSpines: 3, expectedServers: 256 },
+      expectedLeaves: 86, expectedSpines: 3, expectedServers: 256 },
   ]
 
   for (const s of scenarios) {
@@ -507,14 +511,16 @@ describe('Port speed × GPU host count matrix', () => {
     expect(highSpines).toBeGreaterThanOrEqual(lowSpines)
   })
 
-  it('NVIDIA vendor: 2048 GPU, 100G, 1:1 → 14 spines (more than Cisco 8)', () => {
+  it('NVIDIA vendor: 2048 GPU, 100G, 1:1 → 8 spines (denser leaf → fewer than Cisco 9)', () => {
+    // SN4600C has 56 downlinks (vs Cisco 24) → 38 leaves instead of 86, so
+    // the uplink cap (8) governs instead of spine port supply.
     const devices = buildDeviceList({
       useCase: 'gpu', scale: 'large', siteCode: 'GPU',
       totalEndpoints: 2048, bandwidthPerServer: '100G', oversubscription: 1,
       vendorPrefs: ['NVIDIA'],
     })
     const spines = devices.filter(d => d.subLayer === 'spine')
-    expect(spines.length).toBe(14)
+    expect(spines.length).toBe(8)
   })
 
   it('leaf count is independent of bandwidth (only depends on endpoint count)', () => {
