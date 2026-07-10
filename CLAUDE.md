@@ -974,6 +974,46 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### X. Production-grade config hardening (sourced 2026-07-10)
+
+> User directive: "keep improving until it produces production-grade BOM,
+> network design and config." A pre-deployment audit — generated real DC
+> (Cisco/Arista/Juniper), GPU and campus designs and had senior network
+> architects review them — found the configs **NOT deployable as generated**.
+> This group tracks each finding to closure. Method: `frontend/src/test/_dump`
+> harness (temporary) dumps BOM+configs for realistic scenarios; review each
+> vendor's output against real syntax; fix generator + add regression tests.
+>
+> **Audit findings (severity from the review):**
+> - **CRIT** NX-OS/Arista/Juniper overlay BGP has ZERO real neighbors — every
+>   peer line was a commented `<CHANGE-ME-spineN-loopback>` stub → fabric dead.
+> - **CRIT** ASN model incoherent — spine iBGP-RR (`route-reflector-client`,
+>   same-AS) but leaves use unique ASNs (eBGP) → OPEN mismatch, no session.
+> - **CRIT** NX-OS IOS-isms: `aaa new-model`, `username … privilege 15`,
+>   tacacs without `feature tacacs+` → NX-OS parser rejects.
+> - **CRIT** Arista leaf IS-IS NET malformed (14 hex digits); Juniper has no
+>   `family iso`/NET at all → underlay never starts.
+> - **CRIT** Juniper eBGP-over-loopback missing `local-address lo0.0` +
+>   `multihop`; leaf jumbo MTU on the wrong interfaces; no `vlans`/VNI map.
+> - **MAJOR** NX-OS leaf had no anycast-gateway SVI (no default gateway);
+>   Arista VLAN 10 referenced but never created + no shared MLAG VTEP;
+>   vPC/MLAG peer-links commented out (never initialize).
+> - **MAJOR** firewall device mislabeled (Firepower 4145 emitting IOS-XE ZBF).
+> - **VALIDATOR BUG** V-10 misparsed `access-group name <ACL>` → false
+>   "undefined ACL named 'name'". BOM: optics list omits host-facing DACs and
+>   firewall-uplink optics; GPU spine count balloons (40 spines for 512 GPUs).
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| X1 | NX-OS control plane made deployable — (1) **real eBGP EVPN neighbors**: `nxosSpineConfig` emits one `neighbor <leaf-lo0>\n inherit peer LEAF-PEER\n remote-as <leaf-asn>` per leaf derived from `allDevices` (leaf lo0 `10.255.2.(i+1)`, ASN `65001+i`); `nxosLeafConfig` emits one `neighbor <spine-lo0>\n inherit peer SPINE-PEER` per spine (`10.255.1.(i+1)`, template `remote-as 65000`) — no more commented `<CHANGE-ME-spine*>` stubs; (2) **coherent eBGP**: dropped `route-reflector-client` (iBGP-only) from the spine, kept `retain route-target all`; (3) **IOS-ism purge**: removed `aaa new-model`, `username admin privilege 15 … password 5` → `username admin password <CHANGE-ME> role network-admin`, added `feature tacacs+`; (4) **anycast gateway**: leaf now emits `fabric forwarding anycast-gateway-mac` + `interface Vlan10` (anycast-gateway, `<CHANGE-ME-tenant-anycast-gw>`) + L3VNI `Vlan900 ip forward`. 6 new configgen tests (fabric wiring, AAA, anycast); rewrote 2 tests that had asserted the `aaa new-model` bug | [x] | `configgen.ts` `nxosSpineConfig`/`nxosLeafConfig`; `configgen.test.ts` (110→116) |
+| X2 | Validator V-10 access-group parse fix — `checkAcl` misparsed `match access-group name <ACL>` (captured the literal `name`) → false "undefined ACL" warn on every firewall; now skips the optional `name` keyword + trailing `in`/`out` direction, and recognizes NX-OS `ip access-list NAME` (no standard/extended) as a definition. 3 new tests | [x] | `config-validator.ts`; `config-validator.test.ts` (40→43) |
+| X3 | Arista EOS fabric deployability — real eBGP neighbors (emit per-leaf/per-spine, drop non-EOS indented `peer-group` block → flat `neighbor … peer group`), fix malformed leaf IS-IS NET (12-hex system-id), create referenced `vlan 10`, shared MLAG VTEP (common Loopback1 / `ip address virtual`), populate MLAG peer-link members, coherent ASN | [ ] | `configgen.ts` `aristaSpineConfig`/`aristaLeafConfig` |
+| X4 | Juniper JunOS fabric deployability — add `family iso` NET on lo0 + transit units (IS-IS dead without it), `local-address lo0.0` + `multihop` on eBGP groups, real spine neighbors, `set vlans V10 vlan-id/vxlan vni`, `switch-options route-distinguisher`, jumbo MTU on the ACTUAL uplink units (et-0/0/48-49), remove bare `!` comment lines (invalid Junos) | [ ] | `configgen.ts` `juniperSpineConfig`/`juniperLeafConfig` |
+| X5 | vPC / MLAG peer-link fully generated (not commented) + BOM optics completeness (host-facing DACs, firewall-uplink optics) + GPU spine-count sanity (40 spines for 512 GPUs is wrong — cap spines by leaf uplink ports / rail design) | [ ] | `configgen.ts` + `bom.ts` `buildOptics`/`computeSpineLeaf` |
+| X6 | Firewall device platform correctness — a BOM `firewall` device on Firepower/FTD hardware should emit FTD/ASA-style config (or clearly a FMC-managed object), not IOS-XE ZBF mislabeled as Firepower | [ ] | `configgen.ts` firewall dispatch |
+
+---
+
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
 
 ### Purpose

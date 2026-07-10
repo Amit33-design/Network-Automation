@@ -472,15 +472,17 @@ function checkUndefinedACLReferences(configs: Record<string, string>): Validatio
 
   for (const [host, cfg] of Object.entries(configs)) {
     const definedACLs = new Set<string>()
-    const aclDefs = cfg.match(/ip access-list (?:standard|extended)\s+(\S+)/g) ?? []
-    for (const d of aclDefs) {
-      const name = d.replace(/ip access-list (?:standard|extended)\s+/, '')
-      definedACLs.add(name)
+    // IOS/IOS-XE: `ip access-list [standard|extended] NAME`; NX-OS/EOS: `ip access-list NAME`.
+    for (const m of cfg.matchAll(/^\s*ip access-list (?:standard |extended )?(\S+)/gm)) {
+      definedACLs.add(m[1])
     }
 
-    const aclRefs = cfg.match(/access-group\s+(\S+)/g) ?? []
-    for (const r of aclRefs) {
-      const name = r.replace(/access-group\s+/, '')
+    // References: interface `ip access-group NAME in|out` AND class-map
+    // `match access-group name NAME`. The optional `name` keyword must be
+    // skipped (it is not the ACL) and the trailing direction ignored.
+    for (const m of cfg.matchAll(/access-group\s+(?:name\s+)?(\S+)/g)) {
+      const name = m[1]
+      if (name === 'in' || name === 'out' || name === 'name') continue
       if (!definedACLs.has(name) && !/^\d+$/.test(name)) {
         issues.push({ host, ref: name })
       }

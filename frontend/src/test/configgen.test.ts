@@ -22,18 +22,23 @@ function makeDevice(overrides: Partial<BOMDevice> = {}): BOMDevice {
 
 // ── Issue 1: No duplicate config blocks ───────────────────────────────────────
 describe('No duplicate configuration blocks (Issue 1)', () => {
-  it('NX-OS spine has exactly one aaa new-model', () => {
+  it('NX-OS spine uses NX-OS AAA, not the IOS-only aaa new-model', () => {
     const dev = makeDevice({ hostname: 'TST-SPINE-A01', vendor: 'Cisco', subLayer: 'spine' })
     const cfg = generateConfig(dev, 0)
-    const matches = (cfg.match(/aaa new-model/g) ?? []).length
-    expect(matches).toBe(1)
+    // NX-OS has no `aaa new-model` (AAA is always on) and no IOS `privilege` keyword.
+    expect(cfg).not.toMatch(/aaa new-model/)
+    expect(cfg).not.toMatch(/username .* privilege \d+/)
+    expect(cfg).toMatch(/feature tacacs\+/)
+    expect(cfg).toMatch(/aaa authentication login default/)
   })
 
-  it('NX-OS leaf has exactly one aaa new-model', () => {
+  it('NX-OS leaf uses NX-OS AAA, not the IOS-only aaa new-model', () => {
     const dev = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf' })
     const cfg = generateConfig(dev, 0)
-    const matches = (cfg.match(/aaa new-model/g) ?? []).length
-    expect(matches).toBe(1)
+    expect(cfg).not.toMatch(/aaa new-model/)
+    expect(cfg).not.toMatch(/username .* privilege \d+/)
+    expect(cfg).toMatch(/feature tacacs\+/)
+    expect(cfg).toMatch(/aaa authentication login default/)
   })
 
   it('NX-OS spine has no "POLICY BLOCKS" append section', () => {
@@ -986,5 +991,54 @@ describe('Fortinet FortiSwitch campus config', () => {
     const cfg = generateConfig(makeDevice({ vendor: 'Fortinet', subLayer: 'distribution' }), 0)
     expect(cfg).toContain('<CHANGE-ME-admin-password>')
     expect(cfg).toContain('<CHANGE-ME-snmp-auth-pass>')
+  })
+})
+
+// ── X1: NX-OS eBGP EVPN fabric is actually wired (production-grade) ──────────────
+
+describe('NX-OS eBGP EVPN fabric wiring (group X)', () => {
+  function fabric() {
+    // 2 spines + 2 leaves in one BOM so generators can derive real peer IPs.
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', role: 'spine' }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor: 'Cisco', subLayer: 'spine', role: 'spine' }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf' }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf' }),
+    ]
+    return { devices, configs: generateAllConfigs(devices, 'dc') }
+  }
+
+  it('spine emits a REAL eBGP neighbor per leaf with the leaf ASN (no placeholders, no RR-client)', () => {
+    const { configs } = fabric()
+    const spine = configs['s1']
+    // leaves are at global index 2,3 → lo0 10.255.2.3 / .4, ASN 65003 / 65004
+    expect(spine).toMatch(/neighbor 10\.255\.2\.3\n\s+inherit peer LEAF-PEER\n\s+remote-as 65003/)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.4\n\s+inherit peer LEAF-PEER\n\s+remote-as 65004/)
+    expect(spine).not.toMatch(/route-reflector-client/)   // eBGP, not iBGP-RR
+    expect(spine).not.toMatch(/inherit peer LEAF-RR-CLIENT/)
+    expect(spine).not.toMatch(/! neighbor .* inherit/)     // no commented stub peers
+  })
+
+  it('leaf emits a REAL eBGP neighbor per spine (no <CHANGE-ME> peer placeholders)', () => {
+    const { configs } = fabric()
+    const leaf = configs['l1']
+    expect(leaf).toMatch(/neighbor 10\.255\.1\.1\n\s+inherit peer SPINE-PEER/)
+    expect(leaf).toMatch(/neighbor 10\.255\.1\.2\n\s+inherit peer SPINE-PEER/)
+    expect(leaf).not.toMatch(/CHANGE-ME-spine\d?-lo/)      // deterministic peer, must be filled
+    expect(leaf).toMatch(/template peer SPINE-PEER\n\s+remote-as 65000/)  // spines share ASN 65000
+  })
+
+  it('leaf has a working anycast default gateway (distributed IRB)', () => {
+    const { configs } = fabric()
+    const leaf = configs['l1']
+    expect(leaf).toMatch(/fabric forwarding anycast-gateway-mac/)
+    expect(leaf).toMatch(/interface Vlan10[\s\S]*fabric forwarding mode anycast-gateway/)
+  })
+
+  it('spine and leaf ASNs are coherent for eBGP (spine 65000, leaves 65000+idx, all distinct)', () => {
+    const { configs } = fabric()
+    expect(configs['s1']).toMatch(/router bgp 65000/)
+    expect(configs['l1']).toMatch(/router bgp 65003/)  // global idx 2
+    expect(configs['l2']).toMatch(/router bgp 65004/)  // global idx 3
   })
 })

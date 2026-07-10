@@ -496,4 +496,57 @@ describe('config-validator', () => {
       }
     })
   })
+
+  describe('V-10 access-group parsing (audit fix)', () => {
+    it('does not false-flag `access-group name <ACL>` (class-map inspect form)', () => {
+      const configs = {
+        'FW-01': [
+          'hostname FW-01',
+          'ip access-list extended ACL-INSIDE-TO-OUTSIDE',
+          ' permit ip any any',
+          'class-map type inspect match-any CM-INSIDE',
+          ' match access-group name ACL-INSIDE-TO-OUTSIDE',
+          'ntp server 1.1.1.1',
+          'username admin secret <CHANGE-ME-pw>',
+        ].join('\n'),
+      }
+      const result = validateConfigs({ configs, devices: [], useCase: 'campus' })
+      const v10 = result.checks.find(c => c.id === 'V-10')!
+      expect(v10.severity).toBe('pass')          // ACL is defined; "name" is not an ACL
+      expect(v10.detail).not.toContain('name')
+    })
+
+    it('still flags a genuinely undefined ACL reference', () => {
+      const configs = {
+        'R1': [
+          'hostname R1',
+          'interface Gi0/0',
+          ' ip access-group ACL-MISSING in',
+          'ntp server 1.1.1.1',
+          'username admin secret <CHANGE-ME-pw>',
+        ].join('\n'),
+      }
+      const result = validateConfigs({ configs, devices: [], useCase: 'campus' })
+      const v10 = result.checks.find(c => c.id === 'V-10')!
+      expect(v10.severity).toBe('warn')
+      expect(v10.detail).toContain('ACL-MISSING')
+    })
+
+    it('recognizes NX-OS `ip access-list NAME` (no standard/extended) as a definition', () => {
+      const configs = {
+        'LEAF-01': [
+          'hostname LEAF-01',
+          'ip access-list ACL-MGMT',
+          ' 10 permit ip any any',
+          'interface mgmt0',
+          ' ip access-group ACL-MGMT in',
+          'ntp server 1.1.1.1',
+          'username admin secret <CHANGE-ME-pw>',
+        ].join('\n'),
+      }
+      const result = validateConfigs({ configs, devices: [], useCase: 'dc' })
+      const v10 = result.checks.find(c => c.id === 'V-10')!
+      expect(v10.severity).toBe('pass')
+    })
+  })
 })
