@@ -1086,3 +1086,55 @@ describe('Arista EOS eBGP EVPN fabric wiring (group X3)', () => {
     expect(leaf).toMatch(/neighbor SPINE-PEER remote-as 65000/)
   })
 })
+
+// ── X4: Juniper JunOS eBGP EVPN fabric is deployable ────────────────────────────
+
+describe('Juniper JunOS eBGP EVPN fabric wiring (group X4)', () => {
+  function fabric() {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor: 'Juniper', subLayer: 'spine', role: 'spine' }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor: 'Juniper', subLayer: 'spine', role: 'spine' }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf' }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf' }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  it('IS-IS has a family iso NET on lo0 and on every transit interface', () => {
+    const c = fabric()
+    expect(c['s1']).toMatch(/set interfaces lo0 unit 0 family iso address 49\.0001\.[0-9a-f.]+\.00/)
+    expect(c['s1']).toMatch(/set interfaces et-0\/0\/0 unit 0 family iso/)
+    expect(c['l1']).toMatch(/set interfaces lo0 unit 0 family iso address 49\.0001\.[0-9a-f.]+\.00/)
+    expect(c['l1']).toMatch(/set interfaces et-0\/0\/48 unit 0 family iso/)
+  })
+
+  it('eBGP over loopback has local-address + multihop and real neighbors (no placeholders)', () => {
+    const c = fabric()
+    const spine = c['s1']; const leaf = c['l1']
+    expect(spine).toMatch(/group LEAVES local-address lo0\.0/)
+    expect(spine).toMatch(/group LEAVES multihop/)
+    expect(spine).toMatch(/group LEAVES neighbor 10\.255\.2\.3 peer-as 65003/)
+    expect(spine).toMatch(/group LEAVES neighbor 10\.255\.2\.4 peer-as 65004/)
+    expect(leaf).toMatch(/group SPINE-RR local-address lo0\.0/)
+    expect(leaf).toMatch(/group SPINE-RR multihop/)
+    expect(leaf).toMatch(/group SPINE-RR neighbor 10\.255\.1\.1 peer-as 65000/)
+    expect(leaf).not.toMatch(/CHANGE-ME-spine\d?-lo0/)
+    expect(leaf).not.toMatch(/CHANGE-ME-leaf\d?-lo0/)
+  })
+
+  it('leaf defines vlans + VNI map, a route-distinguisher, and jumbo MTU on the real uplinks', () => {
+    const c = fabric()
+    const leaf = c['l1']
+    expect(leaf).toMatch(/set vlans V10 vlan-id 10/)
+    expect(leaf).toMatch(/set vlans V10 vxlan vni 10010/)
+    expect(leaf).toMatch(/set switch-options route-distinguisher 10\.255\.2\.3:1/)
+    expect(leaf).toMatch(/set interfaces et-0\/0\/48 mtu 9216/)
+    expect(leaf).not.toMatch(/set interfaces et-0\/0\/0 mtu 9216/)   // MTU no longer on the wrong ports
+  })
+
+  it('uses # comments (no bare ! lines, which are invalid Junos)', () => {
+    const c = fabric()
+    expect(c['s1'].split('\n').some(l => l === '!')).toBe(false)
+    expect(c['l1'].split('\n').some(l => l === '!')).toBe(false)
+  })
+})

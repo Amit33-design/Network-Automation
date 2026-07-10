@@ -1292,9 +1292,17 @@ set class-of-service interfaces et-* scheduler-map RDMA-MAP
 
 // Juniper QFX spine — IS-IS underlay + eBGP EVPN route-reflection to leaves.
 // A spine is NOT a VTEP: no switch-options vtep-source / vrf-target here.
-function juniperSpineConfig(dev: BOMDevice, idx: number, protoFeatures: string[] = [], needsRoce = false): string {
+function juniperSpineConfig(dev: BOMDevice, idx: number, protoFeatures: string[] = [], needsRoce = false, allDevices: BOMDevice[] = []): string {
   const lo0ip = `10.255.1.${idx + 1}`
+  const isoNet = `49.0001.0101.0255.${String(idx + 1).padStart(4, '0')}.00`
   const roceBlock = needsRoce ? juniperRoceBlock() : ''
+  // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1), ASN 65001+i).
+  const leafNeighborLines = allDevices
+    .map((d, i) => ({ d, i }))
+    .filter(x => x.d.subLayer === 'leaf')
+    .map(x => `set protocols bgp group LEAVES neighbor 10.255.2.${x.i + 1} peer-as ${65001 + x.i}`)
+    .join('\n')
+  const spineLeafNeighbors = leafNeighborLines || 'set protocols bgp group LEAVES neighbor <CHANGE-ME-leaf-lo0> peer-as <CHANGE-ME-leaf-asn>'
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
   const v6Block = ipv6 ? `
 !
@@ -1336,11 +1344,14 @@ set interfaces fxp0 unit 0 description "OOB-MANAGEMENT"
 set interfaces fxp0 unit 0 family inet address <CHANGE-ME-mgmt-ip>/24
 set routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
 !
-# ── LOOPBACK ────────────────────────────────────────────────────────────────
+# ── LOOPBACK (family iso carries the IS-IS NET / system-id) ─────────────────
 set interfaces lo0 unit 0 description "ROUTER-ID/BGP/ISIS-SOURCE"
 set interfaces lo0 unit 0 family inet address ${lo0ip}/32
+set interfaces lo0 unit 0 family iso address ${isoNet}
 !
-# ── UNDERLAY: IS-IS only (no OSPF) ─────────────────────────────────────────
+# ── UNDERLAY: IS-IS only (no OSPF) — family iso required on every IS-IS link ─
+set interfaces et-0/0/0 unit 0 family iso
+set interfaces et-0/0/1 unit 0 family iso
 set protocols isis interface lo0.0 passive
 set protocols isis interface et-0/0/0.0 point-to-point
 set protocols isis interface et-0/0/1.0 point-to-point
@@ -1351,14 +1362,15 @@ set protocols isis export LOOPBACKS-TO-ISIS
 set routing-options autonomous-system 65000
 set protocols bgp group LEAVES type external
 set protocols bgp group LEAVES local-as 65000
+set protocols bgp group LEAVES local-address lo0.0
+set protocols bgp group LEAVES multihop ttl 3
 set protocols bgp group LEAVES multipath
 set protocols bgp group LEAVES family evpn signaling
 set protocols bgp group LEAVES family inet unicast
 set protocols bgp group LEAVES export LOOPBACKS-TO-BGP
 set protocols bgp group LEAVES bfd-liveness-detection minimum-interval 300 multiplier 3
-# One neighbor stanza per leaf (peer-as = that leaf's ASN, 65001+):
-set protocols bgp group LEAVES neighbor <CHANGE-ME-leaf1-lo0> peer-as <CHANGE-ME-leaf1-asn>
-set protocols bgp group LEAVES neighbor <CHANGE-ME-leaf2-lo0> peer-as <CHANGE-ME-leaf2-asn>
+# ── Leaf eBGP peers (auto-generated from the fabric; peer-as = leaf ASN) ────
+${spineLeafNeighbors}
 !
 # ── POLICY ───────────────────────────────────────────────────────────────────
 set policy-options policy-statement LOOPBACKS-TO-ISIS term 1 from interface lo0.0
@@ -1369,7 +1381,7 @@ set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 then accept
 # ── MTU (jumbo for VXLAN overhead) ─────────────────────────────────────────
 set interfaces et-0/0/0 mtu 9216
 set interfaces et-0/0/1 mtu 9216
-${v6Block}${roceBlock}`
+${v6Block}${roceBlock}`.replace(/^!$/gm, '#')
 }
 
 // Junos storage lossless block for DC fabrics carrying NVMe-oF/iSCSI/FCoE.
@@ -1388,8 +1400,16 @@ set class-of-service interfaces et-* congestion-notification-profile STORAGE-PFC
 `
 }
 
-function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], needsRoce = false, appTypes: AppType[] = []): string {
+function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], needsRoce = false, appTypes: AppType[] = [], allDevices: BOMDevice[] = []): string {
   const leafAsn = 65001 + idx
+  const isoNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
+  // Real spine peers from the fabric (spine lo0 10.255.1.(i+1), ASN 65000).
+  const spineNeighborLines = allDevices
+    .map((d, i) => ({ d, i }))
+    .filter(x => x.d.subLayer === 'spine')
+    .map(x => `set protocols bgp group SPINE-RR neighbor 10.255.1.${x.i + 1} peer-as 65000`)
+    .join('\n')
+  const leafSpineNeighbors = spineNeighborLines || 'set protocols bgp group SPINE-RR neighbor <CHANGE-ME-spine-lo0> peer-as 65000'
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
   const roceBlock = needsRoce ? juniperRoceBlock() : ''
   // Storage lossless only when the RoCE block (which already has a STORAGE
@@ -1447,22 +1467,26 @@ set interfaces fxp0 unit 0 description "OOB-MANAGEMENT"
 set interfaces fxp0 unit 0 family inet address <CHANGE-ME-mgmt-ip>/24
 set routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
 !
-# ── LOOPBACK ────────────────────────────────────────────────────────────────
+# ── LOOPBACK (family iso carries the IS-IS NET / system-id) ─────────────────
 set interfaces lo0 unit 0 description "ROUTER-ID/BGP/ISIS-SOURCE"
 set interfaces lo0 unit 0 family inet address ${lo0ip}/32
+set interfaces lo0 unit 0 family iso address ${isoNet}
 !
-# ── UNDERLAY: IS-IS only (no OSPF) ─────────────────────────────────────────
+# ── UNDERLAY: IS-IS only (no OSPF) — family iso required on every IS-IS link ─
+set interfaces et-0/0/48 unit 0 family iso
+set interfaces et-0/0/49 unit 0 family iso
 set protocols isis interface lo0.0 passive
 set protocols isis interface et-0/0/48.0 point-to-point
 set protocols isis interface et-0/0/49.0 point-to-point
 set protocols isis level 2 authentication-key "<CHANGE-ME-isis-auth-key>"
 set protocols isis export LOOPBACKS-TO-ISIS
 !
-# ── BGP / EVPN ───────────────────────────────────────────────────────────────
+# ── BGP / EVPN (eBGP over loopback needs local-address + multihop) ──────────
 set protocols bgp group SPINE-RR type external
 set protocols bgp group SPINE-RR local-as ${leafAsn}
-set protocols bgp group SPINE-RR neighbor <CHANGE-ME-spine1-lo0> peer-as 65000
-set protocols bgp group SPINE-RR neighbor <CHANGE-ME-spine2-lo0> peer-as 65000
+set protocols bgp group SPINE-RR local-address lo0.0
+set protocols bgp group SPINE-RR multihop ttl 3
+${leafSpineNeighbors}
 set protocols bgp group SPINE-RR multipath
 set protocols bgp group SPINE-RR export LOOPBACKS-TO-BGP
 set protocols bgp group SPINE-RR family evpn signaling
@@ -1470,10 +1494,13 @@ set protocols bgp group SPINE-RR family inet unicast
 set protocols bgp group SPINE-RR bfd-liveness-detection minimum-interval 300 multiplier 3
 !
 # ── EVPN / VXLAN ─────────────────────────────────────────────────────────────
+set vlans V10 vlan-id 10
+set vlans V10 vxlan vni 10010
 set protocols evpn encapsulation vxlan
 set protocols evpn extended-vni-list all
 set protocols evpn default-gateway no-gateway-community
 set switch-options vtep-source-interface lo0.0
+set switch-options route-distinguisher ${lo0ip}:1
 set switch-options vrf-target target:65000:1
 !
 # ── POLICY ───────────────────────────────────────────────────────────────────
@@ -1482,10 +1509,10 @@ set policy-options policy-statement LOOPBACKS-TO-ISIS term 1 then accept
 set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 from interface lo0.0
 set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 then accept
 !
-# ── MTU ───────────────────────────────────────────────────────────────────────
-set interfaces et-0/0/0 mtu 9216
-set interfaces et-0/0/1 mtu 9216
-${dciBlock}${v6Block}${roceBlock}${storageBlock}`
+# ── MTU (jumbo on the ACTUAL uplink interfaces et-0/0/48-49) ────────────────
+set interfaces et-0/0/48 mtu 9216
+set interfaces et-0/0/49 mtu 9216
+${dciBlock}${v6Block}${roceBlock}${storageBlock}`.replace(/^!$/gm, '#')
 }
 
 // ── Cisco Firewall (Zone-Based / FTD intent) ──────────────────────────────────
@@ -4563,8 +4590,8 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
   if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
   if (v === 'Arista'    && (l === 'distribution' || l === 'access')) return aristaCampusConfig(dev, idx)
-  if (v === 'Juniper'   && l === 'spine')                            return juniperSpineConfig(dev, idx, protoFeatures, needsRoce)
-  if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures, needsRoce, appTypes)
+  if (v === 'Juniper'   && l === 'spine')                            return juniperSpineConfig(dev, idx, protoFeatures, needsRoce, allDevices)
+  if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures, needsRoce, appTypes, allDevices)
   if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx)
   if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
   if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx)
