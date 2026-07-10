@@ -1042,3 +1042,47 @@ describe('NX-OS eBGP EVPN fabric wiring (group X)', () => {
     expect(configs['l2']).toMatch(/router bgp 65004/)  // global idx 3
   })
 })
+
+// ── X3: Arista EOS eBGP EVPN fabric is deployable ───────────────────────────────
+
+describe('Arista EOS eBGP EVPN fabric wiring (group X3)', () => {
+  function fabric() {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor: 'Arista', subLayer: 'spine', role: 'spine' }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor: 'Arista', subLayer: 'spine', role: 'spine' }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', role: 'leaf' }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Arista', subLayer: 'leaf', role: 'leaf' }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  it('IS-IS NET is a valid 12-hex system-id (3×4 groups) on spine and leaf', () => {
+    const c = fabric()
+    const netRe = /net 49\.0001\.[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}\.00\b/
+    expect(c['s1']).toMatch(netRe)
+    expect(c['l1']).toMatch(netRe)
+    // and NOT the old 13/14-digit overflow
+    expect(c['l1']).not.toMatch(/net 49\.0001\.\d{4}\.\d{4}\.\d{5,}/)
+  })
+
+  it('spine emits real eBGP leaf peers (flat EOS syntax, per-leaf remote-as, no RR-client)', () => {
+    const c = fabric()
+    const spine = c['s1']
+    expect(spine).toMatch(/neighbor 10\.255\.2\.3 peer group LEAF-PEER/)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.3 remote-as 65003/)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.4 remote-as 65004/)
+    // eBGP: no reflector-client in actual config lines (comments allowed)
+    expect(spine.split('\n').filter(l => !l.trim().startsWith('!')).join('\n')).not.toMatch(/route-reflector-client/)
+    expect(spine).not.toMatch(/peer-group LEAF-RR-CLIENTS/)   // no invalid indented block
+  })
+
+  it('leaf emits real spine peers + creates the referenced global vlan 10', () => {
+    const c = fabric()
+    const leaf = c['l1']
+    expect(leaf).toMatch(/neighbor 10\.255\.1\.1 peer group SPINE-PEER/)
+    expect(leaf).toMatch(/neighbor 10\.255\.1\.2 peer group SPINE-PEER/)
+    expect(leaf).not.toMatch(/CHANGE-ME-spine\d?-lo/)
+    expect(leaf).toMatch(/^vlan 10\n\s+name SERVERS/m)          // global VLAN, not just the MAC-VRF
+    expect(leaf).toMatch(/neighbor SPINE-PEER remote-as 65000/)
+  })
+})
