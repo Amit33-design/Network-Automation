@@ -85,14 +85,17 @@ export const PRODUCTS: Product[] = [
     vendor: 'Cisco',
     subLayer: 'leaf',
     ports: 32,
-    uplinks: 2,
+    // 32×100G box — production leaf duty splits ~24 down / 8 up. (2 uplinks
+    // on a 32-port GPU leaf capped fabrics to 2 spines regardless of
+    // bandwidth and starved the spine tier of ports — group X5.)
+    uplinks: 8,
     speed: '100G',
     asic: 'Cloud Scale',
     powerW: 550,
     priceUSD: 18000,
     features: ['VXLAN', 'EVPN', 'BGP', 'PFC'],
     useCases: ['dc', 'gpu'],
-    detail: '32x100G QSFP28 + 2x100G uplinks, GPU-optimised',
+    detail: '32x100G QSFP28 (24 host + 8 fabric uplinks), GPU-optimised',
   },
   {
     id: 'arista-7050cx3',
@@ -100,14 +103,15 @@ export const PRODUCTS: Product[] = [
     vendor: 'Arista',
     subLayer: 'leaf',
     ports: 32,
-    uplinks: 2,
+    // Same 24 down / 8 up split as the 9332C (group X5).
+    uplinks: 8,
     speed: '100G',
     asic: 'Trident3',
     powerW: 460,
     priceUSD: 16000,
     features: ['VXLAN', 'EVPN', 'BGP', 'PFC', 'ECMP'],
     useCases: ['dc', 'multisite'],
-    detail: '32x100G QSFP28 + 2x100G uplinks, Trident3',
+    detail: '32x100G QSFP28 (24 host + 8 fabric uplinks), Trident3',
   },
   {
     id: 'juniper-qfx5120',

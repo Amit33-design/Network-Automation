@@ -126,12 +126,24 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
   //     `uplinks` cables to the spine tier (NOT a leaf×spine full-mesh count).
   if (SPINE_LEAF_CASES.has(j.useCase)) {
     const leaves = p.devices.filter(d => d.subLayer === 'leaf')
+    const spines = p.devices.filter(d => d.subLayer === 'spine')
     const slCable = p.cabling.find(c =>
       (c.fromLayer === 'spine' && c.toLayer === 'leaf') ||
       (c.fromLayer === 'leaf' && c.toLayer === 'spine'))
     if (leaves.length && slCable) {
       const expected = leaves.length * (leaves[0].uplinks ?? 0)
       expect(slCable.quantity, `${ctx}: spine-leaf cable qty ${slCable.quantity} != ${expected}`).toBe(expected)
+    }
+    // 8a'. The spine tier must supply enough ports to TERMINATE that cabling —
+    // the X5 audit found designs quoting 200 spine-leaf cables on 4×36 = 144
+    // spine ports. Leaf uplinks must also fit the leaf SKU's physical ports.
+    if (leaves.length && spines.length) {
+      const linkCount = leaves.length * (leaves[0].uplinks ?? 0)
+      const spinePortSupply = spines.reduce((s, d) => s + d.ports, 0)
+      expect(spinePortSupply, `${ctx}: ${linkCount} spine-leaf links exceed ${spinePortSupply} spine ports`)
+        .toBeGreaterThanOrEqual(linkCount)
+      expect(leaves[0].uplinks ?? 0, `${ctx}: leaf uplinks exceed leaf SKU ports`)
+        .toBeLessThanOrEqual(leaves[0].ports)
     }
   }
 

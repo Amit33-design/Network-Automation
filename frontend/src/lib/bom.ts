@@ -363,11 +363,23 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
     const spinePortSpeed = Math.max(1, parseInt(spineSku.speed) || 100)
     const rawUplinksNeeded = Math.max(1, Math.ceil(serverCapacityPerLeaf / oversub / spinePortSpeed))
 
-    const spinesByUplinks = rawUplinksNeeded
-    const spinesByFanout = Math.ceil(leafCount / spineSku.ports)
-    const spineCount = Math.max(spinesByUplinks, spinesByFanout, 2)
+    // A leaf can physically home to at most `leafSku.uplinks` spines, and needs
+    // at least 2 for redundancy. Capping here prevents an absurd spine count
+    // when a 1:1 non-blocking target demands more uplinks than the SKU has
+    // ports (512 GPUs @400G/1:1 once produced 56 spines from an 8-uplink
+    // leaf); validateBOM warns about the resulting oversubscription.
+    const maxUplinks = Math.max(2, leafSku.uplinks || rawUplinksNeeded)
+    const uplinksPerLeaf = Math.min(Math.max(2, rawUplinksNeeded), maxUplinks)
 
-    computedLeafUplinks = Math.min(spineCount, leafSku.uplinks || leafSku.ports)
+    // The spine tier must (a) give every leaf uplink a distinct spine when
+    // possible (spineCount ≥ uplinksPerLeaf) and (b) supply enough total ports
+    // to terminate every leaf uplink (leafCount × uplinksPerLeaf) — the old
+    // ceil(leafCount / spinePorts) fan-out under-built the spine tier (e.g.
+    // 48 leaves × 4 uplinks = 192 links on 4×36 = 144 spine ports).
+    const spinesByPortSupply = Math.ceil((leafCount * uplinksPerLeaf) / spineSku.ports)
+    const spineCount = Math.max(uplinksPerLeaf, spinesByPortSupply, 2)
+
+    computedLeafUplinks = uplinksPerLeaf
     return { spine: spineCount, leaf: leafCount }
   }
 
