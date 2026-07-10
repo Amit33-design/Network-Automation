@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateConfig, generateAllConfigs } from '@/lib/configgen'
+import { generateConfig, generateAllConfigs, isFtdModel } from '@/lib/configgen'
 import type { BOMDevice } from '@/types'
 
 function makeDevice(overrides: Partial<BOMDevice> = {}): BOMDevice {
@@ -1136,5 +1136,39 @@ describe('Juniper JunOS eBGP EVPN fabric wiring (group X4)', () => {
     const c = fabric()
     expect(c['s1'].split('\n').some(l => l === '!')).toBe(false)
     expect(c['l1'].split('\n').some(l => l === '!')).toBe(false)
+  })
+})
+
+// ── X6: firewall platform correctness (FTD ≠ IOS-XE) ────────────────────────────
+
+describe('Cisco firewall platform dispatch (group X6)', () => {
+  it('Firepower/FTD hardware gets an FTD bootstrap + FMC manifest, not IOS-XE ZBF', () => {
+    const dev = makeDevice({ hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', model: 'Firepower 4145 NGFW' })
+    const cfg = generateConfig(dev, 0)
+    // Real FTD CLI bootstrap
+    expect(cfg).toContain('configure network hostname IAD-FW-A01')
+    expect(cfg).toContain('configure manager add <CHANGE-ME-fmc-ip>')
+    expect(cfg).toContain('FMC POLICY MANIFEST')
+    // The wrong-OS constructs must be gone: FTD accepts none of these
+    expect(cfg).not.toMatch(/zone security/)
+    expect(cfg).not.toMatch(/policy-map type inspect/)
+    expect(cfg).not.toMatch(/aaa new-model/)
+    expect(cfg).not.toMatch(/ip nat inside/)
+  })
+
+  it('router-class Cisco firewalls (non-FTD models) still get IOS-XE ZBF', () => {
+    const dev = makeDevice({ hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', model: 'ISR 4461 Security' })
+    const cfg = generateConfig(dev, 0)
+    expect(cfg).toContain('zone security OUTSIDE')
+    expect(cfg).toContain('policy-map type inspect')
+  })
+
+  it('isFtdModel matches Firepower/FTD/FPR naming and rejects routers/switches', () => {
+    for (const m of ['Firepower 4145 NGFW', 'FTD 1150', 'FPR-2130', 'Secure Firewall FTD 3105']) {
+      expect(isFtdModel(m), m).toBe(true)
+    }
+    for (const m of ['ISR 4461', 'Catalyst 8300', 'Nexus 9336C-FX2', 'ASR 1002-HX']) {
+      expect(isFtdModel(m), m).toBe(false)
+    }
   })
 })
