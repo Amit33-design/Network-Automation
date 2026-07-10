@@ -964,6 +964,19 @@ generate a Markdown design report for change management/documentation.
   Import Design (file picker with validation status feedback).
 - **Tests**: 18 in `test/design-export.test.ts`.
 
+## Frontend — `lib/design-diff.ts` (Design diff / change review — W1)
+
+**Purpose:** Compare two serialized designs (`DesignExport`) so an operator can
+review exactly what a redeploy will change before committing. Pure + deterministic.
+
+**Key exports:**
+- Types: `FieldChange {field, before, after}`, `DeviceChange {id, hostname, status, changes[], priceBefore, priceAfter}`, `ConfigHunk {sign: '+'|'-'|' ', text}`, `ConfigDiff {id, status, addedLines, removedLines, hunks[]}`, `DesignDiff {intentChanges, requirementChanges, bomDelta, configDelta, summary}`.
+- `diffDesigns(a, b): DesignDiff` — a=baseline, b=candidate. Field-level intent/requirements diff (compares flat records, keys in either side), BOM delta indexed by device id (added/removed/changed on model/vendor/count/price/… + capex delta), and per-device config diff.
+- Config diff is an internal LCS (longest-common-subsequence) line differ → unified hunks with N lines of context; long unchanged runs collapse to `… N unchanged lines …` elisions.
+- `diffToMarkdown(diff): string` — full Markdown change-review report (summary, intent/requirement tables, BOM delta, ```diff``` config blocks); returns a "no changes" note for identical designs.
+- **UI**: Step 4 Summary tab "Compare Designs (Change Review)" card — upload a baseline JSON → summary chips (intent/req/device/config counts + colored CapEx delta), before/after field tables, BOM delta list, colored per-device config hunks, and a downloadable `.md` change report.
+- **Tests**: 10 in `test/design-diff.test.ts`.
+
 ## Frontend — `lib/compliance-scan.ts` (Compliance Scanner — H2)
 
 **Purpose:** Framework-aware compliance validation engine that checks the
