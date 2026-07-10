@@ -953,11 +953,24 @@ hardware profile forwarding-mode fabricpath
 function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const asn      = 65000
   const routerId = `10.255.1.${idx + 1}`
-  const isisNet  = `0101.0255.000${idx + 1}`
+  // System-ID must be exactly 12 hex digits (3×4). padStart avoids the overflow
+  // past `000${n}` for idx≥9 that produced an invalid 13/14-digit NET.
+  const isisNet  = `0101.0255.${String(idx + 1).padStart(4, '0')}`
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:1::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
   const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
+  // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1), ASN 65001+i).
+  const spineLeafPeers = allDevices
+    .map((d, i) => ({ d, i }))
+    .filter(x => x.d.subLayer === 'leaf')
+    .flatMap(x => [
+      `  neighbor 10.255.2.${x.i + 1} peer group LEAF-PEER`,
+      `  neighbor 10.255.2.${x.i + 1} remote-as ${65001 + x.i}`,
+      `  neighbor 10.255.2.${x.i + 1} description ${x.d.hostname || `LEAF-${x.i + 1}`}`,
+    ])
+    .join('\n')
+  const spineLeafPeerBlock = spineLeafPeers || '  ! No leaves in fabric — add: neighbor <leaf-lo0> peer group LEAF-PEER / remote-as <leaf-asn>'
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -1031,21 +1044,20 @@ router bgp ${asn}
   maximum-paths 64
   graceful-restart
   !
-  peer-group LEAF-RR-CLIENTS
-    remote-as ${asn}
-    update-source Loopback0
-    bfd
-    route-reflector-client
-    send-community extended
-    maximum-routes 12000
+  ! eBGP EVPN spine — flat EOS peer-group syntax; per-leaf remote-as (unique
+  ! leaf ASN). No route-reflector-client (RR is iBGP-only).
+  neighbor LEAF-PEER peer group
+  neighbor LEAF-PEER update-source Loopback0
+  neighbor LEAF-PEER bfd
+  neighbor LEAF-PEER send-community extended
+  neighbor LEAF-PEER maximum-routes 12000
+  ! ── Leaf eBGP peers (auto-generated from the fabric) ──────────────────────
+${spineLeafPeerBlock}
   !
   address-family ipv4
-    neighbor LEAF-RR-CLIENTS activate
+    neighbor LEAF-PEER activate
   address-family evpn
-    neighbor LEAF-RR-CLIENTS activate
-  !
-  ! Add per-leaf neighbors:
-  ! neighbor 10.255.2.N peer group LEAF-RR-CLIENTS
+    neighbor LEAF-PEER activate
 !
 ${qos}
 !
@@ -1064,11 +1076,20 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
-  const isisNet  = `0101.0255.000${idx + 101}`
+  // Valid 12-hex system-id (padStart); the old `000${idx+101}` overflowed to
+  // 13/14 digits and EOS rejected the NET, so the underlay never started.
+  const isisNet  = `0102.5500.${String(idx + 1).padStart(4, '0')}`
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:2::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
   const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices, ipv6Underlay)
+  // Real spine peers from the fabric (spine lo0 10.255.1.(i+1), ASN 65000).
+  const leafSpinePeers = allDevices
+    .map((d, i) => ({ d, i }))
+    .filter(x => x.d.subLayer === 'spine')
+    .map(x => `  neighbor 10.255.1.${x.i + 1} peer group SPINE-PEER`)
+    .join('\n')
+  const leafSpinePeerBlock = leafSpinePeers || '  ! No spines in fabric — add: neighbor <spine-lo0> peer group SPINE-PEER'
   // Site-local MAC-VRF RT uses the fabric (spine) ASN so all leaves in the
   // site share it; the DCI RT is the cross-site stretched namespace (A7).
   const dciL2RtLines = isMultisite ? `
@@ -1121,28 +1142,32 @@ interface Loopback1
 ! ── UPLINKS to spines (topology-driven from BOM port-math) ──────────────────
 ${fabricLinks}
 !
+! ── VLANs (tenant L2 domains — mapped to VNIs on Vxlan1) ────────────────────
+vlan 10
+  name SERVERS
+!
 ! ── BGP / EVPN ───────────────────────────────────────────────────────────────
 router bgp ${leafAsn}
   router-id ${routerId}
   no bgp default ipv4-unicast
   maximum-paths 4
   !
-  peer-group SPINE-RR
-    remote-as 65000
-    update-source Loopback0
-    bfd
-    send-community extended
-    maximum-routes 12000
-  !
-  neighbor <CHANGE-ME-spine1-lo0> peer group SPINE-RR
-  neighbor <CHANGE-ME-spine2-lo0> peer group SPINE-RR
+  ! eBGP EVPN leaf — flat EOS peer-group syntax; all spines share ASN 65000.
+  neighbor SPINE-PEER peer group
+  neighbor SPINE-PEER remote-as 65000
+  neighbor SPINE-PEER update-source Loopback0
+  neighbor SPINE-PEER bfd
+  neighbor SPINE-PEER send-community extended
+  neighbor SPINE-PEER maximum-routes 12000
+  ! ── Spine eBGP peers (auto-generated from the fabric) ─────────────────────
+${leafSpinePeerBlock}
   !
   address-family ipv4
-    neighbor SPINE-RR activate
+    neighbor SPINE-PEER activate
     network ${routerId}/32
     network ${vtepIp}/32
   address-family evpn
-    neighbor SPINE-RR activate
+    neighbor SPINE-PEER activate
   !
   vlan 10
     rd ${routerId}:10010
