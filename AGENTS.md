@@ -101,6 +101,13 @@ loop autonomously — pick the highest-value item, ship it end-to-end, repeat.
   change_update, rca.ts ↔ rca/engine.py, ztp.ts ↔ ztp/). Change both sides.
 - Anything outside `frontend/` + `backend/` is likely legacy (old vanilla-JS
   app in `src/`, experiments). Check CODE_REFERENCE.md before touching.
+- After merging user-facing changes, VERIFY the Vercel production deploy
+  (project `project-pk174` / team `netdesign-team` serves netdesignai.com
+  from this repo, despite the name). Deploys can fail on Vercel platform
+  errors before the build even runs (`sts_credentials_fetch_failed`),
+  leaving the site silently serving the previous build. Confirm the latest
+  production deployment is READY with your merge SHA; a platform-errored
+  deploy is retriggered with an empty commit to `main`.
 
 ## Verification definition of done
 

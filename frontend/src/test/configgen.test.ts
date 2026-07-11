@@ -433,13 +433,16 @@ describe('vPC / MLAG HA-pair config (Enterprise upgrade A1/A2)', () => {
     expect(cfg1).toContain('peer-link Port-Channel100')
   })
 
-  it('Arista leaf MLAG peer-address points at the paired peer hostname', () => {
+  it('Arista leaf MLAG peer-addresses are deterministic /31 mirrors (X7)', () => {
     const dev0 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Arista', subLayer: 'leaf' })
     const dev1 = makeDevice({ hostname: 'TST-LEAF-A02', vendor: 'Arista', subLayer: 'leaf' })
     const cfg0 = generateConfig(dev0, 0)
     const cfg1 = generateConfig(dev1, 1)
-    expect(cfg0).toContain('<CHANGE-ME-TST-LEAF-A02-mlag-peer-ip>')
-    expect(cfg1).toContain('<CHANGE-ME-TST-LEAF-A01-mlag-peer-ip>')
+    // primary owns .0, secondary .1; each points at the other — no placeholders
+    expect(cfg0).toContain('ip address 10.253.1.0/31')
+    expect(cfg0).toContain('peer-address 10.253.1.1')
+    expect(cfg1).toContain('ip address 10.253.1.1/31')
+    expect(cfg1).toContain('peer-address 10.253.1.0')
   })
 })
 
@@ -527,7 +530,8 @@ describe('CLOS fabric link plan from BOM port-math (Enterprise upgrade A5)', () 
     const dev6 = makeDevice({ hostname: 'TST-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', ports: 48, uplinks: 6 })
     const cfg2 = generateConfig(dev2, 0)
     const cfg6 = generateConfig(dev6, 0)
-    const count = (cfg: string) => (cfg.match(/^interface Ethernet1\/\d+$/gm) ?? []).length
+    // Count fabric UPLINK interfaces only (X7 also emits 2 vPC peer-link members)
+    const count = (cfg: string) => (cfg.match(/description UPLINK:/g) ?? []).length
     expect(count(cfg2)).toBe(2)
     expect(count(cfg6)).toBe(6)
   })
@@ -1170,5 +1174,53 @@ describe('Cisco firewall platform dispatch (group X6)', () => {
     for (const m of ['ISR 4461', 'Catalyst 8300', 'Nexus 9336C-FX2', 'ASR 1002-HX']) {
       expect(isFtdModel(m), m).toBe(false)
     }
+  })
+})
+
+// ── X7: vPC / MLAG data-plane completeness ──────────────────────────────────────
+
+describe('vPC / MLAG peer-link data plane (group X7)', () => {
+  it('NX-OS leaf emits a REAL vPC peer-link (port-channel + members), not comments', () => {
+    const dev = makeDevice({ hostname: 'DC-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 4 })
+    const cfg = generateConfig(dev, 0, 'dc')
+    expect(cfg).toMatch(/^interface port-channel1$/m)          // real, not "! interface"
+    expect(cfg).toMatch(/vpc peer-link/)
+    expect(cfg).not.toMatch(/^! interface port-channel/m)
+    // members just below the 4 uplinks on a 48-port leaf: Eth1/43-44
+    expect(cfg).toMatch(/interface Ethernet1\/43[\s\S]*?channel-group 1 mode active/)
+    expect(cfg).toMatch(/interface Ethernet1\/44[\s\S]*?channel-group 1 mode active/)
+  })
+
+  it('NX-OS vPC pair shares an anycast VTEP VIP (loopback1 secondary, advertised in BGP)', () => {
+    const d1 = makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf' })
+    const d2 = makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf' })
+    const c1 = generateConfig(d1, 0, 'dc'); const c2 = generateConfig(d2, 1, 'dc')
+    // both members of pair 1 carry the same secondary VIP
+    expect(c1).toMatch(/ip address 10\.254\.1\.1\/32 secondary/)
+    expect(c2).toMatch(/ip address 10\.254\.1\.1\/32 secondary/)
+    expect(c1).toMatch(/network 10\.254\.1\.1\/32/)
+    // primary VTEP IPs stay unique
+    expect(c1).toMatch(/ip address 10\.254\.0\.1\/32\n/)
+    expect(c2).toMatch(/ip address 10\.254\.0\.2\/32\n/)
+  })
+
+  it('Arista MLAG pair: real peer-link members, deterministic /31 peering, SHARED anycast VTEP', () => {
+    const d1 = makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', role: 'leaf', ports: 32, uplinks: 8 })
+    const d2 = makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Arista', subLayer: 'leaf', role: 'leaf', ports: 32, uplinks: 8 })
+    const c1 = generateConfig(d1, 0, 'dc'); const c2 = generateConfig(d2, 1, 'dc')
+    // no placeholder or commented member stubs
+    expect(c1).not.toMatch(/CHANGE-ME-.*mlag-peer-ip/)
+    expect(c1).not.toMatch(/^! interface EthernetN-M/m)
+    // deterministic /31: primary .0 peers .1, secondary mirrors it
+    expect(c1).toMatch(/ip address 10\.253\.1\.0\/31/)
+    expect(c1).toMatch(/peer-address 10\.253\.1\.1/)
+    expect(c2).toMatch(/ip address 10\.253\.1\.1\/31/)
+    expect(c2).toMatch(/peer-address 10\.253\.1\.0/)
+    // real members just below the 8 uplinks on a 32-port leaf: Ethernet23-24
+    expect(c1).toMatch(/interface Ethernet23[\s\S]*?channel-group 100 mode active/)
+    expect(c1).toMatch(/interface Ethernet24[\s\S]*?channel-group 100 mode active/)
+    // SHARED anycast VTEP: both members use the same Loopback1 IP (audit A-M4)
+    expect(c1).toMatch(/interface Loopback1[\s\S]*?ip address 10\.254\.0\.1\/32/)
+    expect(c2).toMatch(/interface Loopback1[\s\S]*?ip address 10\.254\.0\.1\/32/)
   })
 })
