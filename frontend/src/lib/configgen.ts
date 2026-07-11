@@ -466,6 +466,13 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   const fabricLinks = renderNxosFabricLinks('leaf', dev, allDevices, ipv6Underlay)
   const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
   const vpcRolePriority = isPrimary ? 8192 : 16384
+  // vPC anycast VTEP VIP — shared secondary on loopback1 for the HA pair, so
+  // multihomed traffic hashes to one logical VTEP (X7).
+  const vpcVtepVip = `10.254.1.${pairId}`
+  // Peer-link members sit just below the fabric uplinks (uplinks occupy the
+  // top `uplinks` ports; see renderNxosFabricLinks portBase).
+  const plPort1 = Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 1)
+  const plPort2 = plPort1 + 1
   const dciL3RtLines = isMultisite ? `
     route-target import ${DCI_RT_ASN}:50000 evpn
     route-target export ${DCI_RT_ASN}:50000 evpn` : ''
@@ -564,8 +571,9 @@ interface loopback0
   no shutdown
 !
 interface loopback1
-  description VTEP SOURCE
+  description VTEP SOURCE (secondary = vPC anycast VTEP VIP shared with ${peerHostname})
   ip address ${vtepIp}/32
+  ip address ${vpcVtepVip}/32 secondary
   ip router isis 1
   no shutdown
 !
@@ -585,6 +593,7 @@ router bgp ${leafAsn}
   address-family ipv4 unicast
     network ${routerId}/32
     network ${vtepIp}/32
+    network ${vpcVtepVip}/32
     maximum-paths ibgp 64
   address-family l2vpn evpn
   !
@@ -632,11 +641,26 @@ vpc domain ${pairId}
   auto-recovery
   delay restore 150
 !
-! interface port-channel${pairId}
-!   description vPC-PEER-LINK to ${peerHostname}
-!   switchport mode trunk
-!   spanning-tree port type network
-!   vpc peer-link
+interface port-channel${pairId}
+  description vPC-PEER-LINK to ${peerHostname}
+  switchport
+  switchport mode trunk
+  spanning-tree port type network
+  vpc peer-link
+!
+interface Ethernet1/${plPort1}
+  description vPC-PEER-LINK member 1 to ${peerHostname}
+  switchport
+  switchport mode trunk
+  channel-group ${pairId} mode active
+  no shutdown
+!
+interface Ethernet1/${plPort2}
+  description vPC-PEER-LINK member 2 to ${peerHostname}
+  switchport
+  switchport mode trunk
+  channel-group ${pairId} mode active
+  no shutdown
 !
 telemetry
   destination-group 1
@@ -1075,7 +1099,18 @@ EOF
 function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false, appTypes: AppType[] = []): string {
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
-  const vtepIp   = `10.254.0.${idx + 1}`
+  const { pairId, isPrimary, peerHostname, domainId } = haPairInfo(dev, idx)
+  // EOS MLAG + EVPN: BOTH pair members share ONE Loopback1 VTEP IP (anycast
+  // VTEP) — with unique VTEPs the pair appears as two separate VTEPs and
+  // multihomed traffic is black-holed/duplicated (X7 / audit A-M4).
+  const vtepIp   = `10.254.0.${pairId}`
+  // Deterministic MLAG peer /31 on Vlan4094 (primary .0, secondary .1).
+  const mlagLocalIp = `10.253.${pairId}.${isPrimary ? 0 : 1}`
+  const mlagPeerIp  = `10.253.${pairId}.${isPrimary ? 1 : 0}`
+  // Peer-link members sit just below the fabric uplinks (uplinks occupy the
+  // top `uplinks` ports; see renderAristaFabricLinks portBase).
+  const plPort1 = Math.max(1, (dev.ports || 32) - (dev.uplinks || 0) - 1)
+  const plPort2 = plPort1 + 1
   // Valid 12-hex system-id (padStart); the old `000${idx+101}` overflowed to
   // 13/14 digits and EOS rejected the NET, so the underlay never started.
   const isisNet  = `0102.5500.${String(idx + 1).padStart(4, '0')}`
@@ -1095,7 +1130,6 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const dciL2RtLines = isMultisite ? `
     route-target import evpn ${DCI_RT_ASN}:10010
     route-target export evpn ${DCI_RT_ASN}:10010` : ''
-  const { pairId, peerHostname, domainId } = haPairInfo(dev, idx)
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -1190,20 +1224,25 @@ vlan 4094
 interface Vlan4094
   description MLAG_PEER_L3_PEERING
   no autostate
-  ip address <CHANGE-ME-${dev.hostname}-mlag-peer-ip>/30
+  ip address ${mlagLocalIp}/31
 !
 interface Port-Channel${pairId}00
   description MLAG_PEER_LINK to ${peerHostname}
   switchport mode trunk
   switchport trunk group MLAG_PEER
 !
-! interface EthernetN-M  (members of peer-link)
-!   channel-group ${pairId}00 mode active
+interface Ethernet${plPort1}
+  description MLAG_PEER_LINK member 1 to ${peerHostname}
+  channel-group ${pairId}00 mode active
+!
+interface Ethernet${plPort2}
+  description MLAG_PEER_LINK member 2 to ${peerHostname}
+  channel-group ${pairId}00 mode active
 !
 mlag configuration
   domain-id ${domainId}MLAG${pairId}
   local-interface Vlan4094
-  peer-address <CHANGE-ME-${peerHostname}-mlag-peer-ip>
+  peer-address ${mlagPeerIp}
   peer-link Port-Channel${pairId}00
   reload-delay mlag 300
   reload-delay non-mlag 330

@@ -252,6 +252,7 @@ All work is tracked in CLAUDE.md §20 (gaps G-A*) and §22 (groups A–V). Befor
 10. **Remote branch deletion no-ops through the Claude Code git proxy** — stale `claude/*` branches accumulate on GitHub. Enable GitHub's auto-delete-merged-branches or clean up via the UI; don't burn time retrying the CLI.
 11. **`cryptography`/`_cffi_backend` panic** in web containers → `pip install cffi` (session-start hook handles it).
 12. **licensing/ is off-limits** without explicit owner approval (pricing/entitlements/billing/auth secrets).
+13. **Verify the Vercel deploy after merging user-facing changes.** The production project is `project-pk174` (team `netdesign-team`) — it serves netdesignai.com from this repo despite the name. Deploys can fail on Vercel platform errors *before the build runs* (`sts_credentials_fetch_failed` at `build-container-init`), leaving the site silently on the previous build (this happened to the X5/X6 merges — the user re-tested against pre-fix code). Confirm the latest production deployment is `READY` **and** its `githubCommitSha` matches your merge; retrigger a platform-errored deploy with an empty commit to `main`.
 
 ---
 

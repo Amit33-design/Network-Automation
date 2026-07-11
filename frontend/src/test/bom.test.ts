@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDeviceList, buildBOM, SCALE_DEFS, alphaLabel, generateHostnames, GPUS_PER_SERVER, validateBOM, BUDGET_BANDS } from '@/lib/bom'
+import { buildDeviceList, buildBOM, buildCabling, buildOptics, SCALE_DEFS, alphaLabel, generateHostnames, GPUS_PER_SERVER, validateBOM, BUDGET_BANDS } from '@/lib/bom'
 import { haPairInfo } from '@/lib/configgen'
 import type { BOMDevice } from '@/types'
 
@@ -805,5 +805,47 @@ describe('budget-aware BOM', () => {
     expect(dist!.vendor).toBe('Juniper')
     expect(access!.vendor).toBe('Juniper')
     expect(fw!.vendor).toBe('Juniper')
+  })
+})
+
+// ── X7: optics BOM completeness / no double-counting ─────────────────────────
+
+describe('buildOptics correctness (group X7)', () => {
+  const DIST = { 'spine-leaf': 100, 'core-dist': 200, 'dist-access': 50, 'wan-edge': 5000 }
+
+  it('DAC/AOC links carry NO separate optics (integrated transceivers)', () => {
+    // 3m spine-leaf → selectCable picks DAC → optics for that link must be skipped
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'large', siteCode: 'X', totalEndpoints: 500, bandwidthPerServer: '25G', oversubscription: 3 })
+    const shortDist = { ...DIST, 'spine-leaf': 3 }
+    const cabling = buildCabling(devices, shortDist)
+    const optics = buildOptics(devices, shortDist)
+    const sl = cabling.find(c => c.fromLayer === 'spine' && c.toLayer === 'leaf')!
+    expect(sl.cableType).toBe('DAC')
+    expect(optics.find(o => o.linkGroup === 'spine → leaf')).toBeUndefined()
+  })
+
+  it('fiber links still get optics (2 per run) at 100m', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'large', siteCode: 'X', totalEndpoints: 500, bandwidthPerServer: '25G', oversubscription: 3 })
+    const cabling = buildCabling(devices, DIST)
+    const optics = buildOptics(devices, DIST)
+    const sl = cabling.find(c => c.fromLayer === 'spine' && c.toLayer === 'leaf')!
+    const o = optics.find(x => x.linkGroup === 'spine → leaf')!
+    expect(sl.cableType).toBe('MPO')
+    expect(o.quantity).toBe(sl.quantity * 2)
+  })
+
+  it('40G firewall uplink fiber runs are no longer silently dropped', () => {
+    // dc with firewalls: firewall→spine link runs at the FW speed (40G).
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'large', siteCode: 'X', totalEndpoints: 500, bandwidthPerServer: '25G', oversubscription: 3 })
+    const fw = devices.find(d => d.subLayer === 'firewall')
+    expect(fw).toBeTruthy()
+    const cabling = buildCabling(devices, DIST)
+    const fwLink = cabling.find(c => c.fromLayer === 'firewall')!
+    const optics = buildOptics(devices, DIST)
+    if (fwLink.cableType !== 'DAC' && fwLink.cableType !== 'AOC') {
+      const o = optics.find(x => x.linkGroup.startsWith('firewall'))
+      expect(o, `no optic for ${fwLink.speed} ${fwLink.cableType} firewall link`).toBeTruthy()
+      expect(o!.quantity).toBe(fwLink.quantity * 2)
+    }
   })
 })

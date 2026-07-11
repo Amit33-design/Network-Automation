@@ -930,10 +930,14 @@ interface OpticSpec {
 }
 
 const OPTIC_CATALOG: OpticSpec[] = [
+  { formFactor: 'SFP',     speed: '1G',   reach: '550m',  reachM: 550,   priceUSD: 15,   vendor: 'Generic', partNumber: 'GLC-SX-MMD'       },
+  { formFactor: 'SFP',     speed: '1G',   reach: '10km',  reachM: 10000, priceUSD: 30,   vendor: 'Generic', partNumber: 'GLC-LH-SMD'       },
   { formFactor: 'SFP+',    speed: '10G',  reach: '300m',  reachM: 300,   priceUSD: 25,   vendor: 'Generic', partNumber: 'SFP-10G-SR'       },
   { formFactor: 'SFP+',    speed: '10G',  reach: '10km',  reachM: 10000, priceUSD: 55,   vendor: 'Generic', partNumber: 'SFP-10G-LR'       },
   { formFactor: 'SFP28',   speed: '25G',  reach: '100m',  reachM: 100,   priceUSD: 45,   vendor: 'Generic', partNumber: 'SFP28-25G-SR'     },
   { formFactor: 'SFP28',   speed: '25G',  reach: '10km',  reachM: 10000, priceUSD: 120,  vendor: 'Generic', partNumber: 'SFP28-25G-LR'     },
+  { formFactor: 'QSFP+',   speed: '40G',  reach: '150m',  reachM: 150,   priceUSD: 60,   vendor: 'Generic', partNumber: 'QSFP-40G-SR4'     },
+  { formFactor: 'QSFP+',   speed: '40G',  reach: '10km',  reachM: 10000, priceUSD: 250,  vendor: 'Generic', partNumber: 'QSFP-40G-LR4'     },
   { formFactor: 'QSFP28',  speed: '100G', reach: '100m',  reachM: 100,   priceUSD: 180,  vendor: 'Generic', partNumber: 'QSFP-100G-SR4'    },
   { formFactor: 'QSFP28',  speed: '100G', reach: '10km',  reachM: 10000, priceUSD: 420,  vendor: 'Generic', partNumber: 'QSFP-100G-LR4'    },
   { formFactor: 'QSFP28',  speed: '100G', reach: '500m',  reachM: 500,   priceUSD: 95,   vendor: 'Generic', partNumber: 'QSFP-100G-PSM4'   },
@@ -949,6 +953,10 @@ export function buildOptics(
   const entries: import('@/types').OpticsEntry[] = []
 
   for (const link of cabling) {
+    // DAC/AOC cables have INTEGRATED transceivers — buying 2 optics per DAC
+    // run double-counts the BOM (X7). Optics apply to fiber runs only.
+    if (link.cableType === 'DAC' || link.cableType === 'AOC') continue
+
     const optic = OPTIC_CATALOG
       .filter(o => o.speed === link.speed && o.reachM >= link.lengthM)
       .sort((a, b) => a.priceUSD - b.priceUSD)[0]
