@@ -606,19 +606,23 @@ describe('Multisite EVPN DCI route-targets (Enterprise upgrade A7)', () => {
     expect(generateConfig(aristaLeaf(), 0, 'dc')).not.toContain('65100:')
   })
 
-  it('multisite NX-OS leaf: DCI RTs on L3VNI VRF and L2VNI MAC-VRF alongside auto RTs', () => {
+  it('multisite NX-OS leaf: DCI RTs on L3VNI VRF and L2VNI MAC-VRF alongside site RTs', () => {
     const cfg = generateConfig(nxosLeaf(), 0, 'multisite')
-    expect(cfg).toContain('route-target both auto evpn')
+    // Explicit fabric-wide site RTs (Y1: auto-RT derives ASN:VNI, which never
+    // matches across unique per-leaf eBGP ASNs)
+    expect(cfg).toContain('route-target import 65000:50000 evpn')
+    expect(cfg).toContain('route-target export 65000:50000 evpn')
     expect(cfg).toContain('route-target import 65100:50000 evpn')
     expect(cfg).toContain('route-target export 65100:50000 evpn')
     expect(cfg).toContain('route-target import 65100:10010')
     expect(cfg).toContain('route-target export 65100:10010')
   })
 
-  it('NX-OS leaf always has an EVPN MAC-VRF block with auto RTs and correct NVE VNI roles', () => {
+  it('NX-OS leaf always has an EVPN MAC-VRF block with fabric-wide RTs and correct NVE VNI roles', () => {
     const cfg = generateConfig(nxosLeaf(), 0, 'dc')
     expect(cfg).toContain('vni 10010 l2')
-    expect(cfg).toContain('route-target import auto')
+    expect(cfg).toContain('route-target import 65000:10010')
+    expect(cfg).not.toContain('route-target import auto')
     // L2VNI gets ingress-replication; L3VNI gets associate-vrf (CLAUDE.md §10)
     expect(cfg).toMatch(/member vni 10010\n\s+ingress-replication protocol bgp/)
     expect(cfg).toContain('member vni 50000 associate-vrf')
@@ -1222,5 +1226,70 @@ describe('vPC / MLAG peer-link data plane (group X7)', () => {
     // SHARED anycast VTEP: both members use the same Loopback1 IP (audit A-M4)
     expect(c1).toMatch(/interface Loopback1[\s\S]*?ip address 10\.254\.0\.1\/32/)
     expect(c2).toMatch(/interface Loopback1[\s\S]*?ip address 10\.254\.0\.1\/32/)
+  })
+})
+
+// ── Y1: overlay-establishment parity (2nd-pass audit) ───────────────────────────
+
+describe('eBGP overlay establishment parity (group Y1)', () => {
+  function nxFabric() {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', role: 'spine' }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf' }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  it('NX-OS: ebgp-multihop on both peer templates (loopback eBGP never established without it)', () => {
+    const c = nxFabric()
+    expect(c['s1']).toMatch(/template peer LEAF-PEER[\s\S]*?ebgp-multihop 2/)
+    expect(c['l1']).toMatch(/template peer SPINE-PEER[\s\S]*?ebgp-multihop 2/)
+  })
+
+  it('NX-OS spine preserves the EVPN next-hop (NH-UNCHANGED out) — spine is not a VTEP', () => {
+    const c = nxFabric()
+    expect(c['s1']).toMatch(/address-family l2vpn evpn\n\s+send-community both\n\s+route-map NH-UNCHANGED out/)
+    expect(c['s1']).toMatch(/route-map NH-UNCHANGED permit 10\n\s+set ip next-hop unchanged/)
+  })
+
+  it('NX-OS: eBGP ECMP (maximum-paths 64 + as-path multipath-relax), not ibgp-only', () => {
+    const c = nxFabric()
+    for (const cfg of [c['s1'], c['l1']]) {
+      expect(cfg).toMatch(/maximum-paths 64/)
+      expect(cfg).not.toMatch(/maximum-paths ibgp/)
+      expect(cfg).toMatch(/bestpath as-path multipath-relax/)
+    }
+  })
+
+  it('NX-OS: LOOPBACKS prefix-list covers the VTEP range 10.254/16', () => {
+    const c = nxFabric()
+    expect(c['s1']).toMatch(/ip prefix-list LOOPBACKS seq 10 permit 10\.254\.0\.0\/16 ge 32/)
+  })
+
+  it('Arista: ip routing enabled (EOS is L2-only by default) + MGMT VRF actually exists', () => {
+    const spine = generateConfig(makeDevice({ hostname: 'DC-SPINE-A01', vendor: 'Arista', subLayer: 'spine', role: 'spine' }), 0, 'dc')
+    const leaf = generateConfig(makeDevice({ hostname: 'DC-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', role: 'leaf' }), 0, 'dc')
+    for (const cfg of [spine, leaf]) {
+      expect(cfg).toMatch(/^ip routing$/m)
+      expect(cfg).toMatch(/^vrf instance MGMT$/m)
+      expect(cfg).toMatch(/interface Management1\n\s+description OOB-MANAGEMENT\n\s+vrf MGMT/)
+    }
+  })
+
+  it('Arista: ebgp-multihop on both peer groups + full-width leaf ECMP', () => {
+    const spine = generateConfig(makeDevice({ hostname: 'DC-SPINE-A01', vendor: 'Arista', subLayer: 'spine', role: 'spine' }), 0, 'dc')
+    const leaf = generateConfig(makeDevice({ hostname: 'DC-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', role: 'leaf' }), 0, 'dc')
+    expect(spine).toMatch(/neighbor LEAF-PEER ebgp-multihop 3/)
+    expect(leaf).toMatch(/neighbor SPINE-PEER ebgp-multihop 3/)
+    expect(leaf).toMatch(/maximum-paths 64 ecmp 64/)
+  })
+
+  it('campus distribution now has a loopback + real peer-link (V-12 / C-2)', () => {
+    const dist = generateConfig(makeDevice({ hostname: 'IAD-DIST-A01', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', ports: 48, uplinks: 4 }), 0, 'campus')
+    expect(dist).toMatch(/interface Loopback0\n\s+description ROUTER-ID\n\s+ip address 10\.255\.3\.1 255\.255\.255\.255/)
+    expect(dist).toMatch(/router ospf 1\n\s+router-id 10\.255\.3\.1/)
+    expect(dist).toMatch(/^interface Port-channel1$/m)
+    expect(dist).not.toMatch(/^! interface Port-channel/m)
+    expect(dist).toMatch(/interface TenGigabitEthernet1\/0\/43[\s\S]*?channel-group 1 mode active/)
   })
 })
