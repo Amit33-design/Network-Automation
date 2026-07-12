@@ -1015,6 +1015,73 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### Y. Production-grade hardening, 2nd-pass audit (sourced 2026-07-11)
+
+> Second architect review of the post-group-X output (same dump-and-review
+> method; scenarios in `frontend/src/test/_dump.test.ts` pattern, dumps under
+> scratchpad/audit2). **All group-X fixes held**; these are the next tier.
+> Key theme: **fix-parity** — each first-audit fix landed on some vendors only.
+>
+> **Remaining findings (by area, severity from review):**
+> - **NX-OS DC**: DC-4 spine configures Ethernet1/37-50 on a 36-port 9336C
+>   (port overflow) + leaves wire uplinks only to spines 1-4 but BGP-peer all
+>   6 (spines 5-6 dark) — link *distribution* must round-robin across all
+>   spines & respect spine port count; DC-6 93180YC-FX uplinks emitted on 25G
+>   server ports Eth1/45-48 instead of the 100G ports Eth1/49-54 (uplink ports
+>   should use the SKU's real uplink port range); DC-7 no server-facing vPC
+>   member ports (day-N note at minimum); MINORs: `version 10.3(x)` artifact,
+>   `$(date -u …)` unrendered banner, dead CONNECTED-TO-ISIS tag-100 map,
+>   unused spine features, missing advertise-pip/virtual-rmac.
+> - **Campus IOS-XE**: C-1 mgmt plane sourced from `Vlan99` SVI that is never
+>   created (both dist+access unmanageable — add `interface Vlan99` w/ mgmt
+>   IP); C-3 access MEC (both uplinks in one LACP Po) toward two standalone
+>   C9500s requires StackWise Virtual on the dist pair (or split uplinks+STP);
+>   C-4 access uplink trunk missing `ip dhcp snooping trust` (all client DHCP
+>   dropped); C-5 OSPF area auth enabled with no md5 keys on any interface;
+>   C-6 no dot1x at all despite A3 scope; C-7 verify STP 4096/8192 split;
+>   dist still has no downlink trunks to access / uplink-to-core.
+> - **Arista**: A-M1 no tenant gateway (no Vlan10 SVI `ip address virtual`,
+>   no L3VNI/VRF — NX-OS got this in X1, Arista parity missing); A-M2 MLAG
+>   pair should share one ASN + iBGP across Vlan4094; A-M3 firewall↔fabric
+>   integration absent (24 cables land on unconfigured spine ports); MINORs:
+>   `dns server` → `ip name-server`, snmp user syntax, MLAG pair-id derived
+>   from global idx (fragile), no host-port config.
+> - **Juniper**: J-C1 fabric interfaces have `family iso` but NO `family
+>   inet` address → underlay carries no IPv4 (BGP can never establish);
+>   J-C2 spine configures only et-0/0/0-1 for 26 leaves / leaf only 2 uplink
+>   ports for 4 spines (topology-driven port counts missing — Arista/NX-OS
+>   have `closFabricLinks`, Juniper doesn't); J-C3 leaf missing global
+>   `set routing-options autonomous-system`; J-M1 spine local-as == global AS
+>   (remove); J-M2 SRX still emits bare `!` lines (X4 post-pass not applied);
+>   J-M3 SRX zones bind nonexistent ge- interfaces + cluster has no fab/reth;
+>   J-M4 no ESI-LAG / IRB gateway; MINOR: isis auth-key without
+>   authentication-type md5.
+> - **NVIDIA Cumulus**: N-C1 RoCE/PFC/ECN is ALL COMMENTS (traffic.conf
+>   lines commented; only a software fq_codel qdisc on swp1) — GPU fabric is
+>   lossy, violates §6.5; N-C2 `router bgp <CHANGE-ME-asn>` + placeholder
+>   loopbacks (all other vendors auto-assign; identical placeholder on both
+>   roles → same-ASN eBGP = zero sessions); N-C3 spine `neighbor swp1-swp64
+>   interface peer-group` is invalid FRR range syntax; N-C4 leaf peers only
+>   swp63-64 (2 spines) vs BOM's 8; N-M1 bare `route-reflector-client` line
+>   on eBGP; N-M2 deprecated NCLU `net add` cmds on Cumulus 5.x (NVUE);
+>   N-M3 `auto swp1-64` invalid ifupdown2 range + broken mgmt VRF stanza;
+>   N-M4 EVPN with zero VNIs. Generator likely needs a full NVUE rewrite.
+> - **FTD manifest**: byte-identical across DC and campus (no design-specific
+>   INSIDE-NETS/subnets); fabric-side firewall handoff ports unconfigured on
+>   leaf/dist (ties to A-M3).
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| Y1 | Overlay-establishment parity criticals — (1) **NX-OS**: `ebgp-multihop 2` on BOTH peer templates (loopback eBGP never established — same class as X4's Juniper fix); spine **NH-UNCHANGED** route-map out on the EVPN AF (`set ip next-hop unchanged` — spine is not a VTEP; without it leaves tunnel to the spine loopback and blackhole); **explicit fabric-wide RTs `65000:<vni>`** replacing `route-target auto` (auto derives ASN:VNI — with unique per-leaf eBGP ASNs no leaf imports any other leaf); eBGP ECMP (`maximum-paths 64` not `ibgp`, `bestpath as-path multipath-relax` — needed for the vPC VIP advertised from 2 ASNs); LOOPBACKS prefix-list now covers the VTEP 10.254/16 range. (2) **Arista**: `ip routing` (+`ip routing vrf MGMT`) — EOS is L2-only by default, fabric didn't forward; `vrf instance MGMT` created + `Management1` joined to it (route/eAPI referenced a nonexistent VRF); leaf gains its missing `interface Management1` block entirely; `ebgp-multihop 3` on both peer groups; leaf `maximum-paths 64 ecmp 64` (was 4 on a 6-spine fabric). (3) **Campus**: dist gains `interface Loopback0` (10.255.3.x router-id, in OSPF — clears the V-12 warn) and a REAL peer-link Port-channel + 2 TenGig members (was commented, C-2 class). 7 new tests; 2 auto-RT tests rewritten (they asserted the DC-2 bug) | [x] | `configgen.ts` (nxos spine/leaf, arista spine/leaf, iosxeCampusConfig); `configgen.test.ts` 129→136; 1189 tests, tsc + build green |
+| Y2 | NX-OS wiring honesty: round-robin leaf uplinks across ALL spines (spines 5-6 currently dark), cap spine downlink ports at SKU port count (Eth1/37-50 emitted on a 36-port box), leaf uplinks on the SKU's real uplink-port range (93180: Eth1/49-54, not 25G server ports) | [ ] | `configgen.ts` `closFabricLinks`/`renderNxosFabricLinks` + spine port math |
+| Y3 | Campus deployability: create `interface Vlan99` mgmt SVI (C-1), dist↔access downlink trunks + StackWise Virtual (or split uplinks) for the access MEC (C-3), `ip dhcp snooping trust` on access uplinks (C-4), OSPF md5 keys (C-5), dot1x per A3 scope (C-6) | [ ] | `configgen.ts` `iosxeCampusConfig` |
+| Y4 | Arista tenant gateway parity (Vlan10 SVI `ip address virtual` + L3VNI/VRF like NX-OS X1) + MLAG pair single-ASN + peer-link iBGP + `ip name-server` fix | [ ] | `configgen.ts` `aristaLeafConfig` |
+| Y5 | Juniper: `family inet` addresses on fabric interfaces (underlay carries no IPv4 — reuse `closFabricLinks` for topology-driven ports/IPs), global `autonomous-system` on leaf, drop spine redundant local-as, SRX `!`→`#` + real interfaces/reth/fab, isis `authentication-type md5` | [ ] | `configgen.ts` juniper spine/leaf/srx |
+| Y6 | NVIDIA Cumulus rewrite to NVUE (5.x): real `nv set qos roce` lossless config (N-C1 — GPU fabric currently lossy, §6.5 violation), auto ASN/loopback assignment, valid per-port FRR neighbors from the BOM (all spines), drop NCLU/`net add`, valid interface stanzas, drop empty EVPN or add VNIs | [ ] | `configgen.ts` cumulus generators |
+| Y7 | Firewall↔fabric integration: emit FW-facing spine/dist ports + design-specific FTD INSIDE-NETS (manifest currently byte-identical across use cases) | [ ] | `configgen.ts` spine/dist + `ciscoFtdFirewallConfig` |
+
+---
+
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
 
 ### Purpose

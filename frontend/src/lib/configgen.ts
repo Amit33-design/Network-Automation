@@ -230,9 +230,10 @@ ${nxosIsisIpv6AddressFamily(ipv6Underlay, true)}  log-adjacency-changes
 ! ── BGP / EVPN OVERLAY ───────────────────────────────────────────────────────
 router bgp ${spineAsn}
   router-id ${routerId}
+  bestpath as-path multipath-relax
   log-neighbor-changes
   address-family ipv4 unicast
-    maximum-paths ibgp 64
+    maximum-paths 64
     redistribute direct route-map CONNECTED-TO-BGP
   address-family l2vpn evpn
     retain route-target all
@@ -240,14 +241,19 @@ router bgp ${spineAsn}
   ! eBGP EVPN spine — peer template holds the common config; each leaf
   ! neighbor sets its own remote-as (unique leaf ASN). No route-reflector-
   ! client (that is iBGP-only; this is an eBGP Clos fabric per RFC 7938).
+  ! ebgp-multihop: loopback-to-loopback eBGP is 2 hops (Y1).
+  ! NH-UNCHANGED: the spine must NOT rewrite the EVPN next-hop to itself —
+  ! it is not a VTEP; leaves must tunnel directly to the remote VTEP (Y1).
   template peer LEAF-PEER
     update-source loopback0
+    ebgp-multihop 2
     timers 3 9
     bfd
     address-family ipv4 unicast
       soft-reconfiguration inbound always
     address-family l2vpn evpn
       send-community both
+      route-map NH-UNCHANGED out
   !
   ! ── Leaf eBGP peers (auto-generated from the fabric) ──────────────────────
 ${spineBgpNeighbors}
@@ -281,7 +287,10 @@ route-map CONNECTED-TO-ISIS permit 10
   match tag 100
 route-map CONNECTED-TO-BGP  permit 10
   match ip address prefix-list LOOPBACKS
+route-map NH-UNCHANGED permit 10
+  set ip next-hop unchanged
 ip prefix-list LOOPBACKS seq 5 permit 10.255.0.0/16 ge 32
+ip prefix-list LOOPBACKS seq 10 permit 10.254.0.0/16 ge 32
 `
 }
 
@@ -538,7 +547,10 @@ vrf context TENANT-A
   vni 50000
   rd auto
   address-family ipv4 unicast
-    route-target both auto evpn${dciL3RtLines}
+    ! Explicit fabric-wide RTs (65000:<vni>) — auto-RT derives ASN:VNI, and
+    ! with unique per-leaf eBGP ASNs no leaf would import any other leaf (Y1).
+    route-target import 65000:50000 evpn
+    route-target export 65000:50000 evpn${dciL3RtLines}
 !
 vlan 10
   name SERVERS
@@ -589,17 +601,19 @@ ${nxosIsisIpv6AddressFamily(ipv6Underlay)}  log-adjacency-changes
 ! ── BGP / EVPN ───────────────────────────────────────────────────────────────
 router bgp ${leafAsn}
   router-id ${routerId}
+  bestpath as-path multipath-relax
   log-neighbor-changes
   address-family ipv4 unicast
     network ${routerId}/32
     network ${vtepIp}/32
     network ${vpcVtepVip}/32
-    maximum-paths ibgp 64
+    maximum-paths 64
   address-family l2vpn evpn
   !
   template peer SPINE-PEER
     remote-as 65000
     update-source loopback0
+    ebgp-multihop 2
     timers 3 9
     bfd
     address-family ipv4 unicast
@@ -623,8 +637,8 @@ interface nve1
 evpn
   vni 10010 l2
     rd auto
-    route-target import auto
-    route-target export auto${dciL2RtLines}
+    route-target import 65000:10010
+    route-target export 65000:10010${dciL2RtLines}
 !
 ! ── UPLINKS (topology-driven from BOM port-math) ─────────────────────────────
 ${fabricLinks}
@@ -1033,14 +1047,20 @@ management ssh
   idle-timeout 10
   authentication mode password
 !
-! ── MANAGEMENT INTERFACE ─────────────────────────────────────────────────────
+! ── MANAGEMENT INTERFACE (OOB, dedicated VRF) ───────────────────────────────
+vrf instance MGMT
+!
 interface Management1
   description OOB-MANAGEMENT
+  vrf MGMT
   ip address <CHANGE-ME-mgmt-ip>/24
 !
 ip route vrf MGMT 0.0.0.0/0 <CHANGE-ME-oob-gateway>
 !
 ! ── ROUTING: IS-IS underlay (single protocol — no OSPF) ─────────────────────
+! EOS defaults to L2-only — without ip routing the box will not forward (Y1).
+ip routing
+ip routing vrf MGMT
 service routing protocols model multi-agent
 !
 router isis UNDERLAY
@@ -1073,6 +1093,7 @@ router bgp ${asn}
   neighbor LEAF-PEER peer group
   neighbor LEAF-PEER update-source Loopback0
   neighbor LEAF-PEER bfd
+  neighbor LEAF-PEER ebgp-multihop 3
   neighbor LEAF-PEER send-community extended
   neighbor LEAF-PEER maximum-routes 12000
   ! ── Leaf eBGP peers (auto-generated from the fabric) ──────────────────────
@@ -1155,6 +1176,20 @@ ntp server <CHANGE-ME-ntp-primary> prefer iburst
 ntp server <CHANGE-ME-ntp-secondary> iburst
 ntp source Management1
 !
+! ── MANAGEMENT INTERFACE (OOB, dedicated VRF) ───────────────────────────────
+vrf instance MGMT
+!
+interface Management1
+  description OOB-MANAGEMENT
+  vrf MGMT
+  ip address <CHANGE-ME-mgmt-ip>/24
+!
+ip route vrf MGMT 0.0.0.0/0 <CHANGE-ME-oob-gateway>
+!
+! EOS defaults to L2-only — without ip routing the box will not forward (Y1).
+ip routing
+ip routing vrf MGMT
+!
 ! ── IS-IS UNDERLAY (single protocol) ────────────────────────────────────────
 router isis UNDERLAY
   net 49.0001.${isisNet}.00
@@ -1184,13 +1219,14 @@ vlan 10
 router bgp ${leafAsn}
   router-id ${routerId}
   no bgp default ipv4-unicast
-  maximum-paths 4
+  maximum-paths 64 ecmp 64
   !
   ! eBGP EVPN leaf — flat EOS peer-group syntax; all spines share ASN 65000.
   neighbor SPINE-PEER peer group
   neighbor SPINE-PEER remote-as 65000
   neighbor SPINE-PEER update-source Loopback0
   neighbor SPINE-PEER bfd
+  neighbor SPINE-PEER ebgp-multihop 3
   neighbor SPINE-PEER send-community extended
   neighbor SPINE-PEER maximum-routes 12000
   ! ── Spine eBGP peers (auto-generated from the fabric) ─────────────────────
@@ -2238,6 +2274,13 @@ ${hasVoice ? `vlan 20
   if (isDist) {
     const stpPriority = isPrimary ? 4096 : 8192
     const hsrpPriority = isPrimary ? 110 : 90
+    // Deterministic router-id loopback (campus dist range 10.255.3.x) — V-12
+    // flagged OSPF routers with no loopback interface.
+    const lo0ip = `10.255.3.${idx + 1}`
+    // Peer-link members on the two ports just below the uplinks (same
+    // convention as the DC vPC/MLAG peer-links, X7).
+    const plPort1 = Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 1)
+    const plPort2 = plPort1 + 1
     const igmpBlock = needsIgmp ? `
 ! ── IGMP SNOOPING / QUERIER (voice/video app types present) ──────────────────
 ip igmp snooping
@@ -2290,19 +2333,35 @@ interface Vlan10
 ${voiceSvi}!
 track 1 interface <CHANGE-ME-uplink-to-core> line-protocol
 !
+! ── LOOPBACK (router-id) ─────────────────────────────────────────────────────
+interface Loopback0
+  description ROUTER-ID
+  ip address ${lo0ip} 255.255.255.255
+!
 ! ── UNDERLAY: OSPF only (no IS-IS on campus) ─────────────────────────────────
 router ospf 1
-  router-id <CHANGE-ME-router-id>
+  router-id ${lo0ip}
   passive-interface default
   no passive-interface <CHANGE-ME-uplink-to-core>
+  network ${lo0ip} 0.0.0.0 area 0
   network <CHANGE-ME-vlan10-ip> <CHANGE-ME-wildcard> area 0
   area 0 authentication message-digest
 !
 ! ── PEER LINK to ${peerHostname} (L2 trunk for SVI / HSRP heartbeat) ─────────
-! interface Port-channel${pairId}
-!   description PEER-LINK to ${peerHostname}
-!   switchport mode trunk
-!   switchport trunk allowed vlan 10,20,99
+interface Port-channel${pairId}
+  description PEER-LINK to ${peerHostname}
+  switchport mode trunk
+  switchport trunk allowed vlan 10,20,99
+!
+interface TenGigabitEthernet1/0/${plPort1}
+  description PEER-LINK member 1 to ${peerHostname}
+  switchport mode trunk
+  channel-group ${pairId} mode active
+!
+interface TenGigabitEthernet1/0/${plPort2}
+  description PEER-LINK member 2 to ${peerHostname}
+  switchport mode trunk
+  channel-group ${pairId} mode active
 !
 ${igmpBlock}
 `
