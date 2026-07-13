@@ -1293,3 +1293,45 @@ describe('eBGP overlay establishment parity (group Y1)', () => {
     expect(dist).toMatch(/interface TenGigabitEthernet1\/0\/43[\s\S]*?channel-group 1 mode active/)
   })
 })
+
+// ── Y2: NX-OS fabric wiring honesty (2nd-pass audit DC-4/DC-6) ───────────────────
+
+describe('NX-OS fabric wiring honesty (group Y2)', () => {
+  function dcFabric(spineCount: number, leafCount: number) {
+    const devices: BOMDevice[] = []
+    for (let i = 0; i < spineCount; i++) devices.push(makeDevice({ id: `s${i}`, hostname: `IAD-SPINE-${String.fromCharCode(65 + Math.floor(i / 2))}0${(i % 2) + 1}`, vendor: 'Cisco', subLayer: 'spine', role: 'spine', model: 'Nexus 9336C-FX2', ports: 36, uplinks: 0 }))
+    for (let i = 0; i < leafCount; i++) devices.push(makeDevice({ id: `l${i}`, hostname: `IAD-LEAF-${String.fromCharCode(65 + Math.floor(i / 2))}0${(i % 2) + 1}`, vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', model: 'Nexus 93180YC-FX', ports: 48, uplinks: 4, uplinkStart: 49 }))
+    return { devices, configs: generateAllConfigs(devices, 'dc') }
+  }
+
+  it('leaf uplinks round-robin across ALL spines — no spine is dark', () => {
+    const { devices, configs } = dcFabric(6, 50)
+    for (const s of devices.filter(d => d.subLayer === 'spine')) {
+      const downlinks = (configs[s.id].match(/description DOWNLINK:/g) ?? []).length
+      expect(downlinks, `${s.hostname} has no downlinks (dark spine)`).toBeGreaterThan(0)
+    }
+  })
+
+  it('no spine configures a port beyond its physical port count', () => {
+    const { devices, configs } = dcFabric(6, 50)
+    for (const s of devices.filter(d => d.subLayer === 'spine')) {
+      const maxPort = Math.max(0, ...[...configs[s.id].matchAll(/interface Ethernet1\/(\d+)\n\s+description DOWNLINK/g)].map(m => +m[1]))
+      expect(maxPort, `${s.hostname} port ${maxPort} > ${s.ports}`).toBeLessThanOrEqual(s.ports)
+    }
+  })
+
+  it('leaf fabric uplinks land on the SKU dedicated uplink range (Eth1/49+), not 25G server ports', () => {
+    const { configs } = dcFabric(4, 4)
+    const uplinkPorts = [...configs['l0'].matchAll(/interface Ethernet1\/(\d+)\n\s+description UPLINK:/g)].map(m => +m[1])
+    expect(uplinkPorts.length).toBeGreaterThan(0)
+    for (const p of uplinkPorts) expect(p, `uplink on port ${p} is in the 25G server range`).toBeGreaterThanOrEqual(49)
+  })
+
+  it('total spine downlinks equal total leaf uplinks (conservation)', () => {
+    const { devices, configs } = dcFabric(6, 50)
+    const spineDl = devices.filter(d => d.subLayer === 'spine').reduce((n, s) => n + (configs[s.id].match(/description DOWNLINK:/g) ?? []).length, 0)
+    const leafUl = devices.filter(d => d.subLayer === 'leaf').reduce((n, l) => n + (configs[l.id].match(/description UPLINK:/g) ?? []).length, 0)
+    expect(spineDl).toBe(leafUl)
+    expect(spineDl).toBe(50 * 4)
+  })
+})

@@ -71,6 +71,9 @@ export const PRODUCTS: Product[] = [
     subLayer: 'leaf',
     ports: 48,
     uplinks: 6,
+    // Dedicated 6×100G QSFP28 uplink ports Eth1/49-54 — fabric uplinks must
+    // NOT land on the 25G server ports (Y2 / audit DC-6).
+    uplinkStart: 49,
     speed: '25G',
     asic: 'Cloud Scale',
     powerW: 480,

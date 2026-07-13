@@ -336,11 +336,16 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
 
   const links: FabricLink[] = []
 
+  // Y2: leaf uplink i lands on spine (leafIdx + i) % spineCount — STAGGERED
+  // round-robin. The old `i % spineCount` start-at-spine-1 scheme meant every
+  // leaf wired the same first `uplinks` spines: with uplinks < spineCount the
+  // remaining spines were completely dark (yet still BGP-peered), and the
+  // first spines absorbed more links than they have ports.
   if (role === 'leaf') {
     const leafIdx = Math.max(0, leaves.findIndex(d => d.id === dev.id))
     const leafNum = leafIdx + 1
     for (let i = 0; i < leafUplinks; i++) {
-      const spineIdx = i % spineCount
+      const spineIdx = (leafIdx + i) % spineCount
       const linkNum = Math.floor(i / spineCount)
       const spineNum = spineIdx + 1
       const octet = (spineNum - 1) * 16 + linkNum * 2
@@ -358,8 +363,9 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
     const spineNum = spineIdx + 1
     let ifIndex = 0
     for (let leafNum = 1; leafNum <= leafCount; leafNum++) {
+      const leafIdx = leafNum - 1
       for (let i = 0; i < leafUplinks; i++) {
-        if (i % spineCount !== spineIdx) continue
+        if ((leafIdx + i) % spineCount !== spineIdx) continue
         const linkNum = Math.floor(i / spineCount)
         const octet = (spineNum - 1) * 16 + linkNum * 2
         links.push({
@@ -372,6 +378,9 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
         })
       }
     }
+    // A spine cannot terminate more links than it has ports; anything beyond
+    // is a design error already flagged by validateBOM's fan-out warning.
+    if (dev.ports && links.length > dev.ports) links.length = dev.ports
   }
   return links
 }
@@ -383,7 +392,12 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
  */
 function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[], ipv6Enabled = false): string {
   const links = closFabricLinks(role, dev, allDevices)
-  const portBase = role === 'leaf' ? Math.max(0, (dev.ports || 48) - (dev.uplinks || 0)) : 0
+  // Leaf uplinks go on the SKU's DEDICATED uplink range when it has one
+  // (93180YC-FX: Eth1/49-54 — fabric links on 25G server ports won't come up
+  // against 100G spine ports, Y2); otherwise the top of the shared port block.
+  const portBase = role === 'leaf'
+    ? (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 48) - (dev.uplinks || 0)))
+    : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
   return links.map(link => `interface Ethernet1/${portBase + link.ifIndex + 1}
   description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
@@ -405,7 +419,9 @@ function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevice
  */
 function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[], ipv6Enabled = false): string {
   const links = closFabricLinks(role, dev, allDevices)
-  const portBase = role === 'leaf' ? Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)) : 0
+  const portBase = role === 'leaf'
+    ? (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
+    : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
   return links.map(link => `interface Ethernet${portBase + link.ifIndex + 1}
   description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
@@ -478,9 +494,12 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   // vPC anycast VTEP VIP — shared secondary on loopback1 for the HA pair, so
   // multihomed traffic hashes to one logical VTEP (X7).
   const vpcVtepVip = `10.254.1.${pairId}`
-  // Peer-link members sit just below the fabric uplinks (uplinks occupy the
-  // top `uplinks` ports; see renderNxosFabricLinks portBase).
-  const plPort1 = Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 1)
+  // Peer-link members: on SKUs with a dedicated uplink range, use the
+  // leftover dedicated high-speed ports (93180: uplinks on 49-52 → peer-link
+  // 53-54); otherwise the two ports just below the fabric uplinks.
+  const plPort1 = dev.uplinkStart
+    ? dev.uplinkStart + (dev.uplinks || 0)
+    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 1)
   const plPort2 = plPort1 + 1
   const dciL3RtLines = isMultisite ? `
     route-target import ${DCI_RT_ASN}:50000 evpn
@@ -1128,9 +1147,11 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   // Deterministic MLAG peer /31 on Vlan4094 (primary .0, secondary .1).
   const mlagLocalIp = `10.253.${pairId}.${isPrimary ? 0 : 1}`
   const mlagPeerIp  = `10.253.${pairId}.${isPrimary ? 1 : 0}`
-  // Peer-link members sit just below the fabric uplinks (uplinks occupy the
-  // top `uplinks` ports; see renderAristaFabricLinks portBase).
-  const plPort1 = Math.max(1, (dev.ports || 32) - (dev.uplinks || 0) - 1)
+  // Peer-link members: leftover dedicated uplink ports when the SKU has a
+  // dedicated range, else the two ports just below the fabric uplinks.
+  const plPort1 = dev.uplinkStart
+    ? dev.uplinkStart + (dev.uplinks || 0)
+    : Math.max(1, (dev.ports || 32) - (dev.uplinks || 0) - 1)
   const plPort2 = plPort1 + 1
   // Valid 12-hex system-id (padStart); the old `000${idx+101}` overflowed to
   // 13/14 digits and EOS rejected the NET, so the underlay never started.

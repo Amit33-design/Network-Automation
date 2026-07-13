@@ -33,6 +33,8 @@ export interface Product {
   subLayer: string
   ports: number
   uplinks: number
+  /** See BOMDevice.uplinkStart — first dedicated uplink port, when separate. */
+  uplinkStart?: number
   speed: string
   asic: string
   powerW: number
@@ -57,6 +59,10 @@ export interface BOMDevice {
   speed: string
   ports: number
   uplinks?: number
+  /** First physical port of the SKU's DEDICATED uplink range (1-based), when
+   *  uplinks are separate higher-speed ports beyond `ports` (e.g. 93180YC-FX:
+   *  48×25G + 6×100G → uplinkStart 49). Absent = uplinks share the port block. */
+  uplinkStart?: number
   features: string[]
 }
 

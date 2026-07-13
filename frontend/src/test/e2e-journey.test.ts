@@ -145,6 +145,30 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
       expect(leaves[0].uplinks ?? 0, `${ctx}: leaf uplinks exceed leaf SKU ports`)
         .toBeLessThanOrEqual(leaves[0].ports)
     }
+
+    // 8a''. Y2 config-wiring honesty: for NX-OS/Arista fabrics every spine must
+    // actually be wired (no dark spines while it is still BGP-peered), no spine
+    // configures a port beyond its SKU, and every leaf uplink lands within the
+    // leaf SKU's port range.
+    const wiringVendors = new Set(['Cisco', 'Arista'])
+    if (leaves.length && spines.length && wiringVendors.has(spines[0].vendor)) {
+      for (const s of spines) {
+        const cfg = p.configs[s.id]
+        if (!cfg) continue
+        const dlPorts = [...cfg.matchAll(/interface Ethernet1?\/?(\d+)\n\s+description DOWNLINK/g)].map(m => +m[1])
+        expect(dlPorts.length, `${ctx}: spine ${s.hostname} is dark (0 downlinks but BGP-peered)`).toBeGreaterThan(0)
+        expect(Math.max(0, ...dlPorts), `${ctx}: spine ${s.hostname} port exceeds SKU ${s.ports}`).toBeLessThanOrEqual(s.ports)
+      }
+      for (const l of leaves) {
+        const cfg = p.configs[l.id]
+        if (!cfg) continue
+        const ulPorts = [...cfg.matchAll(/interface Ethernet1?\/?(\d+)\n\s+description UPLINK/g)].map(m => +m[1])
+        const maxLeafPort = l.uplinkStart ? l.uplinkStart + l.ports : l.ports
+        for (const port of ulPorts) {
+          expect(port, `${ctx}: leaf ${l.hostname} uplink port ${port} out of range`).toBeLessThanOrEqual(maxLeafPort)
+        }
+      }
+    }
   }
 
   // 8b. TCO capex must equal the BOM grand total (no drift between cost views).

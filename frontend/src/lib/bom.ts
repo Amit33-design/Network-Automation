@@ -497,6 +497,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
         speed: product.speed,
         ports: product.ports,
         uplinks: actualUplinks,
+        uplinkStart: product.uplinkStart,
         features: product.features,
       })
     }
@@ -555,6 +556,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
           speed: product.speed,
           ports: product.ports,
           uplinks: product.uplinks,
+          uplinkStart: product.uplinkStart,
           features: product.features,
         })
       }
