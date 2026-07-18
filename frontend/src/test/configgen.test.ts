@@ -674,13 +674,14 @@ describe('Campus distribution/access config (Enterprise upgrade A3)', () => {
     expect(cfg).toContain('spanning-tree bpduguard enable')
   })
 
-  it('Cisco campus access uplinks form a port-channel shared with the HA-paired switch', () => {
+  it('Cisco campus access uses SPLIT uplinks (Y3/C-3 — a cross-chassis LACP MEC to two standalone dist chassis would suspend a member)', () => {
     const dev0 = makeDevice({ hostname: 'TST-ACC-A01', vendor: 'Cisco', subLayer: 'access', ports: 48 })
-    const dev1 = makeDevice({ hostname: 'TST-ACC-A02', vendor: 'Cisco', subLayer: 'access', ports: 48 })
     const cfg0 = generateConfig(dev0, 0, 'campus')
-    const cfg1 = generateConfig(dev1, 1, 'campus')
-    expect(cfg0).toContain('interface Port-channel1')
-    expect(cfg1).toContain('interface Port-channel1')
+    expect(cfg0).toContain('description UPLINK-1 to distribution A01')
+    expect(cfg0).toContain('description UPLINK-2 to distribution A02')
+    // no cross-chassis port-channel on the access uplinks
+    expect(cfg0).not.toContain('UPLINK-TO-DISTRIBUTION-PAIR (MEC)')
+    expect(cfg0).not.toMatch(/UPLINK[\s\S]{0,120}channel-group/)
   })
 
   it('IGMP snooping/querier added on distribution only when voice app type present', () => {
@@ -1333,5 +1334,45 @@ describe('NX-OS fabric wiring honesty (group Y2)', () => {
     const leafUl = devices.filter(d => d.subLayer === 'leaf').reduce((n, l) => n + (configs[l.id].match(/description UPLINK:/g) ?? []).length, 0)
     expect(spineDl).toBe(leafUl)
     expect(spineDl).toBe(50 * 4)
+  })
+})
+
+// ── Y3: campus deployability (2nd-pass audit C-1..C-6) ──────────────────────────
+
+describe('Campus deployability (group Y3)', () => {
+  const dist = () => generateConfig(makeDevice({ hostname: 'IAD-DIST-A01', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', ports: 48, uplinks: 4 }), 0, 'campus')
+  const access = () => generateConfig(makeDevice({ hostname: 'IAD-ACC-A01', vendor: 'Cisco', subLayer: 'access', role: 'access', ports: 48, uplinks: 4 }), 2, 'campus')
+
+  it('C-1: Vlan99 mgmt SVI exists on BOTH dist and access (mgmt plane sources from it)', () => {
+    expect(dist()).toMatch(/interface Vlan99\n\s+description MGMT\n\s+ip address 10\.255\.99\.1 255\.255\.255\.0/)
+    expect(access()).toMatch(/interface Vlan99\n\s+description MGMT\n\s+ip address 10\.255\.99\.3 255\.255\.255\.0/)
+    expect(access()).toContain('ip default-gateway 10.255.99.254')
+  })
+
+  it('C-2: distribution has real access-facing downlink trunks and a routed core uplink', () => {
+    const d = dist()
+    expect(d).toMatch(/interface range TenGigabitEthernet1\/0\/1-42\n\s+description DOWNLINK-TO-ACCESS/)
+    expect(d).toMatch(/interface TenGigabitEthernet1\/0\/45\n\s+description UPLINK-TO-CORE\n\s+no switchport/)
+    expect(d).toContain('no passive-interface TenGigabitEthernet1/0/45')
+    expect(d).not.toContain('<CHANGE-ME-uplink-to-core>')
+  })
+
+  it('C-4: access uplink trunks are DHCP-snooping trusted', () => {
+    const a = access()
+    const uplinkBlocks = a.split('interface GigabitEthernet1/0/4')  // uplinks 47/48
+    expect(a).toMatch(/UPLINK-1[\s\S]*?ip dhcp snooping trust/)
+    expect(a).toMatch(/UPLINK-2[\s\S]*?ip dhcp snooping trust/)
+    expect(uplinkBlocks.length).toBeGreaterThan(1)
+  })
+
+  it('C-5: OSPF md5 key present on the core uplink to match area auth', () => {
+    expect(dist()).toMatch(/UPLINK-TO-CORE[\s\S]*?ip ospf message-digest-key 1 md5 <CHANGE-ME-ospf-md5-key>/)
+  })
+
+  it('C-6: 802.1X with MAB fallback on access ports + global dot1x/radius', () => {
+    const a = access()
+    expect(a).toContain('dot1x system-auth-control')
+    expect(a).toContain('aaa authentication dot1x default group radius')
+    expect(a).toMatch(/authentication port-control auto\n\s+dot1x pae authenticator\n\s+mab/)
   })
 })

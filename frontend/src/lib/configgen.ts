@@ -2302,6 +2302,8 @@ ${hasVoice ? `vlan 20
     // convention as the DC vPC/MLAG peer-links, X7).
     const plPort1 = Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 1)
     const plPort2 = plPort1 + 1
+    // First uplink port carries the routed uplink to core (Y3 / C-5).
+    const coreUplinkPort = Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) + 1)
     const igmpBlock = needsIgmp ? `
 ! ── IGMP SNOOPING / QUERIER (voice/video app types present) ──────────────────
 ip igmp snooping
@@ -2352,27 +2354,51 @@ interface Vlan10
   standby 10 authentication md5 key-string <CHANGE-ME-hsrp-key>
   standby 10 track 1 decrement 20
 ${voiceSvi}!
-track 1 interface <CHANGE-ME-uplink-to-core> line-protocol
+! ── MGMT SVI (Vlan99 — the mgmt plane sources from this; C-1) ────────────────
+interface Vlan99
+  description MGMT
+  ip address 10.255.99.${idx + 1} 255.255.255.0
+!
+track 1 interface TenGigabitEthernet1/0/${coreUplinkPort} line-protocol
 !
 ! ── LOOPBACK (router-id) ─────────────────────────────────────────────────────
 interface Loopback0
   description ROUTER-ID
   ip address ${lo0ip} 255.255.255.255
 !
+! ── UPLINK TO CORE (routed, OSPF w/ md5 — C-5) ───────────────────────────────
+interface TenGigabitEthernet1/0/${coreUplinkPort}
+  description UPLINK-TO-CORE
+  no switchport
+  ip address <CHANGE-ME-core-uplink-ip> <CHANGE-ME-core-uplink-mask>
+  ip ospf message-digest-key 1 md5 <CHANGE-ME-ospf-md5-key>
+  ip ospf network point-to-point
+  no shutdown
+!
 ! ── UNDERLAY: OSPF only (no IS-IS on campus) ─────────────────────────────────
 router ospf 1
   router-id ${lo0ip}
   passive-interface default
-  no passive-interface <CHANGE-ME-uplink-to-core>
+  no passive-interface TenGigabitEthernet1/0/${coreUplinkPort}
   network ${lo0ip} 0.0.0.0 area 0
+  network <CHANGE-ME-core-uplink-ip> <CHANGE-ME-wildcard> area 0
   network <CHANGE-ME-vlan10-ip> <CHANGE-ME-wildcard> area 0
   area 0 authentication message-digest
+!
+! ── DOWNLINK TRUNKS to access switches (C-2) ─────────────────────────────────
+interface range TenGigabitEthernet1/0/1-${plPort1 - 1}
+  description DOWNLINK-TO-ACCESS
+  switchport mode trunk
+  switchport trunk native vlan 99
+  switchport trunk allowed vlan 10${hasVoice ? ',20' : ''},99
+  no shutdown
 !
 ! ── PEER LINK to ${peerHostname} (L2 trunk for SVI / HSRP heartbeat) ─────────
 interface Port-channel${pairId}
   description PEER-LINK to ${peerHostname}
   switchport mode trunk
-  switchport trunk allowed vlan 10,20,99
+  switchport trunk native vlan 99
+  switchport trunk allowed vlan 10${hasVoice ? ',20' : ''},99
 !
 interface TenGigabitEthernet1/0/${plPort1}
   description PEER-LINK member 1 to ${peerHostname}
@@ -2390,6 +2416,8 @@ ${igmpBlock}
 
   // ── Access switch ──────────────────────────────────────────────────────────
   const accessPorts = Math.max(1, dev.ports - 2)
+  const uplink1 = accessPorts + 1
+  const uplink2 = accessPorts + 2
   const igmpBlock = needsIgmp ? `
 ! ── IGMP SNOOPING (voice/video app types present) ────────────────────────────
 ip igmp snooping
@@ -2416,35 +2444,61 @@ spanning-tree extend system-id
 spanning-tree vlan 1-4094 priority 32768
 spanning-tree portfast bpduguard default
 !
+! ── MGMT SVI (Vlan99 — the mgmt plane sources from this; C-1) ────────────────
+interface Vlan99
+  description MGMT
+  ip address 10.255.99.${idx + 1} 255.255.255.0
+!
+ip default-gateway 10.255.99.254
+!
 ! ── DHCP SNOOPING / PORT SECURITY ─────────────────────────────────────────────
 ip dhcp snooping
 ip dhcp snooping vlan 10${hasVoice ? ',20' : ''}
 no ip dhcp snooping information option
 !
-! ── ACCESS PORTS (edge — PortFast + BPDU Guard) ───────────────────────────────
+! ── 802.1X / NAC (C-6) ────────────────────────────────────────────────────────
+aaa authentication dot1x default group radius
+aaa authorization network default group radius
+radius server NAC-1
+  address ipv4 <CHANGE-ME-radius-ip> auth-port 1812 acct-port 1813
+  key <CHANGE-ME-radius-key>
+dot1x system-auth-control
+!
+! ── ACCESS PORTS (edge — PortFast + BPDU Guard + 802.1X w/ MAB fallback) ──────
 interface range GigabitEthernet1/0/1-${accessPorts}
   switchport mode access
   switchport access vlan 10
 ${hasVoice ? '  switchport voice vlan 20\n' : ''}  switchport port-security
   switchport port-security maximum 2
   switchport port-security violation restrict
+  authentication host-mode multi-auth
+  authentication port-control auto
+  dot1x pae authenticator
+  mab
   spanning-tree portfast
   spanning-tree bpduguard enable
   ip dhcp snooping limit rate 15
   storm-control broadcast level 1.00
   no shutdown
 !
-${igmpBlock}! ── UPLINK to distribution pair (MEC port-channel) ────────────────────────────
-interface range GigabitEthernet1/0/${accessPorts + 1}-${dev.ports}
-  description UPLINK-TO-DISTRIBUTION-PAIR
+${igmpBlock}! ── UPLINKS to distribution (SPLIT trunks — one per dist member; the dist
+! pair are standalone chassis, so a cross-chassis LACP MEC would suspend a
+! member (C-3). STP blocks one path; HSRP + RPVST handle failover.) ──────────
+interface GigabitEthernet1/0/${uplink1}
+  description UPLINK-1 to distribution A01
   switchport mode trunk
+  switchport trunk native vlan 99
   switchport trunk allowed vlan 10${hasVoice ? ',20' : ''},99
-  channel-group ${pairId} mode active
+  ip dhcp snooping trust
+  no shutdown
 !
-interface Port-channel${pairId}
-  description UPLINK-TO-DISTRIBUTION-PAIR (MEC)
+interface GigabitEthernet1/0/${uplink2}
+  description UPLINK-2 to distribution A02
   switchport mode trunk
+  switchport trunk native vlan 99
   switchport trunk allowed vlan 10${hasVoice ? ',20' : ''},99
+  ip dhcp snooping trust
+  no shutdown
 `
 }
 
