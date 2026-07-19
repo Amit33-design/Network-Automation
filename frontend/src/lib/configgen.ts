@@ -1017,13 +1017,14 @@ function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevic
   const routerIdV6 = `fd00:255:1::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
   const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
-  // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1), ASN 65001+i).
+  // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1)). Leaf ASNs
+  // are PAIR-based (65000 + pairId — an MLAG pair shares one ASN, Y4/A-M2).
   const spineLeafPeers = allDevices
     .map((d, i) => ({ d, i }))
     .filter(x => x.d.subLayer === 'leaf')
     .flatMap(x => [
       `  neighbor 10.255.2.${x.i + 1} peer group LEAF-PEER`,
-      `  neighbor 10.255.2.${x.i + 1} remote-as ${65001 + x.i}`,
+      `  neighbor 10.255.2.${x.i + 1} remote-as ${65000 + Math.floor(x.i / 2) + 1}`,
       `  neighbor 10.255.2.${x.i + 1} description ${x.d.hostname || `LEAF-${x.i + 1}`}`,
     ])
     .join('\n')
@@ -1041,7 +1042,7 @@ hostname ${dev.hostname}
 !
 ! ── MANAGEMENT ──────────────────────────────────────────────────────────────
 ip domain-name <CHANGE-ME-domain.example.com>
-dns server <CHANGE-ME-dns-ip>
+ip name-server <CHANGE-ME-dns-ip>
 !
 username admin privilege 15 role network-admin secret sha512 <CHANGE-ME-admin-password>
 !
@@ -1053,7 +1054,8 @@ tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
 tacacs-server host <CHANGE-ME-tacacs-secondary-ip> key <CHANGE-ME-tacacs-key>
 !
 snmp-server engineID local f5717f000001
-snmp-server user NETDESIGN-USER priv-v3 auth sha <CHANGE-ME-snmp-auth-pass> priv aes <CHANGE-ME-snmp-priv-pass>
+snmp-server group NETDESIGN-RO v3 priv
+snmp-server user NETDESIGN-USER NETDESIGN-RO v3 auth sha <CHANGE-ME-snmp-auth-pass> priv aes <CHANGE-ME-snmp-priv-pass>
 !
 ntp server <CHANGE-ME-ntp-primary> prefer iburst
 ntp server <CHANGE-ME-ntp-secondary> iburst
@@ -1137,9 +1139,12 @@ EOF
 }
 
 function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false, appTypes: AppType[] = []): string {
-  const leafAsn  = 65001 + idx
-  const routerId = `10.255.2.${idx + 1}`
   const { pairId, isPrimary, peerHostname, domainId } = haPairInfo(dev, idx)
+  // EOS/AVD practice: an MLAG pair shares ONE ASN (Y4/A-M2) — with per-device
+  // ASNs the shared anycast VTEP is advertised from two different AS numbers
+  // and the pair cannot run the required peer-link iBGP session.
+  const leafAsn  = 65000 + pairId
+  const routerId = `10.255.2.${idx + 1}`
   // EOS MLAG + EVPN: BOTH pair members share ONE Loopback1 VTEP IP (anycast
   // VTEP) — with unique VTEPs the pair appears as two separate VTEPs and
   // multihomed traffic is black-holed/duplicated (X7 / audit A-M4).
@@ -1172,6 +1177,9 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const dciL2RtLines = isMultisite ? `
     route-target import evpn ${DCI_RT_ASN}:10010
     route-target export evpn ${DCI_RT_ASN}:10010` : ''
+  const dciL3RtLines = isMultisite ? `
+    route-target import evpn ${DCI_RT_ASN}:50000
+    route-target export evpn ${DCI_RT_ASN}:50000` : ''
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -1253,8 +1261,17 @@ router bgp ${leafAsn}
   ! ── Spine eBGP peers (auto-generated from the fabric) ─────────────────────
 ${leafSpinePeerBlock}
   !
+  ! MLAG peer-link iBGP (Y4/A-M2): if one member loses all uplinks, routes
+  ! still reach it across Vlan4094 through its pair peer.
+  neighbor MLAG-PEER peer group
+  neighbor MLAG-PEER remote-as ${leafAsn}
+  neighbor MLAG-PEER next-hop-self
+  neighbor ${mlagPeerIp} peer group MLAG-PEER
+  neighbor ${mlagPeerIp} description ${peerHostname}
+  !
   address-family ipv4
     neighbor SPINE-PEER activate
+    neighbor MLAG-PEER activate
     network ${routerId}/32
     network ${vtepIp}/32
   address-family evpn
@@ -1264,6 +1281,23 @@ ${leafSpinePeerBlock}
     rd ${routerId}:10010
     route-target both 65000:10010${dciL2RtLines}
     redistribute learned
+  !
+  vrf TENANT-A
+    rd ${routerId}:50000
+    route-target import evpn 65000:50000
+    route-target export evpn 65000:50000${dciL3RtLines}
+    redistribute connected
+!
+! ── TENANT VRF / ANYCAST GATEWAY (Y4/A-M1 — parity with NX-OS X1) ───────────
+vrf instance TENANT-A
+ip routing vrf TENANT-A
+!
+ip virtual-router mac-address 00:1c:73:00:00:99
+!
+interface Vlan10
+  description TENANT-A-ANYCAST-GW
+  vrf TENANT-A
+  ip address virtual <CHANGE-ME-tenant-anycast-gw>/24
 !
 ! ── VXLAN ────────────────────────────────────────────────────────────────────
 interface Vxlan1
@@ -1271,6 +1305,7 @@ interface Vxlan1
   vxlan source-interface Loopback1
   vxlan udp-port 4789
   vxlan vlan 10 vni 10010
+  vxlan vrf TENANT-A vni 50000
   vxlan learn-restrict any
 !
 ! ── MLAG (HA pair with ${peerHostname}) ─────────────────────────────────────
