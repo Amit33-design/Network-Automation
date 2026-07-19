@@ -1074,12 +1074,13 @@ describe('Arista EOS eBGP EVPN fabric wiring (group X3)', () => {
     expect(c['l1']).not.toMatch(/net 49\.0001\.\d{4}\.\d{4}\.\d{5,}/)
   })
 
-  it('spine emits real eBGP leaf peers (flat EOS syntax, per-leaf remote-as, no RR-client)', () => {
+  it('spine emits real eBGP leaf peers (flat EOS syntax, pair-based remote-as, no RR-client)', () => {
     const c = fabric()
     const spine = c['s1']
     expect(spine).toMatch(/neighbor 10\.255\.2\.3 peer group LEAF-PEER/)
-    expect(spine).toMatch(/neighbor 10\.255\.2\.3 remote-as 65003/)
-    expect(spine).toMatch(/neighbor 10\.255\.2\.4 remote-as 65004/)
+    // leaves at global idx 2,3 are ONE MLAG pair (pairId 2) → shared ASN 65002 (Y4)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.3 remote-as 65002/)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.4 remote-as 65002/)
     // eBGP: no reflector-client in actual config lines (comments allowed)
     expect(spine.split('\n').filter(l => !l.trim().startsWith('!')).join('\n')).not.toMatch(/route-reflector-client/)
     expect(spine).not.toMatch(/peer-group LEAF-RR-CLIENTS/)   // no invalid indented block
@@ -1374,5 +1375,55 @@ describe('Campus deployability (group Y3)', () => {
     expect(a).toContain('dot1x system-auth-control')
     expect(a).toContain('aaa authentication dot1x default group radius')
     expect(a).toMatch(/authentication port-control auto\n\s+dot1x pae authenticator\n\s+mab/)
+  })
+})
+
+// ── Y4: Arista tenant gateway + MLAG pair single-ASN + peer-link iBGP ───────────
+
+describe('Arista tenant gateway + MLAG ASN model (group Y4)', () => {
+  function pair() {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', role: 'leaf', ports: 32, uplinks: 8 }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Arista', subLayer: 'leaf', role: 'leaf', ports: 32, uplinks: 8 }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  it('A-M1: leaf has an anycast tenant gateway (Vlan10 ip address virtual + L3VNI/VRF)', () => {
+    const leaf = pair()['l1']
+    expect(leaf).toMatch(/vrf instance TENANT-A/)
+    expect(leaf).toMatch(/ip routing vrf TENANT-A/)
+    expect(leaf).toMatch(/ip virtual-router mac-address/)
+    expect(leaf).toMatch(/interface Vlan10\n\s+description TENANT-A-ANYCAST-GW\n\s+vrf TENANT-A\n\s+ip address virtual <CHANGE-ME-tenant-anycast-gw>\/24/)
+    expect(leaf).toMatch(/vxlan vrf TENANT-A vni 50000/)
+    expect(leaf).toMatch(/vrf TENANT-A\n\s+rd 10\.255\.2\.1:50000\n\s+route-target import evpn 65000:50000/)
+  })
+
+  it('A-M2: MLAG pair shares ONE ASN and runs peer-link iBGP with next-hop-self', () => {
+    const c = pair()
+    // both members of pair 1 → ASN 65001
+    expect(c['l1']).toMatch(/router bgp 65001/)
+    expect(c['l2']).toMatch(/router bgp 65001/)
+    // iBGP across Vlan4094: each peers the other's /31 with its own ASN
+    expect(c['l1']).toMatch(/neighbor MLAG-PEER remote-as 65001/)
+    expect(c['l1']).toMatch(/neighbor MLAG-PEER next-hop-self/)
+    expect(c['l1']).toMatch(/neighbor 10\.253\.1\.1 peer group MLAG-PEER/)
+    expect(c['l2']).toMatch(/neighbor 10\.253\.1\.0 peer group MLAG-PEER/)
+  })
+
+  it('EOS minors: ip name-server (not "dns server") and valid SNMPv3 user+group', () => {
+    const spine = generateConfig(makeDevice({ hostname: 'DC-SPINE-A01', vendor: 'Arista', subLayer: 'spine', role: 'spine' }), 0, 'dc')
+    expect(spine).toContain('ip name-server <CHANGE-ME-dns-ip>')
+    expect(spine).not.toMatch(/^dns server /m)
+    expect(spine).toContain('snmp-server group NETDESIGN-RO v3 priv')
+    expect(spine).toMatch(/snmp-server user NETDESIGN-USER NETDESIGN-RO v3 auth sha/)
+    expect(spine).not.toContain('priv-v3')
+  })
+
+  it('multisite Arista leaf: stretched DCI RTs on the L3VNI VRF too', () => {
+    const dev = makeDevice({ id: 'l1', hostname: 'IAD-LEAF-A01', vendor: 'Arista', subLayer: 'leaf', role: 'leaf' })
+    const cfg = generateConfig(dev, 0, 'multisite')
+    expect(cfg).toContain('route-target import evpn 65100:50000')
+    expect(cfg).toContain('route-target export evpn 65100:50000')
   })
 })
