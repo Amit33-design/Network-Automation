@@ -435,6 +435,32 @@ function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevi
   no shutdown`).join('\n!\n')
 }
 
+/**
+ * Renders CLOS fabric links as Junos set-commands (Y5/J-C1/J-C2): every fabric
+ * interface gets a `family inet` /31 (the underlay carried no IPv4 before —
+ * IS-IS formed ISO adjacencies but BGP-over-loopback could never establish),
+ * `family iso` for IS-IS, jumbo MTU, and its IS-IS interface statement. Junos
+ * ports are 0-based; leaf uplinks sit after the access ports (QFX5120-48Y:
+ * et-0/0/48+); spine downlinks fill from et-0/0/0, topology-driven.
+ */
+function renderJuniperFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): string {
+  const links = closFabricLinks(role, dev, allDevices)
+  const portBase = role === 'leaf' ? (dev.ports || 48) : 0
+  const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
+  const lines: string[] = []
+  for (const link of links) {
+    const ifName = `et-0/0/${portBase + link.ifIndex}`
+    lines.push(
+      `set interfaces ${ifName} description "${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})"`,
+      `set interfaces ${ifName} mtu 9216`,
+      `set interfaces ${ifName} unit 0 family inet address ${link.localIp}`,
+      `set interfaces ${ifName} unit 0 family iso`,
+      `set protocols isis interface ${ifName}.0 point-to-point`,
+    )
+  }
+  return lines.join('\n')
+}
+
 // ── IPv6 dual-stack underlay helpers (Enterprise upgrade A6) ───────────────────
 // Gated by protoFeatures.includes('IPv6 Dual-Stack'); applies to NX-OS + Arista
 // IS-IS spine-leaf underlay only (loopbacks + fabric P2P links). ULA prefix
@@ -1427,6 +1453,7 @@ function juniperSpineConfig(dev: BOMDevice, idx: number, protoFeatures: string[]
   const lo0ip = `10.255.1.${idx + 1}`
   const isoNet = `49.0001.0101.0255.${String(idx + 1).padStart(4, '0')}.00`
   const roceBlock = needsRoce ? juniperRoceBlock() : ''
+  const fabricLinks = renderJuniperFabricLinks('spine', dev, allDevices)
   // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1), ASN 65001+i).
   const leafNeighborLines = allDevices
     .map((d, i) => ({ d, i }))
@@ -1480,19 +1507,19 @@ set interfaces lo0 unit 0 description "ROUTER-ID/BGP/ISIS-SOURCE"
 set interfaces lo0 unit 0 family inet address ${lo0ip}/32
 set interfaces lo0 unit 0 family iso address ${isoNet}
 !
-# ── UNDERLAY: IS-IS only (no OSPF) — family iso required on every IS-IS link ─
-set interfaces et-0/0/0 unit 0 family iso
-set interfaces et-0/0/1 unit 0 family iso
+# ── FABRIC DOWNLINKS (topology-driven from the BOM — family inet /31 +
+# family iso on every link; the underlay carried no IPv4 before, Y5/J-C1) ────
+${fabricLinks}
+!
+# ── UNDERLAY: IS-IS only (no OSPF) ───────────────────────────────────────────
 set protocols isis interface lo0.0 passive
-set protocols isis interface et-0/0/0.0 point-to-point
-set protocols isis interface et-0/0/1.0 point-to-point
+set protocols isis level 2 authentication-type md5
 set protocols isis level 2 authentication-key "<CHANGE-ME-isis-auth-key>"
 set protocols isis export LOOPBACKS-TO-ISIS
 !
 # ── BGP / EVPN (spine peers DOWN to leaves; multipath; not a VTEP) ──────────
 set routing-options autonomous-system 65000
 set protocols bgp group LEAVES type external
-set protocols bgp group LEAVES local-as 65000
 set protocols bgp group LEAVES local-address lo0.0
 set protocols bgp group LEAVES multihop ttl 3
 set protocols bgp group LEAVES multipath
@@ -1508,10 +1535,6 @@ set policy-options policy-statement LOOPBACKS-TO-ISIS term 1 from interface lo0.
 set policy-options policy-statement LOOPBACKS-TO-ISIS term 1 then accept
 set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 from interface lo0.0
 set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 then accept
-!
-# ── MTU (jumbo for VXLAN overhead) ─────────────────────────────────────────
-set interfaces et-0/0/0 mtu 9216
-set interfaces et-0/0/1 mtu 9216
 ${v6Block}${roceBlock}`.replace(/^!$/gm, '#')
 }
 
@@ -1541,6 +1564,7 @@ function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, pro
     .map(x => `set protocols bgp group SPINE-RR neighbor 10.255.1.${x.i + 1} peer-as 65000`)
     .join('\n')
   const leafSpineNeighbors = spineNeighborLines || 'set protocols bgp group SPINE-RR neighbor <CHANGE-ME-spine-lo0> peer-as 65000'
+  const fabricLinks = renderJuniperFabricLinks('leaf', dev, allDevices)
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
   const roceBlock = needsRoce ? juniperRoceBlock() : ''
   // Storage lossless only when the RoCE block (which already has a STORAGE
@@ -1603,18 +1627,19 @@ set interfaces lo0 unit 0 description "ROUTER-ID/BGP/ISIS-SOURCE"
 set interfaces lo0 unit 0 family inet address ${lo0ip}/32
 set interfaces lo0 unit 0 family iso address ${isoNet}
 !
-# ── UNDERLAY: IS-IS only (no OSPF) — family iso required on every IS-IS link ─
-set interfaces et-0/0/48 unit 0 family iso
-set interfaces et-0/0/49 unit 0 family iso
+# ── FABRIC UPLINKS (topology-driven from the BOM — family inet /31 +
+# family iso on every link; the underlay carried no IPv4 before, Y5/J-C1) ────
+${fabricLinks}
+!
+# ── UNDERLAY: IS-IS only (no OSPF) ───────────────────────────────────────────
 set protocols isis interface lo0.0 passive
-set protocols isis interface et-0/0/48.0 point-to-point
-set protocols isis interface et-0/0/49.0 point-to-point
+set protocols isis level 2 authentication-type md5
 set protocols isis level 2 authentication-key "<CHANGE-ME-isis-auth-key>"
 set protocols isis export LOOPBACKS-TO-ISIS
 !
 # ── BGP / EVPN (eBGP over loopback needs local-address + multihop) ──────────
+set routing-options autonomous-system ${leafAsn}
 set protocols bgp group SPINE-RR type external
-set protocols bgp group SPINE-RR local-as ${leafAsn}
 set protocols bgp group SPINE-RR local-address lo0.0
 set protocols bgp group SPINE-RR multihop ttl 3
 ${leafSpineNeighbors}
@@ -1640,9 +1665,6 @@ set policy-options policy-statement LOOPBACKS-TO-ISIS term 1 then accept
 set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 from interface lo0.0
 set policy-options policy-statement LOOPBACKS-TO-BGP  term 1 then accept
 !
-# ── MTU (jumbo on the ACTUAL uplink interfaces et-0/0/48-49) ────────────────
-set interfaces et-0/0/48 mtu 9216
-set interfaces et-0/0/49 mtu 9216
 ${dciBlock}${v6Block}${roceBlock}${storageBlock}`.replace(/^!$/gm, '#')
 }
 
@@ -3660,14 +3682,32 @@ set system services web-management https system-generated-certificate
 set system syslog host <CHANGE-ME-syslog-ip> any info
 set system ntp server <CHANGE-ME-ntp-primary> prefer
 !
+# ── DATA-PLANE INTERFACES (cluster reths — J-M3: zones must bind reth units,
+# and SRX4600 ports are xe-/et-, not ge-) ─────────────────────────────────
+set interfaces xe-0/0/0 gigether-options redundant-parent reth0
+set interfaces xe-7/0/0 gigether-options redundant-parent reth0
+set interfaces xe-0/0/1 gigether-options redundant-parent reth1
+set interfaces xe-7/0/1 gigether-options redundant-parent reth1
+set interfaces xe-0/0/3 gigether-options redundant-parent reth2
+set interfaces xe-7/0/3 gigether-options redundant-parent reth2
+set interfaces reth0 redundant-ether-options redundancy-group 1
+set interfaces reth0 unit 0 description "UNTRUST-INTERNET"
+set interfaces reth0 unit 0 family inet address <CHANGE-ME-untrust-ip>/30
+set interfaces reth1 redundant-ether-options redundancy-group 1
+set interfaces reth1 unit 0 description "TRUST-LAN"
+set interfaces reth1 unit 0 family inet address <CHANGE-ME-trust-ip>/24
+set interfaces reth2 redundant-ether-options redundancy-group 1
+set interfaces reth2 unit 0 description "DMZ-SERVERS"
+set interfaces reth2 unit 0 family inet address <CHANGE-ME-dmz-ip>/24
+!
 # ── SECURITY ZONES ───────────────────────────────────────────────────────
 set security zones security-zone TRUST host-inbound-traffic system-services [ ping ssh dhcp ntp ]
-set security zones security-zone TRUST host-inbound-traffic protocols [ bgp ospf ]
-set security zones security-zone TRUST interfaces ge-0/0/0.0
+set security zones security-zone TRUST host-inbound-traffic protocols [ bgp ]
+set security zones security-zone TRUST interfaces reth1.0
 set security zones security-zone UNTRUST host-inbound-traffic system-services [ ping ike ]
-set security zones security-zone UNTRUST interfaces ge-0/0/1.0
+set security zones security-zone UNTRUST interfaces reth0.0
 set security zones security-zone DMZ host-inbound-traffic system-services [ ping ]
-set security zones security-zone DMZ interfaces ge-0/0/2.0
+set security zones security-zone DMZ interfaces reth2.0
 !
 # ── SECURITY POLICIES ───────────────────────────────────────────────────
 set security policies from-zone TRUST to-zone UNTRUST policy ALLOW-OUTBOUND match source-address any destination-address any application any
@@ -3688,13 +3728,15 @@ set security nat source rule-set TRUST-TO-UNTRUST to zone UNTRUST
 set security nat source rule-set TRUST-TO-UNTRUST rule SNAT match source-address 0.0.0.0/0
 set security nat source rule-set TRUST-TO-UNTRUST rule SNAT then source-nat interface
 !
-# ── HA CLUSTER ───────────────────────────────────────────────────────────
+# ── HA CLUSTER (fab links carry the data-plane sync — J-M3) ───────────────
 set chassis cluster reth-count 4
 set chassis cluster redundancy-group 0 node 0 priority 200
 set chassis cluster redundancy-group 0 node 1 priority 100
 set chassis cluster redundancy-group 1 node 0 priority 200
 set chassis cluster redundancy-group 1 node 1 priority 100
-`
+set interfaces fab0 fabric-options member-interfaces xe-0/0/2
+set interfaces fab1 fabric-options member-interfaces xe-7/0/2
+`.replace(/^!$/gm, '#')
 }
 
 // ── Juniper MX WAN Edge Config ───────────────────────────────────────────────
