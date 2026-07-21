@@ -1101,11 +1101,12 @@ describe('Arista EOS eBGP EVPN fabric wiring (group X3)', () => {
 
 describe('Juniper JunOS eBGP EVPN fabric wiring (group X4)', () => {
   function fabric() {
+    // QFX5120-48Y-like leaves: 48 access ports → uplinks at et-0/0/48+ (0-based)
     const devices: BOMDevice[] = [
-      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor: 'Juniper', subLayer: 'spine', role: 'spine' }),
-      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor: 'Juniper', subLayer: 'spine', role: 'spine' }),
-      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf' }),
-      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf' }),
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor: 'Juniper', subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor: 'Juniper', subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
     ]
     return generateAllConfigs(devices, 'dc')
   }
@@ -1425,5 +1426,62 @@ describe('Arista tenant gateway + MLAG ASN model (group Y4)', () => {
     const cfg = generateConfig(dev, 0, 'multisite')
     expect(cfg).toContain('route-target import evpn 65100:50000')
     expect(cfg).toContain('route-target export evpn 65100:50000')
+  })
+})
+
+// ── Y5: Juniper underlay IPv4 + topology-driven ports + SRX cluster ─────────────
+
+describe('Juniper fabric wiring + SRX (group Y5)', () => {
+  function fabric() {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor: 'Juniper', subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor: 'Juniper', subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+      makeDevice({ id: 'l3', hostname: 'DC-LEAF-B01', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  it('J-C1: every fabric interface carries a family inet /31 (underlay had no IPv4)', () => {
+    const c = fabric()
+    // leaf uplinks: family inet on et-0/0/48 and 49
+    expect(c['l1']).toMatch(/set interfaces et-0\/0\/48 unit 0 family inet address 10\.99\.\d+\.\d+\/31/)
+    expect(c['l1']).toMatch(/set interfaces et-0\/0\/49 unit 0 family inet address 10\.99\.\d+\.\d+\/31/)
+    // spine downlinks too
+    expect(c['s1']).toMatch(/set interfaces et-0\/0\/0 unit 0 family inet address 10\.99\.\d+\.\d+\/31/)
+  })
+
+  it('J-C2: spine port count is topology-driven (one interface per assigned leaf link, not 2)', () => {
+    const c = fabric()
+    // 3 leaves × 2 uplinks staggered over 2 spines → ~3 downlinks per spine
+    const dl = (c['s1'].match(/description "DOWNLINK:/g) ?? []).length
+    expect(dl).toBeGreaterThanOrEqual(2)
+    const dl2 = (c['s2'].match(/description "DOWNLINK:/g) ?? []).length
+    expect(dl + dl2).toBe(3 * 2)   // conservation
+  })
+
+  it('J-C3/J-M1: leaf has a global autonomous-system; no redundant local-as anywhere', () => {
+    const c = fabric()
+    expect(c['l1']).toMatch(/set routing-options autonomous-system 65003/)
+    expect(c['l1']).not.toMatch(/local-as/)
+    expect(c['s1']).toMatch(/set routing-options autonomous-system 65000/)
+    expect(c['s1']).not.toMatch(/local-as/)
+  })
+
+  it('IS-IS auth-type md5 accompanies the auth key (silently unapplied otherwise)', () => {
+    const c = fabric()
+    for (const id of ['s1', 'l1']) {
+      expect(c[id]).toMatch(/set protocols isis level 2 authentication-type md5/)
+    }
+  })
+
+  it('J-M2/J-M3: SRX uses # comments, reth+fab cluster interfaces, zones bind reth units', () => {
+    const srx = generateConfig(makeDevice({ hostname: 'IAD-FW-A01', vendor: 'Juniper', subLayer: 'firewall', model: 'SRX4600' }), 0, 'dc')
+    expect(srx.split('\n').some(l => l === '!')).toBe(false)
+    expect(srx).toMatch(/set interfaces fab0 fabric-options member-interfaces/)
+    expect(srx).toMatch(/set interfaces reth0 unit 0 family inet address/)
+    expect(srx).toMatch(/set security zones security-zone TRUST interfaces reth1\.0/)
+    expect(srx).not.toMatch(/security-zone \w+ interfaces ge-0\/0\//)
   })
 })
