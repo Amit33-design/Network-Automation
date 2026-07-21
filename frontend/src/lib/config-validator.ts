@@ -89,6 +89,10 @@ function extractLoopbacks(configs: Record<string, string>): Map<string, string[]
       const ip = m.match(/address\s+(\d+\.\d+\.\d+\.\d+)/)
       if (ip) ips.push(ip[1])
     }
+    // NVIDIA Cumulus NVUE — `nv set interface lo ip address X/32`
+    for (const m of cfg.matchAll(/nv set interface lo ip address\s+(\d+\.\d+\.\d+\.\d+)/g)) {
+      ips.push(m[1])
+    }
     if (ips.length > 0) loopbacks.set(host, [...new Set(ips)])
   }
   return loopbacks

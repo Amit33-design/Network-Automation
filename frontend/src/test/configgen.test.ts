@@ -1485,3 +1485,66 @@ describe('Juniper fabric wiring + SRX (group Y5)', () => {
     expect(srx).not.toMatch(/security-zone \w+ interfaces ge-0\/0\//)
   })
 })
+
+// ── Y6: NVIDIA Cumulus NVUE rewrite ─────────────────────────────────────────────
+
+describe('NVIDIA Cumulus NVUE (group Y6)', () => {
+  function gpuFabric() {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'GPU-SPINE-A01', vendor: 'NVIDIA', subLayer: 'spine', role: 'spine', model: 'NVIDIA Spectrum SN5600', ports: 64, uplinks: 0 }),
+      makeDevice({ id: 's2', hostname: 'GPU-SPINE-A02', vendor: 'NVIDIA', subLayer: 'spine', role: 'spine', model: 'NVIDIA Spectrum SN5600', ports: 64, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'GPU-LEAF-A01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', model: 'NVIDIA Spectrum SN4600C', ports: 64, uplinks: 8 }),
+      makeDevice({ id: 'l2', hostname: 'GPU-LEAF-A02', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', model: 'NVIDIA Spectrum SN4600C', ports: 64, uplinks: 8 }),
+    ]
+    return generateAllConfigs(devices, 'gpu')
+  }
+
+  it('N-C1: GPU fabric is genuinely lossless — real nv set qos roce, not comments', () => {
+    const c = gpuFabric()
+    for (const id of ['s1', 'l1']) {
+      expect(c[id]).toContain('nv set qos roce enable on')
+      expect(c[id]).toContain('nv set qos roce mode lossless')
+      expect(c[id]).not.toMatch(/^# pfc\.pfc_port_list/m)   // no comment-only PFC
+    }
+  })
+
+  it('N-C2: real auto-assigned identity (ASN + loopback), roles distinct', () => {
+    const c = gpuFabric()
+    expect(c['s1']).toContain('nv set router bgp autonomous-system 65000')
+    expect(c['s1']).toContain('nv set interface lo ip address 10.255.1.1/32')
+    expect(c['l1']).toContain('nv set router bgp autonomous-system 65003')  // global idx 2
+    expect(c['l1']).toContain('nv set interface lo ip address 10.255.2.3/32')
+    expect(c['l1']).not.toContain('<CHANGE-ME-asn>')
+    expect(c['l1']).not.toContain('<CHANGE-ME-loopback-ip>')
+  })
+
+  it('N-C3/N-C4: per-port unnumbered neighbors — leaf peers ALL its uplinks, spine per assigned link', () => {
+    const c = gpuFabric()
+    // leaf: 8 uplinks on the top ports swp57-64
+    for (let p = 57; p <= 64; p++) {
+      expect(c['l1']).toContain(`nv set vrf default router bgp neighbor swp${p} remote-as external`)
+    }
+    // no invalid FRR range syntax anywhere
+    expect(c['s1']).not.toMatch(/neighbor swp\d+-swp\d+/)
+    // spine: one neighbor per assigned link (2 leaves × 8 uplinks staggered over 2 spines = 8 each)
+    const spineNbrs = (c['s1'].match(/neighbor swp\d+ remote-as external/g) ?? []).length
+    expect(spineNbrs).toBe(8)
+  })
+
+  it('N-M1/N-M2/N-M4: no NCLU, no route-reflector-client, no empty EVPN', () => {
+    const c = gpuFabric()
+    for (const id of ['s1', 'l1']) {
+      expect(c[id]).not.toMatch(/^net add /m)          // NCLU removed in 5.x
+      expect(c[id]).not.toContain('route-reflector-client')
+      expect(c[id]).not.toContain('l2vpn evpn')        // pure eBGP L3 GPU fabric
+      expect(c[id]).not.toContain('advertise-all-vni')
+    }
+  })
+
+  it('N-M3: valid mgmt design (eth0 in the mgmt VRF, no contradictory iface stanzas)', () => {
+    const c = gpuFabric()
+    expect(c['s1']).toContain('nv set interface eth0 ip vrf mgmt')
+    expect(c['s1']).not.toMatch(/iface mgmt inet dhcp/)
+    expect(c['s1']).not.toMatch(/^auto swp\d+-\d+$/m)  // invalid ifupdown2 range
+  })
+})
