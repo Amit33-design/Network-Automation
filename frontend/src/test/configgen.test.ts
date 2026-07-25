@@ -1605,3 +1605,86 @@ describe('Firewall/fabric handoff (group Y7)', () => {
     expect(generateAllConfigs(devices, 'dc')['s1']).not.toContain('FW-HANDOFF')
   })
 })
+
+// ── Z1: fabric-forwarding criticals (3rd-pass audit) ────────────────────────────
+
+describe('Fabric actually forwards (group Z1)', () => {
+  function fabricFor(vendor: string, ports: number, uplinks: number, uplinkStart?: number) {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 's3', hostname: 'DC-SPINE-B01', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor, subLayer: 'leaf', role: 'leaf', ports, uplinks, uplinkStart }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor, subLayer: 'leaf', role: 'leaf', ports, uplinks, uplinkStart }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  // The parity invariant the 3rd audit asked for: EVERY vendor whose spine
+  // re-advertises EVPN must preserve the originating VTEP as next-hop.
+  const EVPN_VENDORS: Array<[string, number, number, RegExp]> = [
+    ['Cisco', 48, 4, /set ip next-hop unchanged/],
+    ['Arista', 32, 6, /neighbor LEAF-PEER next-hop-unchanged/],
+    ['Juniper', 48, 4, /multihop no-nexthop-change/],
+  ]
+
+  for (const [vendor, ports, uplinks, re] of EVPN_VENDORS) {
+    it(`${vendor}: eBGP EVPN spine preserves the overlay next-hop (no VXLAN blackhole)`, () => {
+      const c = fabricFor(vendor, ports, uplinks)
+      expect(c['s1'], `${vendor} spine rewrites EVPN next-hop to itself`).toMatch(re)
+    })
+
+    it(`${vendor}: leaf BGP-peers ONLY the spines it has links to (no permanently-Idle sessions)`, () => {
+      // 2 leaves, 3 spines. With uplinks < spineCount the staggered planner
+      // wires a SUBSET, so peering every spine leaves unreachable (>2 hop)
+      // sessions Idle forever. One session per DISTINCT linked spine.
+      const few = fabricFor(vendor, ports, 2)
+      const leafFew = few['l1']
+      const peersFew = (leafFew.match(/inherit peer SPINE-PEER|peer group SPINE-PEER|group SPINE-RR neighbor 10\.255\.1\./g) ?? []).length
+      const linked = new Set(leafFew.match(/(?:UPLINK[:,][^\n]*?)(DC-SPINE-\w+)/g) ?? [])
+      expect(peersFew, `${vendor}: peered ${peersFew} spines but only links to ${linked.size}`).toBe(linked.size)
+      expect(peersFew, `${vendor}: must not peer all 3 spines with only 2 uplinks`).toBeLessThan(3)
+
+      // With uplinks >= spineCount every spine is linked → one session each.
+      const many = fabricFor(vendor, ports, uplinks)
+      const peersMany = (many['l1'].match(/inherit peer SPINE-PEER|peer group SPINE-PEER|group SPINE-RR neighbor 10\.255\.1\./g) ?? []).length
+      expect(peersMany).toBe(3)
+    })
+
+    it(`${vendor}: leaf has host-facing ports so the tenant VLAN can actually attach workloads`, () => {
+      const c = fabricFor(vendor, ports, uplinks)
+      expect(c['l1']).toMatch(/SERVER-ACCESS|ethernet-switching interface-mode access/)
+    })
+  }
+
+  it('NX-OS enables the EVPN control plane (nv overlay evpn — §10; the AF is inert without it)', () => {
+    const c = fabricFor('Cisco', 48, 4)
+    expect(c['s1']).toMatch(/^nv overlay evpn$/m)
+    expect(c['l1']).toMatch(/^nv overlay evpn$/m)
+  })
+
+  it('Arista: VLAN 10 carries the MLAG trunk group (EOS filters non-group VLANs off the peer-link)', () => {
+    const c = fabricFor('Arista', 32, 6)
+    expect(c['l1']).toMatch(/^vlan 10\n\s+name SERVERS\n[\s\S]*?trunk group MLAG_PEER/m)
+  })
+
+  it('Juniper: IRB anycast gateway + TENANT-A VRF + FIB load-balance (Junos needs all three)', () => {
+    const c = fabricFor('Juniper', 48, 4)
+    const leaf = c['l1']
+    expect(leaf).toMatch(/set vlans V10 l3-interface irb\.10/)
+    expect(leaf).toMatch(/set interfaces irb unit 10 family inet address .*virtual-gateway-address/)
+    expect(leaf).toMatch(/set routing-instances TENANT-A instance-type vrf/)
+    expect(leaf).toMatch(/set routing-options forwarding-table export LOAD-BALANCE/)
+    expect(leaf).toMatch(/set protocols isis level 1 disable/)   // single underlay
+  })
+
+  it('NVIDIA leaf gives GPU servers real routed host ports (512 GPUs had no network)', () => {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'GPU-SPINE-A01', vendor: 'NVIDIA', subLayer: 'spine', role: 'spine', ports: 64, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'GPU-LEAF-A01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
+    ]
+    const c = generateAllConfigs(devices, 'gpu')
+    expect(c['l1']).toMatch(/nv set interface swp1-56 ip address <CHANGE-ME-host-p2p>\/31/)
+    expect(c['s1']).not.toMatch(/CHANGE-ME-host-p2p/)   // spines have no host ports
+  })
+})
