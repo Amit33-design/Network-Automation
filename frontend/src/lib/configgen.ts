@@ -170,6 +170,10 @@ feature nxapi
 feature interface-vlan
 feature vn-segment-vlan-based
 feature nv overlay
+!
+! Enables the EVPN control plane (§10) — without it the l2vpn evpn AF,
+! the evpn MAC-VRF block and host-reachability protocol bgp are inert (Z1).
+nv overlay evpn
 feature lldp
 feature lacp
 feature bfd
@@ -539,11 +543,20 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
-  // Real spine eBGP peers derived from the fabric (spine lo0 = 10.255.1.(i+1),
-  // spine ASN = 65000 — matches nxosSpineConfig).
+  // Host/server ports: the access block below the fabric uplinks. With a
+  // dedicated uplink range the whole port block is host-facing; otherwise the
+  // uplinks + peer-link members occupy the top of it.
+  const hostPortMax = dev.uplinkStart
+    ? (dev.ports || 48)
+    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 2)
+  // Real spine eBGP peers — ONLY the spines this leaf actually has a link to
+  // (Z1): with uplinks < spineCount the staggered planner wires a subset, and
+  // peering the rest left permanently-Idle sessions whose loopbacks are >2 hops
+  // away (ebgp-multihop 2 can never reach them).
+  const linkedSpineNames = new Set(closFabricLinks('leaf', dev, allDevices).map(l => l.peerHostname))
   const spinePeerLines = allDevices
     .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'spine')
+    .filter(x => x.d.subLayer === 'spine' && (linkedSpineNames.size === 0 || linkedSpineNames.has(x.d.hostname)))
     .map(x => `  neighbor 10.255.1.${x.i + 1}\n    inherit peer SPINE-PEER\n    description ${x.d.hostname || `SPINE-${x.i + 1}`}`)
     .join('\n')
   const leafBgpNeighbors = spinePeerLines || '  ! No spines in fabric — add: neighbor <spine-lo0>\\n    inherit peer SPINE-PEER'
@@ -590,6 +603,10 @@ feature isis
 feature bgp
 feature vn-segment-vlan-based
 feature nv overlay
+!
+! Enables the EVPN control plane (§10) — without it the l2vpn evpn AF,
+! the evpn MAC-VRF block and host-reachability protocol bgp are inert (Z1).
+nv overlay evpn
 feature interface-vlan
 feature lacp
 feature vpc
@@ -724,6 +741,22 @@ evpn
 !
 ! ── UPLINKS (topology-driven from BOM port-math) ─────────────────────────────
 ${fabricLinks}
+!
+! ── SERVER / HOST PORTS (Z1 — the tenant VLAN had no member ports, so VLAN 10,
+! the anycast gateway and the NVE served nothing that could physically attach) ─
+interface Ethernet1/1-${hostPortMax}
+  description SERVER-ACCESS (tenant VLAN 10)
+  switchport
+  switchport mode access
+  switchport access vlan 10
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+  mtu 9216
+  no shutdown
+!
+! Dual-homed servers: bundle the pair member's matching port into a vPC
+! port-channel, e.g.  interface port-channel101 / vpc 101 / switchport access vlan 10
+vpc orphan-port suspend
 !
 ${qosBlock}
 !
@@ -1199,6 +1232,11 @@ ${spineLeafPeerBlock}
     neighbor LEAF-PEER activate
   address-family evpn
     neighbor LEAF-PEER activate
+    ! The spine is NOT a VTEP: it must re-advertise EVPN routes with the
+    ! ORIGINATING leaf's VTEP as next-hop. Without this an eBGP spine rewrites
+    ! next-hop to its own Loopback0 and every VXLAN tunnel black-holes (Z1 —
+    ! parity with the NX-OS NH-UNCHANGED route-map from Y1).
+    neighbor LEAF-PEER next-hop-unchanged
 !
 ${qos}
 !
@@ -1241,9 +1279,15 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const qos      = isGpu ? aristaGpuQoS() : ''
   const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices, ipv6Underlay)
   // Real spine peers from the fabric (spine lo0 10.255.1.(i+1), ASN 65000).
+  // Host/server ports: the access block below the uplinks + peer-link members.
+  const hostPortMax = dev.uplinkStart
+    ? (dev.ports || 32)
+    : Math.max(1, (dev.ports || 32) - (dev.uplinks || 0) - 2)
+  // Only the spines this leaf actually links to (Z1 — see nxosLeafConfig).
+  const linkedSpines = new Set(closFabricLinks('leaf', dev, allDevices).map(l => l.peerHostname))
   const leafSpinePeers = allDevices
     .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'spine')
+    .filter(x => x.d.subLayer === 'spine' && (linkedSpines.size === 0 || linkedSpines.has(x.d.hostname)))
     .map(x => `  neighbor 10.255.1.${x.i + 1} peer group SPINE-PEER`)
     .join('\n')
   const leafSpinePeerBlock = leafSpinePeers || '  ! No spines in fabric — add: neighbor <spine-lo0> peer group SPINE-PEER'
@@ -1318,6 +1362,20 @@ ${fabricLinks}
 ! ── VLANs (tenant L2 domains — mapped to VNIs on Vxlan1) ────────────────────
 vlan 10
   name SERVERS
+  ! EOS trunk-group semantics: once a trunk group is applied to the peer-link,
+  ! ONLY VLANs carrying that group traverse it. Without this VLAN 10 is filtered
+  ! off the MLAG peer-link, breaking orphan-port and failover bridging (Z1).
+  trunk group MLAG_PEER
+!
+! ── SERVER / HOST PORTS (Z1 — the tenant VLAN had no member ports) ───────────
+interface Ethernet1-${hostPortMax}
+  description SERVER-ACCESS (tenant VLAN 10)
+  switchport mode access
+  switchport access vlan 10
+  spanning-tree portfast
+  spanning-tree bpduguard enable
+  mtu 9214
+  no shutdown
 !
 ! ── BGP / EVPN ───────────────────────────────────────────────────────────────
 router bgp ${leafAsn}
@@ -1562,6 +1620,7 @@ ${fabricLinks}
 !
 # ── UNDERLAY: IS-IS only (no OSPF) ───────────────────────────────────────────
 set protocols isis interface lo0.0 passive
+set protocols isis level 1 disable
 set protocols isis level 2 authentication-type md5
 set protocols isis level 2 authentication-key "<CHANGE-ME-isis-auth-key>"
 set protocols isis export LOOPBACKS-TO-ISIS
@@ -1571,6 +1630,10 @@ set routing-options autonomous-system 65000
 set protocols bgp group LEAVES type external
 set protocols bgp group LEAVES local-address lo0.0
 set protocols bgp group LEAVES multihop ttl 3
+# The spine is NOT a VTEP: no-nexthop-change preserves the originating leaf's
+# VTEP as the EVPN next-hop. Without it the spine rewrites next-hop to its own
+# lo0 and every VXLAN tunnel black-holes (Z1 — parity with NX-OS Y1).
+set protocols bgp group LEAVES multihop no-nexthop-change
 set protocols bgp group LEAVES multipath
 set protocols bgp group LEAVES family evpn signaling
 set protocols bgp group LEAVES family inet unicast
@@ -1607,9 +1670,11 @@ function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, pro
   const leafAsn = 65001 + idx
   const isoNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
   // Real spine peers from the fabric (spine lo0 10.255.1.(i+1), ASN 65000).
+  // Only the spines this leaf actually links to (Z1 — see nxosLeafConfig).
+  const linkedSpineSet = new Set(closFabricLinks('leaf', dev, allDevices).map(l => l.peerHostname))
   const spineNeighborLines = allDevices
     .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'spine')
+    .filter(x => x.d.subLayer === 'spine' && (linkedSpineSet.size === 0 || linkedSpineSet.has(x.d.hostname)))
     .map(x => `set protocols bgp group SPINE-RR neighbor 10.255.1.${x.i + 1} peer-as 65000`)
     .join('\n')
   const leafSpineNeighbors = spineNeighborLines || 'set protocols bgp group SPINE-RR neighbor <CHANGE-ME-spine-lo0> peer-as 65000'
@@ -1682,6 +1747,7 @@ ${fabricLinks}
 !
 # ── UNDERLAY: IS-IS only (no OSPF) ───────────────────────────────────────────
 set protocols isis interface lo0.0 passive
+set protocols isis level 1 disable
 set protocols isis level 2 authentication-type md5
 set protocols isis level 2 authentication-key "<CHANGE-ME-isis-auth-key>"
 set protocols isis export LOOPBACKS-TO-ISIS
@@ -1701,6 +1767,28 @@ set protocols bgp group SPINE-RR bfd-liveness-detection minimum-interval 300 mul
 # ── EVPN / VXLAN ─────────────────────────────────────────────────────────────
 set vlans V10 vlan-id 10
 set vlans V10 vxlan vni 10010
+set vlans V10 l3-interface irb.10
+#
+# ── SERVER / HOST PORTS + IRB ANYCAST GATEWAY (Z1 — Juniper was the only
+# vendor with no tenant gateway and no access ports; NX-OS got this in X1,
+# Arista in Y4) ──────────────────────────────────────────────────────────────
+set interfaces xe-0/0/0 unit 0 family ethernet-switching interface-mode access
+set interfaces xe-0/0/0 unit 0 family ethernet-switching vlan members V10
+# … repeat for each server port xe-0/0/1 .. xe-0/0/${(dev.ports || 48) - 1}
+set interfaces irb unit 10 family inet address <CHANGE-ME-tenant-anycast-gw>/24 virtual-gateway-address <CHANGE-ME-tenant-anycast-vip>
+set routing-instances TENANT-A instance-type vrf
+set routing-instances TENANT-A interface irb.10
+set routing-instances TENANT-A route-distinguisher ${lo0ip}:50000
+set routing-instances TENANT-A vrf-target target:65000:50000
+set routing-instances TENANT-A protocols evpn ip-prefix-routes advertise direct-nexthop
+set routing-instances TENANT-A protocols evpn ip-prefix-routes encapsulation vxlan
+set routing-instances TENANT-A protocols evpn ip-prefix-routes vni 50000
+set switch-options vxlan-routing overlay-ecmp
+#
+# ── FIB ECMP (Junos needs an explicit forwarding-table policy — multipath
+# alone installs multiple RIB routes but programs ONE next-hop; Z1/J3-6) ─────
+set policy-options policy-statement LOAD-BALANCE then load-balance per-packet
+set routing-options forwarding-table export LOAD-BALANCE
 set protocols evpn encapsulation vxlan
 set protocols evpn extended-vni-list all
 set protocols evpn default-gateway no-gateway-community
@@ -3312,6 +3400,15 @@ nv set service snmp-server username netmon auth-sha <CHANGE-ME-snmp-auth-pass> e
 nv set interface lo ip address ${lo0ip}/32
 nv set interface swp1-${ports} link mtu 9216
 nv set interface swp1-${ports} link state up
+${isSpine ? '' : `#
+# ── GPU SERVER PORTS (Z1 — swp1-${ports - uplinks} are cabled to compute nodes but had no
+# L3 config at all: 512 GPUs had no network. Rail-optimized L3-to-the-host:
+# each server port is a routed /31 in the default VRF, RoCE DSCP trust is
+# inherited from the qos roce profile below.) ────────────────────────────────
+nv set interface swp1-${ports - uplinks} ip address <CHANGE-ME-host-p2p>/31
+nv set vrf default router bgp address-family ipv4-unicast network <CHANGE-ME-host-subnet>
+# (the host prefixes reach the fabric via the redistribute-connected above)
+#`}
 
 # ── BGP eBGP spine-leaf, unnumbered (RFC 7938) ───────────────────────────────
 nv set router bgp enable on
