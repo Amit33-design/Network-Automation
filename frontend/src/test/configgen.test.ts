@@ -1548,3 +1548,60 @@ describe('NVIDIA Cumulus NVUE (group Y6)', () => {
     expect(c['s1']).not.toMatch(/^auto swp\d+-\d+$/m)  // invalid ifupdown2 range
   })
 })
+
+// ── Y7: firewall ↔ fabric integration ───────────────────────────────────────────
+
+describe('Firewall/fabric handoff (group Y7)', () => {
+  function dcDesign() {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'IAD-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', role: 'spine', ports: 36 }),
+      makeDevice({ id: 's2', hostname: 'IAD-SPINE-A02', vendor: 'Cisco', subLayer: 'spine', role: 'spine', ports: 36 }),
+      makeDevice({ id: 'l1', hostname: 'IAD-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2, uplinkStart: 49 }),
+      makeDevice({ id: 'f1', hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
+      makeDevice({ id: 'f2', hostname: 'IAD-FW-A02', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  it('spine configures a routed handoff port per firewall (BOM cabled them; nothing was configured before)', () => {
+    const c = dcDesign()
+    expect(c['s1']).toMatch(/description FW-HANDOFF: IAD-FW-A01/)
+    expect(c['s1']).toMatch(/description FW-HANDOFF: IAD-FW-A02/)
+    expect(c['s1']).toMatch(/FW-HANDOFF: IAD-FW-A01[\s\S]*?no switchport[\s\S]*?ip address 10\.98\.1\.0\/31/)
+  })
+
+  it('the FTD manifest INSIDE side matches the fabric handoff /31s (both ends agree)', () => {
+    const c = dcDesign()
+    // spine owns .0, firewall claims .1 of the same /31
+    expect(c['s1']).toMatch(/ip address 10\.98\.1\.0\/31/)
+    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.1\/31\s+← IAD-SPINE-A01/)
+    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.2\.1\/31\s+← IAD-SPINE-A02/)
+    // second firewall takes the next /31 in each spine's block
+    expect(c['s1']).toMatch(/FW-HANDOFF: IAD-FW-A02[\s\S]*?ip address 10\.98\.1\.2\/31/)
+    expect(c['f2']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.3\/31/)
+  })
+
+  it('FTD manifest is design-specific: DC gets tenant/fabric INSIDE-NETS, campus gets VLAN/mgmt', () => {
+    const dcFw = dcDesign()['f1']
+    expect(dcFw).toContain('10.10.0.0/16 (tenant subnets), 10.255.0.0/16 (fabric loopbacks)')
+
+    const campusDevices: BOMDevice[] = [
+      makeDevice({ id: 'd1', hostname: 'IAD-DIST-A01', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', ports: 48, uplinks: 4 }),
+      makeDevice({ id: 'f1', hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
+    ]
+    const campus = generateAllConfigs(campusDevices, 'campus')
+    expect(campus['f1']).toContain('10.10.10.0/24 (VLAN 10 DATA), 10.255.99.0/24 (campus MGMT)')
+    // campus distribution also emits its FW handoff port
+    expect(campus['d1']).toMatch(/description FW-HANDOFF: IAD-FW-A01[\s\S]*?ip address 10\.98\.1\.0 255\.255\.255\.254/)
+    // and the two manifests are no longer byte-identical
+    expect(campus['f1']).not.toBe(dcFw)
+  })
+
+  it('a design with no firewalls emits no handoff block', () => {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'IAD-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', role: 'spine', ports: 36 }),
+      makeDevice({ id: 'l1', hostname: 'IAD-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+    ]
+    expect(generateAllConfigs(devices, 'dc')['s1']).not.toContain('FW-HANDOFF')
+  })
+})

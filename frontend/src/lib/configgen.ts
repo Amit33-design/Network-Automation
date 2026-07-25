@@ -133,6 +133,17 @@ function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:1::${idx + 1}`
   const fabricLinks = renderNxosFabricLinks('spine', dev, allDevices, ipv6Underlay)
+  // Firewall handoff ports (Y7) — routed /31 per firewall, after the leaf links.
+  const fwLinks = fwHandoffPlan(dev, allDevices, 'spine')
+  const fwHandoffBlock = fwLinks.length ? `
+! ── FIREWALL HANDOFF (routed /31 per FW — FW side is the .1 of each pair) ────
+${fwLinks.map(x => `interface Ethernet1/${x.port}
+  description FW-HANDOFF: ${x.fw.hostname}
+  no switchport
+  mtu 9216
+  ip address ${x.ip}/31
+  no shutdown`).join('\n!\n')}
+!` : ''
 
   // GPU fabric: ECN + DCQCN + PFC lossless queuing.
   // Non-GPU: standard 4-class DSCP queuing.
@@ -260,6 +271,7 @@ ${spineBgpNeighbors}
 !
 ! ── SPINE FABRIC INTERFACES (topology-driven from BOM port-math) ────────────
 ${fabricLinks}
+${fwHandoffBlock}
 !
 ${qosBlock}
 !
@@ -433,6 +445,31 @@ function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevi
   isis network point-to-point
   isis metric 10
   no shutdown`).join('\n!\n')
+}
+
+/**
+ * Firewall↔fabric handoff plan (Y7/A-M3): the BOM cables every firewall to
+ * every spine (DC) or distribution switch (campus), but neither end used to
+ * configure those ports — 24 cables landing on unconfigured interfaces. Each
+ * handoff is a routed /31: fabric side .0 (10.98.<myIdx+1>.<fwIdx*2>), FW
+ * side .1. Ports start after the fabric links (spine) / core uplink (dist)
+ * and are dropped (not overflowed) when the SKU runs out of ports.
+ */
+function fwHandoffPlan(
+  dev: BOMDevice,
+  allDevices: BOMDevice[],
+  role: 'spine' | 'distribution',
+): Array<{ port: number; fw: BOMDevice; ip: string }> {
+  const fws = allDevices.filter(d => d.subLayer === 'firewall')
+  if (!fws.length) return []
+  const peers = allDevices.filter(d => d.subLayer === role)
+  const myIdx = Math.max(0, peers.findIndex(d => d.id === dev.id))
+  const firstFree = role === 'spine'
+    ? closFabricLinks('spine', dev, allDevices).length + 1
+    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) + 2) // after the core uplink
+  return fws
+    .map((fw, fi) => ({ port: firstFree + fi, fw, ip: `10.98.${myIdx + 1}.${fi * 2}` }))
+    .filter(x => x.port <= (dev.ports || 48))
 }
 
 /**
@@ -1043,6 +1080,17 @@ function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevic
   const routerIdV6 = `fd00:255:1::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
   const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
+  // Firewall handoff ports (Y7) — routed /31 per firewall, after the leaf links.
+  const fwLinks = fwHandoffPlan(dev, allDevices, 'spine')
+  const fwHandoffBlock = fwLinks.length ? `
+! ── FIREWALL HANDOFF (routed /31 per FW — FW side is the .1 of each pair) ────
+${fwLinks.map(x => `interface Ethernet${x.port}
+  description FW-HANDOFF: ${x.fw.hostname}
+  no switchport
+  mtu 9214
+  ip address ${x.ip}/31
+  no shutdown`).join('\n!\n')}
+!` : ''
   // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1)). Leaf ASNs
   // are PAIR-based (65000 + pairId — an MLAG pair shares one ASN, Y4/A-M2).
   const spineLeafPeers = allDevices
@@ -1126,6 +1174,7 @@ interface Loopback0
 !
 ! ── DOWNLINK INTERFACES (topology-driven from BOM port-math) ────────────────
 ${fabricLinks}
+${fwHandoffBlock}
 !
 ! ── BGP / EVPN OVERLAY ───────────────────────────────────────────────────────
 router bgp ${asn}
@@ -1681,7 +1730,28 @@ export function isFtdModel(model: string): boolean {
 // IOS-XE ZBF for this hardware was the audit's "wrong OS" finding; instead we
 // emit the genuine bootstrap plus a declarative FMC policy manifest the
 // operator implements (or imports) in FMC.
-function ciscoFtdFirewallConfig(dev: BOMDevice, _idx: number): string {
+function ciscoFtdFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase | '' = '', allDevices: BOMDevice[] = []): string {
+  // Y7: the manifest was byte-identical across every design. Derive the real
+  // INSIDE side from the fabric this FW is actually cabled to — DC/GPU fabrics
+  // hand off to spines (tenant + fabric prefixes), campus to the distribution
+  // pair (VLAN 10 data + the mgmt VLAN).
+  const isFabric = useCase === 'dc' || useCase === 'gpu' || useCase === 'multisite'
+  const peerRole = isFabric ? 'spine' : 'distribution'
+  const peers = allDevices.filter(d => d.subLayer === peerRole)
+  const fws = allDevices.filter(d => d.subLayer === 'firewall')
+  const fwIdx = Math.max(0, fws.findIndex(d => d.id === dev.id))
+  // Mirror of fwHandoffPlan: the fabric side owns .0, the firewall side .1.
+  const handoffLines = peers.length
+    ? peers.map((p, pi) => `!   Ethernet1/${2 + pi}  zone=INSIDE  ip=10.98.${pi + 1}.${fwIdx * 2 + 1}/31  ← ${p.hostname} (fabric handoff)`).join('\n')
+    : `!   Ethernet1/2  zone=INSIDE   ip=<CHANGE-ME-inside-ip>/<CHANGE-ME-inside-prefix>  desc=TRUSTED-LAN`
+  const insideNets = isFabric
+    ? '10.10.0.0/16 (tenant subnets), 10.255.0.0/16 (fabric loopbacks)'
+    : '10.10.10.0/24 (VLAN 10 DATA), 10.255.99.0/24 (campus MGMT)'
+  const dmzPort = 2 + Math.max(peers.length, 1)
+  const routingLines = peers.length
+    ? peers.map((p, pi) => `!   ${isFabric ? '10.10.0.0/16' : '10.10.10.0/24'} via 10.98.${pi + 1}.${fwIdx * 2} (${p.hostname}) — ECMP across the ${peers.length} handoff link(s)`).join('\n')
+    : '!   <CHANGE-ME-inside-net> via <CHANGE-ME-inside-gateway>'
+
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
 ! Role   : Internet Perimeter Firewall (NGFW)
@@ -1705,17 +1775,20 @@ configure manager add <CHANGE-ME-fmc-ip> <CHANGE-ME-registration-key>
 !
 ! [Interfaces]  (FMC > Devices > Interface)
 !   Ethernet1/1  zone=OUTSIDE  ip=<CHANGE-ME-outside-ip>/<CHANGE-ME-outside-prefix>  desc=UNTRUSTED-INTERNET
-!   Ethernet1/2  zone=INSIDE   ip=<CHANGE-ME-inside-ip>/<CHANGE-ME-inside-prefix>    desc=TRUSTED-LAN
-!   Ethernet1/3  zone=DMZ      ip=<CHANGE-ME-dmz-ip>/<CHANGE-ME-dmz-prefix>          desc=PUBLIC-SERVERS
+${handoffLines}
+!   Ethernet1/${dmzPort}  zone=DMZ      ip=<CHANGE-ME-dmz-ip>/<CHANGE-ME-dmz-prefix>          desc=PUBLIC-SERVERS
 !
 ! [Routing]     (FMC > Devices > Routing)
 !   static 0.0.0.0/0 via <CHANGE-ME-upstream-gateway> (interface Ethernet1/1)
+${routingLines}
 !
 ! [Access Control Policy: ACP-${dev.hostname}]  default action: BLOCK ALL
 !   10  allow  INSIDE  -> OUTSIDE  apps: HTTP,HTTPS,DNS,NTP,SSH   inspect: IPS+file policy
 !   20  allow  INSIDE  -> DMZ      ports: tcp/443,tcp/22           inspect: IPS
 !   30  allow  OUTSIDE -> DMZ      ports: tcp/443,tcp/25,udp/53    inspect: IPS+file policy
 !   40  deny   any     -> any      log at end of ACP (implicit)
+!
+! [Object: INSIDE-NETS]  ${insideNets}
 !
 ! [NAT Policy]  (FMC > Devices > NAT)
 !   auto  dynamic  source INSIDE-NETS -> interface Ethernet1/1 (PAT)
@@ -2335,7 +2408,7 @@ commit
 // get PortFast + BPDU Guard. Distribution pair runs HSRPv2 for the SVI default
 // gateways (active/standby). IGMP snooping (+ querier on distribution) is added
 // when voice/video app types are present.
-function iosxeCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[]): string {
+function iosxeCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[], allDevices: BOMDevice[] = []): string {
   const isDist = dev.subLayer === 'distribution'
   const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
   const hasVoice = appTypes.includes('voice')
@@ -2361,6 +2434,16 @@ ${hasVoice ? `vlan 20
     const plPort2 = plPort1 + 1
     // First uplink port carries the routed uplink to core (Y3 / C-5).
     const coreUplinkPort = Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) + 1)
+    // Firewall handoff ports (Y7) — routed /31 per firewall, after the core uplink.
+    const fwLinks = fwHandoffPlan(dev, allDevices, 'distribution')
+    const fwHandoffBlock = fwLinks.length ? `
+! ── FIREWALL HANDOFF (routed /31 per FW — FW side is the .1 of each pair) ────
+${fwLinks.map(x => `interface TenGigabitEthernet1/0/${x.port}
+  description FW-HANDOFF: ${x.fw.hostname}
+  no switchport
+  ip address ${x.ip} 255.255.255.254
+  no shutdown`).join('\n!\n')}
+!` : ''
     const igmpBlock = needsIgmp ? `
 ! ── IGMP SNOOPING / QUERIER (voice/video app types present) ──────────────────
 ip igmp snooping
@@ -2449,7 +2532,7 @@ interface range TenGigabitEthernet1/0/1-${plPort1 - 1}
   switchport trunk native vlan 99
   switchport trunk allowed vlan 10${hasVoice ? ',20' : ''},99
   no shutdown
-!
+!${fwHandoffBlock}
 ! ── PEER LINK to ${peerHostname} (L2 trunk for SVI / HSRP heartbeat) ─────────
 interface Port-channel${pairId}
   description PEER-LINK to ${peerHostname}
@@ -4873,14 +4956,14 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
 
   if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx)
   if (isOranSubLayer(l))                                             return oranConfig(dev, idx)
-  if (v === 'Cisco'     && l === 'firewall')                         return isFtdModel(dev.model) ? ciscoFtdFirewallConfig(dev, idx) : ciscoFirewallConfig(dev, idx)
+  if (v === 'Cisco'     && l === 'firewall')                         return isFtdModel(dev.model) ? ciscoFtdFirewallConfig(dev, idx, useCase, allDevices) : ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'sdwan-controller')                 return sdwanControllerConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge' && isSdWanEdge(dev))     return sdwanEdgeConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge' && isIosXrPlatform(dev))  return iosxrPeConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
   if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
   if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
-  if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes)
+  if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes, allDevices)
   if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
   if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
   if (v === 'Arista'    && (l === 'distribution' || l === 'access')) return aristaCampusConfig(dev, idx)
