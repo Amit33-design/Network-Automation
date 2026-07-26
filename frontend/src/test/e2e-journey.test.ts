@@ -200,6 +200,32 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
     expect(o.speed, `${ctx}: ${o.partNumber} (${o.speed}) on a ${link.speed} link`).toBe(link.speed)
   }
 
+  // 8a''''. Z3: the north-south handoff. A firewall cabled to a spine can never
+  // work — an eBGP spine is not a VTEP and carries no tenant VRF. Every cabled
+  // firewall link must land on a border leaf (fabric) or distribution (campus),
+  // and exactly one device tier must configure it.
+  if (p.devices.some(d => d.subLayer === 'firewall')) {
+    expect(p.cabling.find(c => c.fromLayer === 'firewall' && c.toLayer === 'spine'),
+      `${ctx}: firewall cabled to a spine, which has no tenant VRF to route into`).toBeUndefined()
+    for (const s of p.devices.filter(d => d.subLayer === 'spine')) {
+      expect(p.configs[s.id] ?? '', `${ctx}: spine ${s.hostname} still configures a firewall handoff`)
+        .not.toContain('FW-HANDOFF')
+    }
+    const handoffDevices = p.devices.filter(d => (p.configs[d.id] ?? '').includes('FW-HANDOFF'))
+    for (const d of handoffDevices) {
+      expect(['leaf', 'distribution'], `${ctx}: ${d.subLayer} must not own the handoff`).toContain(d.subLayer)
+    }
+    // Presence is asserted for the vendors whose leaf carries a tenant VRF
+    // today. Nokia / NVIDIA / Dell / Extreme leaves have no tenant VRF at all,
+    // so their handoff is tracked separately as Z3b — widen this set as each
+    // lands, and the parity gap can never silently reopen.
+    const TENANT_VRF_VENDORS = new Set(['Cisco', 'Arista', 'Juniper'])
+    const leaves = p.devices.filter(d => d.subLayer === 'leaf')
+    if (leaves.length && TENANT_VRF_VENDORS.has(leaves[0].vendor)) {
+      expect(handoffDevices.length, `${ctx}: no device configures the cabled firewall handoff`).toBeGreaterThan(0)
+    }
+  }
+
   // 8b. TCO capex must equal the BOM grand total (no drift between cost views).
   const tco = computeTCO(p.devices)
   expect(tco.capex, `${ctx}: TCO capex ${tco.capex} != grandTotal ${p.grandTotal}`).toBe(p.grandTotal)

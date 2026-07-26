@@ -922,9 +922,10 @@ describe('BOM physical honesty (group Z2)', () => {
     expect(link.quantity).toBe(Math.min(leafSupply, nicSupply))
   })
 
-  it('validateBOM ERRORS when firewall handoffs do not fit the spine port budget', () => {
-    // Hand-built: a 36-port spine already carrying 34 fabric links cannot also
-    // terminate 4 firewall handoffs — the generator silently drops the extras.
+  it('validateBOM ERRORS when firewall handoffs do not fit the border-leaf port budget', () => {
+    // Hand-built: an 8-port border leaf whose 4 uplinks + peer-link leave 2
+    // host ports cannot terminate 4 firewall handoffs — the generator would
+    // silently drop the extras while the BOM still bills the cables (Z2/Z3).
     const mk = (over: Partial<BOMDevice>): BOMDevice => ({
       id: over.id!, hostname: over.hostname ?? over.id!, role: over.role ?? '', subLayer: over.subLayer!,
       model: over.model ?? 'M', vendor: over.vendor ?? 'Cisco', count: 1, unitPrice: 1000, totalPrice: 1000,
@@ -932,11 +933,22 @@ describe('BOM physical honesty (group Z2)', () => {
     })
     const devices: BOMDevice[] = [
       ...Array.from({ length: 2 }, (_, i) => mk({ id: `sp${i}`, subLayer: 'spine', ports: 36 })),
-      ...Array.from({ length: 34 }, (_, i) => mk({ id: `lf${i}`, subLayer: 'leaf', ports: 48, uplinks: 2 })),
+      ...Array.from({ length: 4 }, (_, i) => mk({ id: `lf${i}`, subLayer: 'leaf', ports: 8, uplinks: 4 })),
       ...Array.from({ length: 4 }, (_, i) => mk({ id: `fw${i}`, subLayer: 'firewall', ports: 8, speed: '40G' })),
     ]
     const issues = validateBOM(devices, { useCase: 'dc', totalEndpoints: 500 })
     const err = issues.find(i => i.severity === 'error' && /firewall handoff/i.test(i.message))
     expect(err, `expected a firewall port-budget error, got: ${issues.map(i => i.message).join(' | ')}`).toBeTruthy()
+  })
+
+  it('firewalls are cabled to the BORDER LEAVES, never to the spines (Z3)', () => {
+    const devices = buildDeviceList(DC)
+    expect(devices.some(d => d.subLayer === 'firewall')).toBe(true)
+    const cabling = buildCabling(devices, DIST)
+    expect(cabling.find(c => c.fromLayer === 'firewall' && c.toLayer === 'spine')).toBeUndefined()
+    const fwLeaf = cabling.find(c => c.fromLayer === 'firewall' && c.toLayer === 'leaf')!
+    expect(fwLeaf).toBeTruthy()
+    const fwCount = devices.filter(d => d.subLayer === 'firewall').length
+    expect(fwLeaf.quantity).toBe(fwCount * 2)   // 2 border leaves, not every leaf
   })
 })
