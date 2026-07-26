@@ -913,8 +913,14 @@ const LAYER_CONNECTS: Array<{
   { from: 'wan-edge',     to: 'distribution', key: 'wan-edge'    },
   { from: 'wan-edge',     to: 'spine',        key: 'wan-edge'    },
   { from: 'firewall',     to: 'distribution', key: 'wan-edge'    },
-  { from: 'firewall',     to: 'spine',        key: 'spine-leaf'  },
+  // Z3: the firewall lands on the BORDER LEAVES, not the spines. An eBGP spine
+  // is not a VTEP and carries no tenant VRF, so it had nothing to route the
+  // firewall's traffic into — the handoff was architecturally impossible.
+  { from: 'firewall',     to: 'leaf',         key: 'spine-leaf'  },
 ]
+
+/** Leaves that own the north-south firewall handoff — mirrors configgen. */
+const BORDER_LEAF_COUNT = 2
 
 export function buildCabling(
   devices: BOMDevice[],
@@ -957,6 +963,9 @@ export function buildCabling(
       const leafSupply = leafDevs.reduce((s, d) => s + Math.max(0, d.ports - (d.uplinks ?? 0)), 0)
       const nicSupply  = hostDevs.reduce((s, d) => s + Math.max(1, d.ports || 1), 0)
       qty = Math.min(leafSupply, nicSupply)
+    } else if (conn.from === 'firewall' && conn.to === 'leaf') {
+      // Only the border leaves terminate the handoff (Z3), not every leaf.
+      qty = froms.length * Math.min(tos.length, BORDER_LEAF_COUNT)
     } else {
       qty = froms.length * tos.length
     }
@@ -1159,18 +1168,20 @@ export function validateBOM(
       })
     }
 
-    // Z2: cap-vs-truncate. The generator silently drops links past a spine's
-    // port count, so the BOM can bill cables that land on unconfigured ports
-    // (a 36-port 9336C carrying 33 fabric links fits only 3 of 4 firewalls).
+    // Z2 cap-vs-truncate, re-homed onto the border leaves in Z3: the generator
+    // silently drops handoffs past the SKU's port count, so the BOM can bill
+    // cables that land on unconfigured ports.
     const fwCount = devices.filter(d => d.subLayer === 'firewall').length
-    if (fwCount > 0 && spines.length > 0) {
-      const fabricPerSpine = Math.ceil((leaves.length * leafUplinks) / spines.length)
-      const freePerSpine = spineSample.ports - fabricPerSpine
-      if (freePerSpine < fwCount) {
+    if (fwCount > 0 && leaves.length > 0) {
+      // Border leaves keep their uplink block; the handoff eats host ports.
+      const hostPorts = leafSample.uplinkStart
+        ? leafSample.ports
+        : Math.max(1, leafSample.ports - leafUplinks - 2)
+      if (fwCount >= hostPorts) {
         issues.push({
           severity: 'error',
           category: 'fan-out',
-          message: `${spineSample.model} has only ${Math.max(0, freePerSpine)} free port(s) after ${fabricPerSpine} fabric links, but ${fwCount} firewall handoffs are cabled to each spine. ${(fwCount - Math.max(0, freePerSpine)) * spines.length} cabled link(s) would land on unconfigured ports — use a higher-radix spine, fewer firewalls, or dedicated border leaves.`,
+          message: `${fwCount} firewall handoffs do not fit the ${leafSample.model} border leaf, which has only ${hostPorts} host-facing port(s) after its fabric uplinks. Cabled links would land on unconfigured ports — use a higher-radix border leaf or fewer firewalls.`,
         })
       }
     }

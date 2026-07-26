@@ -389,6 +389,21 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
     computed as `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2 [+1 for
     leaf]}` so the spine and leaf side of each link always agree on the same
     subnet without manual cabling notes.
+- **`borderLeaves(allDevices)`** / **`isBorderLeaf(dev, allDevices)`** *(Z3,
+  exported)* — the **last leaf pair** owns the north-south firewall handoff.
+  The firewall used to attach to the SPINES, which is architecturally
+  impossible: an eBGP spine is not a VTEP and carries no tenant VRF, so it had
+  nothing to route the firewall's traffic into. Border leaves put the handoff
+  next to `TENANT-A` and the type-5 default it originates.
+- **`leafHostPortMax(dev, allDevices)`** *(Z3)* — highest server-facing port on
+  a leaf; a border leaf gives up the top `firewallCount` ports to the handoff,
+  so the server-access range and the handoff can never claim the same
+  interface. **`nextIp(ip)`** returns the far side of a /31.
+- **`fwHandoffPlan(dev, allDevices, 'border-leaf' | 'distribution')`** — one
+  routed /31 per firewall (`10.98.<peerIdx+1>.<fwIdx*2>` fabric side, `.1` FW
+  side). Emitted by the NX-OS / EOS / Junos **leaf** and the IOS-XE
+  distribution; the campus handoff also joins OSPF area 0 and originates a
+  default. See Z3b for the vendors still missing it.
 - **`speedToGbps(speed)`** / **`fabricRateMismatch(role, dev, allDevices)`**
   *(Z2)* — most catalog spines are 400G while leaf uplink blocks are 100G, so
   the faster end's cage has to be told to run the optic the BOM bills or the

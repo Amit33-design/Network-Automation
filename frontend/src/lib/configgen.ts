@@ -133,17 +133,10 @@ function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:1::${idx + 1}`
   const fabricLinks = renderNxosFabricLinks('spine', dev, allDevices, ipv6Underlay)
-  // Firewall handoff ports (Y7) — routed /31 per firewall, after the leaf links.
-  const fwLinks = fwHandoffPlan(dev, allDevices, 'spine')
-  const fwHandoffBlock = fwLinks.length ? `
-! ── FIREWALL HANDOFF (routed /31 per FW — FW side is the .1 of each pair) ────
-${fwLinks.map(x => `interface Ethernet1/${x.port}
-  description FW-HANDOFF: ${x.fw.hostname}
-  no switchport
-  mtu 9216
-  ip address ${x.ip}/31
-  no shutdown`).join('\n!\n')}
-!` : ''
+  // Z3: the firewall handoff moved OFF the spine. An eBGP spine is not a VTEP
+  // and holds no tenant VRF, so it could never route firewall traffic into
+  // TENANT-A — the handoff now lives on the border leaves.
+  const fwHandoffBlock = ''
 
   // GPU fabric: ECN + DCQCN + PFC lossless queuing.
   // Non-GPU: standard 4-class DSCP queuing.
@@ -493,28 +486,73 @@ function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevi
 }
 
 /**
- * Firewall↔fabric handoff plan (Y7/A-M3): the BOM cables every firewall to
- * every spine (DC) or distribution switch (campus), but neither end used to
- * configure those ports — 24 cables landing on unconfigured interfaces. Each
- * handoff is a routed /31: fabric side .0 (10.98.<myIdx+1>.<fwIdx*2>), FW
- * side .1. Ports start after the fabric links (spine) / core uplink (dist)
- * and are dropped (not overflowed) when the SKU runs out of ports.
+ * Border leaves (Z3) — the leaves that own the north-south handoff. The
+ * firewall used to attach to the SPINES, which cannot work in any design: an
+ * eBGP spine is not a VTEP and carries no tenant VRF, so it has nothing to
+ * route the firewall's traffic INTO. Attaching to the last leaf pair (already
+ * a vPC/MLAG pair, so the handoff is redundant) puts the firewall next to the
+ * TENANT-A VRF and the type-5 default it needs to originate.
+ */
+export function borderLeaves(allDevices: BOMDevice[]): BOMDevice[] {
+  const leaves = allDevices.filter(d => d.subLayer === 'leaf')
+  if (leaves.length <= 2) return leaves
+  // Last MLAG pair. Leaves are emitted in pair order (idx 0&1, 2&3, …), so an
+  // even leaf count makes the final two a complete pair.
+  return leaves.slice(-2)
+}
+
+/** True when this leaf owns the firewall handoff. */
+export function isBorderLeaf(dev: BOMDevice, allDevices: BOMDevice[]): boolean {
+  return borderLeaves(allDevices).some(d => d.id === dev.id)
+}
+
+/**
+ * Firewall↔fabric handoff plan (Y7/A-M3, re-homed in Z3): the BOM cables every
+ * firewall to the border leaves (DC) or every distribution switch (campus),
+ * and both ends must configure those ports — they used to land on unconfigured
+ * interfaces. Each handoff is a routed /31: fabric side .0
+ * (10.98.<myIdx+1>.<fwIdx*2>), FW side .1. Border-leaf ports sit just above
+ * the host block; distribution ports after the core uplink. Ports beyond the
+ * SKU are dropped rather than overflowed (validateBOM errors on that).
  */
 function fwHandoffPlan(
   dev: BOMDevice,
   allDevices: BOMDevice[],
-  role: 'spine' | 'distribution',
+  role: 'border-leaf' | 'distribution',
 ): Array<{ port: number; fw: BOMDevice; ip: string }> {
   const fws = allDevices.filter(d => d.subLayer === 'firewall')
   if (!fws.length) return []
-  const peers = allDevices.filter(d => d.subLayer === role)
+  if (role === 'border-leaf' && !isBorderLeaf(dev, allDevices)) return []
+  const peers = role === 'border-leaf'
+    ? borderLeaves(allDevices)
+    : allDevices.filter(d => d.subLayer === role)
   const myIdx = Math.max(0, peers.findIndex(d => d.id === dev.id))
-  const firstFree = role === 'spine'
-    ? closFabricLinks('spine', dev, allDevices).length + 1
-    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) + 2) // after the core uplink
+  const firstFree = role === 'border-leaf'
+    ? leafHostPortMax(dev, allDevices) + 1                     // just above the host block
+    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) + 2)  // after the core uplink
   return fws
     .map((fw, fi) => ({ port: firstFree + fi, fw, ip: `10.98.${myIdx + 1}.${fi * 2}` }))
     .filter(x => x.port <= (dev.ports || 48))
+}
+
+/** The far side of a /31 whose near side is `ip` (…​.0 → …​.1). */
+function nextIp(ip: string): string {
+  const o = ip.split('.')
+  return [...o.slice(0, 3), String(Number(o[3]) + 1)].join('.')
+}
+
+/**
+ * Highest server-facing port on a leaf: the access block below the fabric
+ * uplinks. A border leaf gives up the top of that block to the firewall
+ * handoffs (Z3), so the two never claim the same interface.
+ */
+function leafHostPortMax(dev: BOMDevice, allDevices: BOMDevice[] = []): number {
+  const base = dev.uplinkStart
+    ? (dev.ports || 48)
+    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 2)
+  if (!isBorderLeaf(dev, allDevices)) return base
+  const fwCount = allDevices.filter(d => d.subLayer === 'firewall').length
+  return Math.max(1, base - fwCount)
 }
 
 /**
@@ -586,12 +624,9 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   const leafAsn  = 65001 + idx
   const routerId = `10.255.2.${idx + 1}`
   const vtepIp   = `10.254.0.${idx + 1}`
-  // Host/server ports: the access block below the fabric uplinks. With a
-  // dedicated uplink range the whole port block is host-facing; otherwise the
-  // uplinks + peer-link members occupy the top of it.
-  const hostPortMax = dev.uplinkStart
-    ? (dev.ports || 48)
-    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 2)
+  // Host/server ports: the access block below the fabric uplinks (a border
+  // leaf gives up the top of it to the firewall handoffs — Z3).
+  const hostPortMax = leafHostPortMax(dev, allDevices)
   // Real spine eBGP peers — ONLY the spines this leaf actually has a link to
   // (Z1): with uplinks < spineCount the staggered planner wires a subset, and
   // peering the rest left permanently-Idle sessions whose loopbacks are >2 hops
@@ -608,6 +643,37 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   const routerIdV6 = `fd00:255:2::${idx + 1}`
   const qosBlock = isGpu ? nxosGpuQoS() : nxosStdQoS()
   const fabricLinks = renderNxosFabricLinks('leaf', dev, allDevices, ipv6Underlay)
+  // Z3 — north-south handoff. The firewall used to attach to the SPINES, which
+  // have no tenant VRF and are not VTEPs, so nothing could route into TENANT-A
+  // and no default was ever originated into the fabric. The border leaves now
+  // own the handoff inside the VRF and originate the type-5 default.
+  const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
+  const fwHandoffBlock = fwLinks.length ? `
+! ── FIREWALL HANDOFF (border leaf, routed /31 inside TENANT-A — FW side .1) ──
+${fwLinks.map(x => `interface Ethernet1/${x.port}
+  description FW-HANDOFF: ${x.fw.hostname}
+  no switchport
+  vrf member TENANT-A
+  mtu 9216
+  ip address ${x.ip}/31
+  no shutdown`).join('\n!\n')}
+!
+! Default route toward the perimeter firewall, inside the tenant VRF.
+vrf context TENANT-A
+${fwLinks.map(x => `  ip route 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
+!` : ''
+  // The tenant VRF BGP block: without it no type-5 (IP-prefix) routes are
+  // advertised at all. On a border leaf it also originates the default the
+  // rest of the fabric needs for north-south traffic (Z3).
+  const tenantVrfBgp = `  !
+  vrf TENANT-A
+    address-family ipv4 unicast
+      advertise l2vpn evpn
+      redistribute direct route-map ALLOW-ALL
+      maximum-paths 64${fwLinks.length ? `
+      ! Border leaf: inject the perimeter default into EVPN as a type-5 route.
+      default-information originate always
+      redistribute static route-map ALLOW-ALL` : ''}`
   const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
   const vpcRolePriority = isPrimary ? 8192 : 16384
   // vPC anycast VTEP VIP — shared secondary on loopback1 for the HA pair, so
@@ -765,6 +831,9 @@ router bgp ${leafAsn}
   !
   ! ── Spine eBGP peers (auto-generated from the fabric) ─────────────────────
 ${leafBgpNeighbors}
+${tenantVrfBgp}
+!
+route-map ALLOW-ALL permit 10
 !
 ! ── VXLAN NVE (VTEP) ─────────────────────────────────────────────────────────
 interface nve1
@@ -800,6 +869,7 @@ interface Ethernet1/1-${hostPortMax}
 ! Dual-homed servers: bundle the pair member's matching port into a vPC
 ! port-channel, e.g.  interface port-channel101 / vpc 101 / switchport access vlan 10
 vpc orphan-port suspend
+${fwHandoffBlock}
 !
 ${qosBlock}
 !
@@ -1156,17 +1226,8 @@ function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevic
   const routerIdV6 = `fd00:255:1::${idx + 1}`
   const qos      = isGpu ? aristaGpuQoS() : ''
   const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
-  // Firewall handoff ports (Y7) — routed /31 per firewall, after the leaf links.
-  const fwLinks = fwHandoffPlan(dev, allDevices, 'spine')
-  const fwHandoffBlock = fwLinks.length ? `
-! ── FIREWALL HANDOFF (routed /31 per FW — FW side is the .1 of each pair) ────
-${fwLinks.map(x => `interface Ethernet${x.port}
-  description FW-HANDOFF: ${x.fw.hostname}
-  no switchport
-  mtu 9214
-  ip address ${x.ip}/31
-  no shutdown`).join('\n!\n')}
-!` : ''
+  // Z3: firewall handoff moved to the border leaves (a spine has no tenant VRF).
+  const fwHandoffBlock = ''
   // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1)). Leaf ASNs
   // are PAIR-based (65000 + pairId — an MLAG pair shares one ASN, Y4/A-M2).
   const spineLeafPeers = allDevices
@@ -1322,10 +1383,29 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const qos      = isGpu ? aristaGpuQoS() : ''
   const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices, ipv6Underlay)
   // Real spine peers from the fabric (spine lo0 10.255.1.(i+1), ASN 65000).
-  // Host/server ports: the access block below the uplinks + peer-link members.
-  const hostPortMax = dev.uplinkStart
-    ? (dev.ports || 32)
-    : Math.max(1, (dev.ports || 32) - (dev.uplinks || 0) - 2)
+  // Host/server ports: the access block below the uplinks + peer-link members
+  // (a border leaf gives up its top ports to the firewall handoffs — Z3).
+  const hostPortMax = leafHostPortMax(dev, allDevices)
+  // Z3 — north-south handoff on the border leaves, inside TENANT-A.
+  const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
+  const fwHandoffBlock = fwLinks.length ? `
+! ── FIREWALL HANDOFF (border leaf, routed /31 inside TENANT-A — FW side .1) ──
+${fwLinks.map(x => `interface Ethernet${x.port}
+  description FW-HANDOFF: ${x.fw.hostname}
+  no switchport
+  vrf TENANT-A
+  mtu 9214
+  ip address ${x.ip}/31
+  no shutdown`).join('\n!\n')}
+!
+${fwLinks.map(x => `ip route vrf TENANT-A 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
+!` : ''
+  // Border leaf injects the perimeter default into EVPN as a type-5 route so
+  // the rest of the fabric has a north-south path (Z3).
+  const tenantDefaultOriginate = fwLinks.length ? `
+    ! Border leaf: originate the perimeter default into the tenant VRF.
+    redistribute static
+    network 0.0.0.0/0` : ''
   // Only the spines this leaf actually links to (Z1 — see nxosLeafConfig).
   const linkedSpines = new Set(closFabricLinks('leaf', dev, allDevices).map(l => l.peerHostname))
   const leafSpinePeers = allDevices
@@ -1419,7 +1499,7 @@ interface Ethernet1-${hostPortMax}
   spanning-tree bpduguard enable
   mtu 9214
   no shutdown
-!
+!${fwHandoffBlock}
 ! ── BGP / EVPN ───────────────────────────────────────────────────────────────
 router bgp ${leafAsn}
   router-id ${routerId}
@@ -1462,7 +1542,7 @@ ${leafSpinePeerBlock}
     rd ${routerId}:50000
     route-target import evpn 65000:50000
     route-target export evpn 65000:50000${dciL3RtLines}
-    redistribute connected
+    redistribute connected${tenantDefaultOriginate}
 !
 ! ── TENANT VRF / ANYCAST GATEWAY (Y4/A-M1 — parity with NX-OS X1) ───────────
 vrf instance TENANT-A
@@ -1722,6 +1802,22 @@ function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, pro
     .join('\n')
   const leafSpineNeighbors = spineNeighborLines || 'set protocols bgp group SPINE-RR neighbor <CHANGE-ME-spine-lo0> peer-as 65000'
   const fabricLinks = renderJuniperFabricLinks('leaf', dev, allDevices)
+  // Z3 — north-south handoff on the border leaves, inside the TENANT-A vrf,
+  // with the perimeter default originated into EVPN as a type-5 route. It used
+  // to hang off the spines, which carry no tenant VRF at all.
+  const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
+  const fwHandoffBlock = fwLinks.length ? `#
+# ── FIREWALL HANDOFF (border leaf, routed /31 inside TENANT-A — FW side .1) ──
+${fwLinks.flatMap(x => [
+  `set interfaces xe-0/0/${x.port - 1} description "FW-HANDOFF: ${x.fw.hostname}"`,
+  `set interfaces xe-0/0/${x.port - 1} unit 0 family inet address ${x.ip}/31`,
+  `set routing-instances TENANT-A interface xe-0/0/${x.port - 1}.0`,
+  `set routing-instances TENANT-A routing-options static route 0.0.0.0/0 next-hop ${nextIp(x.ip)}`,
+]).join('\n')}
+set policy-options policy-statement ORIGINATE-DEFAULT from route-filter 0.0.0.0/0 exact
+set policy-options policy-statement ORIGINATE-DEFAULT then accept
+set routing-instances TENANT-A protocols evpn ip-prefix-routes export ORIGINATE-DEFAULT
+` : ''
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
   const roceBlock = needsRoce ? juniperRoceBlock() : ''
   // Storage lossless only when the RoCE block (which already has a STORAGE
@@ -1827,6 +1923,7 @@ set routing-instances TENANT-A protocols evpn ip-prefix-routes advertise direct-
 set routing-instances TENANT-A protocols evpn ip-prefix-routes encapsulation vxlan
 set routing-instances TENANT-A protocols evpn ip-prefix-routes vni 50000
 set switch-options vxlan-routing overlay-ecmp
+${fwHandoffBlock}
 #
 # ── FIB ECMP (Junos needs an explicit forwarding-table policy — multipath
 # alone installs multiple RIB routes but programs ONE next-hop; Z1/J3-6) ─────
@@ -1864,11 +1961,12 @@ export function isFtdModel(model: string): boolean {
 function ciscoFtdFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase | '' = '', allDevices: BOMDevice[] = []): string {
   // Y7: the manifest was byte-identical across every design. Derive the real
   // INSIDE side from the fabric this FW is actually cabled to — DC/GPU fabrics
-  // hand off to spines (tenant + fabric prefixes), campus to the distribution
-  // pair (VLAN 10 data + the mgmt VLAN).
+  // hand off to the BORDER LEAVES (Z3 — a spine has no tenant VRF to route
+  // into), campus to the distribution pair (VLAN 10 data + the mgmt VLAN).
   const isFabric = useCase === 'dc' || useCase === 'gpu' || useCase === 'multisite'
-  const peerRole = isFabric ? 'spine' : 'distribution'
-  const peers = allDevices.filter(d => d.subLayer === peerRole)
+  const peers = isFabric
+    ? borderLeaves(allDevices)
+    : allDevices.filter(d => d.subLayer === 'distribution')
   const fws = allDevices.filter(d => d.subLayer === 'firewall')
   const fwIdx = Math.max(0, fws.findIndex(d => d.id === dev.id))
   // Mirror of fwHandoffPlan: the fabric side owns .0, the firewall side .1.
@@ -2569,11 +2667,20 @@ ${hasVoice ? `vlan 20
     const fwLinks = fwHandoffPlan(dev, allDevices, 'distribution')
     const fwHandoffBlock = fwLinks.length ? `
 ! ── FIREWALL HANDOFF (routed /31 per FW — FW side is the .1 of each pair) ────
+! Z3: the handoff /31s sit in OSPF (they were in no IGP, so no other campus
+! device could reach the perimeter) and the default is originated from here.
 ${fwLinks.map(x => `interface TenGigabitEthernet1/0/${x.port}
   description FW-HANDOFF: ${x.fw.hostname}
   no switchport
   ip address ${x.ip} 255.255.255.254
+  ip ospf 10 area 0
   no shutdown`).join('\n!\n')}
+!
+${fwLinks.map(x => `ip route 0.0.0.0 0.0.0.0 ${nextIp(x.ip)}`).join('\n')}
+!
+router ospf 10
+${fwLinks.map(x => `  network ${x.ip} 0.0.0.1 area 0`).join('\n')}
+  default-information originate
 !` : ''
     const igmpBlock = needsIgmp ? `
 ! ── IGMP SNOOPING / QUERIER (voice/video app types present) ──────────────────

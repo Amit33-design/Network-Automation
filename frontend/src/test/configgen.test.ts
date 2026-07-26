@@ -1557,27 +1557,42 @@ describe('Firewall/fabric handoff (group Y7)', () => {
       makeDevice({ id: 's1', hostname: 'IAD-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', role: 'spine', ports: 36 }),
       makeDevice({ id: 's2', hostname: 'IAD-SPINE-A02', vendor: 'Cisco', subLayer: 'spine', role: 'spine', ports: 36 }),
       makeDevice({ id: 'l1', hostname: 'IAD-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2, uplinkStart: 49 }),
+      // The last leaf PAIR are the border leaves (Z3) — they own the handoff.
+      makeDevice({ id: 'l2', hostname: 'IAD-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2, uplinkStart: 49 }),
+      makeDevice({ id: 'l3', hostname: 'IAD-LEAF-A03', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2, uplinkStart: 49 }),
       makeDevice({ id: 'f1', hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
       makeDevice({ id: 'f2', hostname: 'IAD-FW-A02', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
     ]
     return generateAllConfigs(devices, 'dc')
   }
 
-  it('spine configures a routed handoff port per firewall (BOM cabled them; nothing was configured before)', () => {
+  it('the BORDER LEAF configures a routed handoff port per firewall, inside the tenant VRF (Z3)', () => {
     const c = dcDesign()
-    expect(c['s1']).toMatch(/description FW-HANDOFF: IAD-FW-A01/)
-    expect(c['s1']).toMatch(/description FW-HANDOFF: IAD-FW-A02/)
-    expect(c['s1']).toMatch(/FW-HANDOFF: IAD-FW-A01[\s\S]*?no switchport[\s\S]*?ip address 10\.98\.1\.0\/31/)
+    // Z3: the handoff moved off the spine — an eBGP spine is not a VTEP and
+    // carries no tenant VRF, so it had nothing to route firewall traffic into.
+    expect(c['s1']).not.toContain('FW-HANDOFF')
+    expect(c['l2']).toMatch(/description FW-HANDOFF: IAD-FW-A01/)
+    expect(c['l2']).toMatch(/description FW-HANDOFF: IAD-FW-A02/)
+    expect(c['l2']).toMatch(/FW-HANDOFF: IAD-FW-A01[\s\S]*?vrf member TENANT-A[\s\S]*?ip address 10\.98\.1\.0\/31/)
   })
 
-  it('the FTD manifest INSIDE side matches the fabric handoff /31s (both ends agree)', () => {
+  it('the border leaf routes north-south: VRF default toward the FW + type-5 origination (Z3)', () => {
     const c = dcDesign()
-    // spine owns .0, firewall claims .1 of the same /31
-    expect(c['s1']).toMatch(/ip address 10\.98\.1\.0\/31/)
-    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.1\/31\s+← IAD-SPINE-A01/)
-    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.2\.1\/31\s+← IAD-SPINE-A02/)
-    // second firewall takes the next /31 in each spine's block
-    expect(c['s1']).toMatch(/FW-HANDOFF: IAD-FW-A02[\s\S]*?ip address 10\.98\.1\.2\/31/)
+    expect(c['l2']).toMatch(/vrf context TENANT-A\n\s+ip route 0\.0\.0\.0\/0 10\.98\.1\.1/)
+    expect(c['l2']).toMatch(/vrf TENANT-A[\s\S]*?default-information originate always/)
+    // a non-border leaf gets the tenant VRF but originates nothing
+    expect(c['l1']).toMatch(/vrf TENANT-A[\s\S]*?advertise l2vpn evpn/)
+    expect(c['l1']).not.toContain('default-information originate')
+  })
+
+  it('the FTD manifest INSIDE side matches the border-leaf handoff /31s (both ends agree)', () => {
+    const c = dcDesign()
+    // border leaf owns .0, firewall claims .1 of the same /31
+    expect(c['l2']).toMatch(/ip address 10\.98\.1\.0\/31/)
+    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.1\/31\s+← IAD-LEAF-A02/)
+    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.2\.1\/31\s+← IAD-LEAF-A03/)
+    // second firewall takes the next /31 in each border leaf's block
+    expect(c['l2']).toMatch(/FW-HANDOFF: IAD-FW-A02[\s\S]*?ip address 10\.98\.1\.2\/31/)
     expect(c['f2']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.3\/31/)
   })
 
@@ -1602,7 +1617,9 @@ describe('Firewall/fabric handoff (group Y7)', () => {
       makeDevice({ id: 's1', hostname: 'IAD-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', role: 'spine', ports: 36 }),
       makeDevice({ id: 'l1', hostname: 'IAD-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
     ]
-    expect(generateAllConfigs(devices, 'dc')['s1']).not.toContain('FW-HANDOFF')
+    const noFw = generateAllConfigs(devices, 'dc')
+    expect(noFw['s1']).not.toContain('FW-HANDOFF')
+    expect(noFw['l1']).not.toContain('FW-HANDOFF')
   })
 })
 
@@ -1744,5 +1761,81 @@ describe('Fabric ports run at the rate the BOM bills (group Z2)', () => {
     const c = generateAllConfigs(devices, 'dc')
     expect(c['l1']).toMatch(/\n {2}speed 100000\b/)
     expect(c['s1']).not.toMatch(/\n {2}speed \d+\b/)
+  })
+})
+
+// ── Z3: north-south handoff lives on the border leaves ──────────────────────
+
+describe('Firewall attaches to border leaves, not spines (group Z3)', () => {
+  function fabric(vendor: string) {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'IAD-SPINE-A01', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 's2', hostname: 'IAD-SPINE-A02', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'IAD-LEAF-A01', vendor, subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+      makeDevice({ id: 'l2', hostname: 'IAD-LEAF-A02', vendor, subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+      makeDevice({ id: 'l3', hostname: 'IAD-LEAF-B01', vendor, subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+      makeDevice({ id: 'l4', hostname: 'IAD-LEAF-B02', vendor, subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+      makeDevice({ id: 'f1', hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  // Parity matrix: the handoff must behave the same on every EVPN vendor.
+  const CASES: Array<[string, RegExp, RegExp]> = [
+    // vendor, "handoff is in the tenant VRF", "default is originated into EVPN"
+    ['Cisco',   /FW-HANDOFF: IAD-FW-A01[\s\S]*?vrf member TENANT-A/,     /default-information originate always/],
+    ['Arista',  /FW-HANDOFF: IAD-FW-A01[\s\S]*?vrf TENANT-A/,            /ip route vrf TENANT-A 0\.0\.0\.0\/0 10\.98\.\d+\.1/],
+    ['Juniper', /set routing-instances TENANT-A interface xe-0\/0\/\d+\.0/, /ip-prefix-routes export ORIGINATE-DEFAULT/],
+  ]
+
+  for (const [vendor, vrfRe, defaultRe] of CASES) {
+    it(`${vendor}: no spine carries a firewall handoff (a spine has no tenant VRF to route into)`, () => {
+      const c = fabric(vendor)
+      expect(c['s1']).not.toContain('FW-HANDOFF')
+      expect(c['s2']).not.toContain('FW-HANDOFF')
+      expect(c['s1']).not.toContain('10.98.')
+    })
+
+    it(`${vendor}: only the LAST leaf pair terminates the handoff, inside TENANT-A`, () => {
+      const c = fabric(vendor)
+      expect(c['l1'], `${vendor}: a non-border leaf claimed the handoff`).not.toContain('FW-HANDOFF')
+      expect(c['l2']).not.toContain('FW-HANDOFF')
+      expect(c['l3'], `${vendor}: border leaf has no handoff`).toContain('FW-HANDOFF')
+      expect(c['l4']).toContain('FW-HANDOFF')
+      expect(c['l3']).toMatch(vrfRe)
+    })
+
+    it(`${vendor}: the border leaf originates a default so north-south traffic has a path`, () => {
+      const c = fabric(vendor)
+      expect(c['l3'], `${vendor}: no default originated — the fabric cannot reach the internet`).toMatch(defaultRe)
+    })
+
+    it(`${vendor}: both border leaves get DISTINCT handoff /31s (no duplicate addressing)`, () => {
+      const c = fabric(vendor)
+      const ips = (id: string) => new Set(c[id].match(/10\.98\.\d+\.\d+/g) ?? [])
+      const a = ips('l3'), b = ips('l4')
+      expect(a.size).toBeGreaterThan(0)
+      expect([...a].some(x => b.has(x)), `${vendor}: border leaves share a handoff /31`).toBe(false)
+    })
+  }
+
+  it('a border leaf gives up host ports to the handoff — the two never overlap', () => {
+    const c = fabric('Cisco')
+    const hostMax = +/interface Ethernet1\/1-(\d+)/.exec(c['l3'])![1]
+    const handoffPorts = [...c['l3'].matchAll(/interface Ethernet1\/(\d+)\n\s+description FW-HANDOFF/g)].map(m => +m[1])
+    expect(handoffPorts.length).toBeGreaterThan(0)
+    for (const p of handoffPorts) expect(p, 'handoff port collides with the server-access block').toBeGreaterThan(hostMax)
+  })
+
+  it('campus: the distribution handoff /31s are in OSPF and originate a default', () => {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 'd1', hostname: 'IAD-DIST-A01', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', ports: 48, uplinks: 4 }),
+      makeDevice({ id: 'd2', hostname: 'IAD-DIST-A02', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', ports: 48, uplinks: 4 }),
+      makeDevice({ id: 'f1', hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
+    ]
+    const c = generateAllConfigs(devices, 'campus')
+    expect(c['d1']).toMatch(/FW-HANDOFF[\s\S]*?ip ospf 10 area 0/)
+    expect(c['d1']).toMatch(/ip route 0\.0\.0\.0 0\.0\.0\.0 10\.98\.1\.1/)
+    expect(c['d1']).toMatch(/default-information originate/)
   })
 })
