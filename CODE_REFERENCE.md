@@ -389,6 +389,16 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
     computed as `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2 [+1 for
     leaf]}` so the spine and leaf side of each link always agree on the same
     subnet without manual cabling notes.
+- **`ipToInt` / `intToIp` / `ipAdd(base, offset)` / `roleIp(primary, slot, idx)`
+  / `fwHandoffIp(peerIdx, fwIdx, fwCount)`** *(Z7)* — the address plan in real
+  32-bit arithmetic. Every scheme used to interpolate into a single octet and
+  silently emitted invalid IPs (`10.99.1.256`) past 16 spines / 254 devices.
+  Fabric P2P links are a flat /31 index in `10.99.0.0/16`, MLAG /31s a flat
+  index in `10.253.0.0/16`. `roleIp` keeps a role's first 254 devices in their
+  documented /24 (`10.255.1.x` spines, `10.255.2.x` leaves, `10.254.0.x` VTEPs,
+  `10.255.3.x` campus loopbacks, `10.255.99.x` campus mgmt) so existing designs
+  are byte-identical, and spills device 255+ into the reserved scale-overflow
+  supernet `10.100.0.0/14`.
 - **`iosIfPrefix(speed)`** / **`hostIf(dev, n)`** / **`uplinkIf(dev, n)`**
   *(Z4)* — platform-correct IOS interface naming. A campus SKU whose commands
   name a port type the chassis lacks is rejected outright (the C9500-48Y4C is

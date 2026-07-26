@@ -1590,7 +1590,9 @@ describe('Firewall/fabric handoff (group Y7)', () => {
     // border leaf owns .0, firewall claims .1 of the same /31
     expect(c['l2']).toMatch(/ip address 10\.98\.1\.0\/31/)
     expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.1\/31\s+← IAD-LEAF-A02/)
-    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.2\.1\/31\s+← IAD-LEAF-A03/)
+    // Z7: handoff /31s are a FLAT index in 10.98.0.0/16 — border leaf 2 with
+    // 2 firewalls starts at offset (1*2+0)*2 = 4.
+    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.5\/31\s+← IAD-LEAF-A03/)
     // second firewall takes the next /31 in each border leaf's block
     expect(c['l2']).toMatch(/FW-HANDOFF: IAD-FW-A02[\s\S]*?ip address 10\.98\.1\.2\/31/)
     expect(c['f2']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.3\/31/)
@@ -1901,5 +1903,95 @@ describe('Campus configs name ports the chassis actually has (group Z4)', () => 
     expect(c['d1'], 'mgmt subnet in no OSPF network statement').toMatch(/network 10\.255\.99\.0 0\.0\.0\.255 area 0/)
     // with port-control auto and no fallback a RADIUS outage locks every port
     expect(c['a1']).toMatch(/authentication event server dead action authorize vlan 10/)
+  })
+})
+
+// ── Z7: address schemes must stay valid at extreme scale ────────────────────
+
+describe('Address plan never emits an invalid IP (group Z7)', () => {
+  /** Every dotted-quad in the text, with any octet > 255 flagged. */
+  function badIps(cfg: string): string[] {
+    const bad: string[] = []
+    // Lookarounds exclude longer dotted sequences (IS-IS NETs like
+    // 49.0001.0102.5500.0001.00 are not IPv4 addresses).
+    for (const m of cfg.matchAll(/(?<![\d.])(\d{1,5})\.(\d{1,5})\.(\d{1,5})\.(\d{1,5})(?![\d.])/g)) {
+      if (m.slice(1).some(o => Number(o) > 255)) bad.push(m[0])
+    }
+    return bad
+  }
+
+  function bigFabric(spineCount: number, leafCount: number, uplinks: number, vendor = 'Cisco') {
+    const devices: BOMDevice[] = []
+    for (let i = 0; i < spineCount; i++) {
+      devices.push(makeDevice({ id: `s${i}`, hostname: `X-SPINE-${String(i + 1).padStart(2, '0')}`, vendor, subLayer: 'spine', role: 'spine', ports: 64, uplinks: 0 }))
+    }
+    for (let i = 0; i < leafCount; i++) {
+      devices.push(makeDevice({ id: `l${i}`, hostname: `X-LEAF-${String(i + 1).padStart(3, '0')}`, vendor, subLayer: 'leaf', role: 'leaf', ports: 48, uplinks, uplinkStart: 49 }))
+    }
+    return { devices, configs: generateAllConfigs(devices, 'dc') }
+  }
+
+  it('32 spines: the fabric /31 scheme survives past the old 16-spine ceiling', () => {
+    // The old scheme packed spineNum into `(spineNum-1)*16 + linkNum*2`, so
+    // spine 17 onward silently produced a 4th octet above 255.
+    const { devices, configs } = bigFabric(32, 8, 32)
+    for (const d of devices) {
+      expect(badIps(configs[d.id] ?? []), `${d.hostname} emitted an invalid IP`).toEqual([])
+    }
+  })
+
+  it('600 leaves: loopbacks, VTEPs and MLAG /31s survive past the old 254 ceiling', () => {
+    // 10.255.2.<idx+1> ran out at 254 leaves; 10.254.0.<pairId> and
+    // 10.253.<pairId>.x at 254 pairs.
+    const { devices, configs } = bigFabric(4, 600, 4)
+    for (const d of devices) {
+      expect(badIps(configs[d.id] ?? []), `${d.hostname} emitted an invalid IP`).toEqual([])
+    }
+  })
+
+  it('both ends of every fabric link still agree on the /31 at scale', () => {
+    const { configs } = bigFabric(6, 40, 4)
+    // Collect (peer, ip) from each leaf uplink and each spine downlink.
+    const leafSide = new Set<string>()
+    for (let i = 0; i < 40; i++) {
+      for (const m of (configs[`l${i}`] ?? '').matchAll(/description UPLINK: (\S+)[\s\S]*?ip address (\d+\.\d+\.\d+\.\d+)\/31/g)) {
+        leafSide.add(`${m[1]}|${m[2]}`)
+      }
+    }
+    expect(leafSide.size).toBeGreaterThan(100)
+    let matched = 0
+    for (let s = 0; s < 6; s++) {
+      for (const m of (configs[`s${s}`] ?? '').matchAll(/description DOWNLINK: (\S+)[\s\S]*?ip address (\d+\.\d+\.\d+\.\d+)\/31/g)) {
+        // spine owns the even .0, the leaf the odd .1 of the same /31
+        const o = m[2].split('.'); const leafIp = [...o.slice(0, 3), String(+o[3] + 1)].join('.')
+        const spineName = `s${s}`
+        void spineName
+        if ([...leafSide].some(k => k.endsWith(`|${leafIp}`))) matched++
+      }
+    }
+    expect(matched, 'spine downlinks and leaf uplinks disagree on their /31s').toBe(leafSide.size)
+  })
+
+  it('every fabric /31 is unique — no two links share a subnet at scale', () => {
+    const { configs } = bigFabric(8, 120, 8)
+    const seen = new Map<string, string>()
+    for (const [id, cfg] of Object.entries(configs)) {
+      for (const m of cfg.matchAll(/ip address (\d+\.\d+\.\d+\.\d+)\/31/g)) {
+        const net = (ip: string) => { const o = ip.split('.').map(Number); o[3] &= ~1; return o.join('.') }
+        const key = `${net(m[1])}|${m[1]}`
+        expect(seen.has(key), `${id} reuses ${m[1]} already owned by ${seen.get(key)}`).toBe(false)
+        seen.set(key, id)
+      }
+    }
+    expect(seen.size).toBeGreaterThan(500)
+  })
+
+  it('campus mgmt + distribution loopbacks stay valid past 254 switches', () => {
+    const devices: BOMDevice[] = Array.from({ length: 300 }, (_, i) =>
+      makeDevice({ id: `d${i}`, hostname: `C-DIST-${i}`, vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', model: 'Catalyst 9500-48Y4C', ports: 48, uplinks: 4, uplinkStart: 49, speed: '25G', uplinkSpeed: '100G', portIf: 'TwentyFiveGigE1/0/', uplinkIf: 'HundredGigE1/0/' }))
+    const configs = generateAllConfigs(devices, 'campus')
+    for (const d of devices) {
+      expect(badIps(configs[d.id] ?? []), `${d.hostname} emitted an invalid IP`).toEqual([])
+    }
   })
 })

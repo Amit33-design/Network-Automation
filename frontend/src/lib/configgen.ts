@@ -119,14 +119,14 @@ line vty 0 15
 
 function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const spineAsn = 65000
-  const routerId = `10.255.1.${idx + 1}`
+  const routerId = roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
   // Real eBGP leaf peers derived from the fabric (leaf lo0 = 10.255.2.(i+1),
   // leaf ASN = 65001+i — matches nxosLeafConfig). eBGP EVPN: per-leaf remote-as,
   // NO route-reflector-client (RR is iBGP-only).
   const leafPeerLines = allDevices
     .map((d, i) => ({ d, i }))
     .filter(x => x.d.subLayer === 'leaf')
-    .map(x => `  neighbor 10.255.2.${x.i + 1}\n    inherit peer LEAF-PEER\n    remote-as ${65001 + x.i}\n    description ${x.d.hostname || `LEAF-${x.i + 1}`}`)
+    .map(x => `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)}\n    inherit peer LEAF-PEER\n    remote-as ${65001 + x.i}\n    description ${x.d.hostname || `LEAF-${x.i + 1}`}`)
     .join('\n')
   const spineBgpNeighbors = leafPeerLines || '  ! No leaves in fabric — add: neighbor <leaf-lo0>\\n    inherit peer LEAF-PEER\\n    remote-as <leaf-asn>'
   const isisNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
@@ -350,6 +350,15 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
   // leaf wired the same first `uplinks` spines: with uplinks < spineCount the
   // remaining spines were completely dark (yet still BGP-peered), and the
   // first spines absorbed more links than they have ports.
+  // Z7: a FLAT /31 index inside 10.99.0.0/16 (32 768 links). The old
+  // `10.99.<leafNum>.<(spineNum-1)*16 + linkNum*2>` scheme silently emitted
+  // invalid addresses past 254 leaves or 16 spines. Both ends derive the same
+  // index from (leafIdx, spineIdx, linkNum), so the /31 still matches.
+  const maxParallel = Math.max(1, Math.ceil(leafUplinks / spineCount))
+  const perLeaf = spineCount * maxParallel
+  const p2pIndex = (leafIdx: number, spineIdx: number, linkNum: number) =>
+    leafIdx * perLeaf + spineIdx * maxParallel + linkNum
+
   if (role === 'leaf') {
     const leafIdx = Math.max(0, leaves.findIndex(d => d.id === dev.id))
     const leafNum = leafIdx + 1
@@ -363,7 +372,7 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
         peerHostname: spines[spineIdx]?.hostname || `SPINE-${spineNum}`,
         peerLabel: `spine ${spineNum}`,
         linkNum,
-        localIp: `10.99.${leafNum}.${octet + 1}/31`,
+        localIp: `${ipAdd('10.99.1.0', p2pIndex(leafIdx, spineIdx, linkNum) * 2 + 1)}/31`,
         localIpv6: `fd00:99:${leafNum}::${octet + 1}/127`,
       })
     }
@@ -382,7 +391,7 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
           peerHostname: leaves[leafNum - 1]?.hostname || `LEAF-${leafNum}`,
           peerLabel: `leaf ${leafNum}`,
           linkNum,
-          localIp: `10.99.${leafNum}.${octet}/31`,
+          localIp: `${ipAdd('10.99.1.0', p2pIndex(leafIdx, spineIdx, linkNum) * 2)}/31`,
           localIpv6: `fd00:99:${leafNum}::${octet}/127`,
         })
       }
@@ -533,7 +542,7 @@ function fwHandoffPlan(
     ? leafHostPortMax(dev, allDevices) + 1
     : Math.max(1, (dev.ports || 48) - fws.length + 1)
   return fws
-    .map((fw, fi) => ({ port: firstFree + fi, fw, ip: `10.98.${myIdx + 1}.${fi * 2}` }))
+    .map((fw, fi) => ({ port: firstFree + fi, fw, ip: fwHandoffIp(myIdx, fi, fws.length) }))
     .filter(x => x.port <= (dev.ports || 48))
 }
 
@@ -567,6 +576,64 @@ function hostIf(dev: BOMDevice, n: number): string {
 function uplinkIf(dev: BOMDevice, n: number): string {
   const prefix = dev.uplinkIf ?? iosIfPrefix(dev.uplinkSpeed ?? dev.speed)
   return `${prefix}${(dev.uplinkStart ?? 1) + n - 1}`
+}
+
+// ── Address plan arithmetic (Z7) ──────────────────────────────────────────────
+// Every scheme used to build addresses by string interpolation into a single
+// octet — `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2}`, `10.255.2.${idx+1}`
+// — so past 254 leaves / 16 spines / ~250 devices the generator SILENTLY
+// emitted invalid IPs like `10.255.2.300`. All of it now goes through real
+// 32-bit arithmetic, and the roles whose /24 can fill up spill into a
+// dedicated overflow supernet instead of overflowing an octet.
+
+function ipToInt(ip: string): number {
+  const o = ip.split('.').map(Number)
+  return ((o[0] << 24) >>> 0) + (o[1] << 16) + (o[2] << 8) + o[3]
+}
+
+function intToIp(n: number): string {
+  const v = n >>> 0
+  return [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255].join('.')
+}
+
+/** `base` advanced by `offset` addresses — never produces an octet > 255. */
+function ipAdd(base: string, offset: number): string {
+  return intToIp(ipToInt(base) + Math.max(0, Math.trunc(offset)))
+}
+
+/**
+ * Scale-overflow supernet: 10.100.0.0/14 (10.100–10.103), reserved and used by
+ * no other scheme. A role's first 254 devices keep their documented /24
+ * (10.255.1.x spines, 10.255.2.x leaves, 10.254.0.x VTEPs, …) so existing
+ * designs are byte-identical; device 255 onward continues here.
+ */
+const OVERFLOW_SUPERNET = '10.100.0.0'
+const OVERFLOW_SLOT_SIZE = 16384
+const ROLE_POOL = 254
+
+/** Overflow slots — one per role that addresses out of a single /24. */
+const RoleSlot = {
+  SpineLoopback:  0,
+  LeafLoopback:   1,
+  Vtep:           2,
+  VpcVip:         3,
+  CampusLoopback: 4,
+  CampusMgmt:     5,
+} as const
+type RoleSlot = (typeof RoleSlot)[keyof typeof RoleSlot]
+
+/** Nth address of a role (0-based), overflowing safely past the /24. */
+function roleIp(primary: string, slot: RoleSlot, idx: number): string {
+  if (idx < ROLE_POOL) return ipAdd(primary, idx)
+  return ipAdd(ipAdd(OVERFLOW_SUPERNET, slot * OVERFLOW_SLOT_SIZE), idx - ROLE_POOL)
+}
+
+/**
+ * Firewall↔fabric handoff /31, shared by BOTH ends (the fabric generator and
+ * the FTD manifest) so they can never drift. Flat index inside 10.98.0.0/16.
+ */
+function fwHandoffIp(peerIdx: number, fwIdx: number, fwCount: number): string {
+  return ipAdd('10.98.1.0', (peerIdx * Math.max(1, fwCount) + fwIdx) * 2)
 }
 
 /** The far side of a /31 whose near side is `ip` (…​.0 → …​.1). */
@@ -656,8 +723,8 @@ export const DCI_RT_ASN = 65100
 
 function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false, appTypes: AppType[] = []): string {
   const leafAsn  = 65001 + idx
-  const routerId = `10.255.2.${idx + 1}`
-  const vtepIp   = `10.254.0.${idx + 1}`
+  const routerId = roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
+  const vtepIp   = roleIp('10.254.0.1', RoleSlot.Vtep, idx)
   // Host/server ports: the access block below the fabric uplinks (a border
   // leaf gives up the top of it to the firewall handoffs — Z3).
   const hostPortMax = leafHostPortMax(dev, allDevices)
@@ -669,7 +736,7 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   const spinePeerLines = allDevices
     .map((d, i) => ({ d, i }))
     .filter(x => x.d.subLayer === 'spine' && (linkedSpineNames.size === 0 || linkedSpineNames.has(x.d.hostname)))
-    .map(x => `  neighbor 10.255.1.${x.i + 1}\n    inherit peer SPINE-PEER\n    description ${x.d.hostname || `SPINE-${x.i + 1}`}`)
+    .map(x => `  neighbor ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)}\n    inherit peer SPINE-PEER\n    description ${x.d.hostname || `SPINE-${x.i + 1}`}`)
     .join('\n')
   const leafBgpNeighbors = spinePeerLines || '  ! No spines in fabric — add: neighbor <spine-lo0>\\n    inherit peer SPINE-PEER'
   const isisNet  = `49.0001.0102.5501.${String(idx + 1).padStart(4, '0')}.00`
@@ -712,7 +779,7 @@ ${fwLinks.map(x => `  ip route 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
   const vpcRolePriority = isPrimary ? 8192 : 16384
   // vPC anycast VTEP VIP — shared secondary on loopback1 for the HA pair, so
   // multihomed traffic hashes to one logical VTEP (X7).
-  const vpcVtepVip = `10.254.1.${pairId}`
+  const vpcVtepVip = roleIp('10.254.1.1', RoleSlot.VpcVip, pairId - 1)
   // Peer-link members: on SKUs with a dedicated uplink range, use the
   // leftover dedicated high-speed ports (93180: uplinks on 49-52 → peer-link
   // 53-54); otherwise the two ports just below the fabric uplinks.
@@ -1252,7 +1319,7 @@ hardware profile forwarding-mode fabricpath
 
 function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   const asn      = 65000
-  const routerId = `10.255.1.${idx + 1}`
+  const routerId = roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
   // System-ID must be exactly 12 hex digits (3×4). padStart avoids the overflow
   // past `000${n}` for idx≥9 that produced an invalid 13/14-digit NET.
   const isisNet  = `0101.0255.${String(idx + 1).padStart(4, '0')}`
@@ -1268,9 +1335,9 @@ function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevic
     .map((d, i) => ({ d, i }))
     .filter(x => x.d.subLayer === 'leaf')
     .flatMap(x => [
-      `  neighbor 10.255.2.${x.i + 1} peer group LEAF-PEER`,
-      `  neighbor 10.255.2.${x.i + 1} remote-as ${65000 + Math.floor(x.i / 2) + 1}`,
-      `  neighbor 10.255.2.${x.i + 1} description ${x.d.hostname || `LEAF-${x.i + 1}`}`,
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)} peer group LEAF-PEER`,
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)} remote-as ${65000 + Math.floor(x.i / 2) + 1}`,
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)} description ${x.d.hostname || `LEAF-${x.i + 1}`}`,
     ])
     .join('\n')
   const spineLeafPeerBlock = spineLeafPeers || '  ! No leaves in fabric — add: neighbor <leaf-lo0> peer group LEAF-PEER / remote-as <leaf-asn>'
@@ -1395,14 +1462,14 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   // ASNs the shared anycast VTEP is advertised from two different AS numbers
   // and the pair cannot run the required peer-link iBGP session.
   const leafAsn  = 65000 + pairId
-  const routerId = `10.255.2.${idx + 1}`
+  const routerId = roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
   // EOS MLAG + EVPN: BOTH pair members share ONE Loopback1 VTEP IP (anycast
   // VTEP) — with unique VTEPs the pair appears as two separate VTEPs and
   // multihomed traffic is black-holed/duplicated (X7 / audit A-M4).
-  const vtepIp   = `10.254.0.${pairId}`
+  const vtepIp   = roleIp('10.254.0.1', RoleSlot.Vtep, pairId - 1)
   // Deterministic MLAG peer /31 on Vlan4094 (primary .0, secondary .1).
-  const mlagLocalIp = `10.253.${pairId}.${isPrimary ? 0 : 1}`
-  const mlagPeerIp  = `10.253.${pairId}.${isPrimary ? 1 : 0}`
+  const mlagLocalIp = ipAdd('10.253.1.0', (pairId - 1) * 2 + (isPrimary ? 0 : 1))
+  const mlagPeerIp  = ipAdd('10.253.1.0', (pairId - 1) * 2 + (isPrimary ? 1 : 0))
   // Peer-link members: leftover dedicated uplink ports when the SKU has a
   // dedicated range, else the two ports just below the fabric uplinks.
   const plPort1 = dev.uplinkStart
@@ -1445,7 +1512,7 @@ ${fwLinks.map(x => `ip route vrf TENANT-A 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')
   const leafSpinePeers = allDevices
     .map((d, i) => ({ d, i }))
     .filter(x => x.d.subLayer === 'spine' && (linkedSpines.size === 0 || linkedSpines.has(x.d.hostname)))
-    .map(x => `  neighbor 10.255.1.${x.i + 1} peer group SPINE-PEER`)
+    .map(x => `  neighbor ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)} peer group SPINE-PEER`)
     .join('\n')
   const leafSpinePeerBlock = leafSpinePeers || '  ! No spines in fabric — add: neighbor <spine-lo0> peer group SPINE-PEER'
   // Site-local MAC-VRF RT uses the fabric (spine) ASN so all leaves in the
@@ -1714,7 +1781,7 @@ set class-of-service interfaces et-* scheduler-map RDMA-MAP
 // Juniper QFX spine — IS-IS underlay + eBGP EVPN route-reflection to leaves.
 // A spine is NOT a VTEP: no switch-options vtep-source / vrf-target here.
 function juniperSpineConfig(dev: BOMDevice, idx: number, protoFeatures: string[] = [], needsRoce = false, allDevices: BOMDevice[] = []): string {
-  const lo0ip = `10.255.1.${idx + 1}`
+  const lo0ip = roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
   const isoNet = `49.0001.0101.0255.${String(idx + 1).padStart(4, '0')}.00`
   const roceBlock = needsRoce ? juniperRoceBlock() : ''
   const fabricLinks = renderJuniperFabricLinks('spine', dev, allDevices)
@@ -1722,7 +1789,7 @@ function juniperSpineConfig(dev: BOMDevice, idx: number, protoFeatures: string[]
   const leafNeighborLines = allDevices
     .map((d, i) => ({ d, i }))
     .filter(x => x.d.subLayer === 'leaf')
-    .map(x => `set protocols bgp group LEAVES neighbor 10.255.2.${x.i + 1} peer-as ${65001 + x.i}`)
+    .map(x => `set protocols bgp group LEAVES neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)} peer-as ${65001 + x.i}`)
     .join('\n')
   const spineLeafNeighbors = leafNeighborLines || 'set protocols bgp group LEAVES neighbor <CHANGE-ME-leaf-lo0> peer-as <CHANGE-ME-leaf-asn>'
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
@@ -1832,7 +1899,7 @@ function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, pro
   const spineNeighborLines = allDevices
     .map((d, i) => ({ d, i }))
     .filter(x => x.d.subLayer === 'spine' && (linkedSpineSet.size === 0 || linkedSpineSet.has(x.d.hostname)))
-    .map(x => `set protocols bgp group SPINE-RR neighbor 10.255.1.${x.i + 1} peer-as 65000`)
+    .map(x => `set protocols bgp group SPINE-RR neighbor ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)} peer-as 65000`)
     .join('\n')
   const leafSpineNeighbors = spineNeighborLines || 'set protocols bgp group SPINE-RR neighbor <CHANGE-ME-spine-lo0> peer-as 65000'
   const fabricLinks = renderJuniperFabricLinks('leaf', dev, allDevices)
@@ -1865,7 +1932,7 @@ set interfaces et-0/0/48 unit 0 family inet6 address <CHANGE-ME-fabric-v6-a>/127
 set interfaces et-0/0/49 unit 0 family inet6 address <CHANGE-ME-fabric-v6-b>/127
 set protocols isis topologies ipv6-unicast
 ` : ''
-  const lo0ip   = `10.255.2.${idx + 1}`
+  const lo0ip   = roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
   // Multisite DCI: site-local VNIs use the auto/site RT; VNIs stretched across
   // sites additionally carry the shared ${DCI_RT_ASN}:<vni> RT so only those
   // VNIs are leaked over the DCI (mirrors the NX-OS/Arista A7 behavior).
@@ -2005,14 +2072,14 @@ function ciscoFtdFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase |
   const fwIdx = Math.max(0, fws.findIndex(d => d.id === dev.id))
   // Mirror of fwHandoffPlan: the fabric side owns .0, the firewall side .1.
   const handoffLines = peers.length
-    ? peers.map((p, pi) => `!   Ethernet1/${2 + pi}  zone=INSIDE  ip=10.98.${pi + 1}.${fwIdx * 2 + 1}/31  ← ${p.hostname} (fabric handoff)`).join('\n')
+    ? peers.map((p, pi) => `!   Ethernet1/${2 + pi}  zone=INSIDE  ip=${nextIp(fwHandoffIp(pi, fwIdx, fws.length))}/31  ← ${p.hostname} (fabric handoff)`).join('\n')
     : `!   Ethernet1/2  zone=INSIDE   ip=<CHANGE-ME-inside-ip>/<CHANGE-ME-inside-prefix>  desc=TRUSTED-LAN`
   const insideNets = isFabric
     ? '10.10.0.0/16 (tenant subnets), 10.255.0.0/16 (fabric loopbacks)'
     : '10.10.10.0/24 (VLAN 10 DATA), 10.255.99.0/24 (campus MGMT)'
   const dmzPort = 2 + Math.max(peers.length, 1)
   const routingLines = peers.length
-    ? peers.map((p, pi) => `!   ${isFabric ? '10.10.0.0/16' : '10.10.10.0/24'} via 10.98.${pi + 1}.${fwIdx * 2} (${p.hostname}) — ECMP across the ${peers.length} handoff link(s)`).join('\n')
+    ? peers.map((p, pi) => `!   ${isFabric ? '10.10.0.0/16' : '10.10.10.0/24'} via ${fwHandoffIp(pi, fwIdx, fws.length)} (${p.hostname}) — ECMP across the ${peers.length} handoff link(s)`).join('\n')
     : '!   <CHANGE-ME-inside-net> via <CHANGE-ME-inside-gateway>'
 
   return `! ═══════════════════════════════════════════════════════════════
@@ -2691,7 +2758,7 @@ ${hasVoice ? `vlan 20
     const hsrpPriority = isPrimary ? 110 : 90
     // Deterministic router-id loopback (campus dist range 10.255.3.x) — V-12
     // flagged OSPF routers with no loopback interface.
-    const lo0ip = `10.255.3.${idx + 1}`
+    const lo0ip = roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)
     // Z4 — platform-correct port allocation. A C9500-48Y4C is 48x25G in
     // chassis + a 4x100G uplink block: the peer-link and the core uplink
     // belong on the 100G ports, the access downlinks and the firewall
@@ -2778,7 +2845,7 @@ ${voiceSvi}!
 ! 802.1X port failed closed. HSRP on Vlan99 now actually owns that address.
 interface Vlan99
   description MGMT
-  ip address 10.255.99.${idx + 1} 255.255.255.0
+  ip address ${roleIp('10.255.99.1', RoleSlot.CampusMgmt, idx)} 255.255.255.0
   standby version 2
   standby 99 ip 10.255.99.254
   standby 99 priority ${hsrpPriority}
@@ -2877,7 +2944,7 @@ spanning-tree portfast bpduguard default
 ! ── MGMT SVI (Vlan99 — the mgmt plane sources from this; C-1) ────────────────
 interface Vlan99
   description MGMT
-  ip address 10.255.99.${idx + 1} 255.255.255.0
+  ip address ${roleIp('10.255.99.1', RoleSlot.CampusMgmt, idx)} 255.255.255.0
 !
 ip default-gateway 10.255.99.254
 !
@@ -3152,7 +3219,7 @@ end
 
 # ── OSPF underlay to campus core ────────────────────────────────────────────
 config router ospf
-    set router-id 10.255.1.${idx + 1}
+    set router-id ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)}
     config area
         edit 0.0.0.0
         next
@@ -3560,7 +3627,9 @@ interface 1/1/1-1/1/${dev.ports}
 function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDevices: BOMDevice[] = []): string {
   const isSpine = dev.subLayer === 'spine'
   const asn = isSpine ? 65000 : 65001 + idx
-  const lo0ip = isSpine ? `10.255.1.${idx + 1}` : `10.255.2.${idx + 1}`
+  const lo0ip = isSpine
+    ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
+    : roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
   const ports = dev.ports || 64
   const uplinks = Math.max(2, dev.uplinks || 2)
 
@@ -3736,7 +3805,9 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
         }
     }` : ''
   const asn = isSpine ? 65000 : 65001 + idx
-  const lo0ip = isSpine ? `10.255.1.${idx + 1}` : `10.255.2.${idx + 1}`
+  const lo0ip = isSpine
+    ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
+    : roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
   const role = isSpine ? 'Spine (Route-Reflector)' : 'Leaf (ToR / VTEP)'
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
   // IPv6 dual-stack underlay: a system0 v6 loopback + IS-IS ipv6-unicast AF.
