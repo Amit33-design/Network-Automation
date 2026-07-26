@@ -527,12 +527,46 @@ function fwHandoffPlan(
     ? borderLeaves(allDevices)
     : allDevices.filter(d => d.subLayer === role)
   const myIdx = Math.max(0, peers.findIndex(d => d.id === dev.id))
+  // Both roles take the TOP of the host/access block, leaving the uplink block
+  // free for the fabric/core links and the peer-link (Z3/Z4).
   const firstFree = role === 'border-leaf'
-    ? leafHostPortMax(dev, allDevices) + 1                     // just above the host block
-    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) + 2)  // after the core uplink
+    ? leafHostPortMax(dev, allDevices) + 1
+    : Math.max(1, (dev.ports || 48) - fws.length + 1)
   return fws
     .map((fw, fi) => ({ port: firstFree + fi, fw, ip: `10.98.${myIdx + 1}.${fi * 2}` }))
     .filter(x => x.port <= (dev.ports || 48))
+}
+
+/**
+ * IOS-style interface-name prefix implied by a port speed (Z4). A campus SKU
+ * whose commands name a port type the chassis does not have is rejected
+ * outright — the C9500-48Y4C has TwentyFiveGigE1/0/x + HundredGigE1/0/49-52
+ * and NO TenGigabitEthernet at all, so every data-plane line the generator
+ * previously emitted for it failed.
+ */
+function iosIfPrefix(speed: string | undefined): string {
+  const g = speedToGbps(speed)
+  if (g >= 100) return 'HundredGigE1/0/'
+  if (g >= 40)  return 'FortyGigabitEthernet1/0/'
+  if (g >= 25)  return 'TwentyFiveGigE1/0/'
+  if (g >= 10)  return 'TenGigabitEthernet1/0/'
+  return 'GigabitEthernet1/0/'
+}
+
+/** Host/access-port interface name for port `n` (1-based). */
+function hostIf(dev: BOMDevice, n: number): string {
+  return `${dev.portIf ?? iosIfPrefix(dev.speed)}${n}`
+}
+
+/**
+ * Uplink-port interface name for uplink `n` (1-based within the uplink block).
+ * `uplinkStart` is where that block begins: 49 for an in-chassis block
+ * (C9500 HundredGigE1/0/49-52), 1 for a separate uplink module
+ * (C9200-NM-4X → TenGigabitEthernet1/1/1-4).
+ */
+function uplinkIf(dev: BOMDevice, n: number): string {
+  const prefix = dev.uplinkIf ?? iosIfPrefix(dev.uplinkSpeed ?? dev.speed)
+  return `${prefix}${(dev.uplinkStart ?? 1) + n - 1}`
 }
 
 /** The far side of a /31 whose near side is `ip` (…​.0 → …​.1). */
@@ -2657,19 +2691,24 @@ ${hasVoice ? `vlan 20
     // Deterministic router-id loopback (campus dist range 10.255.3.x) — V-12
     // flagged OSPF routers with no loopback interface.
     const lo0ip = `10.255.3.${idx + 1}`
-    // Peer-link members on the two ports just below the uplinks (same
-    // convention as the DC vPC/MLAG peer-links, X7).
-    const plPort1 = Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 1)
-    const plPort2 = plPort1 + 1
-    // First uplink port carries the routed uplink to core (Y3 / C-5).
-    const coreUplinkPort = Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) + 1)
-    // Firewall handoff ports (Y7) — routed /31 per firewall, after the core uplink.
+    // Z4 — platform-correct port allocation. A C9500-48Y4C is 48x25G in
+    // chassis + a 4x100G uplink block: the peer-link and the core uplink
+    // belong on the 100G ports, the access downlinks and the firewall
+    // handoff on the 25G ports. Previously every one of these commands named
+    // TenGigabitEthernet, a port type the chassis does not have.
+    const upCount = dev.uplinks || 4
+    const peerLinkIf1 = uplinkIf(dev, 1)
+    const peerLinkIf2 = uplinkIf(dev, Math.min(2, upCount))
+    const coreUplinkIf = uplinkIf(dev, Math.min(3, upCount))
+    // Firewall handoff eats the TOP of the host block (same discipline as the
+    // border leaf, Z3), so it can never collide with the access downlinks.
     const fwLinks = fwHandoffPlan(dev, allDevices, 'distribution')
+    const downlinkMax = Math.max(1, (dev.ports || 48) - fwLinks.length)
     const fwHandoffBlock = fwLinks.length ? `
 ! ── FIREWALL HANDOFF (routed /31 per FW — FW side is the .1 of each pair) ────
 ! Z3: the handoff /31s sit in OSPF (they were in no IGP, so no other campus
 ! device could reach the perimeter) and the default is originated from here.
-${fwLinks.map(x => `interface TenGigabitEthernet1/0/${x.port}
+${fwLinks.map(x => `interface ${hostIf(dev, x.port)}
   description FW-HANDOFF: ${x.fw.hostname}
   no switchport
   ip address ${x.ip} 255.255.255.254
@@ -2733,11 +2772,18 @@ interface Vlan10
   standby 10 track 1 decrement 20
 ${voiceSvi}!
 ! ── MGMT SVI (Vlan99 — the mgmt plane sources from this; C-1) ────────────────
+! Z4/C-7: the .254 the access switches point at was owned by NOBODY, so the
+! whole campus mgmt plane (and therefore RADIUS) was unreachable and every
+! 802.1X port failed closed. HSRP on Vlan99 now actually owns that address.
 interface Vlan99
   description MGMT
   ip address 10.255.99.${idx + 1} 255.255.255.0
+  standby version 2
+  standby 99 ip 10.255.99.254
+  standby 99 priority ${hsrpPriority}
+  standby 99 preempt delay minimum 60
 !
-track 1 interface TenGigabitEthernet1/0/${coreUplinkPort} line-protocol
+track 1 interface ${coreUplinkIf} line-protocol
 !
 ! ── LOOPBACK (router-id) ─────────────────────────────────────────────────────
 interface Loopback0
@@ -2745,7 +2791,7 @@ interface Loopback0
   ip address ${lo0ip} 255.255.255.255
 !
 ! ── UPLINK TO CORE (routed, OSPF w/ md5 — C-5) ───────────────────────────────
-interface TenGigabitEthernet1/0/${coreUplinkPort}
+interface ${coreUplinkIf}
   description UPLINK-TO-CORE
   no switchport
   ip address <CHANGE-ME-core-uplink-ip> <CHANGE-ME-core-uplink-mask>
@@ -2757,14 +2803,17 @@ interface TenGigabitEthernet1/0/${coreUplinkPort}
 router ospf 1
   router-id ${lo0ip}
   passive-interface default
-  no passive-interface TenGigabitEthernet1/0/${coreUplinkPort}
+  no passive-interface ${coreUplinkIf}
   network ${lo0ip} 0.0.0.0 area 0
   network <CHANGE-ME-core-uplink-ip> <CHANGE-ME-wildcard> area 0
   network <CHANGE-ME-vlan10-ip> <CHANGE-ME-wildcard> area 0
+  ! Z4/C-7: the mgmt subnet was in NO network statement, so nothing outside
+  ! the local VLAN could reach it — RADIUS, TACACS, syslog and NTP all dead.
+  network 10.255.99.0 0.0.0.255 area 0
   area 0 authentication message-digest
 !
 ! ── DOWNLINK TRUNKS to access switches (C-2) ─────────────────────────────────
-interface range TenGigabitEthernet1/0/1-${plPort1 - 1}
+interface range ${hostIf(dev, 1)}-${downlinkMax}
   description DOWNLINK-TO-ACCESS
   switchport mode trunk
   switchport trunk native vlan 99
@@ -2778,12 +2827,12 @@ interface Port-channel${pairId}
   switchport trunk native vlan 99
   switchport trunk allowed vlan 10${hasVoice ? ',20' : ''},99
 !
-interface TenGigabitEthernet1/0/${plPort1}
+interface ${peerLinkIf1}
   description PEER-LINK member 1 to ${peerHostname}
   switchport mode trunk
   channel-group ${pairId} mode active
 !
-interface TenGigabitEthernet1/0/${plPort2}
+interface ${peerLinkIf2}
   description PEER-LINK member 2 to ${peerHostname}
   switchport mode trunk
   channel-group ${pairId} mode active
@@ -2793,9 +2842,11 @@ ${igmpBlock}
   }
 
   // ── Access switch ──────────────────────────────────────────────────────────
-  const accessPorts = Math.max(1, dev.ports - 2)
-  const uplink1 = accessPorts + 1
-  const uplink2 = accessPorts + 2
+  // Z4 — a C9200-48P's uplinks are the C9200-NM-4X module (TenGigabitEthernet
+  // 1/1/1-4), NOT front-panel copper: all 48 in-chassis ports stay access.
+  const accessPorts = dev.uplinkStart ? dev.ports : Math.max(1, dev.ports - 2)
+  const accessUplink1 = uplinkIf(dev, 1)
+  const accessUplink2 = uplinkIf(dev, Math.min(2, dev.uplinks || 2))
   const igmpBlock = needsIgmp ? `
 ! ── IGMP SNOOPING (voice/video app types present) ────────────────────────────
 ip igmp snooping
@@ -2843,7 +2894,7 @@ radius server NAC-1
 dot1x system-auth-control
 !
 ! ── ACCESS PORTS (edge — PortFast + BPDU Guard + 802.1X w/ MAB fallback) ──────
-interface range GigabitEthernet1/0/1-${accessPorts}
+interface range ${hostIf(dev, 1)}-${accessPorts}
   switchport mode access
   switchport access vlan 10
 ${hasVoice ? '  switchport voice vlan 20\n' : ''}  switchport port-security
@@ -2853,6 +2904,9 @@ ${hasVoice ? '  switchport voice vlan 20\n' : ''}  switchport port-security
   authentication port-control auto
   dot1x pae authenticator
   mab
+  ! Z4/C-7: without a critical-auth fallback a RADIUS outage locks every port.
+  authentication event server dead action authorize vlan 10
+  authentication event server alive action reinitialize
   spanning-tree portfast
   spanning-tree bpduguard enable
   ip dhcp snooping limit rate 15
@@ -2862,7 +2916,7 @@ ${hasVoice ? '  switchport voice vlan 20\n' : ''}  switchport port-security
 ${igmpBlock}! ── UPLINKS to distribution (SPLIT trunks — one per dist member; the dist
 ! pair are standalone chassis, so a cross-chassis LACP MEC would suspend a
 ! member (C-3). STP blocks one path; HSRP + RPVST handle failover.) ──────────
-interface GigabitEthernet1/0/${uplink1}
+interface ${accessUplink1}
   description UPLINK-1 to distribution A01
   switchport mode trunk
   switchport trunk native vlan 99
@@ -2870,7 +2924,7 @@ interface GigabitEthernet1/0/${uplink1}
   ip dhcp snooping trust
   no shutdown
 !
-interface GigabitEthernet1/0/${uplink2}
+interface ${accessUplink2}
   description UPLINK-2 to distribution A02
   switchport mode trunk
   switchport trunk native vlan 99

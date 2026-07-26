@@ -389,6 +389,14 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
     computed as `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2 [+1 for
     leaf]}` so the spine and leaf side of each link always agree on the same
     subnet without manual cabling notes.
+- **`iosIfPrefix(speed)`** / **`hostIf(dev, n)`** / **`uplinkIf(dev, n)`**
+  *(Z4)* — platform-correct IOS interface naming. A campus SKU whose commands
+  name a port type the chassis lacks is rejected outright (the C9500-48Y4C is
+  25G+100G and has no `TenGigabitEthernet` at all). `Product.portIf` /
+  `Product.uplinkIf` carry the real prefixes per SKU; `uplinkStart` says where
+  the uplink block begins — 49 for an in-chassis block (`HundredGigE1/0/49-52`)
+  or 1 for a separate uplink module (`TenGigabitEthernet1/1/1-4`). Both default
+  to the prefix implied by the port speed when a SKU doesn't declare them.
 - **`borderLeaves(allDevices)`** / **`isBorderLeaf(dev, allDevices)`** *(Z3,
   exported)* — the **last leaf pair** owns the north-south firewall handoff.
   The firewall used to attach to the SPINES, which is architecturally

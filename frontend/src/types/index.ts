@@ -39,6 +39,15 @@ export interface Product {
    *  describes the access/host ports) — e.g. 93180YC-FX: 48×25G host, 6×100G
    *  uplinks → speed 25G, uplinkSpeed 100G. Fabric links negotiate on this. */
   uplinkSpeed?: string
+  /** IOS-style interface-name prefix for the HOST/access port block, e.g.
+   *  'TwentyFiveGigE1/0/' on a C9500-48Y4C. Platform-specific: a command
+   *  naming a port type the chassis does not have is rejected outright.
+   *  Defaults to the prefix implied by `speed` when absent. */
+  portIf?: string
+  /** Interface-name prefix for the UPLINK block, e.g. 'HundredGigE1/0/' (in
+   *  chassis) or 'TenGigabitEthernet1/1/' (uplink module). Defaults to the
+   *  prefix implied by `uplinkSpeed ?? speed`. */
+  uplinkIf?: string
   speed: string
   asic: string
   powerW: number
@@ -71,6 +80,15 @@ export interface BOMDevice {
    *  describes the access/host ports) — e.g. 93180YC-FX: 48×25G host, 6×100G
    *  uplinks → speed 25G, uplinkSpeed 100G. Fabric links negotiate on this. */
   uplinkSpeed?: string
+  /** IOS-style interface-name prefix for the HOST/access port block, e.g.
+   *  'TwentyFiveGigE1/0/' on a C9500-48Y4C. Platform-specific: a command
+   *  naming a port type the chassis does not have is rejected outright.
+   *  Defaults to the prefix implied by `speed` when absent. */
+  portIf?: string
+  /** Interface-name prefix for the UPLINK block, e.g. 'HundredGigE1/0/' (in
+   *  chassis) or 'TenGigabitEthernet1/1/' (uplink module). Defaults to the
+   *  prefix implied by `uplinkSpeed ?? speed`. */
+  uplinkIf?: string
   features: string[]
 }
 
