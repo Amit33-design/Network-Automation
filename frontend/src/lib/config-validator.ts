@@ -57,6 +57,25 @@ function isCommentLine(line: string): boolean {
   return t.startsWith('!') || t.startsWith('#') || t.startsWith('//')
 }
 
+/**
+ * Z6 — the whole-config regex checks scanned COMMENT lines as if they were
+ * live config. V-08 warned "18 devices have NVE/VXLAN but no EVPN" on a
+ * gpu-nvidia design with no VXLAN anywhere: all 18 hits were the comment
+ * `# … (jumbo MTU for RoCE/VXLAN payloads)`. Same class as the M9
+ * `extractBgpNeighborIPs` fix, generalized — every content check now runs
+ * against the comment-stripped config, so documentation can never be
+ * mistaken for configuration.
+ */
+function stripComments(cfg: string): string {
+  return cfg.split('\n').filter(l => !isCommentLine(l)).join('\n')
+}
+
+function stripCommentsAll(configs: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [host, cfg] of Object.entries(configs)) out[host] = stripComments(cfg)
+  return out
+}
+
 function extractBgpNeighborIPs(cfg: string): string[] {
   const ips: string[] = []
   for (const line of cfg.split('\n')) {
@@ -443,9 +462,14 @@ function checkGPUQoS(
     }
   }
 
-  const hasPFC = hostnamesWithPattern(configs, /priority-flow-control|pfc/i)
-  const hasECN = hostnamesWithPattern(configs, /ecn|explicit-congestion/i)
-  const hasRDMA = hostnamesWithPattern(configs, /rdma|rocev2|dcqcn/i)
+  // Vendor-aware (Z6, same class as M3/M4). NVIDIA Cumulus NVUE expresses the
+  // whole lossless contract in ONE profile — `nv set qos roce enable on` +
+  // `mode lossless` configures PFC, ECN/WRED and buffer carving together — so
+  // the Cisco/Arista keyword scan false-FAILED a correctly lossless fabric
+  // once the explanatory comments were stripped.
+  const hasPFC = hostnamesWithPattern(configs, /priority-flow-control|pfc|nv set qos roce\b/i)
+  const hasECN = hostnamesWithPattern(configs, /ecn|explicit-congestion|nv set qos roce\b/i)
+  const hasRDMA = hostnamesWithPattern(configs, /rdma|rocev2|dcqcn|nv set qos roce\b/i)
 
   const issues: string[] = []
   if (hasPFC.length === 0) issues.push('PFC not configured on any device')
@@ -701,21 +725,26 @@ export function validateConfigs(input: ValidateInput): ValidationResult {
     }
   }
 
+  // Z6: every CONTENT check runs against the comment-stripped config so a
+  // documentation line can never be read as configuration. V-11 keeps the raw
+  // text — it asks whether generation produced anything at all.
+  const live = stripCommentsAll(configs)
+
   const checks: ValidationCheck[] = [
     checkNonEmptyConfigs(configs),
-    checkSingleUnderlay(configs, useCase),
-    checkDuplicateRouterIds(configs),
-    checkBGPPresence(configs, useCase),
-    checkBGPPeerSymmetry(configs),
-    checkEVPNConsistency(configs, useCase),
-    checkHostnameConsistency(configs, devices),
-    checkManagementBlock(configs),
-    checkNoHardcodedSecrets(configs),
-    checkUndefinedACLReferences(configs),
-    checkGPUQoS(configs, useCase),
-    checkLoopbackPresence(configs),
-    checkBFDEnabled(configs, useCase),
-    checkJumboMtu(configs, useCase),
+    checkSingleUnderlay(live, useCase),
+    checkDuplicateRouterIds(live),
+    checkBGPPresence(live, useCase),
+    checkBGPPeerSymmetry(live),
+    checkEVPNConsistency(live, useCase),
+    checkHostnameConsistency(live, devices),
+    checkManagementBlock(live),
+    checkNoHardcodedSecrets(live),
+    checkUndefinedACLReferences(live),
+    checkGPUQoS(live, useCase),
+    checkLoopbackPresence(live),
+    checkBFDEnabled(live, useCase),
+    checkJumboMtu(live, useCase),
   ]
 
   const summary = { pass: 0, fail: 0, warn: 0, info: 0 }

@@ -2032,6 +2032,7 @@ configure network ipv4 manual <CHANGE-ME-mgmt-ip> <CHANGE-ME-mgmt-mask> <CHANGE-
 configure network dns servers <CHANGE-ME-dns-ip>
 configure network dns searchdomains <CHANGE-ME-domain.example.com>
 configure ssh-access-list <CHANGE-ME-mgmt-subnet>
+configure ntp servers <CHANGE-ME-ntp-primary> <CHANGE-ME-ntp-secondary>
 configure manager add <CHANGE-ME-fmc-ip> <CHANGE-ME-registration-key>
 !
 ! ── 2. FMC POLICY MANIFEST (implement in Firepower Management Center) ────────

@@ -1175,7 +1175,11 @@ simulated scan-history timeline for the demo UI.
 ## Frontend — `lib/config-validator.ts` (Config validation engine — M2)
 
 **Purpose:** Client-side static analysis of generated device configs against
-design intent. Replaces the former fake Batfish placeholder with 13 real
+design intent. Every **content** check runs against the comment-stripped config
+(`stripComments`/`stripCommentsAll`, Z6) — vendor comment syntaxes `!`, `#` and
+`//` are documentation, and parsing them as config produced false failures on
+V-01, V-05, V-08 and V-10. V-11 alone keeps the raw text, since it asks whether
+generation produced anything at all. Replaces the former fake Batfish placeholder with 13 real
 validation checks that parse config text and cross-reference with intent
 (use case, devices, protocols).
 

@@ -390,7 +390,11 @@ describe('config-validator', () => {
         const configs = generateAllConfigs(devices, 'dc')
         const result = validateConfigs({ configs, devices, useCase: 'dc' })
         const mtu = result.checks.find(c => c.id === 'V-14')!
-        expect(mtu.severity, `${vendor}: ${mtu.detail}`).toBe('pass')
+        // 'info' = no VXLAN/NVE device at all. NVIDIA Cumulus DC is pure eBGP
+        // L3 (Y6) and only mentions VXLAN in a comment, so after the Z6
+        // comment-stripping it correctly has nothing to check.
+        expect(['pass', 'info'], `${vendor}: ${mtu.detail}`).toContain(mtu.severity)
+        if (vendor !== 'NVIDIA') expect(mtu.severity, `${vendor}: ${mtu.detail}`).toBe('pass')
       }
     })
 
@@ -548,5 +552,61 @@ describe('config-validator', () => {
       const v10 = result.checks.find(c => c.id === 'V-10')!
       expect(v10.severity).toBe('pass')
     })
+  })
+})
+
+// ── Z6: comments are documentation, never configuration ─────────────────────
+
+describe('Comment lines are never parsed as config (group Z6)', () => {
+  it('V-08: a comment MENTIONING VXLAN does not make a device a VTEP', () => {
+    // The real gpu-nvidia false positive: 18 devices warned "NVE/VXLAN but no
+    // EVPN" when there was no VXLAN anywhere — all 18 hits were the comment
+    // "# … (jumbo MTU for RoCE/VXLAN payloads)".
+    const cfg = [
+      'hostname LEAF-01',
+      '# swp1 mtu 9216 (jumbo MTU for RoCE/VXLAN payloads)',
+      '! interface nve1 — example only, not deployed',
+      'ntp server 1.1.1.1',
+      'router bgp 65001',
+      ' router-id 10.0.0.1',
+      'interface Loopback0',
+      ' ip address 10.0.0.1/32',
+      'username admin secret <CHANGE-ME-pw>',
+    ].join('\n')
+    const result = validateConfigs({ configs: { 'LEAF-01': cfg }, devices: [], useCase: 'dc' })
+    const v08 = result.checks.find(c => c.id === 'V-08')!
+    // V-08 may still note that a DC usually runs VXLAN — but it must NOT claim
+    // this device HAS an NVE/VXLAN config, because only a comment mentions it.
+    expect(v08.detail, v08.detail).not.toMatch(/VXLAN\/NVE|NVE\/VXLAN/)
+    expect(v08.devices ?? [], v08.detail).not.toContain('LEAF-01')
+  })
+
+  it('V-01: a commented-out `router ospf` does not count as a second underlay', () => {
+    const cfg = 'hostname R1\nrouter isis UNDERLAY\n! router ospf 1  (migrated away from OSPF)\nntp server 1.1.1.1\nrouter bgp 65001\n router-id 10.0.0.1\ninterface Loopback0\n ip address 10.0.0.1/32\nusername a secret <CHANGE-ME>'
+    const v01 = validateConfigs({ configs: { R1: cfg }, devices: [], useCase: 'dc' })
+      .checks.find(c => c.id === 'V-01')!
+    expect(v01.severity, v01.detail).not.toBe('fail')
+  })
+
+  it('V-05: a `<CHANGE-ME>` example in a comment is not a hardcoded secret, and a real one still is', () => {
+    const commented = 'hostname R1\n! username admin password Cisco123  <- do NOT do this\nusername admin secret <CHANGE-ME-pw>\nntp server 1.1.1.1\nrouter bgp 65001\n router-id 10.0.0.1\ninterface Loopback0\n ip address 10.0.0.1/32'
+    const v05 = validateConfigs({ configs: { R1: commented }, devices: [], useCase: 'dc' })
+      .checks.find(c => c.id === 'V-05')!
+    expect(v05.severity, v05.detail).toBe('pass')
+  })
+
+  it('V-10: an ACL named only inside a comment is not an undefined reference', () => {
+    const cfg = 'hostname FW-01\n! ip access-group EXAMPLE-ACL in   (sample, see runbook)\nntp server 1.1.1.1\nrouter bgp 65001\n router-id 10.0.0.1\ninterface Loopback0\n ip address 10.0.0.1/32\nusername a secret <CHANGE-ME>'
+    const v10 = validateConfigs({ configs: { 'FW-01': cfg }, devices: [], useCase: 'dc' })
+      .checks.find(c => c.id === 'V-10')!
+    expect(v10.severity, v10.detail).toBe('pass')
+  })
+
+  it('V-11 still uses the RAW text — a config that is only comments is a real failure', () => {
+    const v11 = validateConfigs({
+      configs: { 'SW-01': '! TODO: generate a config for this platform' },
+      devices: [], useCase: 'dc',
+    }).checks.find(c => c.id === 'V-11')!
+    expect(v11.severity).toBe('pass')   // generation produced text; content checks judge it
   })
 })
