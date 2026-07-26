@@ -389,6 +389,13 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
     computed as `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2 [+1 for
     leaf]}` so the spine and leaf side of each link always agree on the same
     subnet without manual cabling notes.
+- **`roleIndex(dev, allDevices, fallback)`** *(Z5/M-7, exported)* — index of a
+  device **within its own tier**. `pairId`, loopbacks, VTEPs and ASNs all used
+  the GLOBAL device index, so an odd number of preceding devices (three spines)
+  split an HA pair across two pairIds: mismatched vPC domain, anycast VTEP,
+  peer-link and ASN, silently. Every generator and peer-list now indexes by
+  tier, so the first leaf is `10.255.2.1` / ASN 65001 regardless of spine count.
+  `haPairInfo(dev, idx, allDevices?)` uses it too.
 - **`ipToInt` / `intToIp` / `ipAdd(base, offset)` / `roleIp(primary, slot, idx)`
   / `fwHandoffIp(peerIdx, fwIdx, fwCount)`** *(Z7)* — the address plan in real
   32-bit arithmetic. Every scheme used to interpolate into a single octet and

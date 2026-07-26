@@ -118,15 +118,15 @@ line vty 0 15
 // ── NX-OS Spine ───────────────────────────────────────────────────────────────
 
 function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const spineAsn = 65000
   const routerId = roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
   // Real eBGP leaf peers derived from the fabric (leaf lo0 = 10.255.2.(i+1),
   // leaf ASN = 65001+i — matches nxosLeafConfig). eBGP EVPN: per-leaf remote-as,
   // NO route-reflector-client (RR is iBGP-only).
   const leafPeerLines = allDevices
-    .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'leaf')
-    .map(x => `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)}\n    inherit peer LEAF-PEER\n    remote-as ${65001 + x.i}\n    description ${x.d.hostname || `LEAF-${x.i + 1}`}`)
+    .filter(d => d.subLayer === 'leaf')
+    .map((d, i) => `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)}\n    inherit peer LEAF-PEER\n    remote-as ${65000 + Math.floor(i / 2) + 1}\n    description ${d.hostname || `LEAF-${i + 1}`}`)
     .join('\n')
   const spineBgpNeighbors = leafPeerLines || '  ! No leaves in fabric — add: neighbor <leaf-lo0>\\n    inherit peer LEAF-PEER\\n    remote-as <leaf-asn>'
   const isisNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
@@ -308,9 +308,24 @@ ip prefix-list LOOPBACKS seq 10 permit 10.254.0.0/16 ge 32
 // 2&3 share pair 2, etc. (matches generateHostnames() in bom.ts, which assigns
 // rack letters per pair and alternates the trailing 01/02 unit number within a
 // pair). isPrimary (even idx) is the active/root member of the pair.
-export function haPairInfo(dev: BOMDevice, idx: number): { pairId: number; isPrimary: boolean; peerHostname: string; domainId: string } {
-  const pairId = Math.floor(idx / 2) + 1
-  const isPrimary = idx % 2 === 0
+/**
+ * Index of a device WITHIN ITS OWN TIER (Z5/M-7). Everything role-scoped — the
+ * vPC/MLAG pair id, the loopback, the ASN — used the GLOBAL device index, so
+ * an ODD number of preceding devices (three spines, say) split an HA pair
+ * across two pairIds: mismatched vPC domain, anycast VTEP, peer-link and ASN.
+ * Fabric-fatal and completely silent. Falls back to the caller's index when
+ * `allDevices` is empty (single-device calls).
+ */
+export function roleIndex(dev: BOMDevice, allDevices: BOMDevice[], fallback: number): number {
+  if (!allDevices.length) return fallback
+  const i = allDevices.filter(d => d.subLayer === dev.subLayer).findIndex(d => d.id === dev.id)
+  return i >= 0 ? i : fallback
+}
+
+export function haPairInfo(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): { pairId: number; isPrimary: boolean; peerHostname: string; domainId: string } {
+  const tierIdx = roleIndex(dev, allDevices, idx)
+  const pairId = Math.floor(tierIdx / 2) + 1
+  const isPrimary = tierIdx % 2 === 0
   const peerHostname = dev.hostname.replace(/0([12])$/, (_m, n) => (n === '1' ? '02' : '01'))
   const domainId = dev.hostname.replace(/0[12]$/, '')
   return { pairId, isPrimary, peerHostname, domainId }
@@ -722,7 +737,11 @@ export const DCI_RT_ASN = 65100
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 
 function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false, appTypes: AppType[] = []): string {
-  const leafAsn  = 65001 + idx
+  idx = roleIndex(dev, allDevices, idx)
+  // Z5/M-6: PAIR-based ASN — both vPC members share one AS (parity with the
+  // Arista Y4 fix). With different ASNs the pair's shared anycast VTEP is
+  // advertised from two ASes, so remote leaves see it as two distinct origins.
+  const leafAsn  = 65000 + Math.floor(roleIndex(dev, allDevices, idx) / 2) + 1
   const routerId = roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
   const vtepIp   = roleIp('10.254.0.1', RoleSlot.Vtep, idx)
   // Host/server ports: the access block below the fabric uplinks (a border
@@ -734,8 +753,9 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   // away (ebgp-multihop 2 can never reach them).
   const linkedSpineNames = new Set(closFabricLinks('leaf', dev, allDevices).map(l => l.peerHostname))
   const spinePeerLines = allDevices
+    .filter(d => d.subLayer === 'spine')
     .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'spine' && (linkedSpineNames.size === 0 || linkedSpineNames.has(x.d.hostname)))
+    .filter(x => linkedSpineNames.size === 0 || linkedSpineNames.has(x.d.hostname))
     .map(x => `  neighbor ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)}\n    inherit peer SPINE-PEER\n    description ${x.d.hostname || `SPINE-${x.i + 1}`}`)
     .join('\n')
   const leafBgpNeighbors = spinePeerLines || '  ! No spines in fabric — add: neighbor <spine-lo0>\\n    inherit peer SPINE-PEER'
@@ -775,11 +795,15 @@ ${fwLinks.map(x => `  ip route 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
       ! Border leaf: inject the perimeter default into EVPN as a type-5 route.
       default-information originate always
       redistribute static route-map ALLOW-ALL` : ''}`
-  const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
+  const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx, allDevices)
   const vpcRolePriority = isPrimary ? 8192 : 16384
   // vPC anycast VTEP VIP — shared secondary on loopback1 for the HA pair, so
   // multihomed traffic hashes to one logical VTEP (X7).
   const vpcVtepVip = roleIp('10.254.1.1', RoleSlot.VpcVip, pairId - 1)
+  // Backup L3 peering /31 across the peer-link, in the same 10.253/16 pool the
+  // Arista MLAG peering uses (flat index, Z7).
+  const vpcBackupLocalIp = ipAdd('10.253.1.0', (pairId - 1) * 2 + (isPrimary ? 0 : 1))
+  const vpcBackupPeerIp  = ipAdd('10.253.1.0', (pairId - 1) * 2 + (isPrimary ? 1 : 0))
   // Peer-link members: on SKUs with a dedicated uplink range, use the
   // leftover dedicated high-speed ports (93180: uplinks on 49-52 → peer-link
   // 53-54); otherwise the two ports just below the fabric uplinks.
@@ -919,6 +943,13 @@ router bgp ${leafAsn}
     maximum-paths 64
   address-family l2vpn evpn
   !
+  ! Z5/M-2: with a PIP (loopback1 primary) + VIP (secondary) vPC VTEP AND an
+  ! L3VNI, type-5 routes must be sourced from the PIP and carry the pair's
+  ! virtual RMAC — otherwise the peer imports them with the VIP next-hop and
+  ! symmetric-IRB traffic is dropped by the wrong-MAC check.
+  advertise-pip
+  advertise virtual-rmac
+  !
   template peer SPINE-PEER
     remote-as 65000
     update-source loopback0
@@ -932,6 +963,17 @@ router bgp ${leafAsn}
   !
   ! ── Spine eBGP peers (auto-generated from the fabric) ─────────────────────
 ${leafBgpNeighbors}
+  !
+  ! Z5/M-6: iBGP across the vPC peer-link. A member that loses every fabric
+  ! uplink still reaches the fabric through its peer instead of black-holing.
+  neighbor ${vpcBackupPeerIp}
+    remote-as ${leafAsn}
+    description vPC-PEER ${peerHostname}
+    update-source Vlan3999
+    address-family ipv4 unicast
+      next-hop-self
+    address-family l2vpn evpn
+      send-community both
 ${tenantVrfBgp}
 !
 route-map ALLOW-ALL permit 10
@@ -973,6 +1015,18 @@ vpc orphan-port suspend
 ${fwHandoffBlock}
 !
 ${qosBlock}
+!
+! ── vPC BACKUP ROUTED PATH (Z5/M-6 — iBGP peering VLAN over the peer-link) ───
+vlan 3999
+  name VPC-PEER-L3
+!
+interface Vlan3999
+  description VPC-PEER-L3 to ${peerHostname}
+  no shutdown
+  mtu 9216
+  ip address ${vpcBackupLocalIp}/31
+  ip router isis 1
+  isis network point-to-point
 !
 ! ── vPC PEER-LINK (HA pair with ${peerHostname}) ──────────────────────────────
 vpc domain ${pairId}
@@ -1188,9 +1242,18 @@ policy-map type queuing PM-EGRESS-QUEUING
     bandwidth percent 35
     random-detect dscp-based
 !
+! Z5/M-5: the routed fabric ports set MTU per-interface, but the L2 paths —
+! the vPC peer-link and the server access ports — inherit the system default
+! of 1500, so a VXLAN-encapsulated frame is dropped on those paths. A
+! network-qos jumbo MTU covers every switched port.
+policy-map type network-qos PM-JUMBO
+  class type network-qos class-default
+    mtu 9216
+!
 system qos
-  service-policy type qos      input PM-INGRESS-CLASSIFY
-  service-policy type queuing  output PM-EGRESS-QUEUING`
+  service-policy type qos          input  PM-INGRESS-CLASSIFY
+  service-policy type queuing      output PM-EGRESS-QUEUING
+  service-policy type network-qos  PM-JUMBO`
 }
 
 function nxosGpuQoS(): string {
@@ -1318,6 +1381,7 @@ hardware profile forwarding-mode fabricpath
 // ── Arista EOS ────────────────────────────────────────────────────────────────
 
 function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const asn      = 65000
   const routerId = roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
   // System-ID must be exactly 12 hex digits (3×4). padStart avoids the overflow
@@ -1332,12 +1396,11 @@ function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevic
   // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1)). Leaf ASNs
   // are PAIR-based (65000 + pairId — an MLAG pair shares one ASN, Y4/A-M2).
   const spineLeafPeers = allDevices
-    .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'leaf')
-    .flatMap(x => [
-      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)} peer group LEAF-PEER`,
-      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)} remote-as ${65000 + Math.floor(x.i / 2) + 1}`,
-      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)} description ${x.d.hostname || `LEAF-${x.i + 1}`}`,
+    .filter(d => d.subLayer === 'leaf')
+    .flatMap((d, i) => [
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} peer group LEAF-PEER`,
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} remote-as ${65000 + Math.floor(i / 2) + 1}`,
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} description ${d.hostname || `LEAF-${i + 1}`}`,
     ])
     .join('\n')
   const spineLeafPeerBlock = spineLeafPeers || '  ! No leaves in fabric — add: neighbor <leaf-lo0> peer group LEAF-PEER / remote-as <leaf-asn>'
@@ -1457,7 +1520,8 @@ EOF
 }
 
 function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = [], isMultisite = false, appTypes: AppType[] = []): string {
-  const { pairId, isPrimary, peerHostname, domainId } = haPairInfo(dev, idx)
+  idx = roleIndex(dev, allDevices, idx)
+  const { pairId, isPrimary, peerHostname, domainId } = haPairInfo(dev, idx, allDevices)
   // EOS/AVD practice: an MLAG pair shares ONE ASN (Y4/A-M2) — with per-device
   // ASNs the shared anycast VTEP is advertised from two different AS numbers
   // and the pair cannot run the required peer-link iBGP session.
@@ -1510,8 +1574,9 @@ ${fwLinks.map(x => `ip route vrf TENANT-A 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')
   // Only the spines this leaf actually links to (Z1 — see nxosLeafConfig).
   const linkedSpines = new Set(closFabricLinks('leaf', dev, allDevices).map(l => l.peerHostname))
   const leafSpinePeers = allDevices
+    .filter(d => d.subLayer === 'spine')
     .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'spine' && (linkedSpines.size === 0 || linkedSpines.has(x.d.hostname)))
+    .filter(x => linkedSpines.size === 0 || linkedSpines.has(x.d.hostname))
     .map(x => `  neighbor ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)} peer group SPINE-PEER`)
     .join('\n')
   const leafSpinePeerBlock = leafSpinePeers || '  ! No spines in fabric — add: neighbor <spine-lo0> peer group SPINE-PEER'
@@ -1781,15 +1846,15 @@ set class-of-service interfaces et-* scheduler-map RDMA-MAP
 // Juniper QFX spine — IS-IS underlay + eBGP EVPN route-reflection to leaves.
 // A spine is NOT a VTEP: no switch-options vtep-source / vrf-target here.
 function juniperSpineConfig(dev: BOMDevice, idx: number, protoFeatures: string[] = [], needsRoce = false, allDevices: BOMDevice[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const lo0ip = roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
   const isoNet = `49.0001.0101.0255.${String(idx + 1).padStart(4, '0')}.00`
   const roceBlock = needsRoce ? juniperRoceBlock() : ''
   const fabricLinks = renderJuniperFabricLinks('spine', dev, allDevices)
   // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1), ASN 65001+i).
   const leafNeighborLines = allDevices
-    .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'leaf')
-    .map(x => `set protocols bgp group LEAVES neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, x.i)} peer-as ${65001 + x.i}`)
+    .filter(d => d.subLayer === 'leaf')
+    .map((_d, i) => `set protocols bgp group LEAVES neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} peer-as ${65001 + i}`)
     .join('\n')
   const spineLeafNeighbors = leafNeighborLines || 'set protocols bgp group LEAVES neighbor <CHANGE-ME-leaf-lo0> peer-as <CHANGE-ME-leaf-asn>'
   const ipv6 = protoFeatures.includes('IPv6 Dual-Stack')
@@ -1891,14 +1956,16 @@ set class-of-service interfaces et-* congestion-notification-profile STORAGE-PFC
 }
 
 function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], needsRoce = false, appTypes: AppType[] = [], allDevices: BOMDevice[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const leafAsn = 65001 + idx
   const isoNet  = `49.0001.0102.5500.${String(idx + 1).padStart(4, '0')}.00`
   // Real spine peers from the fabric (spine lo0 10.255.1.(i+1), ASN 65000).
   // Only the spines this leaf actually links to (Z1 — see nxosLeafConfig).
   const linkedSpineSet = new Set(closFabricLinks('leaf', dev, allDevices).map(l => l.peerHostname))
   const spineNeighborLines = allDevices
+    .filter(d => d.subLayer === 'spine')
     .map((d, i) => ({ d, i }))
-    .filter(x => x.d.subLayer === 'spine' && (linkedSpineSet.size === 0 || linkedSpineSet.has(x.d.hostname)))
+    .filter(x => linkedSpineSet.size === 0 || linkedSpineSet.has(x.d.hostname))
     .map(x => `set protocols bgp group SPINE-RR neighbor ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)} peer-as 65000`)
     .join('\n')
   const leafSpineNeighbors = spineNeighborLines || 'set protocols bgp group SPINE-RR neighbor <CHANGE-ME-spine-lo0> peer-as 65000'
@@ -2740,8 +2807,9 @@ commit
 // gateways (active/standby). IGMP snooping (+ querier on distribution) is added
 // when voice/video app types are present.
 function iosxeCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[], allDevices: BOMDevice[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const isDist = dev.subLayer === 'distribution'
-  const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx)
+  const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx, allDevices)
   const hasVoice = appTypes.includes('voice')
   const hasVideo = appTypes.includes('video')
   const needsIgmp = hasVoice || hasVideo
@@ -3625,6 +3693,7 @@ interface 1/1/1-1/1/${dev.ports}
 // output had PFC/ECN only as comments — §6.5 violation), and no empty EVPN
 // (a GPU fabric is standard pure eBGP L3; RFC 7938).
 function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDevices: BOMDevice[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const isSpine = dev.subLayer === 'spine'
   const asn = isSpine ? 65000 : 65001 + idx
   const lo0ip = isSpine
