@@ -585,11 +585,11 @@ describe('IPv6 dual-stack underlay (Enterprise upgrade A6)', () => {
     ]
     const configs = generateAllConfigs(devices, 'dc', [], [], ipv6Feature)
 
-    // lf1 is at global devices[] index 2, so its loopback router-id is
-    // 10.255.2.3 / fd00:255:2::3 (router-id numbering follows global index,
-    // unlike the fabric-link leafNum which follows position among leaves).
+    // Z5/M-7: identity is TIER-scoped — lf1 is the FIRST leaf, so its
+    // router-id is 10.255.2.1 / fd00:255:2::1 regardless of how many spines
+    // precede it in the device list.
     expect(configs['sp1']).toContain('ipv6 address fd00:255:1::1/128')
-    expect(configs['lf1']).toContain('ipv6 address fd00:255:2::3/128')
+    expect(configs['lf1']).toContain('ipv6 address fd00:255:2::1/128')
     expect(configs['sp1']).toContain('address-family ipv6 unicast')
     expect(configs['lf1']).toContain('ipv6 address fd00:99:1::1/127')
     expect(configs['sp1']).toContain('ipv6 address fd00:99:1::0/127')
@@ -1020,9 +1020,10 @@ describe('NX-OS eBGP EVPN fabric wiring (group X)', () => {
   it('spine emits a REAL eBGP neighbor per leaf with the leaf ASN (no placeholders, no RR-client)', () => {
     const { configs } = fabric()
     const spine = configs['s1']
-    // leaves are at global index 2,3 → lo0 10.255.2.3 / .4, ASN 65003 / 65004
-    expect(spine).toMatch(/neighbor 10\.255\.2\.3\n\s+inherit peer LEAF-PEER\n\s+remote-as 65003/)
-    expect(spine).toMatch(/neighbor 10\.255\.2\.4\n\s+inherit peer LEAF-PEER\n\s+remote-as 65004/)
+    // Z5/M-7: leaves are the 1st and 2nd LEAVES → lo0 10.255.2.1 / .2.
+    // Z5/M-6: they are ONE vPC pair, so they SHARE ASN 65001.
+    expect(spine).toMatch(/neighbor 10\.255\.2\.1\n\s+inherit peer LEAF-PEER\n\s+remote-as 65001/)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.2\n\s+inherit peer LEAF-PEER\n\s+remote-as 65001/)
     expect(spine).not.toMatch(/route-reflector-client/)   // eBGP, not iBGP-RR
     expect(spine).not.toMatch(/inherit peer LEAF-RR-CLIENT/)
     expect(spine).not.toMatch(/! neighbor .* inherit/)     // no commented stub peers
@@ -1047,8 +1048,10 @@ describe('NX-OS eBGP EVPN fabric wiring (group X)', () => {
   it('spine and leaf ASNs are coherent for eBGP (spine 65000, leaves 65000+idx, all distinct)', () => {
     const { configs } = fabric()
     expect(configs['s1']).toMatch(/router bgp 65000/)
-    expect(configs['l1']).toMatch(/router bgp 65003/)  // global idx 2
-    expect(configs['l2']).toMatch(/router bgp 65004/)  // global idx 3
+    // Z5/M-6: a vPC pair shares one ASN (the shared anycast VTEP must have
+    // a single origin AS), so both members are 65001.
+    expect(configs['l1']).toMatch(/router bgp 65001/)
+    expect(configs['l2']).toMatch(/router bgp 65001/)
   })
 })
 
@@ -1077,10 +1080,10 @@ describe('Arista EOS eBGP EVPN fabric wiring (group X3)', () => {
   it('spine emits real eBGP leaf peers (flat EOS syntax, pair-based remote-as, no RR-client)', () => {
     const c = fabric()
     const spine = c['s1']
-    expect(spine).toMatch(/neighbor 10\.255\.2\.3 peer group LEAF-PEER/)
-    // leaves at global idx 2,3 are ONE MLAG pair (pairId 2) → shared ASN 65002 (Y4)
-    expect(spine).toMatch(/neighbor 10\.255\.2\.3 remote-as 65002/)
-    expect(spine).toMatch(/neighbor 10\.255\.2\.4 remote-as 65002/)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.1 peer group LEAF-PEER/)
+    // the 1st and 2nd leaves are ONE MLAG pair (pairId 1) → shared ASN 65001 (Y4)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.1 remote-as 65001/)
+    expect(spine).toMatch(/neighbor 10\.255\.2\.2 remote-as 65001/)
     // eBGP: no reflector-client in actual config lines (comments allowed)
     expect(spine.split('\n').filter(l => !l.trim().startsWith('!')).join('\n')).not.toMatch(/route-reflector-client/)
     expect(spine).not.toMatch(/peer-group LEAF-RR-CLIENTS/)   // no invalid indented block
@@ -1124,8 +1127,8 @@ describe('Juniper JunOS eBGP EVPN fabric wiring (group X4)', () => {
     const spine = c['s1']; const leaf = c['l1']
     expect(spine).toMatch(/group LEAVES local-address lo0\.0/)
     expect(spine).toMatch(/group LEAVES multihop/)
-    expect(spine).toMatch(/group LEAVES neighbor 10\.255\.2\.3 peer-as 65003/)
-    expect(spine).toMatch(/group LEAVES neighbor 10\.255\.2\.4 peer-as 65004/)
+    expect(spine).toMatch(/group LEAVES neighbor 10\.255\.2\.1 peer-as 65001/)
+    expect(spine).toMatch(/group LEAVES neighbor 10\.255\.2\.2 peer-as 65002/)
     expect(leaf).toMatch(/group SPINE-RR local-address lo0\.0/)
     expect(leaf).toMatch(/group SPINE-RR multihop/)
     expect(leaf).toMatch(/group SPINE-RR neighbor 10\.255\.1\.1 peer-as 65000/)
@@ -1138,7 +1141,7 @@ describe('Juniper JunOS eBGP EVPN fabric wiring (group X4)', () => {
     const leaf = c['l1']
     expect(leaf).toMatch(/set vlans V10 vlan-id 10/)
     expect(leaf).toMatch(/set vlans V10 vxlan vni 10010/)
-    expect(leaf).toMatch(/set switch-options route-distinguisher 10\.255\.2\.3:1/)
+    expect(leaf).toMatch(/set switch-options route-distinguisher 10\.255\.2\.1:1/)
     expect(leaf).toMatch(/set interfaces et-0\/0\/48 mtu 9216/)
     expect(leaf).not.toMatch(/set interfaces et-0\/0\/0 mtu 9216/)   // MTU no longer on the wrong ports
   })
@@ -1463,7 +1466,7 @@ describe('Juniper fabric wiring + SRX (group Y5)', () => {
 
   it('J-C3/J-M1: leaf has a global autonomous-system; no redundant local-as anywhere', () => {
     const c = fabric()
-    expect(c['l1']).toMatch(/set routing-options autonomous-system 65003/)
+    expect(c['l1']).toMatch(/set routing-options autonomous-system 65001/)
     expect(c['l1']).not.toMatch(/local-as/)
     expect(c['s1']).toMatch(/set routing-options autonomous-system 65000/)
     expect(c['s1']).not.toMatch(/local-as/)
@@ -1512,8 +1515,8 @@ describe('NVIDIA Cumulus NVUE (group Y6)', () => {
     const c = gpuFabric()
     expect(c['s1']).toContain('nv set router bgp autonomous-system 65000')
     expect(c['s1']).toContain('nv set interface lo ip address 10.255.1.1/32')
-    expect(c['l1']).toContain('nv set router bgp autonomous-system 65003')  // global idx 2
-    expect(c['l1']).toContain('nv set interface lo ip address 10.255.2.3/32')
+    expect(c['l1']).toContain('nv set router bgp autonomous-system 65001')  // 1st leaf
+    expect(c['l1']).toContain('nv set interface lo ip address 10.255.2.1/32')
     expect(c['l1']).not.toContain('<CHANGE-ME-asn>')
     expect(c['l1']).not.toContain('<CHANGE-ME-loopback-ip>')
   })
@@ -1993,5 +1996,67 @@ describe('Address plan never emits an invalid IP (group Z7)', () => {
     for (const d of devices) {
       expect(badIps(configs[d.id] ?? []), `${d.hostname} emitted an invalid IP`).toEqual([])
     }
+  })
+})
+
+// ── Z5: per-vendor remainders (first slice: NX-OS + the pairing bug) ────────
+
+describe('HA pairing and NX-OS vPC completeness (group Z5)', () => {
+  function fabric(spineCount: number, vendor = 'Cisco') {
+    const devices: BOMDevice[] = []
+    for (let i = 0; i < spineCount; i++) {
+      devices.push(makeDevice({ id: `s${i}`, hostname: `P-SPINE-A0${i + 1}`, vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }))
+    }
+    for (const [i, h] of ['P-LEAF-A01', 'P-LEAF-A02', 'P-LEAF-B01', 'P-LEAF-B02'].entries()) {
+      devices.push(makeDevice({ id: `l${i}`, hostname: h, vendor, subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2, uplinkStart: 49 }))
+    }
+    return { devices, configs: generateAllConfigs(devices, 'dc') }
+  }
+
+  // M-7/A3-7: pairId came from the GLOBAL device index, so an ODD number of
+  // preceding devices split an HA pair across two pairIds — mismatched vPC
+  // domain, anycast VTEP, peer-link and ASN. Silent and fabric-fatal.
+  for (const spineCount of [2, 3, 5]) {
+    it(`${spineCount} spines: an HA pair stays ONE pair (identity is tier-scoped, not global)`, () => {
+      const { configs } = fabric(spineCount)
+      const domainOf = (id: string) => /vpc domain (\d+)/.exec(configs[id])![1]
+      const vipOf = (id: string) => /ip address (10\.254\.1\.\d+)\/32 secondary/.exec(configs[id])![1]
+      const asnOf = (id: string) => /router bgp (\d+)/.exec(configs[id])![1]
+      expect(domainOf('l0'), `${spineCount} spines split the A pair's vPC domain`).toBe(domainOf('l1'))
+      expect(vipOf('l0'), 'pair members disagree on the anycast VTEP VIP').toBe(vipOf('l1'))
+      expect(asnOf('l0'), 'pair members disagree on the ASN').toBe(asnOf('l1'))
+      // …and the two pairs must still be DISTINCT from each other
+      expect(domainOf('l0')).not.toBe(domainOf('l2'))
+      expect(vipOf('l0')).not.toBe(vipOf('l2'))
+    })
+
+    it(`${spineCount} spines: leaf identity does not shift with the spine count`, () => {
+      const { configs } = fabric(spineCount)
+      expect(configs['l0'], 'first leaf must always be 10.255.2.1').toContain('ip address 10.255.2.1/32')
+    })
+  }
+
+  it('M-2: a PIP+VIP vPC VTEP with an L3VNI advertises pip + virtual-rmac', () => {
+    const { configs } = fabric(2)
+    expect(configs['l0']).toMatch(/address-family l2vpn evpn[\s\S]*?advertise-pip/)
+    expect(configs['l0']).toContain('advertise virtual-rmac')
+  })
+
+  it('M-6: the vPC pair runs iBGP over a backup routed peering VLAN', () => {
+    const { configs } = fabric(2)
+    const a = configs['l0'], b = configs['l1']
+    expect(a).toMatch(/interface Vlan3999[\s\S]*?ip address 10\.253\.1\.0\/31/)
+    expect(b).toMatch(/interface Vlan3999[\s\S]*?ip address 10\.253\.1\.1\/31/)
+    // each peers the OTHER end of that /31, in its own (shared) AS
+    expect(a).toMatch(/neighbor 10\.253\.1\.1\n\s+remote-as 65001[\s\S]*?update-source Vlan3999/)
+    expect(b).toMatch(/neighbor 10\.253\.1\.0\n\s+remote-as 65001[\s\S]*?update-source Vlan3999/)
+  })
+
+  it('M-5: a network-qos jumbo policy covers the L2 paths the per-interface MTU misses', () => {
+    const { configs } = fabric(2)
+    // the peer-link and server access ports are switched — per-interface `mtu`
+    // on the routed fabric ports does not apply to them
+    expect(configs['l0']).toMatch(/policy-map type network-qos PM-JUMBO[\s\S]*?mtu 9216/)
+    expect(configs['l0']).toMatch(/system qos[\s\S]*?service-policy type network-qos\s+PM-JUMBO/)
   })
 })
