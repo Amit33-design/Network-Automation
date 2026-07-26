@@ -1288,12 +1288,12 @@ describe('eBGP overlay establishment parity (group Y1)', () => {
   })
 
   it('campus distribution now has a loopback + real peer-link (V-12 / C-2)', () => {
-    const dist = generateConfig(makeDevice({ hostname: 'IAD-DIST-A01', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', ports: 48, uplinks: 4 }), 0, 'campus')
+    const dist = generateConfig(makeDevice({ hostname: 'IAD-DIST-A01', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', model: 'Catalyst 9500-48Y4C', ports: 48, uplinks: 4, uplinkStart: 49, speed: '25G', uplinkSpeed: '100G', portIf: 'TwentyFiveGigE1/0/', uplinkIf: 'HundredGigE1/0/' }), 0, 'campus')
     expect(dist).toMatch(/interface Loopback0\n\s+description ROUTER-ID\n\s+ip address 10\.255\.3\.1 255\.255\.255\.255/)
     expect(dist).toMatch(/router ospf 1\n\s+router-id 10\.255\.3\.1/)
     expect(dist).toMatch(/^interface Port-channel1$/m)
     expect(dist).not.toMatch(/^! interface Port-channel/m)
-    expect(dist).toMatch(/interface TenGigabitEthernet1\/0\/43[\s\S]*?channel-group 1 mode active/)
+    expect(dist).toMatch(/interface HundredGigE1\/0\/49[\s\S]*?channel-group 1 mode active/)
   })
 })
 
@@ -1342,8 +1342,8 @@ describe('NX-OS fabric wiring honesty (group Y2)', () => {
 // ── Y3: campus deployability (2nd-pass audit C-1..C-6) ──────────────────────────
 
 describe('Campus deployability (group Y3)', () => {
-  const dist = () => generateConfig(makeDevice({ hostname: 'IAD-DIST-A01', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', ports: 48, uplinks: 4 }), 0, 'campus')
-  const access = () => generateConfig(makeDevice({ hostname: 'IAD-ACC-A01', vendor: 'Cisco', subLayer: 'access', role: 'access', ports: 48, uplinks: 4 }), 2, 'campus')
+  const dist = () => generateConfig(makeDevice({ hostname: 'IAD-DIST-A01', vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', model: 'Catalyst 9500-48Y4C', ports: 48, uplinks: 4, uplinkStart: 49, speed: '25G', uplinkSpeed: '100G', portIf: 'TwentyFiveGigE1/0/', uplinkIf: 'HundredGigE1/0/' }), 0, 'campus')
+  const access = () => generateConfig(makeDevice({ hostname: 'IAD-ACC-A01', vendor: 'Cisco', subLayer: 'access', role: 'access', model: 'Catalyst 9200-48P', ports: 48, uplinks: 4, uplinkStart: 1, speed: '1G', uplinkSpeed: '10G', portIf: 'GigabitEthernet1/0/', uplinkIf: 'TenGigabitEthernet1/1/' }), 2, 'campus')
 
   it('C-1: Vlan99 mgmt SVI exists on BOTH dist and access (mgmt plane sources from it)', () => {
     expect(dist()).toMatch(/interface Vlan99\n\s+description MGMT\n\s+ip address 10\.255\.99\.1 255\.255\.255\.0/)
@@ -1353,15 +1353,15 @@ describe('Campus deployability (group Y3)', () => {
 
   it('C-2: distribution has real access-facing downlink trunks and a routed core uplink', () => {
     const d = dist()
-    expect(d).toMatch(/interface range TenGigabitEthernet1\/0\/1-42\n\s+description DOWNLINK-TO-ACCESS/)
-    expect(d).toMatch(/interface TenGigabitEthernet1\/0\/45\n\s+description UPLINK-TO-CORE\n\s+no switchport/)
-    expect(d).toContain('no passive-interface TenGigabitEthernet1/0/45')
+    expect(d).toMatch(/interface range TwentyFiveGigE1\/0\/1-48\n\s+description DOWNLINK-TO-ACCESS/)
+    expect(d).toMatch(/interface HundredGigE1\/0\/51\n\s+description UPLINK-TO-CORE\n\s+no switchport/)
+    expect(d).toContain('no passive-interface HundredGigE1/0/51')
     expect(d).not.toContain('<CHANGE-ME-uplink-to-core>')
   })
 
   it('C-4: access uplink trunks are DHCP-snooping trusted', () => {
     const a = access()
-    const uplinkBlocks = a.split('interface GigabitEthernet1/0/4')  // uplinks 47/48
+    const uplinkBlocks = a.split('interface TenGigabitEthernet1/1/')  // C9200-NM-4X module
     expect(a).toMatch(/UPLINK-1[\s\S]*?ip dhcp snooping trust/)
     expect(a).toMatch(/UPLINK-2[\s\S]*?ip dhcp snooping trust/)
     expect(uplinkBlocks.length).toBeGreaterThan(1)
@@ -1837,5 +1837,69 @@ describe('Firewall attaches to border leaves, not spines (group Z3)', () => {
     expect(c['d1']).toMatch(/FW-HANDOFF[\s\S]*?ip ospf 10 area 0/)
     expect(c['d1']).toMatch(/ip route 0\.0\.0\.0 0\.0\.0\.0 10\.98\.1\.1/)
     expect(c['d1']).toMatch(/default-information originate/)
+  })
+})
+
+// ── Z4: campus physical-layer correctness ───────────────────────────────────
+
+describe('Campus configs name ports the chassis actually has (group Z4)', () => {
+  const C9500 = { vendor: 'Cisco', subLayer: 'distribution', role: 'distribution', model: 'Catalyst 9500-48Y4C', ports: 48, uplinks: 4, uplinkStart: 49, speed: '25G', uplinkSpeed: '100G', portIf: 'TwentyFiveGigE1/0/', uplinkIf: 'HundredGigE1/0/' }
+  const C9200 = { vendor: 'Cisco', subLayer: 'access', role: 'access', model: 'Catalyst 9200-48P', ports: 48, uplinks: 4, uplinkStart: 1, speed: '1G', uplinkSpeed: '10G', portIf: 'GigabitEthernet1/0/', uplinkIf: 'TenGigabitEthernet1/1/' }
+
+  const design = () => generateAllConfigs([
+    makeDevice({ id: 'd1', hostname: 'SJC-DIST-A01', ...C9500 }),
+    makeDevice({ id: 'd2', hostname: 'SJC-DIST-A02', ...C9500 }),
+    makeDevice({ id: 'a1', hostname: 'SJC-ACC-A01', ...C9200 }),
+    makeDevice({ id: 'a2', hostname: 'SJC-ACC-A02', ...C9200 }),
+    makeDevice({ id: 'f1', hostname: 'SJC-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW', ports: 8 }),
+  ] as BOMDevice[], 'campus')
+
+  it('C-5: the C9500-48Y4C emits NO TenGigabitEthernet — it has none', () => {
+    const d = design()['d1']
+    expect(d, 'every dist data-plane command named a port type the chassis lacks')
+      .not.toMatch(/interface (range )?TenGigabitEthernet/)
+    expect(d).toMatch(/interface range TwentyFiveGigE1\/0\/1-\d+/)   // 25G host block
+    expect(d).toMatch(/interface HundredGigE1\/0\/(49|50|51)/)       // 100G uplink block
+  })
+
+  it('C-6: the C9200 access uplinks are the SFP module (1/1/x), not front-panel copper', () => {
+    const a = design()['a1']
+    expect(a).toMatch(/interface TenGigabitEthernet1\/1\/1\n\s+description UPLINK-1/)
+    expect(a).toMatch(/interface TenGigabitEthernet1\/1\/2\n\s+description UPLINK-2/)
+    // all 48 in-chassis ports stay access when the uplinks are on a module
+    expect(a).toMatch(/interface range GigabitEthernet1\/0\/1-48/)
+  })
+
+  it('every emitted port number is within the SKU (host block and uplink block)', () => {
+    const c = design()
+    for (const [id, ports, upStart, upCount] of [['d1', 48, 49, 4], ['a1', 48, 1, 4]] as const) {
+      const host = [...c[id].matchAll(/interface (?:range )?(?:TwentyFiveGigE|GigabitEthernet)1\/0\/(\d+)/g)].map(m => +m[1])
+      for (const p of host) expect(p, `${id}: host port ${p} > ${ports}`).toBeLessThanOrEqual(ports)
+      const up = [...c[id].matchAll(/interface (?:HundredGigE1\/0\/|TenGigabitEthernet1\/1\/)(\d+)/g)].map(m => +m[1])
+      for (const p of up) expect(p, `${id}: uplink port ${p} outside block`).toBeLessThanOrEqual(upStart + upCount - 1)
+    }
+  })
+
+  it('peer-link and core uplink sit on the 100G block; downlinks + FW handoff on the 25G block', () => {
+    const d = design()['d1']
+    expect(d).toMatch(/interface HundredGigE1\/0\/49\n\s+description PEER-LINK member 1/)
+    expect(d).toMatch(/interface HundredGigE1\/0\/50\n\s+description PEER-LINK member 2/)
+    expect(d).toMatch(/interface HundredGigE1\/0\/51\n\s+description UPLINK-TO-CORE/)
+    expect(d).toMatch(/interface TwentyFiveGigE1\/0\/48\n\s+description FW-HANDOFF/)
+    // the downlink trunk range must stop before the handoff ports
+    const dlMax = +/interface range TwentyFiveGigE1\/0\/1-(\d+)/.exec(d)![1]
+    const fwPort = +/interface TwentyFiveGigE1\/0\/(\d+)\n\s+description FW-HANDOFF/.exec(d)![1]
+    expect(fwPort, 'FW handoff collides with the access downlink trunks').toBeGreaterThan(dlMax)
+  })
+
+  it('C-7: 10.255.99.254 is actually owned, reachable, and 802.1X fails OPEN on RADIUS loss', () => {
+    const c = design()
+    // the access switches point at .254 — someone must answer for it
+    expect(c['a1']).toContain('ip default-gateway 10.255.99.254')
+    expect(c['d1'], 'nobody owns the campus mgmt gateway').toMatch(/interface Vlan99[\s\S]*?standby 99 ip 10\.255\.99\.254/)
+    // …and the subnet must be advertised, or RADIUS/TACACS/syslog are dead
+    expect(c['d1'], 'mgmt subnet in no OSPF network statement').toMatch(/network 10\.255\.99\.0 0\.0\.0\.255 area 0/)
+    // with port-control auto and no fallback a RADIUS outage locks every port
+    expect(c['a1']).toMatch(/authentication event server dead action authorize vlan 10/)
   })
 })

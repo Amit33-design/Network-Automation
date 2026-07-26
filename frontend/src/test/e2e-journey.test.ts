@@ -226,6 +226,19 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
     }
   }
 
+  // 8a'''''. Z4: a campus config must only name port types its SKU actually
+  // has. The C9500-48Y4C is 25G+100G with NO TenGigabitEthernet at all, so
+  // every command that named one was rejected by the platform.
+  for (const d of p.devices) {
+    const cfg = p.configs[d.id]
+    if (!cfg || !d.portIf) continue
+    const prefixes = [d.portIf, d.uplinkIf].filter(Boolean) as string[]
+    const named = [...cfg.matchAll(/^interface (?:range )?((?:Gigabit|TenGigabit|TwentyFiveGigE|FortyGigabit|HundredGigE)\S*?)\d+(?:-\d+)?$/gm)].map(m => m[1])
+    for (const n of new Set(named)) {
+      expect(prefixes, `${ctx}: ${d.model} names ${n}x but has only ${prefixes.join(' / ')}`).toContain(n)
+    }
+  }
+
   // 8b. TCO capex must equal the BOM grand total (no drift between cost views).
   const tco = computeTCO(p.devices)
   expect(tco.capex, `${ctx}: TCO capex ${tco.capex} != grandTotal ${p.grandTotal}`).toBe(p.grandTotal)

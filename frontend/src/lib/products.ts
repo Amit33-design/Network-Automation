@@ -142,6 +142,13 @@ export const PRODUCTS: Product[] = [
     subLayer: 'distribution',
     ports: 48,
     uplinks: 4,
+    // 48x25G SFP28 in-chassis + 4x100G QSFP28 uplinks (Z4): every campus
+    // data-plane command previously used TenGigabitEthernet, a port type this
+    // chassis does not have — the whole distribution config was rejected.
+    uplinkStart: 49,
+    uplinkSpeed: '100G',
+    portIf: 'TwentyFiveGigE1/0/',
+    uplinkIf: 'HundredGigE1/0/',
     speed: '25G',
     asic: 'UADP 3.0',
     powerW: 715,
@@ -157,6 +164,10 @@ export const PRODUCTS: Product[] = [
     subLayer: 'access',
     ports: 48,
     uplinks: 4,
+    // Uplinks are the C9300-NM-4G module — a separate 1/1/x slot (Z4).
+    uplinkStart: 1,
+    portIf: 'GigabitEthernet1/0/',
+    uplinkIf: 'GigabitEthernet1/1/',
     speed: '1G',
     asic: 'UADP 2.0',
     powerW: 390,
@@ -172,13 +183,18 @@ export const PRODUCTS: Product[] = [
     subLayer: 'access',
     ports: 48,
     uplinks: 4,
+    // C9200-NM-4X uplink module: 4x10G SFP+ at 1/1/x, NOT front-panel copper.
+    uplinkStart: 1,
+    uplinkSpeed: '10G',
+    portIf: 'GigabitEthernet1/0/',
+    uplinkIf: 'TenGigabitEthernet1/1/',
     speed: '1G',
     asic: 'UADP 2.0 Lite',
     powerW: 370,
     priceUSD: 3200,
     features: ['PoE+', 'QoS', 'LLDP'],
     useCases: ['campus'],
-    detail: '48x1G PoE+ + 4x1G SFP uplinks',
+    detail: '48x1G PoE+ + 4x10G SFP+ uplinks (C9200-NM-4X)',
   },
 
   // ── WAN / Edge ───────────────────────────────────────────────────────────────
@@ -728,6 +744,10 @@ export const PRODUCTS: Product[] = [
     subLayer: 'distribution',
     ports: 48,
     uplinks: 4,
+    // C9300-NM-4X uplink module at 1/1/x (Z4).
+    uplinkStart: 1,
+    portIf: 'TenGigabitEthernet1/0/',
+    uplinkIf: 'TenGigabitEthernet1/1/',
     speed: '10G',
     asic: 'UADP 2.0',
     powerW: 520,
