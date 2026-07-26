@@ -401,6 +401,39 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
   return links
 }
 
+/** Gbps value of a speed label ('400G'→400, '1T'→1000, '10G'→10). */
+function speedToGbps(speed: string | undefined): number {
+  const m = /([\d.]+)\s*(t|g|m)?/i.exec((speed || '').trim())
+  if (!m) return 0
+  const n = parseFloat(m[1])
+  if (!isFinite(n) || n <= 0) return 0
+  const u = (m[2] || 'g').toLowerCase()
+  return u === 't' ? n * 1000 : u === 'm' ? n / 1000 : n
+}
+
+/**
+ * Fabric rate mismatch (Z2). Most spine SKUs in the catalog are 400G while
+ * leaf uplinks are 100G, so the spine's QSFP-DD cage has to be told to run the
+ * 100G optic the BOM bills — left on its native rate the port simply never
+ * links. Returns the rate to pin on the LOCAL side, or null when both ends of
+ * the fabric link already run at the same speed.
+ */
+function fabricRateMismatch(
+  role: 'spine' | 'leaf',
+  dev: BOMDevice,
+  allDevices: BOMDevice[],
+): { localGbps: number; linkGbps: number; linkSpeed: string } | null {
+  const peers = allDevices.filter(d => d.subLayer === (role === 'spine' ? 'leaf' : 'spine'))
+  if (!peers.length) return null
+  // A leaf reaches the fabric on its dedicated uplink block when it has one.
+  const localSpeed = role === 'leaf' ? (dev.uplinkSpeed ?? dev.speed) : dev.speed
+  const peerSpeed = role === 'spine' ? (peers[0].uplinkSpeed ?? peers[0].speed) : peers[0].speed
+  const localGbps = speedToGbps(localSpeed)
+  const peerGbps = speedToGbps(peerSpeed)
+  if (!localGbps || !peerGbps || localGbps <= peerGbps) return null
+  return { localGbps, linkGbps: peerGbps, linkSpeed: peerSpeed }
+}
+
 /**
  * Renders CLOS fabric links as NX-OS (IS-IS, `Ethernet1/N`) interface stanzas.
  * `ipv6Enabled` (Enterprise upgrade A6) adds a matching IPv6 /127 address and
@@ -415,9 +448,14 @@ function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevice
     ? (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 48) - (dev.uplinks || 0)))
     : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
+  const rate = fabricRateMismatch(role, dev, allDevices)
+  // Z2: pin the rate when the two ends are not native-matched (400G cage
+  // running the 100G optic the BOM bills). `speed` is in Mbps on NX-OS.
+  const rateLine = rate ? `
+  speed ${rate.linkGbps * 1000}` : ''
   return links.map(link => `interface Ethernet1/${portBase + link.ifIndex + 1}
   description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
-  no switchport
+  no switchport${rateLine}
   mtu 9216
   ip address ${link.localIp}
   ip router isis 1${ipv6Enabled ? `
@@ -439,9 +477,12 @@ function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevi
     ? (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
     : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
+  const rate = fabricRateMismatch(role, dev, allDevices)
+  const rateLine = rate ? `
+  speed forced ${rate.linkGbps}gfull` : ''
   return links.map(link => `interface Ethernet${portBase + link.ifIndex + 1}
   description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
-  no switchport
+  no switchport${rateLine}
   mtu 9214
   ip address ${link.localIp}${ipv6Enabled ? `
   ipv6 address ${link.localIpv6}` : ''}
@@ -488,11 +529,13 @@ function renderJuniperFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDev
   const links = closFabricLinks(role, dev, allDevices)
   const portBase = role === 'leaf' ? (dev.ports || 48) : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
+  const rate = fabricRateMismatch(role, dev, allDevices)
   const lines: string[] = []
   for (const link of links) {
     const ifName = `et-0/0/${portBase + link.ifIndex}`
     lines.push(
       `set interfaces ${ifName} description "${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})"`,
+      ...(rate ? [`set interfaces ${ifName} speed ${rate.linkGbps}g`] : []),
       `set interfaces ${ifName} mtu 9216`,
       `set interfaces ${ifName} unit 0 family inet address ${link.localIp}`,
       `set interfaces ${ifName} unit 0 family iso`,

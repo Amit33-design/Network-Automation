@@ -1688,3 +1688,61 @@ describe('Fabric actually forwards (group Z1)', () => {
     expect(c['s1']).not.toMatch(/CHANGE-ME-host-p2p/)   // spines have no host ports
   })
 })
+
+// ── Z2: BOM ↔ config physical honesty (fabric rate mismatch) ─────────────────
+
+describe('Fabric ports run at the rate the BOM bills (group Z2)', () => {
+  function mixedRateFabric(vendor: string, ports: number, uplinks: number, uplinkStart?: number) {
+    // 400G spine cages facing 100G leaf uplinks — the catalog's common case
+    // (most spine SKUs are 400G, most leaf uplink blocks are 100G).
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0, speed: '400G' }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0, speed: '400G' }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor, subLayer: 'leaf', role: 'leaf', ports, uplinks, uplinkStart, speed: '25G', uplinkSpeed: '100G' }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor, subLayer: 'leaf', role: 'leaf', ports, uplinks, uplinkStart, speed: '25G', uplinkSpeed: '100G' }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  function matchedRateFabric(vendor: string, ports: number, uplinks: number) {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0, speed: '100G' }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0, speed: '100G' }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor, subLayer: 'leaf', role: 'leaf', ports, uplinks, speed: '100G' }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor, subLayer: 'leaf', role: 'leaf', ports, uplinks, speed: '100G' }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  const RATE_VENDORS: Array<[string, number, number, RegExp]> = [
+    ['Cisco',   48, 4, /\n {2}speed 100000\b/],
+    ['Arista',  32, 4, /\n {2}speed forced 100gfull\b/],
+    ['Juniper', 48, 4, /set interfaces et-0\/0\/\d+ speed 100g\b/],
+  ]
+
+  for (const [vendor, ports, uplinks, re] of RATE_VENDORS) {
+    it(`${vendor}: a 400G spine cage is pinned to the 100G optic the BOM bills`, () => {
+      const c = mixedRateFabric(vendor, ports, uplinks)
+      expect(c['s1'], `${vendor} spine leaves its 400G port at native rate — it will never link`).toMatch(re)
+    })
+
+    it(`${vendor}: no rate is forced when both ends already match`, () => {
+      const c = matchedRateFabric(vendor, ports, uplinks)
+      expect(c['s1']).not.toMatch(re)
+      expect(c['l1']).not.toMatch(re)
+    })
+  }
+
+  it('the leaf side is pinned when ITS uplink block is the faster end', () => {
+    // 400G leaf uplinks facing 100G spine ports — mismatch on the leaf.
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'DC-SPINE-A01', vendor: 'Cisco', subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0, speed: '100G' }),
+      makeDevice({ id: 's2', hostname: 'DC-SPINE-A02', vendor: 'Cisco', subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0, speed: '100G' }),
+      makeDevice({ id: 'l1', hostname: 'DC-LEAF-A01', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 4, speed: '100G', uplinkSpeed: '400G' }),
+      makeDevice({ id: 'l2', hostname: 'DC-LEAF-A02', vendor: 'Cisco', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 4, speed: '100G', uplinkSpeed: '400G' }),
+    ]
+    const c = generateAllConfigs(devices, 'dc')
+    expect(c['l1']).toMatch(/\n {2}speed 100000\b/)
+    expect(c['s1']).not.toMatch(/\n {2}speed \d+\b/)
+  })
+})

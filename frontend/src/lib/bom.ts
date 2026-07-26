@@ -498,6 +498,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
         ports: product.ports,
         uplinks: actualUplinks,
         uplinkStart: product.uplinkStart,
+        uplinkSpeed: product.uplinkSpeed,
         features: product.features,
       })
     }
@@ -557,6 +558,7 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
           ports: product.ports,
           uplinks: product.uplinks,
           uplinkStart: product.uplinkStart,
+          uplinkSpeed: product.uplinkSpeed,
           features: product.features,
         })
       }
@@ -857,11 +859,57 @@ function selectCable(distM: number, speed: string): CableSpec {
   return candidates.sort((a, b) => CABLE_PRIORITY[a.type] - CABLE_PRIORITY[b.type])[0]
 }
 
-const LAYER_CONNECTS: Array<{ from: string; to: string; key: string }> = [
-  { from: 'spine',        to: 'leaf',         key: 'spine-leaf'  },
+/** Gbps value of a speed label ('400G'→400, '1T'→1000, '10G'→10). */
+function speedGbps(speed: string | undefined): number {
+  const m = /([\d.]+)\s*(t|g|m)?/i.exec((speed || '').trim())
+  if (!m) return 0
+  const n = parseFloat(m[1])
+  if (!isFinite(n) || n <= 0) return 0
+  const u = (m[2] || 'g').toLowerCase()
+  return u === 't' ? n * 1000 : u === 'm' ? n / 1000 : n
+}
+
+/**
+ * Speed of the ports this device actually presents on a given link. A SKU with
+ * a dedicated uplink block (93180YC-FX: 48×25G host + 6×100G QSFP28) reports
+ * `speed` for its host ports and `uplinkSpeed` for the fabric block, so which
+ * one applies depends on which side of the link the device is on.
+ */
+function portSpeed(dev: BOMDevice | undefined, useUplink: boolean): string {
+  if (!dev) return ''
+  return useUplink ? (dev.uplinkSpeed ?? dev.speed) : dev.speed
+}
+
+/**
+ * A link negotiates to the SLOWER of the two ends (Z2): the BOM previously
+ * took the `from` device's speed, so a 400G spine facing a 100G leaf billed
+ * 400G QSFP-DD optics that physically do not fit the leaf's QSFP28 cages.
+ */
+function linkSpeed(
+  a: BOMDevice | undefined,
+  b: BOMDevice | undefined,
+  aUplink = false,
+  bUplink = false,
+): string {
+  const spa = portSpeed(a, aUplink), spb = portSpeed(b, bUplink)
+  const sa = speedGbps(spa), sb = speedGbps(spb)
+  if (!sa) return spb || '100G'
+  if (!sb) return spa || '100G'
+  return sa <= sb ? spa : spb
+}
+
+/**
+ * `uplinkSide` names the end that terminates the link on its DEDICATED uplink
+ * ports (leaf→spine, access→distribution, distribution→core). That end's
+ * `uplinkSpeed` — not its host-port `speed` — sets the link rate.
+ */
+const LAYER_CONNECTS: Array<{
+  from: string; to: string; key: string; uplinkSide?: 'from' | 'to'
+}> = [
+  { from: 'spine',        to: 'leaf',         key: 'spine-leaf',  uplinkSide: 'to'   },
   { from: 'leaf',         to: 'gpu-compute',  key: 'spine-leaf'  },
-  { from: 'core',         to: 'distribution', key: 'core-dist'   },
-  { from: 'distribution', to: 'access',       key: 'dist-access' },
+  { from: 'core',         to: 'distribution', key: 'core-dist',   uplinkSide: 'to'   },
+  { from: 'distribution', to: 'access',       key: 'dist-access', uplinkSide: 'to'   },
   { from: 'wan-edge',     to: 'distribution', key: 'wan-edge'    },
   { from: 'wan-edge',     to: 'spine',        key: 'wan-edge'    },
   { from: 'firewall',     to: 'distribution', key: 'wan-edge'    },
@@ -886,7 +934,11 @@ export function buildCabling(
     if (!froms.length || !tos.length) continue
 
     const distM  = linkDistances[conn.key] ?? 5
-    const speed  = froms[0].speed ?? '100G'
+    // A link runs at the slower end's speed (Z2) — not the `from` device's.
+    const speed  = linkSpeed(
+      froms[0], tos[0],
+      conn.uplinkSide === 'from', conn.uplinkSide === 'to',
+    )
     const cable  = selectCable(distM, speed)
 
     // Spine-leaf: each leaf has leafUplinks cables to spines (capped at
@@ -896,6 +948,15 @@ export function buildCabling(
       const leafDevs = conn.from === 'leaf' ? froms : tos
       const uplinksPerLeaf = leafDevs[0]?.uplinks ?? 2
       qty = leafDevs.length * uplinksPerLeaf
+    } else if (conn.to === 'gpu-compute' || conn.from === 'gpu-compute') {
+      // Host attachment is bounded by BOTH sides (Z2): the leaf downlink
+      // supply AND the servers' own NIC ports. The old froms×tos full-mesh
+      // billed 640 runs where only 560 leaf ports and 256 NIC ports exist.
+      const leafDevs  = conn.from === 'leaf' ? froms : tos
+      const hostDevs  = conn.to === 'gpu-compute' ? tos : froms
+      const leafSupply = leafDevs.reduce((s, d) => s + Math.max(0, d.ports - (d.uplinks ?? 0)), 0)
+      const nicSupply  = hostDevs.reduce((s, d) => s + Math.max(1, d.ports || 1), 0)
+      qty = Math.min(leafSupply, nicSupply)
     } else {
       qty = froms.length * tos.length
     }
@@ -907,6 +968,36 @@ export function buildCabling(
       toLayer:      conn.to,
       fromDevice:   `${froms.length}x ${conn.from}`,
       toDevice:     `${tos.length}x ${conn.to}`,
+      cableType:    cable.type,
+      speed,
+      lengthM:      distM,
+      quantity:     qty,
+      pricePerUnit: Math.round(unit),
+      totalPrice:   Math.round(unit * qty),
+    })
+  }
+
+  // ── HA peer-links (Z2) ─────────────────────────────────────────────────────
+  // vPC / MLAG / campus-distribution pairs each run a 2-member peer-link that
+  // the configs emit but the BOM never cabled: 25 leaf pairs = 50 missing runs.
+  const PEER_LINK_LAYERS = ['leaf', 'distribution'] as const
+  for (const layer of PEER_LINK_LAYERS) {
+    const devs = byLayer[layer] ?? []
+    const pairs = Math.floor(devs.length / 2)
+    if (pairs < 1) continue
+    const MEMBERS_PER_PEER_LINK = 2
+    const qty = pairs * MEMBERS_PER_PEER_LINK
+    const distM = 3   // intra-rack / adjacent-rack pair
+    // Peer-link members land on the leftover dedicated uplink ports (Y2).
+    const speed = linkSpeed(devs[0], devs[0], true, true)
+    const cable = selectCable(distM, speed)
+    const unit = cable.unitCost + cable.costPerM * distM
+    links.push({
+      id:           `cable-${id++}`,
+      fromLayer:    layer,
+      toLayer:      layer,
+      fromDevice:   `${pairs}x ${layer} pair`,
+      toDevice:     `${pairs}x ${layer} peer`,
       cableType:    cable.type,
       speed,
       lengthM:      distM,
@@ -1066,6 +1157,22 @@ export function validateBOM(
         category: 'fan-out',
         message: `${spines.length} spines exceed ${leafSample.model} uplink count (${leafUplinks}). Not all leaves can connect to all spines — partial Clos fabric.`,
       })
+    }
+
+    // Z2: cap-vs-truncate. The generator silently drops links past a spine's
+    // port count, so the BOM can bill cables that land on unconfigured ports
+    // (a 36-port 9336C carrying 33 fabric links fits only 3 of 4 firewalls).
+    const fwCount = devices.filter(d => d.subLayer === 'firewall').length
+    if (fwCount > 0 && spines.length > 0) {
+      const fabricPerSpine = Math.ceil((leaves.length * leafUplinks) / spines.length)
+      const freePerSpine = spineSample.ports - fabricPerSpine
+      if (freePerSpine < fwCount) {
+        issues.push({
+          severity: 'error',
+          category: 'fan-out',
+          message: `${spineSample.model} has only ${Math.max(0, freePerSpine)} free port(s) after ${fabricPerSpine} fabric links, but ${fwCount} firewall handoffs are cabled to each spine. ${(fwCount - Math.max(0, freePerSpine)) * spines.length} cabled link(s) would land on unconfigured ports — use a higher-radix spine, fewer firewalls, or dedicated border leaves.`,
+        })
+      }
     }
 
     if (leaves.length < 2) {

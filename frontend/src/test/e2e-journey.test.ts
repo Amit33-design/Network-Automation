@@ -171,6 +171,35 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
     }
   }
 
+  // 8a'''. Z2 physical honesty: a link cannot be billed faster than the slower
+  // of its two ends (a 400G QSFP-DD module does not fit a 100G QSFP28 cage),
+  // and every optic must match its own link's rate.
+  const gbps = (s: string): number => {
+    const m = /([\d.]+)\s*(t|g|m)?/i.exec((s || '').trim())
+    if (!m) return 0
+    const n = parseFloat(m[1]); const u = (m[2] || 'g').toLowerCase()
+    return u === 't' ? n * 1000 : u === 'm' ? n / 1000 : n
+  }
+  // The end that terminates on its DEDICATED uplink block presents uplinkSpeed.
+  const UPLINK_SIDE: Record<string, string> = { leaf: 'spine', access: 'distribution', distribution: 'core' }
+  for (const c of p.cabling) {
+    if (c.fromLayer === c.toLayer) continue           // HA peer-link, both ends identical
+    const a = p.devices.find(d => d.subLayer === c.fromLayer)
+    const b = p.devices.find(d => d.subLayer === c.toLayer)
+    if (!a || !b) continue
+    const rate = (d: typeof a, other: string) =>
+      gbps(UPLINK_SIDE[d.subLayer] === other ? (d.uplinkSpeed ?? d.speed) : d.speed)
+    const cap = Math.min(rate(a, b.subLayer), rate(b, a.subLayer))
+    if (!cap) continue
+    expect(gbps(c.speed), `${ctx}: ${c.fromLayer}→${c.toLayer} billed at ${c.speed} but the slower end tops out at ${cap}G`)
+      .toBeLessThanOrEqual(cap)
+  }
+  for (const o of p.optics) {
+    const link = p.cabling.find(c => `${c.fromLayer} → ${c.toLayer}` === o.linkGroup)
+    if (!link) continue
+    expect(o.speed, `${ctx}: ${o.partNumber} (${o.speed}) on a ${link.speed} link`).toBe(link.speed)
+  }
+
   // 8b. TCO capex must equal the BOM grand total (no drift between cost views).
   const tco = computeTCO(p.devices)
   expect(tco.capex, `${ctx}: TCO capex ${tco.capex} != grandTotal ${p.grandTotal}`).toBe(p.grandTotal)
