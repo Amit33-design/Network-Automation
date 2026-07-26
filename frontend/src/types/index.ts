@@ -35,6 +35,10 @@ export interface Product {
   uplinks: number
   /** See BOMDevice.uplinkStart — first dedicated uplink port, when separate. */
   uplinkStart?: number
+  /** Speed of the DEDICATED uplink ports when they differ from `speed` (which
+   *  describes the access/host ports) — e.g. 93180YC-FX: 48×25G host, 6×100G
+   *  uplinks → speed 25G, uplinkSpeed 100G. Fabric links negotiate on this. */
+  uplinkSpeed?: string
   speed: string
   asic: string
   powerW: number
@@ -63,6 +67,10 @@ export interface BOMDevice {
    *  uplinks are separate higher-speed ports beyond `ports` (e.g. 93180YC-FX:
    *  48×25G + 6×100G → uplinkStart 49). Absent = uplinks share the port block. */
   uplinkStart?: number
+  /** Speed of the DEDICATED uplink ports when they differ from `speed` (which
+   *  describes the access/host ports) — e.g. 93180YC-FX: 48×25G host, 6×100G
+   *  uplinks → speed 25G, uplinkSpeed 100G. Fabric links negotiate on this. */
+  uplinkSpeed?: string
   features: string[]
 }
 

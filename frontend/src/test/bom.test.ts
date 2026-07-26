@@ -849,3 +849,94 @@ describe('buildOptics correctness (group X7)', () => {
     }
   })
 })
+
+// ── Z2: BOM ↔ config physical honesty ────────────────────────────────────────
+
+describe('BOM physical honesty (group Z2)', () => {
+  const DIST = { 'spine-leaf': 100, 'core-dist': 200, 'dist-access': 50, 'wan-edge': 5000 }
+  const DC = { useCase: 'dc' as const, scale: 'large' as const, siteCode: 'Z2', totalEndpoints: 500, bandwidthPerServer: '25G' as const, oversubscription: 3 }
+
+  it('a link is billed at the SLOWER end, never the faster one', () => {
+    const devices = buildDeviceList(DC)
+    const spine = devices.find(d => d.subLayer === 'spine')!
+    const leaf  = devices.find(d => d.subLayer === 'leaf')!
+    const cabling = buildCabling(devices, DIST)
+    const sl = cabling.find(c => c.fromLayer === 'spine' && c.toLayer === 'leaf')!
+    const gbps = (s: string) => parseFloat(s)
+    const leafUplink = leaf.uplinkSpeed ?? leaf.speed
+    expect(gbps(sl.speed)).toBeLessThanOrEqual(gbps(spine.speed))
+    expect(gbps(sl.speed)).toBeLessThanOrEqual(gbps(leafUplink))
+    expect(sl.speed).toBe(gbps(spine.speed) <= gbps(leafUplink) ? spine.speed : leafUplink)
+  })
+
+  it('a leaf reaches the fabric on its UPLINK speed, not its host-port speed', () => {
+    // 93180YC-FX: 48x25G host + 6x100G uplinks — the fabric link is 100G.
+    const devices = buildDeviceList(DC)
+    const leaf = devices.find(d => d.subLayer === 'leaf')!
+    if (!leaf.uplinkSpeed) return          // SKU without a dedicated uplink block
+    expect(leaf.uplinkSpeed).not.toBe(leaf.speed)
+    const sl = buildCabling(devices, DIST).find(c => c.fromLayer === 'spine' && c.toLayer === 'leaf')!
+    expect(sl.speed).not.toBe(leaf.speed)
+  })
+
+  it('optics fit the cage: no optic faster than either end of its link', () => {
+    const devices = buildDeviceList(DC)
+    const cabling = buildCabling(devices, DIST)
+    const optics  = buildOptics(devices, DIST)
+    for (const o of optics) {
+      const link = cabling.find(c => `${c.fromLayer} → ${c.toLayer}` === o.linkGroup)!
+      expect(o.speed).toBe(link.speed)
+    }
+  })
+
+  it('HA peer-links are cabled (2 members per pair), not just configured', () => {
+    const devices = buildDeviceList(DC)
+    const leaves = devices.filter(d => d.subLayer === 'leaf')
+    const pairs = Math.floor(leaves.length / 2)
+    expect(pairs).toBeGreaterThan(0)
+    const peer = buildCabling(devices, DIST).find(c => c.fromLayer === 'leaf' && c.toLayer === 'leaf')
+    expect(peer, 'leaf vPC/MLAG peer-link missing from cabling').toBeTruthy()
+    expect(peer!.quantity).toBe(pairs * 2)
+  })
+
+  it('campus distribution peer-links are cabled too', () => {
+    const devices = buildDeviceList({ useCase: 'campus', scale: 'medium', siteCode: 'Z2', totalEndpoints: 600 })
+    const dists = devices.filter(d => d.subLayer === 'distribution')
+    const peer = buildCabling(devices, DIST).find(c => c.fromLayer === 'distribution' && c.toLayer === 'distribution')
+    if (dists.length >= 2) {
+      expect(peer).toBeTruthy()
+      expect(peer!.quantity).toBe(Math.floor(dists.length / 2) * 2)
+    }
+  })
+
+  it('host links never exceed leaf downlink supply OR server NIC supply', () => {
+    const devices = buildDeviceList({ useCase: 'gpu', scale: 'medium', siteCode: 'Z2', totalEndpoints: 512, bandwidthPerServer: '400G', oversubscription: 1 })
+    const leaves = devices.filter(d => d.subLayer === 'leaf')
+    const hosts  = devices.filter(d => d.subLayer === 'compute' || d.role === 'gpu-compute')
+    expect(hosts.length).toBeGreaterThan(0)
+    const link = buildCabling(devices, DIST).find(c => c.toLayer === 'gpu-compute' || c.fromLayer === 'gpu-compute')!
+    const leafSupply = leaves.reduce((s, d) => s + (d.ports - (d.uplinks ?? 0)), 0)
+    const nicSupply  = hosts.reduce((s, d) => s + Math.max(1, d.ports || 1), 0)
+    expect(link.quantity).toBeLessThanOrEqual(leafSupply)
+    expect(link.quantity).toBeLessThanOrEqual(nicSupply)
+    expect(link.quantity).toBe(Math.min(leafSupply, nicSupply))
+  })
+
+  it('validateBOM ERRORS when firewall handoffs do not fit the spine port budget', () => {
+    // Hand-built: a 36-port spine already carrying 34 fabric links cannot also
+    // terminate 4 firewall handoffs — the generator silently drops the extras.
+    const mk = (over: Partial<BOMDevice>): BOMDevice => ({
+      id: over.id!, hostname: over.hostname ?? over.id!, role: over.role ?? '', subLayer: over.subLayer!,
+      model: over.model ?? 'M', vendor: over.vendor ?? 'Cisco', count: 1, unitPrice: 1000, totalPrice: 1000,
+      speed: over.speed ?? '100G', ports: over.ports ?? 36, uplinks: over.uplinks, features: [],
+    })
+    const devices: BOMDevice[] = [
+      ...Array.from({ length: 2 }, (_, i) => mk({ id: `sp${i}`, subLayer: 'spine', ports: 36 })),
+      ...Array.from({ length: 34 }, (_, i) => mk({ id: `lf${i}`, subLayer: 'leaf', ports: 48, uplinks: 2 })),
+      ...Array.from({ length: 4 }, (_, i) => mk({ id: `fw${i}`, subLayer: 'firewall', ports: 8, speed: '40G' })),
+    ]
+    const issues = validateBOM(devices, { useCase: 'dc', totalEndpoints: 500 })
+    const err = issues.find(i => i.severity === 'error' && /firewall handoff/i.test(i.message))
+    expect(err, `expected a firewall port-budget error, got: ${issues.map(i => i.message).join(' | ')}`).toBeTruthy()
+  })
+})

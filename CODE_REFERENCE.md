@@ -245,10 +245,21 @@ cabling, and optics. **Never hardcode device counts — always go through
   (spine-leaf)`.
 - **`buildCabling(devices, linkDistances): CableLink[]`** — for each
   `LAYER_CONNECTS` entry where both layers have devices, picks a cable via
-  `selectCable()`, computes `quantity = froms.length * tos.length` and
-  `totalPrice = (unitCost + costPerM*distM) * quantity`. **Note**: this is
-  an aggregate "N×layer to M×layer" link, not per-pair cabling — it doesn't
-  know about HA pairing.
+  `selectCable()` and computes `totalPrice = (unitCost + costPerM*distM) *
+  quantity`. Quantities: spine↔leaf = `leaves × uplinks`; leaf↔gpu-compute =
+  `min(leaf downlink supply, server NIC supply)` (Z2 — the old froms×tos mesh
+  billed phantom runs); everything else = full mesh. Then appends one
+  **HA peer-link** row per `leaf`/`distribution` tier (Z2): `pairs × 2`
+  members, which the configs have emitted since X7/Y1 but the BOM never
+  cabled. Speed comes from `linkSpeed()` below, not the `from` device.
+- **`speedGbps(speed)`** / **`portSpeed(dev, useUplink)`** /
+  **`linkSpeed(a, b, aUplink?, bUplink?)`** *(Z2)* — a link is billed at the
+  **slower of its two ends** (a 400G QSFP-DD module does not fit a 100G
+  QSFP28 cage). `portSpeed` picks `uplinkSpeed` over `speed` for the end that
+  terminates on its dedicated uplink block; `LAYER_CONNECTS` marks that end
+  with `uplinkSide: 'from' | 'to'` (leaf→spine, access→dist, dist→core), so a
+  93180YC-FX fabric link rates at its 100G uplink block, not its 25G server
+  ports.
 
 ### Optics
 - `OPTIC_CATALOG: OpticSpec[]` — SFP+/SFP28/QSFP28/QSFP-DD across
@@ -378,6 +389,13 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
     computed as `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2 [+1 for
     leaf]}` so the spine and leaf side of each link always agree on the same
     subnet without manual cabling notes.
+- **`speedToGbps(speed)`** / **`fabricRateMismatch(role, dev, allDevices)`**
+  *(Z2)* — most catalog spines are 400G while leaf uplink blocks are 100G, so
+  the faster end's cage has to be told to run the optic the BOM bills or the
+  port never links. Returns `{localGbps, linkGbps, linkSpeed}` for the local
+  side when it is the faster end, else `null`. The three fabric renderers pin
+  it: NX-OS `speed 100000` (Mbps), EOS `speed forced 100gfull`, Junos
+  `set interfaces et-0/0/N speed 100g`.
 - **`renderNxosFabricLinks(role, dev, allDevices, ipv6Enabled = false): string`**
   / **`renderAristaFabricLinks(role, dev, allDevices, ipv6Enabled = false):
   string`** *(added 2026-06-11, Enterprise Upgrade A5; `ipv6Enabled` param
