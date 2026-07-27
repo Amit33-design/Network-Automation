@@ -389,6 +389,14 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
     computed as `10.99.${leafNum}.${(spineNum-1)*16 + linkNum*2 [+1 for
     leaf]}` so the spine and leaf side of each link always agree on the same
     subnet without manual cabling notes.
+- **Vendor fabric generators** — `nokiaSrLinuxConfig`, `dellOs10SwitchConfig`
+  and `extremeExosConfig` all take `allDevices` (Z8) and follow the same shape
+  as the Cisco/Arista/Juniper generators: tier-scoped identity, topology-driven
+  fabric interfaces from `closFabricLinks`, one real eBGP session per leaf
+  (spine) / per **linked** spine (leaf), next-hop preservation on the spine,
+  host ports, and the border-leaf firewall handoff in a tenant VRF. Before Z8
+  all three shipped `<CHANGE-ME-asn>` / placeholder peers and formed no
+  sessions at all.
 - **`roleIndex(dev, allDevices, fallback)`** *(Z5/M-7, exported)* — index of a
   device **within its own tier**. `pairId`, loopbacks, VTEPs and ASNs all used
   the GLOBAL device index, so an odd number of preceding devices (three spines)
