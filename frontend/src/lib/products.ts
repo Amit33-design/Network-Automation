@@ -252,14 +252,19 @@ export const PRODUCTS: Product[] = [
     vendor: 'Cisco',
     subLayer: 'wan-edge',
     ports: 8,
-    uplinks: 0,
+    // AA4: the vEdge 2000 has two PIM slots — the 8x1GE SFP PIM (host
+    // side) and the 2x10GE SFP+ PIM. Without uplinkSpeed the DCI to a
+    // 100G spine was billed at 1G with GLC-LH-SMD optics, which is not a
+    // credible link in front of a 36-leaf fabric.
+    uplinks: 2,
+    uplinkSpeed: '10G',
     speed: '1G',
     asic: 'Software',
     powerW: 150,
     priceUSD: 9500,
     features: ['SD-WAN', 'BGP', 'IPSec', 'ZTP', 'AppQoE'],
     useCases: ['wan', 'multisite', 'multicloud'],
-    detail: '8x1G, SD-WAN ZTP, AppQoE, 20Gbps',
+    detail: '8x1G SFP PIM + 2x10G SFP+ PIM, SD-WAN ZTP, AppQoE, 20Gbps',
   },
 
   // ── SD-WAN Controllers (G-A12) ──────────────────────────────────────────────

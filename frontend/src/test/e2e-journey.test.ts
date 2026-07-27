@@ -197,14 +197,19 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
     return u === 't' ? n * 1000 : u === 'm' ? n / 1000 : n
   }
   // The end that terminates on its DEDICATED uplink block presents uplinkSpeed.
-  const UPLINK_SIDE: Record<string, string> = { leaf: 'spine', access: 'distribution', distribution: 'core' }
+  // Mirrors LAYER_CONNECTS' uplinkSide: the end that terminates on its
+  // dedicated uplink block presents uplinkSpeed (AA4 added the WAN edge).
+  const UPLINK_SIDE: Record<string, string[]> = {
+    leaf: ['spine'], access: ['distribution'], distribution: ['core'],
+    'wan-edge': ['spine', 'distribution'],
+  }
   for (const c of p.cabling) {
     if (c.fromLayer === c.toLayer) continue           // HA peer-link, both ends identical
     const a = p.devices.find(d => d.subLayer === c.fromLayer)
     const b = p.devices.find(d => d.subLayer === c.toLayer)
     if (!a || !b) continue
     const rate = (d: typeof a, other: string) =>
-      gbps(UPLINK_SIDE[d.subLayer] === other ? (d.uplinkSpeed ?? d.speed) : d.speed)
+      gbps((UPLINK_SIDE[d.subLayer] ?? []).includes(other) ? (d.uplinkSpeed ?? d.speed) : d.speed)
     const cap = Math.min(rate(a, b.subLayer), rate(b, a.subLayer))
     if (!cap) continue
     expect(gbps(c.speed), `${ctx}: ${c.fromLayer}→${c.toLayer} billed at ${c.speed} but the slower end tops out at ${cap}G`)

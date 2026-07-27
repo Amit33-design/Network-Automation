@@ -999,3 +999,34 @@ describe('Every physical tier is cabled (group AA1)', () => {
     }
   })
 })
+
+// ── AA3 / AA4: WAN site coherence and DCI link rate ─────────────────────────
+
+describe('WAN sizing and DCI rate (groups AA3 / AA4)', () => {
+  const DIST = { 'spine-leaf': 100, 'core-dist': 200, 'dist-access': 50, 'wan-edge': 5000 }
+
+  it('AA3: every WAN site gets an edge PAIR — never fewer routers than sites', () => {
+    for (const numSites of [2, 4, 8, 20]) {
+      const devices = buildDeviceList({ useCase: 'wan', scale: 'medium', siteCode: 'W', totalEndpoints: 2000, numSites })
+      const edges = devices.filter(d => d.subLayer === 'wan-edge').length
+      expect(edges, `${numSites} sites got only ${edges} edge routers`).toBeGreaterThanOrEqual(numSites * 2)
+      expect(edges % 2, 'edge count must stay even for HA pairing').toBe(0)
+    }
+  })
+
+  it('AA3: endpoint-driven sizing still wins when it demands more than the site floor', () => {
+    const few = buildDeviceList({ useCase: 'wan', scale: 'large', siteCode: 'W', totalEndpoints: 200000, numSites: 2 })
+    expect(few.filter(d => d.subLayer === 'wan-edge').length).toBeGreaterThan(4)
+  })
+
+  it('AA4: the DCI to the fabric uses the WAN edge UPLINK PIM, not its 1G host ports', () => {
+    const devices = buildDeviceList({ useCase: 'multisite', scale: 'medium', siteCode: 'M', totalEndpoints: 1500, numSites: 3 })
+    const edge = devices.find(d => d.subLayer === 'wan-edge')
+    if (!edge?.uplinkSpeed) return
+    const dci = buildCabling(devices, DIST).find(c => c.fromLayer === 'wan-edge' && c.toLayer === 'spine')!
+    expect(dci, 'no DCI link').toBeTruthy()
+    // a 1G DCI in front of a multi-leaf fabric is not a credible design
+    expect(dci.speed).not.toBe(edge.speed)
+    expect(dci.speed).toBe(edge.uplinkSpeed)
+  })
+})

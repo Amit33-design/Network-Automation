@@ -415,7 +415,13 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
       const wanProdId = prefs['wan-edge']
       const wanSku = wanProdId ? PRODUCTS.find(p => p.id === wanProdId) : undefined
       const portsPerRouter = Math.max(1, wanSku?.ports ?? 4)
-      const rawWan = Math.max(2, Math.ceil(endpointCount / portsPerRouter / 100))
+      const byEndpoints = Math.max(2, Math.ceil(endpointCount / portsPerRouter / 100))
+      // AA3: a WAN is a set of SITES, and every site needs its own edge router
+      // (a pair when the design is dual-redundant). Sizing from endpoints alone
+      // produced 6 routers for an 8-site network — fewer routers than sites, so
+      // two sites had no edge at all.
+      const bySites = Math.max(1, numSites) * 2
+      const rawWan = Math.max(byEndpoints, bySites)
       const wanCount = rawWan % 2 === 0 ? rawWan : rawWan + 1
       scaleDef = { 'wan-edge': wanCount }
 
@@ -914,8 +920,10 @@ const LAYER_CONNECTS: Array<{
   { from: 'leaf',         to: 'gpu-compute',  key: 'spine-leaf'  },
   { from: 'core',         to: 'distribution', key: 'core-dist',   uplinkSide: 'to'   },
   { from: 'distribution', to: 'access',       key: 'dist-access', uplinkSide: 'to'   },
-  { from: 'wan-edge',     to: 'distribution', key: 'wan-edge'    },
-  { from: 'wan-edge',     to: 'spine',        key: 'wan-edge'    },
+  // A WAN edge reaches the fabric/campus core on its dedicated uplink PIM,
+  // not its host ports (AA4) — otherwise the DCI is rated at the access speed.
+  { from: 'wan-edge',     to: 'distribution', key: 'wan-edge', uplinkSide: 'from' },
+  { from: 'wan-edge',     to: 'spine',        key: 'wan-edge', uplinkSide: 'from' },
   { from: 'firewall',     to: 'distribution', key: 'wan-edge'    },
   // Z3: the firewall lands on the BORDER LEAVES, not the spines. An eBGP spine
   // is not a VTEP and carries no tenant VRF, so it had nothing to route the
