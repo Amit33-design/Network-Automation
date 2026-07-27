@@ -2250,3 +2250,41 @@ describe('Per-vendor mgmt-plane and liveness remainders (group Z5b)', () => {
     expect(c['s1']).toMatch(/nv set vrf mgmt router static 0\.0\.0\.0\/0 via/)
   })
 })
+
+// ── Z5b/A3-6: modular chassis port naming ───────────────────────────────────
+
+describe('Arista modular chassis names ports <slot>/<port> (A3-6)', () => {
+  const modular = { vendor: 'Arista', model: 'Arista 7800R3', ports: 48, uplinks: 0, speed: '400G', portIf: 'Ethernet3/' }
+  const fixed = { vendor: 'Arista', model: 'Arista 7050CX3', ports: 32, uplinks: 8, speed: '100G' }
+
+  const design = () => generateAllConfigs([
+    makeDevice({ id: 's1', hostname: 'M-SPINE-A01', subLayer: 'spine', role: 'spine', ...modular }),
+    makeDevice({ id: 's2', hostname: 'M-SPINE-A02', subLayer: 'spine', role: 'spine', ...modular }),
+    makeDevice({ id: 'l1', hostname: 'M-LEAF-A01', subLayer: 'leaf', role: 'leaf', ...fixed }),
+    makeDevice({ id: 'l2', hostname: 'M-LEAF-A02', subLayer: 'leaf', role: 'leaf', ...fixed }),
+  ] as BOMDevice[], 'dc')
+
+  it('a 7800R3 emits Ethernet3/N and never a flat EthernetN (which does not exist on it)', () => {
+    const spine = design()['s1']
+    expect(spine).toMatch(/interface Ethernet3\/\d+\n\s+description DOWNLINK/)
+    const flat = [...spine.matchAll(/^interface Ethernet(\d+)(?![/\d])/gm)].map(m => m[0])
+    expect(flat, `7800R3 emitted flat port names: ${flat.join(', ')}`).toEqual([])
+  })
+
+  it('a fixed-config box is unchanged — flat EthernetN', () => {
+    const leaf = design()['l1']
+    expect(leaf).toMatch(/^interface Ethernet\d+\n\s+description UPLINK/m)
+    expect(leaf).not.toMatch(/interface Ethernet\d+\/\d+/)
+  })
+
+  it('both ends of the fabric still agree on their /31s across the naming change', () => {
+    const c = design()
+    const leafIps = [...c['l1'].matchAll(/description UPLINK[\s\S]*?ip address (\d+\.\d+\.\d+\.\d+)\/31/g)].map(m => m[1])
+    expect(leafIps.length).toBeGreaterThan(0)
+    for (const ip of leafIps) {
+      const o = ip.split('.'); const peer = [...o.slice(0, 3), String(+o[3] - 1)].join('.')
+      const onASpine = c['s1'].includes(`${peer}/31`) || c['s2'].includes(`${peer}/31`)
+      expect(onASpine, `no spine owns ${peer}, the peer of the leaf's ${ip}`).toBe(true)
+    }
+  })
+})

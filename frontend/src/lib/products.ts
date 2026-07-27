@@ -39,6 +39,9 @@ export const PRODUCTS: Product[] = [
     subLayer: 'spine',
     ports: 48,
     uplinks: 0,
+    // Modular chassis (Z5b/A3-6): ports are Ethernet<slot>/<port>. A flat
+    // `Ethernet1` does not exist on a 7800R3 and the command is rejected.
+    portIf: 'Ethernet3/',
     speed: '400G',
     asic: 'Jericho2+',
     powerW: 1400,

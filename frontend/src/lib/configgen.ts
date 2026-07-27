@@ -504,7 +504,7 @@ function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevi
   const rate = fabricRateMismatch(role, dev, allDevices)
   const rateLine = rate ? `
   speed forced ${rate.linkGbps}gfull` : ''
-  return links.map(link => `interface Ethernet${portBase + link.ifIndex + 1}
+  return links.map(link => `interface ${aristaIf(dev, portBase + link.ifIndex + 1)}
   description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
   no switchport${rateLine}
   mtu 9214
@@ -582,6 +582,15 @@ function iosIfPrefix(speed: string | undefined): string {
   if (g >= 25)  return 'TwentyFiveGigE1/0/'
   if (g >= 10)  return 'TenGigabitEthernet1/0/'
   return 'GigabitEthernet1/0/'
+}
+
+/**
+ * Arista interface name for port `n` (Z5b/A3-6). The 7800R3 is a MODULAR
+ * chassis — its ports are `Ethernet<slot>/<port>`, and a flat `Ethernet1`
+ * simply does not exist on it. Fixed-config boxes keep the flat form.
+ */
+function aristaIf(dev: BOMDevice, n: number | string): string {
+  return `${dev.portIf ?? 'Ethernet'}${n}`
 }
 
 /** Host/access-port interface name for port `n` (1-based). */
@@ -1574,7 +1583,7 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
   const fwHandoffBlock = fwLinks.length ? `
 ! ── FIREWALL HANDOFF (border leaf, routed /31 inside TENANT-A — FW side .1) ──
-${fwLinks.map(x => `interface Ethernet${x.port}
+${fwLinks.map(x => `interface ${aristaIf(dev, x.port)}
   description FW-HANDOFF: ${x.fw.hostname}
   no switchport
   vrf TENANT-A
@@ -1688,7 +1697,7 @@ vlan 10
   trunk group MLAG_PEER
 !
 ! ── SERVER / HOST PORTS (Z1 — the tenant VLAN had no member ports) ───────────
-interface Ethernet1-${hostPortMax}
+interface ${aristaIf(dev, `1-${hostPortMax}`)}
   description SERVER-ACCESS (tenant VLAN 10)
   switchport mode access
   switchport access vlan 10
@@ -1778,11 +1787,11 @@ interface Port-Channel${pairId}00
   switchport mode trunk
   switchport trunk group MLAG_PEER
 !
-interface Ethernet${plPort1}
+interface ${aristaIf(dev, plPort1)}
   description MLAG_PEER_LINK member 1 to ${peerHostname}
   channel-group ${pairId}00 mode active
 !
-interface Ethernet${plPort2}
+interface ${aristaIf(dev, plPort2)}
   description MLAG_PEER_LINK member 2 to ${peerHostname}
   channel-group ${pairId}00 mode active
 !
