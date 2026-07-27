@@ -155,14 +155,16 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
       for (const s of spines) {
         const cfg = p.configs[s.id]
         if (!cfg) continue
-        const dlPorts = [...cfg.matchAll(/interface Ethernet1?\/?(\d+)\n\s+description DOWNLINK/g)].map(m => +m[1])
+        // Modular chassis name ports Ethernet<slot>/<port> (Z5b/A3-6), fixed
+        // boxes just EthernetN — take the LAST numeric component either way.
+        const dlPorts = [...cfg.matchAll(/interface Ethernet(?:\d+\/)*(\d+)\n\s+description DOWNLINK/g)].map(m => +m[1])
         expect(dlPorts.length, `${ctx}: spine ${s.hostname} is dark (0 downlinks but BGP-peered)`).toBeGreaterThan(0)
         expect(Math.max(0, ...dlPorts), `${ctx}: spine ${s.hostname} port exceeds SKU ${s.ports}`).toBeLessThanOrEqual(s.ports)
       }
       for (const l of leaves) {
         const cfg = p.configs[l.id]
         if (!cfg) continue
-        const ulPorts = [...cfg.matchAll(/interface Ethernet1?\/?(\d+)\n\s+description UPLINK/g)].map(m => +m[1])
+        const ulPorts = [...cfg.matchAll(/interface Ethernet(?:\d+\/)*(\d+)\n\s+description UPLINK/g)].map(m => +m[1])
         const maxLeafPort = l.uplinkStart ? l.uplinkStart + l.ports : l.ports
         for (const port of ulPorts) {
           expect(port, `${ctx}: leaf ${l.hostname} uplink port ${port} out of range`).toBeLessThanOrEqual(maxLeafPort)
