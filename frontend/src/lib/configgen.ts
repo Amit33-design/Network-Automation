@@ -36,6 +36,25 @@ no ip bootp server
 login block-for 60 attempts 5 within 30
 login delay 2
 !
+! ── MANAGEMENT SERVICES (AA1) ───────────────────────────────────────────────
+! mgmtBlock previously had NO ntp/syslog/snmp at all — V-07 only passed
+! because RE_MGMT matched the word MANAGEMENT in the comment banner above.
+! Once Z6 stopped counting comments as configuration, every device built on
+! this block was correctly reported as having no management plane.
+ntp server <CHANGE-ME-ntp-primary> prefer
+ntp server <CHANGE-ME-ntp-secondary>
+ntp source Loopback0
+!
+logging host <CHANGE-ME-syslog-ip>
+logging source-interface Loopback0
+logging trap informational
+!
+snmp-server group NETDESIGN-RO v3 priv
+snmp-server user netmon NETDESIGN-RO v3 auth sha <CHANGE-ME-snmp-auth-pass> priv aes 128 <CHANGE-ME-snmp-priv-pass>
+snmp-server host <CHANGE-ME-nms-ip> version 3 priv netmon
+snmp-server location <CHANGE-ME-site-location>
+snmp-server contact <CHANGE-ME-noc-email>
+!
 banner motd ^
 *******************************************************************************
 *  ${hostname} — Authorized access only.  All activity is monitored.        *
@@ -4785,9 +4804,43 @@ system
   vbond <CHANGE-ME-vbond-ip>
   clock timezone <CHANGE-ME-timezone>
   host-name ${dev.hostname}
+  ! AA1: the SD-WAN edge logged to local disk only and had no NTP or SNMP at
+  ! all, so it was invisible to the NOC and its timestamps could not be
+  ! correlated with the rest of the fleet.
+  ntp
+    server <CHANGE-ME-ntp-primary>
+      version 4
+      prefer
+    !
+    server <CHANGE-ME-ntp-secondary>
+      version 4
+    !
+  !
   logging
     disk
       enable
+    !
+    server <CHANGE-ME-syslog-ip>
+      vpn 512
+      priority information
+    !
+  !
+!
+snmp
+  contact <CHANGE-ME-noc-email>
+  location <CHANGE-ME-site-location>
+  view NETDESIGN-VIEW oid 1.3.6.1
+  !
+  group NETDESIGN-RO auth-priv view NETDESIGN-VIEW
+  !
+  user netmon
+    auth sha auth-password <CHANGE-ME-snmp-auth-pass>
+    priv aes-cfb-128 priv-password <CHANGE-ME-snmp-priv-pass>
+    group NETDESIGN-RO
+  !
+  trap target vpn 512 <CHANGE-ME-nms-ip> 162
+    group-name NETDESIGN-RO
+    community-name netmon
   !
 !
 ! ── VPN 0 — TRANSPORT (WAN underlay) ────────────────────────────────────────
@@ -5698,10 +5751,15 @@ monitoring:
 
 # ── Management ───────────────────────────────────────────────────────────────
 management:
+  hostname ${dev.hostname}
   ip-address <CHANGE-ME-mgmt-ip>/24
   gateway <CHANGE-ME-mgmt-gw>
   ssh enabled
   ntp-server <CHANGE-ME-ntp-primary>
+  syslog-server <CHANGE-ME-syslog-ip>
+  snmp:
+    version v3
+    user netmon auth sha <CHANGE-ME-snmp-auth-pass> priv aes <CHANGE-ME-snmp-priv-pass>
 `
 }
 

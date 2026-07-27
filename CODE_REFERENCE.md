@@ -252,6 +252,11 @@ cabling, and optics. **Never hardcode device counts — always go through
   **HA peer-link** row per `leaf`/`distribution` tier (Z2): `pairs × 2`
   members, which the configs have emitted since X7/Y1 but the BOM never
   cabled. Speed comes from `linkSpeed()` below, not the `from` device.
+- **`EXTRA_LINK_DISTANCES`** *(AA1)* — default run lengths for link keys the
+  wizard does not expose (`oran-fronthaul` 300 m, `oran-midhaul` 2 km,
+  `oran-backhaul` 10 km). `LAYER_CONNECTS` now also carries `wan-edge↔wan-edge`
+  and the full O-RAN cascade; before AA1 the WAN and O-RAN use cases produced
+  **zero** cabling and optics.
 - **`speedGbps(speed)`** / **`portSpeed(dev, useUplink)`** /
   **`linkSpeed(a, b, aUplink?, bUplink?)`** *(Z2)* — a link is billed at the
   **slower of its two ends** (a 400G QSFP-DD module does not fit a 100G

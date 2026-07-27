@@ -921,7 +921,25 @@ const LAYER_CONNECTS: Array<{
   // is not a VTEP and carries no tenant VRF, so it had nothing to route the
   // firewall's traffic into — the handoff was architecturally impossible.
   { from: 'firewall',     to: 'leaf',         key: 'spine-leaf'  },
+  // AA1: WAN and O-RAN adjacencies. LAYER_CONNECTS modelled only the DC and
+  // campus tiers, so a WAN design billed ZERO circuits and an O-RAN design
+  // billed ZERO fronthaul — the eCPRI fronthaul is the defining link of an
+  // O-RAN network, and a 937-device / $11.8M design quoted none of it.
+  { from: 'wan-edge',     to: 'wan-edge',     key: 'wan-edge'      },
+  { from: 'oran-ru',      to: 'oran-fronthaul', key: 'oran-fronthaul' },
+  { from: 'oran-fronthaul', to: 'oran-du',    key: 'oran-midhaul'  },
+  { from: 'oran-du',      to: 'oran-midhaul', key: 'oran-midhaul'  },
+  { from: 'oran-midhaul', to: 'oran-cu',      key: 'oran-backhaul' },
+  { from: 'oran-cu',      to: 'oran-core',    key: 'oran-backhaul' },
+  { from: 'oran-timing',  to: 'oran-fronthaul', key: 'oran-fronthaul' },
 ]
+
+/** Default run lengths for the link keys the wizard does not expose. */
+const EXTRA_LINK_DISTANCES: Record<string, number> = {
+  'oran-fronthaul': 300,    // RU → cell-site switch, typically <1 km
+  'oran-midhaul':   2000,   // cell site → aggregation
+  'oran-backhaul':  10000,  // aggregation → regional core
+}
 
 /** Leaves that own the north-south firewall handoff — mirrors configgen. */
 const BORDER_LEAF_COUNT = 2
@@ -943,7 +961,7 @@ export function buildCabling(
     const tos   = byLayer[conn.to]   ?? []
     if (!froms.length || !tos.length) continue
 
-    const distM  = linkDistances[conn.key] ?? 5
+    const distM  = linkDistances[conn.key] ?? EXTRA_LINK_DISTANCES[conn.key] ?? 5
     // A link runs at the slower end's speed (Z2) — not the `from` device's.
     const speed  = linkSpeed(
       froms[0], tos[0],
@@ -967,6 +985,16 @@ export function buildCabling(
       const leafSupply = leafDevs.reduce((s, d) => s + Math.max(0, d.ports - (d.uplinks ?? 0)), 0)
       const nicSupply  = hostDevs.reduce((s, d) => s + Math.max(1, d.ports || 1), 0)
       qty = Math.min(leafSupply, nicSupply)
+    } else if (conn.from === 'wan-edge' && conn.to === 'wan-edge') {
+      // Site-to-site circuits: one WAN uplink per edge router (each site's
+      // pair gives the site a primary and a backup path).
+      qty = froms.length
+    } else if (conn.from.startsWith('oran-') || conn.to.startsWith('oran-')) {
+      // O-RAN is a cascade, not a mesh: every downstream element homes to one
+      // upstream element (dual-homed where the upstream tier is redundant).
+      const downstream = Math.max(froms.length, tos.length)
+      const upstream = Math.min(froms.length, tos.length)
+      qty = downstream * Math.min(2, Math.max(1, upstream))
     } else if (conn.from === 'firewall' && conn.to === 'leaf') {
       // Only the border leaves terminate the handoff (Z3), not every leaf.
       qty = froms.length * Math.min(tos.length, BORDER_LEAF_COUNT)
