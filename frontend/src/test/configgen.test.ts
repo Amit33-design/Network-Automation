@@ -1706,7 +1706,9 @@ describe('Fabric actually forwards (group Z1)', () => {
       makeDevice({ id: 'l1', hostname: 'GPU-LEAF-A01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
     ]
     const c = generateAllConfigs(devices, 'gpu')
-    expect(c['l1']).toMatch(/nv set interface swp1-56 ip address <CHANGE-ME-host-p2p>\/31/)
+    // Z3b: the host range now comes from the shared leafHostPortMax(), which
+    // also reserves the pair peer-link ports — 64 - 8 uplinks - 2 = 54.
+    expect(c['l1']).toMatch(/nv set interface swp1-54 ip address <CHANGE-ME-host-p2p>\/31/)
     expect(c['s1']).not.toMatch(/CHANGE-ME-host-p2p/)   // spines have no host ports
   })
 })
@@ -2130,4 +2132,41 @@ describe('Nokia, Dell and Extreme fabrics are deployable (group Z8)', () => {
       expect(c['s1'], `${vendor}: a spine must never own the handoff`).not.toContain('FW-HANDOFF')
     })
   }
+})
+
+// ── Z3b: the last handoff gap — NVIDIA Cumulus ──────────────────────────────
+
+describe('NVIDIA Cumulus border leaf terminates the firewall handoff (Z3b)', () => {
+  const fabric = () => generateAllConfigs([
+    makeDevice({ id: 's1', hostname: 'V-SPINE-A01', vendor: 'NVIDIA', subLayer: 'spine', role: 'spine', ports: 64, uplinks: 0 }),
+    makeDevice({ id: 's2', hostname: 'V-SPINE-A02', vendor: 'NVIDIA', subLayer: 'spine', role: 'spine', ports: 64, uplinks: 0 }),
+    makeDevice({ id: 'l1', hostname: 'V-LEAF-A01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
+    makeDevice({ id: 'l2', hostname: 'V-LEAF-A02', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
+    makeDevice({ id: 'l3', hostname: 'V-LEAF-B01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
+    makeDevice({ id: 'l4', hostname: 'V-LEAF-B02', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
+    makeDevice({ id: 'f1', hostname: 'V-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW', ports: 8 }),
+  ] as BOMDevice[], 'dc')
+
+  it('the border leaf gets a routed /31 and a default toward the perimeter', () => {
+    const c = fabric()
+    expect(c['l4']).toMatch(/nv set interface swp\d+ ip address 10\.98\.\d+\.\d+\/31/)
+    expect(c['l4']).toMatch(/nv set interface swp\d+ description FW-HANDOFF: V-FW-A01/)
+    expect(c['l4']).toMatch(/nv set vrf default router static 0\.0\.0\.0\/0 via 10\.98\.\d+\.\d+/)
+    // …and the fabric must actually LEARN that default
+    expect(c['l4']).toContain('redistribute static enable on')
+  })
+
+  it('no spine and no non-border leaf claims the handoff', () => {
+    const c = fabric()
+    expect(c['s1']).not.toContain('FW-HANDOFF')
+    expect(c['l1']).not.toContain('FW-HANDOFF')
+  })
+
+  it('the handoff port never collides with the GPU server-port range', () => {
+    const c = fabric()
+    const hostMax = +/nv set interface swp1-(\d+) ip address <CHANGE-ME-host-p2p>/.exec(c['l4'])![1]
+    const fwPorts = [...c['l4'].matchAll(/nv set interface swp(\d+) description FW-HANDOFF/g)].map(m => +m[1])
+    expect(fwPorts.length).toBeGreaterThan(0)
+    for (const p of fwPorts) expect(p, 'handoff port overlaps the compute range').toBeGreaterThan(hostMax)
+  })
 })

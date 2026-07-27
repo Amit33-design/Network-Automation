@@ -3764,6 +3764,21 @@ function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
   } else {
     peerPorts = Array.from({ length: uplinks }, (_, i) => ports - uplinks + i + 1)
   }
+  // Z3b — border-leaf firewall handoff. Cumulus is a pure eBGP L3 fabric
+  // (Y6, RFC 7938) with no tenant VRF, so the handoff lives in the default
+  // VRF as a routed /31 with a static default that BGP redistributes — the
+  // rest of the fabric had no north-south path at all before this.
+  const nvFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
+  // Host ports stop below the handoff ports so the two never collide — same
+  // helper the other vendors use, so the two allocators can never drift.
+  const nvHostMax = isSpine ? ports : leafHostPortMax(dev, allDevices)
+  const nvFwBlock = nvFwLinks.length ? `#
+# ── FIREWALL HANDOFF (border leaf — routed /31, FW side is the .1) ───────────
+${nvFwLinks.map(x => `nv set interface swp${x.port} ip address ${x.ip}/31
+nv set interface swp${x.port} description FW-HANDOFF: ${x.fw.hostname}`).join('\n')}
+${nvFwLinks.map(x => `nv set vrf default router static 0.0.0.0/0 via ${nextIp(x.ip)}`).join('\n')}
+nv set vrf default router bgp address-family ipv4-unicast redistribute static enable on
+#` : ''
   const neighborLines = peerPorts.map(p => `nv set vrf default router bgp neighbor swp${p} remote-as external
 nv set vrf default router bgp neighbor swp${p} type unnumbered
 nv set vrf default router bgp neighbor swp${p} timers keepalive 3
@@ -3796,14 +3811,14 @@ nv set interface lo ip address ${lo0ip}/32
 nv set interface swp1-${ports} link mtu 9216
 nv set interface swp1-${ports} link state up
 ${isSpine ? '' : `#
-# ── GPU SERVER PORTS (Z1 — swp1-${ports - uplinks} are cabled to compute nodes but had no
+# ── GPU SERVER PORTS (Z1 — swp1-${nvHostMax} are cabled to compute nodes but had no
 # L3 config at all: 512 GPUs had no network. Rail-optimized L3-to-the-host:
 # each server port is a routed /31 in the default VRF, RoCE DSCP trust is
 # inherited from the qos roce profile below.) ────────────────────────────────
-nv set interface swp1-${ports - uplinks} ip address <CHANGE-ME-host-p2p>/31
+nv set interface swp1-${nvHostMax} ip address <CHANGE-ME-host-p2p>/31
 nv set vrf default router bgp address-family ipv4-unicast network <CHANGE-ME-host-subnet>
 # (the host prefixes reach the fabric via the redistribute-connected above)
-#`}
+#`}${nvFwBlock}
 
 # ── BGP eBGP spine-leaf, unnumbered (RFC 7938) ───────────────────────────────
 nv set router bgp enable on
