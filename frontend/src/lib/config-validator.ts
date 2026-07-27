@@ -112,6 +112,11 @@ function extractLoopbacks(configs: Record<string, string>): Map<string, string[]
     for (const m of cfg.matchAll(/nv set interface lo ip address\s+(\d+\.\d+\.\d+\.\d+)/g)) {
       ips.push(m[1])
     }
+    // Extreme EXOS — the loopback is a VLAN: `configure vlan Loopback0
+    // ipaddress X 255.255.255.255` (Z8, same vendor-awareness class as M3/M4).
+    for (const m of cfg.matchAll(/configure vlan \S*[Ll]oopback\S* ipaddress\s+(\d+\.\d+\.\d+\.\d+)/g)) {
+      ips.push(m[1])
+    }
     if (ips.length > 0) loopbacks.set(host, [...new Set(ips)])
   }
   return loopbacks

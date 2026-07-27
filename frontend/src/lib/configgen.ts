@@ -3460,8 +3460,62 @@ end
 
 // ── Dell EMC OS10 ────────────────────────────────────────────────────────────
 
-function dellOs10SwitchConfig(dev: BOMDevice, _idx: number, isGpu = false): string {
+function dellOs10SwitchConfig(dev: BOMDevice, idx: number, isGpu = false, allDevices: BOMDevice[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const isSpine = dev.subLayer === 'spine'
+  // Z8 — real identity + real peers, the treatment X1/X3/X4 gave the other
+  // vendors. Dell shipped `router bgp <CHANGE-ME-asn>` on BOTH roles (so even
+  // if an operator filled them in, identical ASNs make eBGP impossible) and
+  // `neighbor <CHANGE-ME-spine1-ip>` placeholders, so the fabric was dead.
+  const asn = isSpine ? 65000 : 65000 + Math.floor(idx / 2) + 1
+  const lo0ip = isSpine
+    ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
+    : roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
+  const dellLinks = closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)
+  const dellPortBase = isSpine
+    ? 0
+    : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
+  const dellFabricIfaces = dellLinks.map(l => `interface ethernet1/1/${dellPortBase + l.ifIndex + 1}
+  description ${isSpine ? 'DOWNLINK' : 'UPLINK'}: ${l.peerHostname}
+  no switchport
+  mtu 9216
+  ip address ${l.localIp}
+  no shutdown
+!`).join('\n')
+  const dellLeafPeers = allDevices
+    .filter(d => d.subLayer === 'leaf')
+    .map((_d, i) => `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)}
+    remote-as ${65000 + Math.floor(i / 2) + 1}
+    ebgp-multihop 2
+    update-source loopback 0
+    advertisement-interval 0
+    timers 3 9
+    bfd
+    send-community extended
+    no shutdown
+    address-family l2vpn evpn
+      activate
+      route-map NH-UNCHANGED out
+  !`).join('\n')
+  const dellLinkedSpines = new Set(dellLinks.map(l => l.peerHostname))
+  const dellSpinePeers = allDevices
+    .filter(d => d.subLayer === 'spine')
+    .map((d, i) => ({ d, i }))
+    .filter(x => dellLinkedSpines.size === 0 || dellLinkedSpines.has(x.d.hostname))
+    .map(x => `  neighbor ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)}
+    remote-as 65000
+    ebgp-multihop 2
+    update-source loopback 0
+    advertisement-interval 0
+    timers 3 9
+    bfd
+    send-community extended
+    no shutdown
+    address-family l2vpn evpn
+      activate
+  !`).join('\n')
+  const dellHostMax = isSpine ? 0 : leafHostPortMax(dev, allDevices)
+  const dellFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
 ! Role   : ${isSpine ? 'Spine' : 'Leaf / ToR'}
@@ -3485,7 +3539,7 @@ management route 0.0.0.0/0 <CHANGE-ME-mgmt-gw>
 ! ── Loopback (router-id / BGP / VTEP source) ─────────────────────────────────
 interface loopback 0
   no shutdown
-  ip address <CHANGE-ME-loopback-ip>/32
+  ip address ${lo0ip}/32
 !
 ! ── NTP ─────────────────────────────────────────────────────────────────────
 ntp server <CHANGE-ME-ntp-primary>
@@ -3502,55 +3556,53 @@ logging server <CHANGE-ME-syslog-ip>
 ! ── LLDP ────────────────────────────────────────────────────────────────────
 lldp enable
 !
-! ── BGP (eBGP spine-leaf, unnumbered) ───────────────────────────────────────
-router bgp <CHANGE-ME-asn>
+! ── FABRIC LINKS (topology-driven from BOM port-math, Z8) ───────────────────
+${dellFabricIfaces || '! No fabric peers in this design'}
+! ── UNDERLAY: eBGP over the /31s, overlay eBGP over loopback 0 ───────────────
+! ── BGP (eBGP spine-leaf) ───────────────────────────────────────────────────
+router bgp ${asn}
+  router-id ${lo0ip}
   bestpath as-path multipath-relax
   !
   address-family ipv4 unicast
     maximum-paths 64
+    network ${lo0ip}/32
   !
   address-family l2vpn evpn
     advertise-all-vni
   !
-${isSpine ? `  ! ── Spine: accept all leaf peers ────────────────────────────────────────
-  neighbor interface ethernet1/1/1-1/1/32
-    peer-group LEAVES
-  !
-  peer-group LEAVES
-    remote-as external
-    advertisement-interval 0
-    timers 3 9
-    send-community extended
-    address-family l2vpn evpn
-      activate
-    address-family ipv4 unicast
-      activate` : `  ! ── Leaf: peer to spines ──────────────────────────────────────────────────
-  neighbor <CHANGE-ME-spine1-ip>
-    remote-as <CHANGE-ME-spine-asn>
-    advertisement-interval 0
-    timers 3 9
-    bfd
-    send-community extended
-    address-family l2vpn evpn
-      activate
-  !
-  neighbor <CHANGE-ME-spine2-ip>
-    remote-as <CHANGE-ME-spine-asn>
-    advertisement-interval 0
-    timers 3 9
-    bfd
-    send-community extended
-    address-family l2vpn evpn
-      activate`}
+${isSpine
+  ? `  ! ── Spine: one eBGP session per leaf, derived from the BOM ──────────────
+${dellLeafPeers || '  ! No leaves in fabric'}`
+  : `  ! ── Leaf: one eBGP session per LINKED spine ─────────────────────────────
+${dellSpinePeers || '  ! No spines in fabric'}`}
 !
+${isSpine ? `! The spine is NOT a VTEP — it must re-advertise EVPN routes with the
+! originating leaf's next-hop, or the overlay black-holes at the spine.
+route-map NH-UNCHANGED permit 10
+!` : ''}
 ! ── VXLAN ───────────────────────────────────────────────────────────────────
 interface virtual-network 1
   vxlan-vni 10001
 !
-! ── Jumbo MTU on fabric uplinks (VXLAN 50B overhead) ─────────────────────────
-interface range ethernet 1/1/1-1/1/${dev.ports}
+${dellHostMax > 0 ? `! ── SERVER / HOST PORTS (the VNI had no member ports before Z8) ──────────────
+interface range ethernet 1/1/1-1/1/${dellHostMax}
+  switchport access vlan 10
   mtu 9216
+  no shutdown
+!` : ''}${dellFwLinks.length ? `
+! ── FIREWALL HANDOFF (border leaf, routed /31 — FW side is the .1) ───────────
+${dellFwLinks.map(x => `interface ethernet1/1/${x.port}
+  description FW-HANDOFF: ${x.fw.hostname}
+  no switchport
+  ip vrf forwarding TENANT-A
+  ip address ${x.ip}/31
+  no shutdown
+!`).join('\n')}
+ip vrf TENANT-A
 !
+${dellFwLinks.map(x => `ip route vrf TENANT-A 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
+!` : ''}
 ${isGpu ? `! ── RoCEv2 / DCB / ECN — Full Lossless Fabric (OS10) ───────────────────────
 !   Priority 3 → RoCEv2/RDMA (lossless, PFC no-drop)
 !   Priority 6 → Storage/NVMe-oF (lossless, PFC no-drop)
@@ -3695,7 +3747,7 @@ interface 1/1/1-1/1/${dev.ports}
 function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDevices: BOMDevice[] = []): string {
   idx = roleIndex(dev, allDevices, idx)
   const isSpine = dev.subLayer === 'spine'
-  const asn = isSpine ? 65000 : 65001 + idx
+  const asn = isSpine ? 65000 : 65000 + Math.floor(idx / 2) + 1
   const lo0ip = isSpine
     ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
     : roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
@@ -3777,9 +3829,50 @@ nv config apply
 
 // ── Extreme Networks EXOS / Switch Engine ─────────────────────────────────────
 
-function extremeExosConfig(dev: BOMDevice, _idx: number): string {
+function extremeExosConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const isSpine = dev.subLayer === 'spine'
   const isAccess = dev.subLayer === 'access'
+  // Z8 — real identity + real peers. EXOS shipped `configure bgp AS-number
+  // <CHANGE-ME-asn>` on both roles and `<CHANGE-ME-leaf-range>` /
+  // `<CHANGE-ME-spine1-ip>` peers, so the fabric never formed a session.
+  const asn = isSpine ? 65000 : 65000 + Math.floor(idx / 2) + 1
+  const lo0ip = isSpine
+    ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
+    : roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
+  const exosLinks = isAccess ? [] : closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)
+  const exosPortBase = isSpine
+    ? 0
+    : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
+  const exosFabricIfaces = exosLinks.map(l => {
+    const port = exosPortBase + l.ifIndex + 1
+    const vlanName = `P2P-${port}`
+    return `create vlan ${vlanName}
+configure vlan ${vlanName} add ports ${port} untagged
+configure vlan ${vlanName} ipaddress ${l.localIp.replace('/31', ' 255.255.255.254')}
+configure ports ${port} description-string "${isSpine ? 'DOWNLINK' : 'UPLINK'}: ${l.peerHostname}"
+enable ipforwarding vlan ${vlanName}`
+  }).join('\n')
+  const exosLeafPeers = allDevices
+    .filter(d => d.subLayer === 'leaf')
+    .map((_d, i) => {
+      const ip = roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)
+      return `configure bgp add neighbor ${ip} remote-AS-number ${65000 + Math.floor(i / 2) + 1}
+configure bgp neighbor ${ip} no-next-hop-self
+enable bgp neighbor ${ip} capability evpn`
+    }).join('\n')
+  const exosLinkedSpines = new Set(exosLinks.map(l => l.peerHostname))
+  const exosSpinePeers = allDevices
+    .filter(d => d.subLayer === 'spine')
+    .map((d, i) => ({ d, i }))
+    .filter(x => exosLinkedSpines.size === 0 || exosLinkedSpines.has(x.d.hostname))
+    .map(x => {
+      const ip = roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)
+      return `configure bgp add neighbor ${ip} remote-AS-number 65000
+configure bgp neighbor ${ip} source-interface vlan Loopback0
+enable bgp neighbor ${ip} capability evpn`
+    }).join('\n')
+  const exosFwLinks = (isSpine || isAccess) ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : ${dev.subLayer}
@@ -3827,18 +3920,38 @@ configure vlan Voice add ports 1-${dev.ports} tagged
 enable inline-power
 configure inline-power usage-threshold 85
 enable stpd s0 ports 1-${dev.ports}
-configure stpd s0 ports edge-safeguard enable 1-${dev.ports}` : `# ── BGP + EVPN / Fabric ───────────────────────────────────────────────────────
-configure bgp AS-number <CHANGE-ME-asn>
-configure bgp routerid <CHANGE-ME-loopback-ip>
-configure bgp add network 0.0.0.0/0
+configure stpd s0 ports edge-safeguard enable 1-${dev.ports}` : `# ── Loopback (router-id / BGP source) ────────────────────────────────────────
+create vlan Loopback0
+enable loopback-mode vlan Loopback0
+configure vlan Loopback0 ipaddress ${lo0ip} 255.255.255.255
+#
+# ── FABRIC LINKS (topology-driven from BOM port-math, Z8) ─────────────────────
+${exosFabricIfaces || '# No fabric peers in this design'}
+#
+# ── BGP + EVPN / Fabric ───────────────────────────────────────────────────────
+configure bgp AS-number ${asn}
+configure bgp routerid ${lo0ip}
 enable bgp
 ${isSpine
-  ? '# Spine: accept eBGP from all leaves\nconfigure bgp neighbor <CHANGE-ME-leaf-range> peer-group LEAVES remote-AS-number external'
-  : '# Leaf: peer to spines\nconfigure bgp neighbor <CHANGE-ME-spine1-ip> peer-group SPINES remote-AS-number <CHANGE-ME-spine-asn>\nconfigure bgp neighbor <CHANGE-ME-spine2-ip> peer-group SPINES remote-AS-number <CHANGE-ME-spine-asn>'}
+  ? `# Spine: one eBGP session per leaf, derived from the BOM. no-next-hop-self is
+# mandatory — the spine is not a VTEP, so rewriting the EVPN next-hop to itself
+# black-holes every overlay route.
+${exosLeafPeers || '# No leaves in fabric'}`
+  : `# Leaf: one eBGP session per LINKED spine
+${exosSpinePeers || '# No spines in fabric'}`}
 configure bgp neighbor all timer 3 9
 configure bgp neighbor all bfd on
 enable bgp neighbor all
-#
+#${exosFwLinks.length ? `
+# ── FIREWALL HANDOFF (border leaf, routed /31 — FW side is the .1) ───────────
+create vrf TENANT-A
+${exosFwLinks.map(x => `create vlan FW-${x.port} vr TENANT-A
+configure vlan FW-${x.port} add ports ${x.port} untagged
+configure vlan FW-${x.port} ipaddress ${x.ip} 255.255.255.254
+configure ports ${x.port} description-string "FW-HANDOFF: ${x.fw.hostname}"
+enable ipforwarding vlan FW-${x.port}`).join('\n')}
+${exosFwLinks.map(x => `configure iproute add default ${nextIp(x.ip)} vr TENANT-A`).join('\n')}
+#` : ''}
 # ── Jumbo MTU (VXLAN 50B overhead → underlay must be jumbo) ───────────────────
 enable jumbo-frame ports all
 configure jumbo-frame-size 9216
@@ -3851,7 +3964,8 @@ configure virtual-network "VNI-10001" add vlan Data`}
 
 // ── Nokia SR Linux Config ───────────────────────────────────────────────────
 
-function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], appTypes: AppType[] = []): string {
+function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, protoFeatures: string[] = [], appTypes: AppType[] = [], allDevices: BOMDevice[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
   const isSpine = dev.subLayer === 'spine'
   // Storage lossless (NVMe-oF/iSCSI) — PFC priority-6 no-drop, leaf only.
   const storageBlock = (!isSpine && appTypes.includes('storage')) ? `
@@ -3897,30 +4011,123 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
                     }`
     : ''
 
+  // Z8 — real eBGP peers derived from the BOM, the same treatment X1/X3/X4
+  // gave Cisco/Arista/Juniper. The spine had NO neighbors at all (just an
+  // empty peer-group with an iBGP `route-reflector client` on an eBGP
+  // session), and the leaf peered two `<CHANGE-ME-spine*-lo0>` placeholders,
+  // so a Nokia fabric never formed a single session.
+  const nokiaLeafPeers = allDevices
+    .filter(d => d.subLayer === 'leaf')
+    .map((_d, i) => `                neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} {
+                    peer-as ${65000 + Math.floor(i / 2) + 1}
+                }`)
+    .join('\n')
+  const nokiaLinkedSpines = new Set(closFabricLinks('leaf', dev, allDevices).map(l => l.peerHostname))
+  const nokiaSpinePeers = allDevices
+    .filter(d => d.subLayer === 'spine')
+    .map((d, i) => ({ d, i }))
+    .filter(x => nokiaLinkedSpines.size === 0 || nokiaLinkedSpines.has(x.d.hostname))
+    .map(x => `                neighbor ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)} {
+                    peer-as 65000
+                }`)
+    .join('\n')
+  // Topology-driven fabric interfaces (Z8): the generator used to hardcode
+  // ethernet-1/1 and 1/2 no matter how many links the BOM actually planned.
+  const nokiaLinks = closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)
+  const nokiaPortBase = isSpine
+    ? 0
+    : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
+  const nokiaFabricIfaces = nokiaLinks.map(l => `    interface ethernet-1/${nokiaPortBase + l.ifIndex + 1} {
+        description "${isSpine ? 'DOWNLINK' : 'UPLINK'}: ${l.peerHostname}"
+        admin-state enable
+        mtu 9232
+        subinterface 0 {
+            ipv4 {
+                address ${l.localIp} { }
+            }
+        }
+    }`).join('\n') || `    interface ethernet-1/1 {
+        admin-state enable
+        mtu 9232
+    }`
+  const nokiaFabricNiIfaces = nokiaLinks
+    .map(l => `        interface ethernet-1/${nokiaPortBase + l.ifIndex + 1}.0 { }`).join('\n')
+  // Server-facing ports — the mac-vrf and its VNI had no member ports (Z1 class).
+  const nokiaHostMax = isSpine ? 0 : leafHostPortMax(dev, allDevices)
+  const nokiaHostIfaces = nokiaHostMax > 0 ? `    # ── SERVER / HOST PORTS (tenant VLAN 10) ────────────────────────────────
+    interface ethernet-1/{1..${nokiaHostMax}} {
+        description "SERVER-ACCESS"
+        admin-state enable
+        vlan-tagging false
+        subinterface 0 {
+            type bridged
+        }
+    }` : ''
+  // Border-leaf firewall handoff (Z3b) — routed /31 inside the tenant ip-vrf.
+  const nokiaFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
+  const nokiaFwIfaces = nokiaFwLinks.length ? `
+    # ── FIREWALL HANDOFF (border leaf, routed /31 — FW side is the .1) ──────
+${nokiaFwLinks.map(x => `    interface ethernet-1/${x.port} {
+        description "FW-HANDOFF: ${x.fw.hostname}"
+        admin-state enable
+        subinterface 0 {
+            ipv4 {
+                address ${x.ip}/31 { }
+            }
+        }
+    }`).join('\n')}
+
+    network-instance TENANT-A {
+        type ip-vrf
+${nokiaFwLinks.map(x => `        interface ethernet-1/${x.port}.0 { }`).join('\n')}
+        static-routes {
+            route 0.0.0.0/0 {
+                next-hop-group fw-perimeter
+            }
+        }
+        next-hop-groups {
+            group fw-perimeter {
+${nokiaFwLinks.map((x, i) => `                nexthop ${i + 1} {
+                    ip-address ${nextIp(x.ip)}
+                }`).join('\n')}
+            }
+        }
+    }` : ''
+
   const bgpNeighbors = isSpine
     ? `            group leaf-peers {
-                peer-as 65001
                 family {
                     evpn true
                     ipv4-unicast true
                 }
-                route-reflector {
-                    client true
+                multihop {
+                    admin-state enable
+                    maximum-hops 2
                 }
-            }`
+                # eBGP spine is NOT a VTEP — preserve the originating next-hop
+                # or every overlay route is tunnelled to the spine and dropped.
+                route-advertisement {
+                    next-hop-self false
+                }
+            }
+${nokiaLeafPeers || '                # No leaves in fabric'}`
     : `            group spine-rr {
                 peer-as 65000
                 family {
                     evpn true
                     ipv4-unicast true
                 }
-                neighbor <CHANGE-ME-spine1-lo0> { }
-                neighbor <CHANGE-ME-spine2-lo0> { }
-            }`
+                multihop {
+                    admin-state enable
+                    maximum-hops 2
+                }
+            }
+${nokiaSpinePeers || '                # No spines in fabric'}`
 
   const evpnBlock = isSpine ? '' : `
     network-instance vxlan-default {
         type mac-vrf
+${nokiaHostMax > 0 ? `        interface ethernet-1/{1..${nokiaHostMax}}.0 { }` : ''}
         protocols {
             bgp-evpn {
                 bgp-instance 1 {
@@ -4004,15 +4211,10 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
         }
     }
 
-    # Jumbo MTU on fabric uplinks — VXLAN adds 50B; underlay must be jumbo.
-    interface ethernet-1/1 {
-        admin-state enable
-        mtu 9232
-    }
-    interface ethernet-1/2 {
-        admin-state enable
-        mtu 9232
-    }
+    # ── FABRIC LINKS (topology-driven from BOM port-math, Z8) ───────────────
+    # Jumbo MTU — VXLAN adds 50B, so the underlay must be jumbo.
+${nokiaFabricIfaces}
+${nokiaHostIfaces}${nokiaFwIfaces}
 
     network-instance mgmt {
         type ip-vrf
@@ -4040,6 +4242,7 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
     network-instance default {
         type default
         interface system0.0 { }
+${nokiaFabricNiIfaces}
         protocols {
             isis {
                 instance default {
@@ -5414,13 +5617,13 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx)
   if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
   if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx)
-  if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite', protoFeatures, appTypes)
+  if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite', protoFeatures, appTypes, allDevices)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
   if (v === 'Fortinet'  && (l === 'distribution' || l === 'access')) return fortinetCampusConfig(dev, idx, appTypes)
-  if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce)
+  if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce, allDevices)
   if (v === 'HPE Aruba')                                             return arubaOsCxConfig(dev, idx)
   if (v === 'NVIDIA'    && (l === 'spine' || l === 'leaf'))          return nvidiaSpectrumConfig(dev, idx, needsRoce, allDevices)
-  if (v === 'Extreme Networks')                                      return extremeExosConfig(dev, idx)
+  if (v === 'Extreme Networks')                                      return extremeExosConfig(dev, idx, allDevices)
   return genericConfig(dev)
 }
 

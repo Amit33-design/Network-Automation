@@ -2060,3 +2060,74 @@ describe('HA pairing and NX-OS vPC completeness (group Z5)', () => {
     expect(configs['l0']).toMatch(/system qos[\s\S]*?service-policy type network-qos\s+PM-JUMBO/)
   })
 })
+
+// ── Z8: fabric deployability parity for Nokia / Dell / Extreme ──────────────
+
+describe('Nokia, Dell and Extreme fabrics are deployable (group Z8)', () => {
+  function fabric(vendor: string) {
+    const devices: BOMDevice[] = [
+      makeDevice({ id: 's1', hostname: 'W-SPINE-A01', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 's2', hostname: 'W-SPINE-A02', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'W-LEAF-A01', vendor, subLayer: 'leaf', role: 'leaf', ports: 32, uplinks: 2 }),
+      makeDevice({ id: 'l2', hostname: 'W-LEAF-A02', vendor, subLayer: 'leaf', role: 'leaf', ports: 32, uplinks: 2 }),
+      makeDevice({ id: 'l3', hostname: 'W-LEAF-B01', vendor, subLayer: 'leaf', role: 'leaf', ports: 32, uplinks: 2 }),
+      makeDevice({ id: 'l4', hostname: 'W-LEAF-B02', vendor, subLayer: 'leaf', role: 'leaf', ports: 32, uplinks: 2 }),
+      makeDevice({ id: 'f1', hostname: 'W-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW', ports: 8 }),
+    ]
+    return generateAllConfigs(devices, 'dc')
+  }
+
+  const VENDORS = ['Nokia', 'Dell EMC', 'Extreme Networks']
+
+  for (const vendor of VENDORS) {
+    it(`${vendor}: identity is auto-assigned — no <CHANGE-ME> ASN or loopback`, () => {
+      const c = fabric(vendor)
+      for (const id of ['s1', 'l1']) {
+        expect(c[id], `${vendor} ${id} has a placeholder ASN`).not.toMatch(/<CHANGE-ME[^>]*asn/i)
+        expect(c[id], `${vendor} ${id} has a placeholder loopback`).not.toMatch(/<CHANGE-ME[^>]*loopback/i)
+      }
+      // spine and leaf must land in DIFFERENT ASes — identical placeholders on
+      // both roles meant eBGP could never come up even once filled in.
+      expect(c['s1']).toMatch(/10\.255\.1\.1/)
+      expect(c['l1']).toMatch(/10\.255\.2\.1/)
+    })
+
+    it(`${vendor}: spine emits one real eBGP session per leaf (no placeholder peers)`, () => {
+      const c = fabric(vendor)
+      const spine = c['s1']
+      for (const lo of ['10.255.2.1', '10.255.2.2', '10.255.2.3', '10.255.2.4']) {
+        expect(spine, `${vendor} spine does not peer ${lo}`).toContain(lo)
+      }
+      expect(spine).not.toMatch(/<CHANGE-ME[^>]*(?:leaf|spine)/i)
+    })
+
+    it(`${vendor}: leaf peers only the spines it is LINKED to, never a placeholder`, () => {
+      const c = fabric(vendor)
+      expect(c['l1']).toContain('10.255.1.1')
+      expect(c['l1']).not.toMatch(/<CHANGE-ME[^>]*spine/i)
+    })
+
+    it(`${vendor}: the eBGP spine preserves the overlay next-hop (it is not a VTEP)`, () => {
+      const c = fabric(vendor)
+      expect(c['s1'], `${vendor} spine rewrites the EVPN next-hop to itself`)
+        .toMatch(/next-hop-self false|no-next-hop-self|NH-UNCHANGED/)
+    })
+
+    it(`${vendor}: fabric interfaces are topology-driven, one per planned link`, () => {
+      const c = fabric(vendor)
+      const downlinks = (c['s1'].match(/DOWNLINK:/g) ?? []).length
+      const uplinks = (c['l1'].match(/UPLINK:/g) ?? []).length
+      expect(downlinks, `${vendor} spine has no fabric interfaces`).toBeGreaterThan(0)
+      expect(uplinks, `${vendor} leaf has no fabric interfaces`).toBe(2)
+    })
+
+    it(`${vendor}: the border leaf terminates the firewall handoff in a tenant VRF`, () => {
+      const c = fabric(vendor)
+      expect(c['l1'], `${vendor}: a non-border leaf claimed the handoff`).not.toContain('FW-HANDOFF')
+      expect(c['l4'], `${vendor}: border leaf has no firewall handoff`).toContain('FW-HANDOFF')
+      expect(c['l4']).toContain('TENANT-A')
+      expect(c['l4'], `${vendor}: no default route toward the perimeter`).toMatch(/0\.0\.0\.0\/0|default 10\.98\./)
+      expect(c['s1'], `${vendor}: a spine must never own the handoff`).not.toContain('FW-HANDOFF')
+    })
+  }
+})
