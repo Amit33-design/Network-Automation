@@ -122,6 +122,20 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
     expect(c.quantity, `${ctx}: non-positive cable qty`).toBeGreaterThan(0)
   }
 
+  // 7b. AA1: a design with more than one PHYSICAL network tier must produce
+  // cabling. LAYER_CONNECTS only modelled the DC and campus tiers, so WAN and
+  // O-RAN designs billed zero cables and zero optics — an O-RAN network's
+  // eCPRI fronthaul is its defining link and a $11.8M design quoted none.
+  const physical = p.devices.filter(d => !NON_NETWORK.has(d.subLayer))
+  const physicalLayers = new Set(physical.map(d => d.subLayer))
+  if (physical.length > 1 && physicalLayers.size > 0) {
+    expect(p.cabling.length, `${ctx}: ${physical.length} devices across ${[...physicalLayers].join('/')} but ZERO cabling`)
+      .toBeGreaterThan(0)
+    const cabled = new Set(p.cabling.flatMap(c => [c.fromLayer, c.toLayer]))
+    const orphan = [...physicalLayers].find(l => !cabled.has(l))
+    expect(orphan, `${ctx}: tier "${orphan}" has devices but no cabling to anything`).toBeUndefined()
+  }
+
   // 8a. Spine-leaf cabling quantity is physically correct: each leaf has
   //     `uplinks` cables to the spine tier (NOT a leaf×spine full-mesh count).
   if (SPINE_LEAF_CASES.has(j.useCase)) {
@@ -372,13 +386,16 @@ function assertDcimExportInvariants(j: Journey, p: ReturnType<typeof runPipeline
 
   const rows = (csv: string) => csv.trim().split('\n').slice(1)
 
+  // These scan thousands of rows on a large O-RAN design, so they collect the
+  // FIRST violation and assert once — an expect() per row is what made this
+  // invariant time out once O-RAN started producing cabling (AA1).
+  const firstBad = <T,>(items: T[], ok: (t: T) => boolean): T | undefined => items.find(t => !ok(t))
+
   // 1. One device row per unique hostname; every BOM device present.
   const deviceRows = rows(x.devicesCsv)
   const exportedNames = new Set(deviceRows.map(r => r.split(',')[0]))
-  for (const d of p.devices) {
-    const name = d.hostname || d.model
-    expect(exportedNames.has(name), `${ctx}: ${name} missing from device CSV`).toBe(true)
-  }
+  const missing = firstBad(p.devices, d => exportedNames.has(d.hostname || d.model))
+  expect(missing, `${ctx}: ${missing?.hostname} missing from device CSV`).toBeUndefined()
 
   // 2. Cable rows match the expanded plan count.
   expect(rows(x.cablesCsv).length, `${ctx}: cable CSV row drift`).toBe(x.cableCount)
@@ -388,11 +405,11 @@ function assertDcimExportInvariants(j: Journey, p: ReturnType<typeof runPipeline
     const [device, name] = r.split(',')
     return `${device} ${name}`
   }))
-  for (const r of rows(x.cablesCsv)) {
+  const badCable = firstBad(rows(x.cablesCsv), r => {
     const c = r.split(',')
-    expect(ifaceKeys.has(`${c[0]} ${c[2]}`), `${ctx}: cable side_a ${c[0]} ${c[2]} not in interface CSV`).toBe(true)
-    expect(ifaceKeys.has(`${c[3]} ${c[5]}`), `${ctx}: cable side_b ${c[3]} ${c[5]} not in interface CSV`).toBe(true)
-  }
+    return ifaceKeys.has(`${c[0]} ${c[2]}`) && ifaceKeys.has(`${c[3]} ${c[5]}`)
+  })
+  expect(badCable, `${ctx}: cable endpoint not in interface CSV: ${badCable}`).toBeUndefined()
 
   // 4. Rack export: count matches, positions in bounds, no U overlap per rack,
   //    and every rack referenced by a device row exists.

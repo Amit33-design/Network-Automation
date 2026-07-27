@@ -133,8 +133,15 @@ const RE_BGP = /router bgp\b|protocols bgp|\bbgp\s*\{|autonomous-system\s+\d+|co
 const RE_ISIS = /router isis|isis enable|protocols isis|\bisis\s*\{/i
 const RE_OSPF = /router ospf\s|ospf area|protocols ospf/i
 const RE_HOSTNAME = /\bhostname\s+\S+|host-name\s+\S+|sysName\s+\S+/i
-const RE_MGMT = /MANAGEMENT|ntp server|ntp\s*\{|logging host|logging\s*\{|remote-server|snmp-server|gnmi-server/i
+// AA1: Viptela / Cisco SD-WAN expresses these as nested BLOCKS — `ntp` then
+// an indented `server`, `snmp` then `user`/`group` — so the flat Cisco-IOS
+// keywords missed them entirely and a fully-managed SD-WAN edge was reported
+// as having no management plane. Same vendor-awareness class as M3/M4/Z8.
+const RE_MGMT = /MANAGEMENT|ntp server|ntp\s*\{|ntp\s*\n\s+server\b|logging host|logging\s*\{|logging\s*\n[\s\S]{0,200}?\bserver\b|remote-server|syslog-server|snmp-server|snmp\s*\n\s+(?:contact|view|group|user)\b|gnmi-server/i
 const RE_ROUTING_DEVICE = /router bgp|router ospf|router isis|protocols (?:bgp|ospf|isis)|\bbgp\s*\{|\bisis\s*\{|\bospf\s*\{/i
+
+/** Cloud-native tiers: provisioned via Terraform/API, no device CLI exists. */
+const CLOUD_SUBLAYERS = new Set(['cloud-gw', 'cloud-transit'])
 
 // ── Validation checks ─────────────────────────────────────────────────────────
 
@@ -717,15 +724,22 @@ export function validateConfigs(input: ValidateInput): ValidationResult {
   const { configs, devices, useCase } = input
 
   if (Object.keys(configs).length === 0) {
+    // AA1: a multicloud/Aviatrix design is made entirely of cloud gateways and
+    // transit VPCs, which are API/Terraform-provisioned and have no CLI at
+    // all. Reporting that as a validation FAILURE was wrong — the design is
+    // legitimate and complete; there is simply nothing CLI-shaped to check.
+    const allCloud = devices.length > 0 && devices.every(d => CLOUD_SUBLAYERS.has(d.subLayer))
     return {
       checks: [{
         id: 'V-00',
         name: 'Configurations present',
         category: 'Identity',
-        severity: 'fail',
-        detail: 'No generated configs to validate — generate configs in Step 3 first',
+        severity: allCloud ? 'info' : 'fail',
+        detail: allCloud
+          ? `All ${devices.length} device(s) are cloud-native (gateways / transit VPCs) — provisioned via Terraform or the provider API, so there is no device CLI to validate`
+          : 'No generated configs to validate — generate configs in Step 3 first',
       }],
-      summary: { pass: 0, fail: 1, warn: 0, info: 0 },
+      summary: { pass: 0, fail: allCloud ? 0 : 1, warn: 0, info: allCloud ? 1 : 0 },
       timestamp: Date.now(),
     }
   }

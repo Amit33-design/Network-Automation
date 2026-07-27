@@ -952,3 +952,50 @@ describe('BOM physical honesty (group Z2)', () => {
     expect(fwLeaf.quantity).toBe(fwCount * 2)   // 2 border leaves, not every leaf
   })
 })
+
+// ── AA1: cabling coverage for every use case ────────────────────────────────
+
+describe('Every physical tier is cabled (group AA1)', () => {
+  const DIST = { 'spine-leaf': 100, 'core-dist': 200, 'dist-access': 50, 'wan-edge': 5000 }
+
+  it('a WAN design bills site-to-site circuits (it billed ZERO before)', () => {
+    const devices = buildDeviceList({ useCase: 'wan', scale: 'medium', siteCode: 'W', totalEndpoints: 2000, numSites: 8 })
+    const edges = devices.filter(d => d.subLayer === 'wan-edge')
+    expect(edges.length).toBeGreaterThan(0)
+    const cabling = buildCabling(devices, DIST)
+    const wan = cabling.find(c => c.fromLayer === 'wan-edge' && c.toLayer === 'wan-edge')
+    expect(wan, 'WAN design produced no circuits at all').toBeTruthy()
+    expect(wan!.quantity).toBe(edges.length)
+  })
+
+  it('an O-RAN design bills its fronthaul — the defining link of the architecture', () => {
+    const devices = buildDeviceList({ useCase: 'oran', scale: 'medium', siteCode: 'O', totalEndpoints: 600 })
+    const cabling = buildCabling(devices, DIST)
+    const fh = cabling.find(c => c.fromLayer === 'oran-ru' && c.toLayer === 'oran-fronthaul')
+    expect(fh, 'no eCPRI fronthaul cabling on an O-RAN design').toBeTruthy()
+    const rus = devices.filter(d => d.subLayer === 'oran-ru').length
+    // every RU is dual-homed to the cell-site switch pair
+    expect(fh!.quantity).toBe(rus * 2)
+    // …and the whole cascade is present, not just the fronthaul
+    for (const [from, to] of [['oran-fronthaul', 'oran-du'], ['oran-du', 'oran-midhaul'], ['oran-midhaul', 'oran-cu'], ['oran-cu', 'oran-core']]) {
+      expect(cabling.find(c => c.fromLayer === from && c.toLayer === to), `${from}->${to} missing`).toBeTruthy()
+    }
+    // O-RAN link keys are not wizard-exposed — they must still get a distance
+    for (const c of cabling) expect(c.lengthM, `${c.fromLayer}->${c.toLayer} has no run length`).toBeGreaterThan(0)
+  })
+
+  it('every use case with >1 physical device produces cabling', () => {
+    const cases = ['campus', 'dc', 'gpu', 'wan', 'multisite', 'oran'] as const
+    for (const useCase of cases) {
+      const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'A', totalEndpoints: 800, numSites: 3 })
+      const physical = devices.filter(d => !['gpu-compute', 'cloud-gw', 'cloud-transit'].includes(d.subLayer))
+      if (physical.length < 2) continue
+      const cabling = buildCabling(devices, DIST)
+      expect(cabling.length, `${useCase}: ${physical.length} devices but ZERO cabling`).toBeGreaterThan(0)
+      const cabled = new Set(cabling.flatMap(c => [c.fromLayer, c.toLayer]))
+      for (const l of new Set(physical.map(d => d.subLayer))) {
+        expect(cabled.has(l), `${useCase}: tier ${l} is cabled to nothing`).toBe(true)
+      }
+    }
+  })
+})

@@ -610,3 +610,40 @@ describe('Comment lines are never parsed as config (group Z6)', () => {
     expect(v11.severity).toBe('pass')   // generation produced text; content checks judge it
   })
 })
+
+// ── AA1: detector gaps found by the 4th audit ───────────────────────────────
+
+describe('Management-plane detection and cloud-only designs (group AA1)', () => {
+  it('V-07 recognises Viptela/SD-WAN nested block syntax', () => {
+    // ntp/snmp are BLOCKS on Viptela, not flat `ntp server` lines — the
+    // Cisco-IOS-shaped detector reported a fully managed edge as unmanaged.
+    const cfg = [
+      'system', '  host-name EDGE-01',
+      '  ntp', '    server 10.0.0.1', '      version 4', '    !', '  !',
+      '  logging', '    server 10.0.0.2', '      vpn 512', '    !', '  !', '!',
+      'snmp', '  user netmon', '    group NETDESIGN-RO', '  !', '!',
+      'router bgp 65001', ' router-id 10.0.0.1',
+      'interface Loopback0', ' ip address 10.0.0.1/32',
+      'username admin secret <CHANGE-ME-pw>',
+    ].join('\n')
+    const v07 = validateConfigs({ configs: { 'EDGE-01': cfg }, devices: [], useCase: 'wan' })
+      .checks.find(c => c.id === 'V-07')!
+    expect(v07.severity, v07.detail).toBe('pass')
+  })
+
+  it('V-00 is INFO, not FAIL, when every device is cloud-native', () => {
+    const cloud = (id: string, subLayer: string): BOMDevice => ({ ...device(id), subLayer, vendor: 'Aviatrix' })
+    const r = validateConfigs({
+      configs: {},
+      devices: [cloud('GW-1', 'cloud-gw'), cloud('TR-1', 'cloud-transit')],
+      useCase: 'multicloud',
+    })
+    // an Aviatrix design is Terraform/API-provisioned — there is no device CLI
+    expect(r.checks[0].id).toBe('V-00')
+    expect(r.checks[0].severity).toBe('info')
+    expect(r.summary.fail).toBe(0)
+    // …but an empty config set with real switches is still a failure
+    const bad = validateConfigs({ configs: {}, devices: [device('LEAF-01')], useCase: 'dc' })
+    expect(bad.checks[0].severity).toBe('fail')
+  })
+})
