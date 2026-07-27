@@ -215,12 +215,12 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
     for (const d of handoffDevices) {
       expect(['leaf', 'distribution'], `${ctx}: ${d.subLayer} must not own the handoff`).toContain(d.subLayer)
     }
-    // Presence is asserted for the vendors whose leaf carries a tenant VRF.
-    // Z8 closed Nokia / Dell / Extreme; NVIDIA Cumulus is a pure eBGP L3 GPU
-    // fabric with no tenant VRF at all (Y6), so it is the last one open.
-    const TENANT_VRF_VENDORS = new Set(['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'Extreme Networks'])
+    // Every fabric vendor's leaf must configure the handoff it is cabled for.
+    // Z3/Z8/Z3b closed all six; the set is the guard against a new vendor
+    // (or a regression) silently reopening the gap.
+    const HANDOFF_VENDORS = new Set(['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'Extreme Networks', 'NVIDIA'])
     const leaves = p.devices.filter(d => d.subLayer === 'leaf')
-    if (leaves.length && TENANT_VRF_VENDORS.has(leaves[0].vendor)) {
+    if (leaves.length && HANDOFF_VENDORS.has(leaves[0].vendor)) {
       expect(handoffDevices.length, `${ctx}: no device configures the cabled firewall handoff`).toBeGreaterThan(0)
     }
   }
