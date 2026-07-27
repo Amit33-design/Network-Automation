@@ -170,6 +170,9 @@ nv overlay evpn
 feature lldp
 feature lacp
 feature bfd
+!
+! Multihop BFD parameters for the loopback-sourced eBGP sessions (Z5b/M-4).
+bfd multihop interval 250 min_rx 250 multiplier 3
 feature telemetry
 !
 ! ── MANAGEMENT ──────────────────────────────────────────────────────────────────
@@ -256,7 +259,11 @@ router bgp ${spineAsn}
     update-source loopback0
     ebgp-multihop 2
     timers 3 9
-    bfd
+    ! Z5b/M-4: a plain bfd statement only arms SINGLE-hop BFD. These sessions
+    ! run over the loopback (ebgp-multihop 2), so without the multihop keyword
+    ! — and the matching global bfd multihop interval — the session has no BFD
+    ! at all and falls back to the 9s hold timer.
+    bfd multihop
     address-family ipv4 unicast
       soft-reconfiguration inbound always
     address-family l2vpn evpn
@@ -848,6 +855,9 @@ feature lldp
 feature telemetry
 feature bfd
 !
+! Multihop BFD parameters for the loopback-sourced eBGP sessions (Z5b/M-4).
+bfd multihop interval 250 min_rx 250 multiplier 3
+!
 username admin password <CHANGE-ME-admin-password> role network-admin
 !
 feature tacacs+
@@ -955,7 +965,11 @@ router bgp ${leafAsn}
     update-source loopback0
     ebgp-multihop 2
     timers 3 9
-    bfd
+    ! Z5b/M-4: a plain bfd statement only arms SINGLE-hop BFD. These sessions
+    ! run over the loopback (ebgp-multihop 2), so without the multihop keyword
+    ! — and the matching global bfd multihop interval — the session has no BFD
+    ! at all and falls back to the 9s hold timer.
+    bfd multihop
     address-family ipv4 unicast
       soft-reconfiguration inbound always
     address-family l2vpn evpn
@@ -1425,19 +1439,24 @@ aaa authentication login default group tacacs+ local
 aaa authorization exec default group tacacs+ local
 aaa accounting exec default start-stop group tacacs+
 !
-tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
-tacacs-server host <CHANGE-ME-tacacs-secondary-ip> key <CHANGE-ME-tacacs-key>
+! Z5b/A3-3: every mgmt service must be pinned to the SAME VRF as Management1.
+! Left in the default VRF (as they were) they have no route to the OOB
+! network at all, so TACACS, NTP, syslog and SNMP were all non-functional.
+tacacs-server host <CHANGE-ME-tacacs-primary-ip> vrf MGMT key <CHANGE-ME-tacacs-key>
+tacacs-server host <CHANGE-ME-tacacs-secondary-ip> vrf MGMT key <CHANGE-ME-tacacs-key>
+ip tacacs vrf MGMT source-interface Management1
 !
 snmp-server engineID local f5717f000001
+snmp-server vrf MGMT
 snmp-server group NETDESIGN-RO v3 priv
 snmp-server user NETDESIGN-USER NETDESIGN-RO v3 auth sha <CHANGE-ME-snmp-auth-pass> priv aes <CHANGE-ME-snmp-priv-pass>
 !
-ntp server <CHANGE-ME-ntp-primary> prefer iburst
-ntp server <CHANGE-ME-ntp-secondary> iburst
-ntp source Management1
+ntp server vrf MGMT <CHANGE-ME-ntp-primary> prefer iburst
+ntp server vrf MGMT <CHANGE-ME-ntp-secondary> iburst
+ntp source vrf MGMT Management1
 !
-logging host <CHANGE-ME-syslog-ip>
-logging source-interface Management1
+logging vrf MGMT host <CHANGE-ME-syslog-ip>
+logging vrf MGMT source-interface Management1
 !
 management ssh
   idle-timeout 10
@@ -1606,12 +1625,24 @@ username admin privilege 15 role network-admin secret sha512 <CHANGE-ME-admin-pa
 aaa authentication login default group tacacs+ local
 aaa authorization exec default group tacacs+ local
 aaa accounting exec default start-stop group tacacs+
-tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
-tacacs-server host <CHANGE-ME-tacacs-secondary-ip> key <CHANGE-ME-tacacs-key>
+! Z5b/A3-4: the leaf mgmt plane was a strict SUBSET of the spine's — no
+! syslog and no SNMP at all, so half the fleet was invisible to the NOC.
+! Z5b/A3-3: every service is pinned to the same VRF as Management1.
+tacacs-server host <CHANGE-ME-tacacs-primary-ip> vrf MGMT key <CHANGE-ME-tacacs-key>
+tacacs-server host <CHANGE-ME-tacacs-secondary-ip> vrf MGMT key <CHANGE-ME-tacacs-key>
+ip tacacs vrf MGMT source-interface Management1
 !
-ntp server <CHANGE-ME-ntp-primary> prefer iburst
-ntp server <CHANGE-ME-ntp-secondary> iburst
-ntp source Management1
+snmp-server engineID local f5717f000001
+snmp-server vrf MGMT
+snmp-server group NETDESIGN-RO v3 priv
+snmp-server user NETDESIGN-USER NETDESIGN-RO v3 auth sha <CHANGE-ME-snmp-auth-pass> priv aes <CHANGE-ME-snmp-priv-pass>
+!
+ntp server vrf MGMT <CHANGE-ME-ntp-primary> prefer iburst
+ntp server vrf MGMT <CHANGE-ME-ntp-secondary> iburst
+ntp source vrf MGMT Management1
+!
+logging vrf MGMT host <CHANGE-ME-syslog-ip>
+logging vrf MGMT source-interface Management1
 !
 ! ── MANAGEMENT INTERFACE (OOB, dedicated VRF) ───────────────────────────────
 vrf instance MGMT
@@ -1694,8 +1725,10 @@ ${leafSpinePeerBlock}
   address-family ipv4
     neighbor SPINE-PEER activate
     neighbor MLAG-PEER activate
-    network ${routerId}/32
-    network ${vtepIp}/32
+    ! Z5b/A3-5: both loopbacks are already advertised by IS-IS (each carries
+    ! isis enable UNDERLAY). Re-originating them into BGP makes every overlay
+    ! next-hop resolve through a BGP route — a recursive next-hop that EOS
+    ! will not install, so the VXLAN tunnels never come up.
   address-family evpn
     neighbor SPINE-PEER activate
   !
@@ -1896,7 +1929,12 @@ set system ntp server <CHANGE-ME-ntp-secondary>
 # ── MANAGEMENT ──────────────────────────────────────────────────────────────
 set interfaces fxp0 unit 0 description "OOB-MANAGEMENT"
 set interfaces fxp0 unit 0 family inet address <CHANGE-ME-mgmt-ip>/24
-set routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
+# Z5b/J3-4: the OOB default used to sit in inet.0 — a DATA-PLANE default route
+# pointed out the management port, so any unresolved production traffic was
+# sent to the OOB network. The management-instance knob puts fxp0 and its
+# default route in the dedicated mgmt_junos routing instance instead.
+set system management-instance
+set routing-instances mgmt_junos routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
 !
 # ── LOOPBACK (family iso carries the IS-IS NET / system-id) ─────────────────
 set interfaces lo0 unit 0 description "ROUTER-ID/BGP/ISIS-SOURCE"
@@ -2041,7 +2079,12 @@ set system ntp server <CHANGE-ME-ntp-secondary>
 # ── MANAGEMENT ──────────────────────────────────────────────────────────────
 set interfaces fxp0 unit 0 description "OOB-MANAGEMENT"
 set interfaces fxp0 unit 0 family inet address <CHANGE-ME-mgmt-ip>/24
-set routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
+# Z5b/J3-4: the OOB default used to sit in inet.0 — a DATA-PLANE default route
+# pointed out the management port, so any unresolved production traffic was
+# sent to the OOB network. The management-instance knob puts fxp0 and its
+# default route in the dedicated mgmt_junos routing instance instead.
+set system management-instance
+set routing-instances mgmt_junos routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
 !
 # ── LOOPBACK (family iso carries the IS-IS NET / system-id) ─────────────────
 set interfaces lo0 unit 0 description "ROUTER-ID/BGP/ISIS-SOURCE"
@@ -3790,7 +3833,9 @@ nv set vrf default router bgp neighbor swp${p} bfd enable on`).join('\n')
 # Role   : ${isSpine ? 'Spine' : 'Leaf / ToR'}
 # Model  : ${dev.model}
 # OS     : NVIDIA Cumulus Linux 5.x (NVUE)
-# Apply  : nv config replace <this-file> && nv config apply
+# Apply  : source this file into the shell — it is a script of nv set lines,
+#          NOT an nv config replace YAML snapshot — then apply:
+#            bash <this-file> && nv config apply
 # Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
 # ═══════════════════════════════════════════════════════════════
 
@@ -3799,7 +3844,11 @@ nv set system hostname ${dev.hostname}
 nv set system aaa user admin password <CHANGE-ME-admin-password>
 nv set system aaa user admin role system-admin
 nv set interface eth0 ip vrf mgmt
-nv set interface eth0 ip address dhcp
+# Z5b/N3-5: static OOB addressing, matching every other vendor. DHCP on the
+# management port makes the device's address unpredictable, which breaks the
+# NMS/syslog/ZTP-callback records the rest of the pipeline generates.
+nv set interface eth0 ip address <CHANGE-ME-mgmt-ip>/24
+nv set vrf mgmt router static 0.0.0.0/0 via <CHANGE-ME-oob-gateway>
 nv set service ntp mgmt server <CHANGE-ME-ntp-primary> iburst on
 nv set service ntp mgmt server <CHANGE-ME-ntp-secondary> iburst on
 nv set service syslog mgmt server <CHANGE-ME-syslog-ip> port 514
@@ -4364,7 +4413,12 @@ set system ntp server <CHANGE-ME-ntp-secondary>
 # ── MANAGEMENT ──────────────────────────────────────────────────────────
 set interfaces fxp0 unit 0 description "OOB-MANAGEMENT"
 set interfaces fxp0 unit 0 family inet address <CHANGE-ME-mgmt-ip>/24
-set routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
+# Z5b/J3-4: the OOB default used to sit in inet.0 — a DATA-PLANE default route
+# pointed out the management port, so any unresolved production traffic was
+# sent to the OOB network. The management-instance knob puts fxp0 and its
+# default route in the dedicated mgmt_junos routing instance instead.
+set system management-instance
+set routing-instances mgmt_junos routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
 !
 # ── LOOPBACK ────────────────────────────────────────────────────────────
 set interfaces lo0 unit 0 description "ROUTER-ID"
@@ -4493,7 +4547,12 @@ set system ntp server <CHANGE-ME-ntp-secondary>
 # ── MANAGEMENT ──────────────────────────────────────────────────────────
 set interfaces fxp0 unit 0 description "OOB-MANAGEMENT"
 set interfaces fxp0 unit 0 family inet address <CHANGE-ME-mgmt-ip>/24
-set routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
+# Z5b/J3-4: the OOB default used to sit in inet.0 — a DATA-PLANE default route
+# pointed out the management port, so any unresolved production traffic was
+# sent to the OOB network. The management-instance knob puts fxp0 and its
+# default route in the dedicated mgmt_junos routing instance instead.
+set system management-instance
+set routing-instances mgmt_junos routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
 !
 # ── LOOPBACK ────────────────────────────────────────────────────────────
 set interfaces lo0 unit 0 family inet address ${lo0ip}/32

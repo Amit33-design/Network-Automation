@@ -2170,3 +2170,83 @@ describe('NVIDIA Cumulus border leaf terminates the firewall handoff (Z3b)', () 
     for (const p of fwPorts) expect(p, 'handoff port overlaps the compute range').toBeGreaterThan(hostMax)
   })
 })
+
+// ── Z5b: per-vendor remainders from the 3rd audit ───────────────────────────
+
+describe('Per-vendor mgmt-plane and liveness remainders (group Z5b)', () => {
+  const fabric = (vendor: string) => generateAllConfigs([
+    makeDevice({ id: 's1', hostname: 'R-SPINE-A01', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+    makeDevice({ id: 's2', hostname: 'R-SPINE-A02', vendor, subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+    makeDevice({ id: 'l1', hostname: 'R-LEAF-A01', vendor, subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+    makeDevice({ id: 'l2', hostname: 'R-LEAF-A02', vendor, subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+  ] as BOMDevice[], 'dc')
+
+  it('A3-3: Arista mgmt services live in the same VRF as Management1', () => {
+    const c = fabric('Arista')
+    for (const id of ['s1', 'l1']) {
+      // Management1 is in vrf MGMT — a service left in the default VRF has no
+      // route to the OOB network at all, so it is silently non-functional.
+      expect(c[id], `${id}: Management1 not in vrf MGMT`).toMatch(/interface Management1[\s\S]*?vrf MGMT/)
+      expect(c[id], `${id}: TACACS not VRF-pinned`).toMatch(/tacacs-server host \S+ vrf MGMT/)
+      expect(c[id], `${id}: NTP not VRF-pinned`).toMatch(/ntp server vrf MGMT/)
+      expect(c[id], `${id}: syslog not VRF-pinned`).toMatch(/logging vrf MGMT host/)
+      expect(c[id], `${id}: SNMP not VRF-pinned`).toMatch(/snmp-server vrf MGMT/)
+    }
+  })
+
+  it('A3-4: the Arista leaf mgmt plane is not a subset of the spine\'s', () => {
+    const c = fabric('Arista')
+    // The leaf used to have no syslog and no SNMP at all — half the fleet was
+    // invisible to the NOC.
+    for (const svc of [/logging vrf MGMT host/, /snmp-server user NETDESIGN-USER/, /snmp-server engineID/]) {
+      expect(c['l1'], `leaf missing ${svc}`).toMatch(svc)
+      expect(c['s1']).toMatch(svc)
+    }
+  })
+
+  it('A3-5: Arista does not re-originate IS-IS loopbacks into BGP (recursive next-hop)', () => {
+    const c = fabric('Arista')
+    // Both loopbacks carry `isis enable UNDERLAY`; advertising them in BGP too
+    // makes every overlay next-hop resolve via a BGP route, which EOS will not
+    // install.
+    expect(c['l1']).toMatch(/interface Loopback0[\s\S]*?isis enable UNDERLAY/)
+    const ipv4Af = /address-family ipv4\n([\s\S]*?)\n  address-family evpn/.exec(c['l1'])![1]
+    expect(ipv4Af, 'loopback re-advertised into BGP').not.toMatch(/^\s*network /m)
+  })
+
+  it('M-4: NX-OS loopback-sourced eBGP arms MULTIHOP BFD, not single-hop', () => {
+    const c = fabric('Cisco')
+    for (const id of ['s1', 'l1']) {
+      // A plain `bfd` under a multihop template never comes up — the session
+      // silently falls back to the 9s hold timer.
+      expect(c[id], `${id}: single-hop bfd on a multihop session`).toMatch(/ebgp-multihop 2[\s\S]*?bfd multihop/)
+      expect(c[id]).toMatch(/^bfd multihop interval \d+/m)
+    }
+  })
+
+  it('J3-4: the Juniper OOB default is in the mgmt instance, not inet.0', () => {
+    const c = fabric('Juniper')
+    for (const id of ['s1', 'l1']) {
+      expect(c[id]).toContain('set system management-instance')
+      expect(c[id]).toMatch(/set routing-instances mgmt_junos routing-options static route 0\.0\.0\.0\/0/)
+      // …and no data-plane default pointing out the management port
+      expect(c[id], `${id}: data-plane default out fxp0`)
+        .not.toMatch(/^set routing-options static route 0\.0\.0\.0\/0/m)
+    }
+  })
+
+  it('N3-3/N3-5: Cumulus names the right apply command and uses static OOB', () => {
+    const c = generateAllConfigs([
+      makeDevice({ id: 's1', hostname: 'C-SPINE-A01', vendor: 'NVIDIA', subLayer: 'spine', role: 'spine', ports: 64, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'C-LEAF-A01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
+    ] as BOMDevice[], 'gpu')
+    // the artifact is a script of `nv set` lines — `nv config replace` expects
+    // a full YAML snapshot and would fail
+    expect(c['s1']).not.toMatch(/Apply\s+: nv config replace/)
+    expect(c['s1']).toMatch(/bash <this-file> && nv config apply/)
+    // static OOB, matching every other vendor
+    expect(c['s1']).not.toContain('nv set interface eth0 ip address dhcp')
+    expect(c['s1']).toMatch(/nv set interface eth0 ip address <CHANGE-ME-mgmt-ip>\/24/)
+    expect(c['s1']).toMatch(/nv set vrf mgmt router static 0\.0\.0\.0\/0 via/)
+  })
+})
