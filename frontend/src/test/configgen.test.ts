@@ -2288,3 +2288,61 @@ describe('Arista modular chassis names ports <slot>/<port> (A3-6)', () => {
     }
   })
 })
+
+// ── Z5b remainders: J3-3 ESI-LAG, J3-8 SRX FPC offset, N3-4 host RoCE ───────
+
+describe('Final Z5b remainders (J3-3 / J3-8 / N3-4)', () => {
+  const juniperFabric = () => generateAllConfigs([
+    makeDevice({ id: 's1', hostname: 'E-SPINE-A01', vendor: 'Juniper', subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+    makeDevice({ id: 's2', hostname: 'E-SPINE-A02', vendor: 'Juniper', subLayer: 'spine', role: 'spine', ports: 32, uplinks: 0 }),
+    makeDevice({ id: 'l1', hostname: 'E-LEAF-A01', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+    makeDevice({ id: 'l2', hostname: 'E-LEAF-A02', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+    makeDevice({ id: 'l3', hostname: 'E-LEAF-B01', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+    makeDevice({ id: 'l4', hostname: 'E-LEAF-B02', vendor: 'Juniper', subLayer: 'leaf', role: 'leaf', ports: 48, uplinks: 2 }),
+  ] as BOMDevice[], 'dc')
+
+  it('J3-3: a leaf PAIR advertises the SAME ESI and LACP system-id (one bundle to the server)', () => {
+    const c = juniperFabric()
+    const esi = (id: string) => /set interfaces ae0 esi (\S+)/.exec(c[id])![1]
+    const sysId = (id: string) => /lacp system-id (\S+)/.exec(c[id])![1]
+    // pair members must agree — otherwise the server sees two independent
+    // links instead of one LAG and half its traffic is dropped
+    expect(esi('l1')).toBe(esi('l2'))
+    expect(sysId('l1')).toBe(sysId('l2'))
+    // …and different pairs must NOT collide
+    expect(esi('l1')).not.toBe(esi('l3'))
+    expect(sysId('l1')).not.toBe(sysId('l3'))
+    expect(c['l1']).toContain('set interfaces ae0 esi all-active')
+    expect(c['l1']).toContain('set chassis aggregated-devices ethernet device-count 8')
+  })
+
+  it('J3-8: the SRX node-1 FPC offset is model-driven, never a blanket 7', () => {
+    const srx = (model: string) => generateConfig(
+      makeDevice({ hostname: 'E-FW-A01', vendor: 'Juniper', subLayer: 'firewall', role: 'firewall', model, ports: 8 }), 0, 'dc')
+    // SRX1500 is a documented 7-FPC platform
+    expect(srx('SRX1500')).toMatch(/set interfaces xe-7\/0\/0 gigether-options redundant-parent reth0/)
+    // a model we cannot state with confidence must be flagged, not guessed
+    const s4600 = srx('SRX4600')
+    expect(s4600).not.toMatch(/xe-7\/0\//)
+    expect(s4600).toMatch(/xe-<CHANGE-ME-node1-fpc>\/0\/0/)
+    // node 0 is unaffected either way
+    for (const m of ['SRX1500', 'SRX4600']) expect(srx(m)).toMatch(/set interfaces xe-0\/0\/0 gigether-options redundant-parent reth0/)
+  })
+
+  it('N3-4: the GPU fabric documents the matching host-side RoCE settings', () => {
+    const c = generateAllConfigs([
+      makeDevice({ id: 's1', hostname: 'H-SPINE-A01', vendor: 'NVIDIA', subLayer: 'spine', role: 'spine', ports: 64, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'H-LEAF-A01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
+    ] as BOMDevice[], 'gpu')
+    // lossless is a contract — the switch half is inert unless the NICs agree
+    expect(c['l1']).toContain('nv set qos roce mode lossless')
+    expect(c['l1']).toMatch(/mlnx_qos -i <nic> --pfc 0,0,0,1,0,0,0,0/)
+    expect(c['l1']).toMatch(/cma_roce_tos/)
+    // and it must NOT leak into a non-GPU fabric
+    const dc = generateAllConfigs([
+      makeDevice({ id: 's1', hostname: 'H-SPINE-A01', vendor: 'NVIDIA', subLayer: 'spine', role: 'spine', ports: 64, uplinks: 0 }),
+      makeDevice({ id: 'l1', hostname: 'H-LEAF-A01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
+    ] as BOMDevice[], 'campus')
+    expect(dc['l1'] ?? '').not.toMatch(/mlnx_qos/)
+  })
+})

@@ -2020,6 +2020,7 @@ function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, pro
   // Z3 — north-south handoff on the border leaves, inside the TENANT-A vrf,
   // with the perimeter default originated into EVPN as a type-5 route. It used
   // to hang off the spines, which carry no tenant VRF at all.
+  const { pairId: esiPair, peerHostname: esiPeer } = haPairInfo(dev, idx, allDevices)
   const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
   const fwHandoffBlock = fwLinks.length ? `#
 # ── FIREWALL HANDOFF (border leaf, routed /31 inside TENANT-A — FW side .1) ──
@@ -2133,7 +2134,22 @@ set vlans V10 l3-interface irb.10
 # Arista in Y4) ──────────────────────────────────────────────────────────────
 set interfaces xe-0/0/0 unit 0 family ethernet-switching interface-mode access
 set interfaces xe-0/0/0 unit 0 family ethernet-switching vlan members V10
-# … repeat for each server port xe-0/0/1 .. xe-0/0/${(dev.ports || 48) - 1}
+# … repeat for each single-homed server port xe-0/0/1 .. xe-0/0/${(dev.ports || 48) - 1}
+#
+# ── ESI-LAG: DUAL-HOMED SERVERS (J3-3) ──────────────────────────────────────
+# Junos EVPN multihomes a server with an ESI-LAG, NOT a peer-link — that is
+# why this leaf has no MLAG. Both members of the pair (with ${esiPeer}) must
+# advertise the SAME ESI and the SAME LACP system-id, or the server sees two
+# independent links instead of one bundle and half its traffic is dropped.
+set interfaces xe-0/0/1 ether-options 802.3ad ae0
+set interfaces ae0 description "ESI-LAG to dual-homed server (pair ${esiPair})"
+set interfaces ae0 esi 00:00:00:00:00:00:00:00:${String(esiPair).padStart(2, '0')}:01
+set interfaces ae0 esi all-active
+set interfaces ae0 aggregated-ether-options lacp active
+set interfaces ae0 aggregated-ether-options lacp system-id 00:00:5e:00:53:${String(esiPair).padStart(2, '0')}
+set interfaces ae0 unit 0 family ethernet-switching interface-mode trunk
+set interfaces ae0 unit 0 family ethernet-switching vlan members V10
+set chassis aggregated-devices ethernet device-count 8
 set interfaces irb unit 10 family inet address <CHANGE-ME-tenant-anycast-gw>/24 virtual-gateway-address <CHANGE-ME-tenant-anycast-vip>
 set routing-instances TENANT-A instance-type vrf
 set routing-instances TENANT-A interface irb.10
@@ -3894,6 +3910,19 @@ ${isGpu ? `
 # shipped LOSSY.) ────────────────────────────────────────────────────────────
 nv set qos roce enable on
 nv set qos roce mode lossless
+#
+# ── HOST-SIDE RoCE (N3-4) ────────────────────────────────────────────────────
+# Lossless is a CONTRACT: the switch half above is inert unless every attached
+# GPU server marks and honours the same priority. These are the matching
+# ConnectX/BlueField settings, run once per RDMA NIC on each compute node —
+# not switch config, but the design is not deployable without them.
+#   mlnx_qos -i <nic> --trust dscp                 # trust DSCP, not 802.1p
+#   mlnx_qos -i <nic> --pfc 0,0,0,1,0,0,0,0        # PFC on priority 3 only
+#   cma_roce_tos -d <ib-dev> -t 106                # RoCE DSCP 26 (TC3)
+#   echo 106 > /sys/class/infiniband/<ib-dev>/tc/1/traffic_class
+#   sysctl -w net.ipv4.tcp_ecn=1                   # ECN participation
+# Verify end to end: mlnx_qos -i <nic> on the host and
+# nv show qos roce counters on this switch must agree on priority 3.
 ` : ''}
 # ── APPLY ────────────────────────────────────────────────────────────────────
 nv config apply
@@ -4452,7 +4481,29 @@ set protocols lldp interface all
 
 // ── Juniper SRX Firewall Config ──────────────────────────────────────────────
 
+/**
+ * Node-1 FPC slot for an SRX chassis cluster (Z5b/J3-8). Junos renumbers
+ * node 1 by adding the platform's TOTAL FPC count to each original FPC
+ * number, so the offset is model-specific — the generator previously
+ * hardcoded 7 for every SRX, which is wrong on any platform that isn't a
+ * 7-FPC box. Models we cannot state with confidence get a <CHANGE-ME-*>
+ * placeholder rather than a plausible-but-wrong slot number; see Juniper's
+ * "Chassis Cluster Slot Numbering and Logical Interface Naming".
+ */
+const SRX_NODE1_FPC: Array<[RegExp, number]> = [
+  [/SRX\s?3(00|20)\b/i, 3],
+  [/SRX\s?3(40|45)\b/i, 5],
+  [/SRX\s?550\b/i,      9],
+  [/SRX\s?1500\b/i,     7],
+]
+
+function srxNode1Fpc(model: string): string {
+  for (const [re, fpc] of SRX_NODE1_FPC) if (re.test(model)) return String(fpc)
+  return '<CHANGE-ME-node1-fpc>'
+}
+
 function juniperSrxConfig(dev: BOMDevice, _idx: number): string {
+  const n1 = srxNode1Fpc(dev.model)
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : Firewall (NGFW)
@@ -4474,11 +4525,11 @@ set system ntp server <CHANGE-ME-ntp-primary> prefer
 # ── DATA-PLANE INTERFACES (cluster reths — J-M3: zones must bind reth units,
 # and SRX4600 ports are xe-/et-, not ge-) ─────────────────────────────────
 set interfaces xe-0/0/0 gigether-options redundant-parent reth0
-set interfaces xe-7/0/0 gigether-options redundant-parent reth0
+set interfaces xe-${n1}/0/0 gigether-options redundant-parent reth0
 set interfaces xe-0/0/1 gigether-options redundant-parent reth1
-set interfaces xe-7/0/1 gigether-options redundant-parent reth1
+set interfaces xe-${n1}/0/1 gigether-options redundant-parent reth1
 set interfaces xe-0/0/3 gigether-options redundant-parent reth2
-set interfaces xe-7/0/3 gigether-options redundant-parent reth2
+set interfaces xe-${n1}/0/3 gigether-options redundant-parent reth2
 set interfaces reth0 redundant-ether-options redundancy-group 1
 set interfaces reth0 unit 0 description "UNTRUST-INTERNET"
 set interfaces reth0 unit 0 family inet address <CHANGE-ME-untrust-ip>/30
@@ -4524,7 +4575,7 @@ set chassis cluster redundancy-group 0 node 1 priority 100
 set chassis cluster redundancy-group 1 node 0 priority 200
 set chassis cluster redundancy-group 1 node 1 priority 100
 set interfaces fab0 fabric-options member-interfaces xe-0/0/2
-set interfaces fab1 fabric-options member-interfaces xe-7/0/2
+set interfaces fab1 fabric-options member-interfaces xe-${n1}/0/2
 `.replace(/^!$/gm, '#')
 }
 
