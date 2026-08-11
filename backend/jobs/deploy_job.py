@@ -200,10 +200,15 @@ def _run_pipeline(
     try:
         deploy_results = deploy_configs(configs, inventory, dry_run, deployment_id)
         deploy_ok = deploy_results.get("success", False)
+        # A refusal carries a `reason` (no device I/O, no inventory). Surface it
+        # verbatim — "Deploy encountered errors" sent operators hunting through
+        # device logs for a fault that was actually on the server.
+        reason = deploy_results.get("reason")
         _publish_event(
             r_client, deployment_id, "deploy",
             "success" if deploy_ok else "failed",
-            "Configs pushed successfully" if deploy_ok else "Deploy encountered errors",
+            "Configs pushed successfully" if deploy_ok
+            else (reason or "Deploy encountered errors"),
             {"results": deploy_results},
         )
     except Exception as exc:

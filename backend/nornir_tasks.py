@@ -122,6 +122,16 @@ def _simulate_check(host: str, check: str, passed: bool = True) -> dict[str, Any
     return {"host": host, "check": check, "passed": passed, "detail": "simulated"}
 
 
+# A real inventory was supplied but the device libraries are not importable.
+# This is an ENVIRONMENT FAULT, never a simulation: silently "passing" these
+# checks told an operator their fleet had been backed up and configured when
+# nothing had been touched at all.
+NO_DEVICE_IO = (
+    "Nornir/Netmiko not installed on the server - cannot reach devices. "
+    "Install backend/requirements.txt; nothing was read from or written to this device."
+)
+
+
 # ─────────────────────────────────────────────
 # Pre-checks
 # ─────────────────────────────────────────────
@@ -175,8 +185,12 @@ def run_pre_checks(
             continue
 
         if not NORNIR_AVAILABLE:
+            # Fail CLOSED. config_backup in particular must never report a
+            # pass it did not earn - rollback restores from that file, so a
+            # phantom backup leaves the deploy with no restore target.
             for c in ["ssh_login", "version_check", "config_backup"]:
-                results.append(_simulate_check(host_name, c))
+                results.append({"host": host_name, "check": c,
+                                "passed": False, "detail": NO_DEVICE_IO})
             continue
 
         # 2–3. SSH checks via Nornir
@@ -412,11 +426,15 @@ def run_post_checks(state: dict[str, Any], inventory: dict[str, Any]) -> list[di
         platform = host_data.get("platform", "cisco_ios")
         commands = _POST_CHECK_COMMANDS.get(platform, _POST_CHECK_COMMANDS["cisco_ios"])
 
-        if not NORNIR_AVAILABLE or not _icmp_reachable(host_data.get("hostname", host_name)):
+        reachable = _icmp_reachable(host_data.get("hostname", host_name))
+        if not NORNIR_AVAILABLE or not reachable:
+            why = NO_DEVICE_IO if not NORNIR_AVAILABLE else "device unreachable on TCP/22"
             for cmd in commands:
-                results.append(_simulate_check(host_name, cmd[:40], passed=False))
+                results.append({"host": host_name, "check": cmd[:40],
+                                "passed": False, "detail": why})
             for check in ["lldp_neighbors", "ecn_thresholds", "pfc_counters", "mtu_ping_9000"]:
-                results.append(_simulate_check(host_name, check, passed=False))
+                results.append({"host": host_name, "check": check,
+                                "passed": False, "detail": why})
             continue
 
         try:
@@ -558,12 +576,17 @@ def deploy_configs(
         for host_name, config in configs.items():
             results[host_name] = {"status": "skipped", "detail": "no inventory"}
         results["success"] = False
+        results["reason"] = "No inventory supplied - there is nothing to push to."
         return results
 
     if not NORNIR_AVAILABLE:
+        # Previously this returned success=True with every host "simulated",
+        # so an operator who explicitly asked for a real push (dry_run=False)
+        # got a green deployment and an unchanged fleet.
         for host_name in configs:
-            results[host_name] = {"status": "simulated", "detail": "Nornir not installed"}
-        results["success"] = True
+            results[host_name] = {"status": "no_device_io", "detail": NO_DEVICE_IO}
+        results["success"] = False
+        results["reason"] = NO_DEVICE_IO
         return results
 
     for host_name, config in configs.items():

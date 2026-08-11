@@ -210,11 +210,13 @@ Day-0 templates exist for all 12 platforms.
 
 1. `DeployRequest.dry_run` defaults to `true`. Nothing is pushed unless the
    caller explicitly sends `false`.
-2. **A deploy can report success while touching nothing.** If Nornir is not
-   importable, `deploy_configs` marks every host `"simulated"` and still sets
-   `success: True`; pre-checks do the same when given no inventory. In a
-   container where the netmiko install silently failed, an operator gets a
-   green deployment and an unchanged fleet.
+2. ~~A deploy can report success while touching nothing.~~ **Fixed.** Device
+   I/O now fails *closed*: with real inventory supplied, a missing Nornir is
+   an environment fault, not a simulation. `deploy_configs` returns
+   `success: False` with a `reason`, pre-checks mark `config_backup` FAILED
+   rather than claiming a backup that was never written, and the deploy event
+   surfaces the reason verbatim. Simulation still happens when there is no
+   inventory at all — that is demo mode, and it claims nothing.
 3. None of the device-facing path is verified against real hardware by the
    test suite. It is dependency-complete and unit-tested, which is not the
    same as proven against a real chassis.
