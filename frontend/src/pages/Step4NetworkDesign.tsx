@@ -15,6 +15,7 @@ import { diffDesigns, diffToMarkdown, type DesignDiff } from '@/lib/design-diff'
 import { computeCapacityPlan } from '@/lib/capacity-planning'
 import { buildContainerlabTopology, topologyToYAML } from '@/lib/containerlab'
 import { buildCloudTerraform, cloudTerraformFilename } from '@/lib/cloud-terraform'
+import { buildDrawio, drawioFilename } from '@/lib/drawio-export'
 import type { DesignExport } from '@/lib/design-export'
 import type { BOMDevice, AppType, AppState } from '@/types'
 
@@ -1852,6 +1853,27 @@ export function Step4NetworkDesign() {
                 className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-orange-500/40 bg-orange-600/20 text-orange-300 text-sm font-medium hover:bg-orange-600/30 transition-colors cursor-pointer"
               >
                 Containerlab (.yml)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const st = useAppStore.getState()
+                  const xml = buildDrawio(
+                    generatedDevices, cablingData,
+                    st.orgName || st.siteName || siteCode || 'Network Topology',
+                  )
+                  const blob = new Blob([xml], { type: 'application/xml' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = drawioFilename(siteCode)
+                  a.click()
+                  URL.revokeObjectURL(url)
+                }}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-sky-500/40 bg-sky-600/20 text-sky-300 text-sm font-medium hover:bg-sky-600/30 transition-colors cursor-pointer"
+              >
+                draw.io (.drawio)
               </button>
 
               {/* AA2: a multicloud/Aviatrix design is made only of cloud
