@@ -14,6 +14,7 @@ import { downloadDesignJSON, downloadDesignMarkdown, validateDesignImport, apply
 import { diffDesigns, diffToMarkdown, type DesignDiff } from '@/lib/design-diff'
 import { computeCapacityPlan } from '@/lib/capacity-planning'
 import { buildContainerlabTopology, topologyToYAML } from '@/lib/containerlab'
+import { buildCloudTerraform, cloudTerraformFilename } from '@/lib/cloud-terraform'
 import type { DesignExport } from '@/lib/design-export'
 import type { BOMDevice, AppType, AppState } from '@/types'
 
@@ -1852,6 +1853,45 @@ export function Step4NetworkDesign() {
               >
                 Containerlab (.yml)
               </button>
+
+              {/* AA2: a multicloud/Aviatrix design is made only of cloud
+                  gateways and transit VPCs — API-provisioned, with no device
+                  CLI — so it produced no deployable artifact at all. These are
+                  the hub stacks, mirrored from the backend's Jinja templates. */}
+              {(useCase === 'multicloud' || useCase === 'aviatrix') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const st = useAppStore.getState()
+                    const stacks = buildCloudTerraform(st.useCase, st.cloudProviders, {
+                      orgName: st.orgName || undefined,
+                      orgCidr: st.orgCidr || undefined,
+                      bgpAsn: st.bgpAsn ? Number(st.bgpAsn) : undefined,
+                    })
+                    const names = Object.keys(stacks)
+                    if (!names.length) {
+                      setImportStatus({ type: 'error', message: 'Select at least one cloud provider in Step 2 first.' })
+                      return
+                    }
+                    for (const [provider, hcl] of Object.entries(stacks)) {
+                      const blob = new Blob([hcl], { type: 'text/plain' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = cloudTerraformFilename(provider)
+                      a.click()
+                      URL.revokeObjectURL(url)
+                    }
+                    setImportStatus({
+                      type: 'success',
+                      message: `Downloaded ${names.length} Terraform stack(s): ${names.join(', ')}`,
+                    })
+                  }}
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-purple-500/40 bg-purple-600/20 text-purple-300 text-sm font-medium hover:bg-purple-600/30 transition-colors cursor-pointer"
+                >
+                  Cloud Terraform (.tf)
+                </button>
+              )}
             </div>
             {importStatus && (
               <div className={cn(
