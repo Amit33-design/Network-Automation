@@ -25,6 +25,7 @@ import { LiveProgressFeed } from '@/components/LiveProgressFeed'
 import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory, INTERVAL_PRESETS, type WatcherConfig, type ScanType, type ScanAction, type ScanHistoryEntry } from '@/lib/scheduled-scans'
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
+import { buildAnsibleInventory, buildAnsiblePlaybook } from '@/lib/ansible-export'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
 import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts, recordAvailability, availabilityReport, updateAlertHistory, ackAlert, alertHistoryList, simulateInterfaces, analyzeInterfaces, type AvailabilityAcc, type AlertHistory } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
@@ -727,45 +728,6 @@ const downloadText = downloadBlob
 
 // ── M-64: Ansible playbook generator ─────────────────────────────────────────
 
-function buildAnsiblePlaybook(logLines: string[], deviceNames: string[]): string {
-  return `---
-# NetDesign AI — Generated Ansible Playbook (M-64)
-# Deploy network device configurations
-# Devices: ${deviceNames.join(', ') || 'see inventory'}
-
-- name: Network Device Configuration Deployment
-  hosts: all
-  gather_facts: no
-  vars:
-    deploy_log: |
-${logLines.slice(0, 20).map(l => `      ${l}`).join('\n')}
-
-  tasks:
-    - name: Push configuration
-      cisco.ios.ios_config:
-        src: "{{ inventory_hostname }}.cfg"
-
-    - name: Save running config
-      cisco.ios.ios_command:
-        commands: write memory
-
-    - name: Verify BGP neighbors
-      cisco.ios.ios_command:
-        commands: show bgp summary
-      register: bgp_output
-
-    - name: Assert BGP sessions established
-      ansible.builtin.assert:
-        that:
-          - "'Established' in bgp_output.stdout[0]"
-        fail_msg: "BGP session not established on {{ inventory_hostname }}"
-        success_msg: "BGP OK on {{ inventory_hostname }}"
-
-# Inventory hint — create an inventory.ini with:
-# [network_devices]
-${deviceNames.map(n => `# ${n} ansible_host=<IP> ansible_user=<CHANGE-ME-USER> ansible_password=<CHANGE-ME-PASS>`).join('\n') || '# leaf1 ansible_host=192.168.1.1 ansible_user=<CHANGE-ME-USER> ansible_password=<CHANGE-ME-PASS>'}
-`
-}
 
 // ── M-65: NETCONF Python script generator ────────────────────────────────────
 
@@ -2214,14 +2176,6 @@ function buildNetconfMockResponse(op: string): string {
 
 // ── Automation helpers ────────────────────────────────────────────────────────
 
-function buildAnsibleInventory(deviceNames: string[]): string {
-  const lines = ['[network_devices]']
-  deviceNames.forEach((n, i) => {
-    lines.push(`${n} ansible_host=10.0.0.${i + 10} ansible_user=<CHANGE-ME-USER> ansible_password=<CHANGE-ME-PASS> ansible_network_os=ios`)
-  })
-  lines.push('', '[network_devices:vars]', 'ansible_connection=network_cli', 'ansible_become=yes', 'ansible_become_method=enable')
-  return lines.join('\n')
-}
 
 function buildTerraformMain(provider: string, deviceNames: string[]): string {
   if (provider === 'cisco_nso') return `terraform {
@@ -3363,7 +3317,7 @@ export function Step6Deploy() {
                 size="sm"
                 disabled={!deployDone}
                 onClick={() => {
-                  const content = buildAnsiblePlaybook(deployLog, allDevices.map(d => d.name))
+                  const content = buildAnsiblePlaybook(storeDevices, storeConfigs)
                   downloadText(content, 'ansible_playbook.yml')
                   showToast('ansible_playbook.yml downloaded', 'success')
                 }}
@@ -3425,11 +3379,11 @@ export function Step6Deploy() {
                     {towerJobRunning ? '⏳ Launching…' : '▶ Launch Job'}
                   </Button>
                   <Button variant="secondary" size="sm"
-                    onClick={() => { downloadBlob('inventory.ini', buildAnsibleInventory(autoDeviceNames)); showToast('inventory.ini downloaded', 'success') }}>
+                    onClick={() => { downloadBlob('inventory.yml', buildAnsibleInventory(storeDevices)); showToast('inventory.yml downloaded', 'success') }}>
                     ↓ Download Inventory
                   </Button>
                   <Button variant="secondary" size="sm"
-                    onClick={() => { downloadBlob('deploy_playbook.yml', buildAnsiblePlaybook(deployLog, autoDeviceNames)); showToast('deploy_playbook.yml downloaded', 'success') }}>
+                    onClick={() => { downloadBlob('deploy_playbook.yml', buildAnsiblePlaybook(storeDevices, storeConfigs)); showToast('deploy_playbook.yml downloaded', 'success') }}>
                     ↓ Download Playbook
                   </Button>
                   {towerJobId && (
