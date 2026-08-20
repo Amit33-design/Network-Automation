@@ -25,7 +25,9 @@ import { LiveProgressFeed } from '@/components/LiveProgressFeed'
 import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, simulateScanHistory, INTERVAL_PRESETS, type WatcherConfig, type ScanType, type ScanAction, type ScanHistoryEntry } from '@/lib/scheduled-scans'
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
+import { validateBOM } from '@/lib/bom'
 import { buildAnsibleInventory, buildAnsiblePlaybook } from '@/lib/ansible-export'
+import { buildRunbook, runbookFilename } from '@/lib/runbook'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
 import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts, recordAvailability, availabilityReport, updateAlertHistory, ackAlert, alertHistoryList, simulateInterfaces, analyzeInterfaces, type AvailabilityAcc, type AlertHistory } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
@@ -3385,6 +3387,29 @@ export function Step6Deploy() {
                   <Button variant="secondary" size="sm"
                     onClick={() => { downloadBlob('deploy_playbook.yml', buildAnsiblePlaybook(storeDevices, storeConfigs)); showToast('deploy_playbook.yml downloaded', 'success') }}>
                     ↓ Download Playbook
+                  </Button>
+                  <Button variant="secondary" size="sm"
+                    onClick={() => {
+                      const st = useAppStore.getState()
+                      const md = buildRunbook({
+                        devices: storeDevices,
+                        configs: storeConfigs,
+                        orgName: st.orgName || st.siteName || 'Unnamed organisation',
+                        siteCode: st.siteCode,
+                        useCase: st.useCase,
+                        bomIssues: validateBOM(storeDevices, {
+                          useCase: st.useCase, totalEndpoints: st.totalEndpoints,
+                          bandwidthPerServer: st.bandwidthPerServer,
+                          oversubscription: st.oversubscription,
+                        }),
+                        validation: validateConfigs({
+                          configs: storeConfigs, devices: storeDevices, useCase: st.useCase,
+                        }),
+                      })
+                      downloadBlob(runbookFilename(st.siteCode), md)
+                      showToast('Deployment runbook downloaded', 'success')
+                    }}>
+                    ↓ Download Runbook
                   </Button>
                   {towerJobId && (
                     <span className={cn('text-xs font-mono px-3 py-1 rounded border',

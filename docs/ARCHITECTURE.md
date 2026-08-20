@@ -8,9 +8,9 @@
 | | |
 |---|---|
 | Frontend | React 19 · TypeScript · Vite · Tailwind v4 · Zustand 5 · TanStack Query v5 |
-| Design engines | 22 modules in `frontend/src/lib/`, ~15.8k LOC, no I/O |
+| Design engines | 26 modules in `frontend/src/lib/`, no I/O |
 | Backend | FastAPI · Python 3.11 · Nornir + Netmiko · Jinja2 |
-| Tests | 1,323 frontend across 45 files, incl. a 193-scenario e2e harness |
+| Tests | 1,372 frontend across 49 files + 369 backend, incl. a 193-scenario e2e harness |
 
 Companion docs: [`CODE_REFERENCE.md`](../CODE_REFERENCE.md) (function-level map)
 · [`docs/TECHNICAL_GUIDE.md`](./TECHNICAL_GUIDE.md) (extension recipes, tribal
@@ -129,6 +129,9 @@ for months while the BOM billed 400G optics for 100G ports — the bug lived
 | `monitoring.ts` | Thresholds, alerts, correlation, SLA, forecasting | Works with no telemetry backend |
 | `rollback.ts` / `closed-loop.ts` | Regression detection, platform-native rollback, drift loop | — |
 | `containerlab.ts` | Topology export to a runnable virtual lab | Test the design before buying it |
+| `cloud-terraform.ts` | AWS TGW / Azure vWAN / GCP NCC stacks | Byte-identical to the backend's Jinja templates |
+| `ansible-export.ts` | Inventory + playbook from the BOM | Per-vendor `network_os`, not `ios` for everything |
+| `drawio-export.ts` / `runbook.ts` | Editable topology, deployment runbook | Built from the BOM, so no synthesised device names |
 
 ---
 
