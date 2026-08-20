@@ -274,12 +274,68 @@ describe('DC tier bifurcation', () => {
     }
   })
 
-  it('use cases that do not define tiers still render cleanly', () => {
-    for (const useCase of ['campus', 'gpu', 'wan'] as const) {
+  it('the border-leaf callout is fabric-specific — it must not leak elsewhere', () => {
+    // multicloud/aviatrix reuse the DC builder but have no on-prem border pair.
+    for (const useCase of ['campus', 'gpu', 'wan', 'oran', 'multicloud', 'aviatrix'] as const) {
       cleanup()
       const { container } = render(<HLDTopologyDiagram devices={dcDevices} useCase={useCase} />)
       expect(container.querySelector('svg')).not.toBeNull()
-      expect(texts(container)).not.toContain('BORDER LEAF')
+      expect(texts(container), useCase).not.toContain('BORDER LEAF')
+    }
+  })
+
+  it('…but multisite IS a real fabric, so it keeps the callout', () => {
+    const { container } = render(<HLDTopologyDiagram devices={dcDevices} useCase="multisite" />)
+    expect(texts(container)).toContain('BORDER LEAF')
+  })
+})
+
+// AC2 — the same bifurcation applied to the remaining builders.
+describe('Tier bifurcation across every use case', () => {
+  const devs: BOMDevice[] = [
+    bomDev({ hostname: 'SP-01', subLayer: 'spine', role: 'spine' }),
+    bomDev({ hostname: 'LF-01', subLayer: 'leaf', role: 'leaf' }),
+    bomDev({ hostname: 'DS-01', subLayer: 'distribution', role: 'distribution' }),
+    bomDev({ hostname: 'AC-01', subLayer: 'access', role: 'access' }),
+    bomDev({ hostname: 'WE-01', subLayer: 'wan-edge', role: 'wan-edge' }),
+  ]
+  const texts = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll('text')).map(t => t.textContent ?? '')
+
+  const EXPECTED: Record<string, { tiers: string[]; region: string }> = {
+    campus: { tiers: ['CORE', 'DISTRIBUTION', 'ACCESS'],       region: 'CAMPUS LAN' },
+    gpu:    { tiers: ['SPINE', 'ToR / LEAF', 'GPU COMPUTE'],   region: 'LOSSLESS FABRIC' },
+    wan:    { tiers: ['HUB / DC EDGE', 'WAN EDGE', 'BRANCH'],  region: 'WAN OVERLAY' },
+    oran:   { tiers: ['5GC / UPF', 'O-CU', 'O-RU (RADIO)'],    region: 'FRONTHAUL' },
+  }
+
+  for (const [useCase, want] of Object.entries(EXPECTED)) {
+    it(`${useCase}: rows are named and the region is enclosed`, () => {
+      const { container } = render(<HLDTopologyDiagram devices={devs} useCase={useCase} />)
+      const t = texts(container)
+      for (const tier of want.tiers) {
+        expect(t, `${useCase}: tier "${tier}" missing`).toContain(tier)
+      }
+      expect(t, `${useCase}: region "${want.region}" missing`).toContain(want.region)
+    })
+  }
+
+  it('every use case annotates at least one traffic axis', () => {
+    for (const useCase of ['dc', 'campus', 'gpu', 'wan', 'oran'] as const) {
+      cleanup()
+      const { container } = render(<HLDTopologyDiagram devices={devs} useCase={useCase} />)
+      const hasAxis = container.querySelector('line[marker-start^="url(#axisArrow"]')
+      expect(hasAxis, `${useCase}: no traffic axis drawn`).not.toBeNull()
+    }
+  })
+
+  it('no builder leaks a raw store enum into a caption', () => {
+    for (const useCase of ['dc', 'campus', 'gpu', 'wan', 'oran'] as const) {
+      cleanup()
+      const { container } = render(<HLDTopologyDiagram devices={devs} useCase={useCase} />)
+      for (const txt of texts(container)) {
+        expect(txt, `${useCase}: raw enum in "${txt}"`).not.toMatch(/[a-z]+_[a-z]+/)
+      }
     }
   })
 })

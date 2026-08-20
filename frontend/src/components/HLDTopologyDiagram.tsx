@@ -548,7 +548,10 @@ function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string
       protocol: `${underlay.toUpperCase()} underlay · ${overlayLabel(overlay)} overlay`,
       fill: 'rgba(56,189,248,0.10)', stroke: '#38BDF8' },
   ]
-  const groups: NodeGroup[] = borderIds.length
+  // multicloud/aviatrix reuse this builder but have no on-prem border pair —
+  // the callout would name devices their design does not contain.
+  const hasBorderPair = useCase === 'dc' || useCase === 'multisite'
+  const groups: NodeGroup[] = (hasBorderPair && borderIds.length)
     ? [{ id: 'g-border', nodeIds: borderIds, label: 'BORDER LEAF', color: '#F87171' }]
     : []
   const traffic: TrafficAxis[] = [
@@ -736,8 +739,28 @@ function buildCampusTopology(devices: BOMDevice[], underlay: string, sc: string)
     },
   ]
 
+  const campusTiers: TierLabel[] = [
+    { id: 't-wan',    y: Y.wan,    label: 'WAN EDGE',     side: 'right', color: '#F59E0B' },
+    { id: 't-fw',     y: Y.fw,     label: 'FIREWALL',     side: 'right', color: '#FB923C' },
+    { id: 't-core',   y: Y.core,   label: 'CORE',         side: 'right', color: '#A78BFA' },
+    { id: 't-dist',   y: Y.dist,   label: 'DISTRIBUTION', side: 'right', color: '#38BDF8' },
+    { id: 't-acc',    y: Y.access, label: 'ACCESS',       side: 'right', color: '#22C55E' },
+    { id: 't-hosts',  y: Y.hosts,  label: 'END USERS',    side: 'right', color: '#A8A29E' },
+  ]
+  const campusRegions: TopoRegion[] = [
+    { id: 'r-campus', yStart: Y.core - 46, yEnd: Y.access + 46,
+      label: 'CAMPUS LAN',
+      protocol: `${underlay.toUpperCase()} area 0 · HSRP first-hop · RPVST+`,
+      fill: 'rgba(56,189,248,0.10)', stroke: '#38BDF8' },
+  ]
+  const campusTraffic: TrafficAxis[] = [
+    { id: 'tr-ns', axis: 'ns', label: 'NORTH–SOUTH', color: '#F87171',
+      at: LEFT_W + 14, from: Y.internet, to: Y.hosts },
+  ]
+
   return {
     nodes, links, zones, flows,
+    tiers: campusTiers, regions: campusRegions, traffic: campusTraffic,
     title: `Campus LAN HLD${sc ? ` — ${sc}` : ''}`,
     subtitle: `2 Core · ${nDist} Distribution · ${nAccess} Access · ${underlay.toUpperCase()} · OSPF Area 0`,
     svgH: 900,
@@ -858,8 +881,27 @@ function buildGPUTopology(devices: BOMDevice[], sc: string): Topo {
     },
   ]
 
+  const gpuTiers: TierLabel[] = [
+    { id: 't-oob',   y: Y.oob,     label: 'OOB MGMT',    side: 'right', color: '#78716C' },
+    { id: 't-spine', y: Y.spine,   label: 'SPINE',       side: 'right', color: '#60A5FA' },
+    { id: 't-tor',   y: Y.leaf,    label: 'ToR / LEAF',  side: 'right', color: '#4ADE80' },
+    { id: 't-gpu',   y: Y.gpu,     label: 'GPU COMPUTE', side: 'right', color: '#34D399' },
+    { id: 't-stor',  y: Y.storage, label: 'STORAGE',     side: 'right', color: '#818CF8' },
+  ]
+  const gpuRegions: TopoRegion[] = [
+    { id: 'r-lossless', yStart: Y.spine - 46, yEnd: Y.leaf + 46,
+      label: 'LOSSLESS FABRIC',
+      protocol: 'RoCEv2 · PFC priority 3 no-drop · ECN/DCQCN',
+      fill: 'rgba(52,211,153,0.10)', stroke: '#34D399' },
+  ]
+  const gpuTraffic: TrafficAxis[] = [
+    { id: 'tr-ew', axis: 'ew', label: 'EAST–WEST (RDMA)', color: '#38BDF8',
+      at: Y.gpu + 62, from: LEFT_W + 40, to: SVG_W - 40 },
+  ]
+
   return {
     nodes, links, zones, flows,
+    tiers: gpuTiers, regions: gpuRegions, traffic: gpuTraffic,
     title: `GPU AI Fabric HLD${sc ? ` — ${sc}` : ''}`,
     subtitle: `2 Spine · ${nLeaves} ToR · ${nGPU} GPU Servers · RoCEv2 lossless · PFC priority 3`,
     svgH: 760,
@@ -960,8 +1002,27 @@ function buildWANTopology(devices: BOMDevice[], underlay: string, sc: string): T
     },
   ]
 
+  const wanTiers: TierLabel[] = [
+    { id: 't-isp',    y: Y.isp,    label: 'SERVICE PROVIDER', side: 'right', color: '#94A3B8' },
+    { id: 't-hub',    y: Y.hub,    label: 'HUB / DC EDGE',    side: 'right', color: '#A78BFA' },
+    { id: 't-wan',    y: Y.wan,    label: 'WAN EDGE',         side: 'right', color: '#F59E0B' },
+    { id: 't-branch', y: Y.branch, label: 'BRANCH',           side: 'right', color: '#22C55E' },
+    { id: 't-hosts',  y: Y.hosts,  label: 'BRANCH USERS',     side: 'right', color: '#A8A29E' },
+  ]
+  const wanRegions: TopoRegion[] = [
+    { id: 'r-overlay', yStart: Y.hub - 46, yEnd: Y.branch + 46,
+      label: 'WAN OVERLAY',
+      protocol: `${underlay.toUpperCase()} · MPLS L3VPN · IPSec hub-and-spoke`,
+      fill: 'rgba(245,158,11,0.10)', stroke: '#F59E0B' },
+  ]
+  const wanTraffic: TrafficAxis[] = [
+    { id: 'tr-ns', axis: 'ns', label: 'BRANCH → HUB', color: '#F87171',
+      at: LEFT_W + 14, from: Y.isp, to: Y.hosts },
+  ]
+
   return {
     nodes, links, zones, flows,
+    tiers: wanTiers, regions: wanRegions, traffic: wanTraffic,
     title: `WAN HLD${sc ? ` — ${sc}` : ''}`,
     subtitle: `Hub-and-Spoke · ${nBranches} branch sites · ${underlay.toUpperCase()} · MPLS L3VPN`,
     svgH: 760,
@@ -1075,8 +1136,27 @@ function buildORANTopology(devices: BOMDevice[], sc: string): Topo {
     },
   ]
 
+  const oranTiers: TierLabel[] = [
+    { id: 't-core',  y: Y.core,      label: '5GC / UPF',   side: 'right', color: '#A78BFA' },
+    { id: 't-cu',    y: Y.cu,        label: 'O-CU',        side: 'right', color: '#60A5FA' },
+    { id: 't-fh',    y: Y.fronthaul, label: 'FRONTHAUL SW', side: 'right', color: '#4ADE80' },
+    { id: 't-du',    y: Y.du,        label: 'O-DU',        side: 'right', color: '#38BDF8' },
+    { id: 't-ru',    y: Y.ru,        label: 'O-RU (RADIO)', side: 'right', color: '#FB923C' },
+  ]
+  const oranRegions: TopoRegion[] = [
+    { id: 'r-fh', yStart: Y.fronthaul - 46, yEnd: Y.ru + 46,
+      label: 'FRONTHAUL',
+      protocol: 'eCPRI 7.2x split · PTP G.8275.1 · SyncE',
+      fill: 'rgba(74,222,128,0.10)', stroke: '#4ADE80' },
+  ]
+  const oranTraffic: TrafficAxis[] = [
+    { id: 'tr-ns', axis: 'ns', label: 'RADIO → CORE', color: '#F87171',
+      at: LEFT_W + 14, from: Y.core, to: Y.ru },
+  ]
+
   return {
     nodes, links, zones, flows,
+    tiers: oranTiers, regions: oranRegions, traffic: oranTraffic,
     title: `Private 5G / O-RAN HLD${sc ? ` — ${sc}` : ''}`,
     subtitle: `5GC UPF · 1 O-CU · ${nDU} O-DU · ${nRU} O-RU · eCPRI 7.2x fronthaul · PTP G.8275.1 timing`,
     svgH: 800,
