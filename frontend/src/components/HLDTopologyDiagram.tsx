@@ -68,6 +68,55 @@ interface PacketFlow {
   animDur: number
 }
 
+/**
+ * Tier bifurcation (user request): the security zones give coarse trust
+ * bands, but an engineer reading a spine-leaf diagram wants the ROW names —
+ * Spine, Leaf, Border Leaf, Server Farm — called out on the edge, the fabric
+ * itself enclosed and labelled with its protocol, and the two traffic axes
+ * annotated. All optional, so the builders that do not set them are unchanged.
+ */
+interface TierLabel {
+  id: string
+  /** Row centre-line this label belongs to. */
+  y: number
+  label: string
+  /** 'left' sits in the zone gutter, 'right' outside the node area. */
+  side: 'left' | 'right'
+  color: string
+}
+
+/** A translucent enclosure over a contiguous span of rows (e.g. the fabric). */
+interface TopoRegion {
+  id: string
+  yStart: number
+  yEnd: number
+  label: string
+  /** Rendered centred inside the region — e.g. "BGP with VXLAN". */
+  protocol?: string
+  fill: string
+  stroke: string
+}
+
+/** Dashed callout around a named subset of nodes (e.g. the border-leaf pair). */
+interface NodeGroup {
+  id: string
+  nodeIds: string[]
+  label: string
+  color: string
+}
+
+/** North-south / east-west traffic annotation. */
+interface TrafficAxis {
+  id: string
+  axis: 'ns' | 'ew'
+  label: string
+  color: string
+  /** ns: x of the vertical rail, and y span. ew: y of the rail, and x span. */
+  at: number
+  from: number
+  to: number
+}
+
 interface Topo {
   nodes: HLDNode[]
   links: HLDLink[]
@@ -76,6 +125,10 @@ interface Topo {
   title: string
   subtitle: string
   svgH: number
+  tiers?: TierLabel[]
+  regions?: TopoRegion[]
+  groups?: NodeGroup[]
+  traffic?: TrafficAxis[]
 }
 
 // ─── Health overlay (C2) ────────────────────────────────────────────────────
@@ -101,6 +154,12 @@ const RIGHT_PAD = 16
 const CONTENT_W = SVG_W - LEFT_W - RIGHT_PAD
 const NW = 136  // node width
 const NH = 66   // node height
+
+// Overlay protocol names for display. The store holds raw enum values
+// (`vxlan_evpn`); a diagram caption should read like a protocol name.
+function overlayLabel(overlay: string[]): string {
+  return overlay.map(o => o.replace(/_/g, '/').toUpperCase()).join(' + ') || 'VXLAN/EVPN'
+}
 
 // ─── Style palette by layer ───────────────────────────────────────────────────
 // Node fills must be clearly distinct from the SVG background (#080E1A = rgb(8,14,26))
@@ -310,7 +369,7 @@ function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string
       yStart:136, yEnd:380, fill:'rgba(127,29,29,0.26)', stroke:'#B91C1C', icon:'🔴' },
     { id:'z-dmz', label:'DMZ', sublabel:'Perimeter FW · IPS · TLS Inspect',
       yStart:380, yEnd:500, fill:'rgba(154,52,18,0.26)', stroke:'#C2410C', icon:'🟠' },
-    { id:'z-fabric', label:'DC FABRIC / TRUST', sublabel:`${underlay.toUpperCase()} underlay · ${overlay.join('/') || 'VXLAN/EVPN'} overlay`,
+    { id:'z-fabric', label:'DC FABRIC / TRUST', sublabel:`${underlay.toUpperCase()} underlay · ${overlayLabel(overlay)} overlay`,
       yStart:500, yEnd:746, fill:'rgba(29,78,216,0.24)', stroke:'#1D4ED8', icon:'🔵' },
     { id:'z-compute', label:'COMPUTE', sublabel:'Servers · GPU · Storage',
       yStart:746, yEnd:860, fill:'rgba(21,128,61,0.24)', stroke:'#15803D', icon:'🟢' },
@@ -470,10 +529,39 @@ function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string
     },
   ]
 
+  // Tier bifurcation. The last leaf pair are the border leaves — the same
+  // rule configgen's borderLeaves() uses to place the firewall handoff, so
+  // the diagram and the generated configs name the same devices.
+  const borderIds = leaves.slice(-2).map(n => n.id)
+  const tiers: TierLabel[] = [
+    { id: 't-wan',    y: Y.wan,     label: 'WAN EDGE',    side: 'right', color: '#F59E0B' },
+    { id: 't-fw',     y: Y.edgefw,  label: 'FIREWALL',    side: 'right', color: '#FB923C' },
+    { id: 't-spine',  y: Y.spine,   label: 'SPINE',       side: 'right', color: '#60A5FA' },
+    { id: 't-leaf',   y: Y.leaf,    label: 'LEAF',        side: 'right', color: '#4ADE80' },
+    { id: 't-srv',    y: Y.servers, label: 'SERVER FARM', side: 'right', color: '#A8A29E' },
+  ]
+  const regions: TopoRegion[] = [
+    { id: 'r-fabric', yStart: Y.spine - 46, yEnd: Y.leaf + 46,
+      label: 'FABRIC',
+      // Store values are raw enum strings (`vxlan_evpn`); a diagram caption
+      // should read like a protocol name, not a field value.
+      protocol: `${underlay.toUpperCase()} underlay · ${overlayLabel(overlay)} overlay`,
+      fill: 'rgba(56,189,248,0.10)', stroke: '#38BDF8' },
+  ]
+  const groups: NodeGroup[] = borderIds.length
+    ? [{ id: 'g-border', nodeIds: borderIds, label: 'BORDER LEAF', color: '#F87171' }]
+    : []
+  const traffic: TrafficAxis[] = [
+    { id: 'tr-ns', axis: 'ns', label: 'NORTH–SOUTH', color: '#F87171',
+      at: LEFT_W + 14, from: Y.internet, to: Y.servers },
+    { id: 'tr-ew', axis: 'ew', label: 'EAST–WEST', color: '#38BDF8',
+      at: Y.servers + 62, from: LEFT_W + 40, to: SVG_W - 40 },
+  ]
+
   return {
-    nodes, links, zones, flows,
+    nodes, links, zones, flows, tiers, regions, groups, traffic,
     title: `DC Spine-Leaf HLD${sc ? ` — ${sc}` : ''}`,
-    subtitle: `${nSpines} Spine · ${nLeaves} Leaf · ${underlay.toUpperCase()} underlay · ${overlay.join('/') || 'VXLAN/EVPN'} overlay`,
+    subtitle: `${nSpines} Spine · ${nLeaves} Leaf · ${underlay.toUpperCase()} underlay · ${overlayLabel(overlay)} overlay`,
     svgH: 920,
   }
 }
@@ -1159,6 +1247,22 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
               <stop offset="0%" stopColor="#080E1A" stopOpacity="1" />
               <stop offset="100%" stopColor="#080E1A" stopOpacity="0" />
             </linearGradient>
+            <marker id="axisArrowDown" viewBox="0 0 10 10" refX="5" refY="9"
+                    markerWidth="5" markerHeight="5" orient="auto">
+              <path d="M0 0 L5 10 L10 0 z" fill="#F87171" />
+            </marker>
+            <marker id="axisArrowUp" viewBox="0 0 10 10" refX="5" refY="1"
+                    markerWidth="5" markerHeight="5" orient="auto">
+              <path d="M0 10 L5 0 L10 10 z" fill="#F87171" />
+            </marker>
+            <marker id="axisArrowRight" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="5" markerHeight="5" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="#38BDF8" />
+            </marker>
+            <marker id="axisArrowLeft" viewBox="0 0 10 10" refX="1" refY="5"
+                    markerWidth="5" markerHeight="5" orient="auto">
+              <path d="M10 0 L0 5 L10 10 z" fill="#38BDF8" />
+            </marker>
           </defs>
 
           {/* ── Background ── */}
@@ -1184,6 +1288,49 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
               </text>
               {/* Right separator line */}
               <line x1={LEFT_W - 4} y1={z.yStart} x2={LEFT_W - 4} y2={z.yEnd} stroke={z.stroke} strokeWidth={0.5} opacity={0.5} />
+            </g>
+          ))}
+
+          {/* ── Fabric / tier regions (behind links and nodes) ── */}
+          {(topo.regions ?? []).map(r => (
+            <g key={r.id}>
+              <rect
+                x={LEFT_W + 6} y={r.yStart} width={SVG_W - LEFT_W - 74} height={r.yEnd - r.yStart}
+                rx={14} fill={r.fill} stroke={r.stroke} strokeWidth={1.1} strokeDasharray="6 4" />
+              <text x={SVG_W - 82} y={r.yStart + 15} textAnchor="end"
+                    fill={r.stroke} fontSize={9} fontWeight="700" letterSpacing="0.08em">
+                {r.label}
+              </text>
+              {r.protocol && (
+                <text x={SVG_W - 82} y={r.yStart + 28} textAnchor="end"
+                      fill="#CBD5E1" fontSize={7.5} fontWeight="500" opacity={0.9}>
+                  {r.protocol}
+                </text>
+              )}
+            </g>
+          ))}
+
+          {/* ── Traffic axes (north-south rail, east-west rail) ── */}
+          {(topo.traffic ?? []).map(t => t.axis === 'ns' ? (
+            <g key={t.id} opacity={0.85}>
+              <line x1={t.at} y1={t.from} x2={t.at} y2={t.to}
+                    stroke={t.color} strokeWidth={1.4} strokeDasharray="7 5"
+                    markerStart="url(#axisArrowUp)" markerEnd="url(#axisArrowDown)" />
+              <text x={t.at - 6} y={(t.from + t.to) / 2} fill={t.color}
+                    fontSize={8} fontWeight="700" letterSpacing="0.1em" textAnchor="middle"
+                    transform={`rotate(-90 ${t.at - 6} ${(t.from + t.to) / 2})`}>
+                {t.label}
+              </text>
+            </g>
+          ) : (
+            <g key={t.id} opacity={0.85}>
+              <line x1={t.from} y1={t.at} x2={t.to} y2={t.at}
+                    stroke={t.color} strokeWidth={1.4} strokeDasharray="7 5"
+                    markerStart="url(#axisArrowLeft)" markerEnd="url(#axisArrowRight)" />
+              <text x={(t.from + t.to) / 2} y={t.at + 14} fill={t.color}
+                    fontSize={8} fontWeight="700" letterSpacing="0.1em" textAnchor="middle">
+                {t.label}
+              </text>
             </g>
           ))}
 
@@ -1238,6 +1385,39 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                     )}
                   </g>
                 )}
+              </g>
+            )
+          })}
+
+          {/* ── Tier row labels (right edge) ── */}
+          {(topo.tiers ?? []).map(t => (
+            <g key={t.id}>
+              <line x1={SVG_W - 70} y1={t.y} x2={SVG_W - 58} y2={t.y}
+                    stroke={t.color} strokeWidth={1.2} opacity={0.8} />
+              <text x={SVG_W - 54} y={t.y + 3} fill={t.color}
+                    fontSize={8.5} fontWeight="700" letterSpacing="0.06em">
+                {t.label}
+              </text>
+            </g>
+          ))}
+
+          {/* ── Group callouts (border leaf) ── */}
+          {(topo.groups ?? []).map(g => {
+            const members = topo.nodes.filter(n => g.nodeIds.includes(n.id))
+            if (!members.length) return null
+            const pad = 9
+            const x1 = Math.min(...members.map(n => n.x)) - NW / 2 - pad
+            const x2 = Math.max(...members.map(n => n.x)) + NW / 2 + pad
+            const y1 = Math.min(...members.map(n => n.y)) - NH / 2 - pad
+            const y2 = Math.max(...members.map(n => n.y)) + NH / 2 + pad
+            return (
+              <g key={g.id}>
+                <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} rx={8}
+                      fill="none" stroke={g.color} strokeWidth={1.5} strokeDasharray="5 4" />
+                <text x={x1} y={y1 - 5} fill={g.color} fontSize={8} fontWeight="700"
+                      letterSpacing="0.08em">
+                  {g.label}
+                </text>
               </g>
             )
           })}

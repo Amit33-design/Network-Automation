@@ -207,3 +207,79 @@ describe('HLDTopologyDiagram — vendor-aware firewall / WAN / core', () => {
     expect(text).not.toContain('ASR-9001')
   })
 })
+
+// ─── Tier bifurcation (user request) ────────────────────────────────────────
+// The security zones give coarse trust bands; an engineer reading a
+// spine-leaf diagram also wants the ROW names called out, the fabric enclosed
+// and labelled with its protocol, the border-leaf pair highlighted, and the
+// two traffic axes annotated.
+
+describe('DC tier bifurcation', () => {
+  const dcDevices: BOMDevice[] = [
+    ...Array.from({ length: 2 }, (_, i) =>
+      bomDev({ hostname: `SP-0${i + 1}`, subLayer: 'spine', role: 'spine', model: 'N9K-C9336C' })),
+    ...Array.from({ length: 6 }, (_, i) =>
+      bomDev({ hostname: `LF-0${i + 1}`, subLayer: 'leaf', role: 'leaf', model: 'N9K-C93180YC' })),
+    bomDev({ hostname: 'FW-01', subLayer: 'firewall', role: 'firewall', model: 'PA-5450', vendor: 'Palo Alto' }),
+  ]
+  const dc = () => render(<HLDTopologyDiagram devices={dcDevices} useCase="dc" />)
+
+  const texts = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll('text')).map(t => t.textContent ?? '')
+
+  it('labels every tier row so the layers are named, not just colour-coded', () => {
+    const { container } = dc()
+    const t = texts(container)
+    for (const tier of ['SPINE', 'LEAF', 'SERVER FARM', 'FIREWALL', 'WAN EDGE']) {
+      expect(t, `tier label "${tier}" missing`).toContain(tier)
+    }
+  })
+
+  it('encloses the fabric and states the protocol running on it', () => {
+    const { container } = dc()
+    const t = texts(container)
+    expect(t).toContain('FABRIC')
+    // the protocol caption names the underlay and the overlay
+    expect(t.some(x => /underlay/.test(x) && /VXLAN\/EVPN/.test(x))).toBe(true)
+    // the caption reads as a protocol name, not the raw `vxlan_evpn` enum
+    expect(t.some(x => /vxlan_evpn/.test(x) && /FABRIC|underlay/.test(x))).toBe(false)
+    // …drawn as a dashed enclosure, not just a label
+    expect(container.querySelector('rect[stroke="#38BDF8"][stroke-dasharray]')).not.toBeNull()
+  })
+
+  it('calls out the border-leaf pair — the same devices configgen hands off to', () => {
+    const { container } = dc()
+    expect(texts(container)).toContain('BORDER LEAF')
+    expect(container.querySelector('rect[stroke="#F87171"][stroke-dasharray]')).not.toBeNull()
+  })
+
+  it('annotates both traffic axes', () => {
+    const { container } = dc()
+    const t = texts(container)
+    expect(t).toContain('NORTH–SOUTH')
+    expect(t).toContain('EAST–WEST')
+    // each rail is a dashed line carrying arrowheads at both ends
+    const ns = container.querySelector('line[marker-start="url(#axisArrowUp)"]')
+    const ew = container.querySelector('line[marker-start="url(#axisArrowLeft)"]')
+    expect(ns).not.toBeNull()
+    expect(ew).not.toBeNull()
+  })
+
+  it('arrowheads use explicit fills — currentColor does not resolve inside defs', () => {
+    const { container } = dc()
+    for (const id of ['axisArrowUp', 'axisArrowDown', 'axisArrowLeft', 'axisArrowRight']) {
+      const path = container.querySelector(`#${id} path`)
+      expect(path, `${id} missing`).not.toBeNull()
+      expect(path!.getAttribute('fill')).toMatch(/^#/)
+    }
+  })
+
+  it('use cases that do not define tiers still render cleanly', () => {
+    for (const useCase of ['campus', 'gpu', 'wan'] as const) {
+      cleanup()
+      const { container } = render(<HLDTopologyDiagram devices={dcDevices} useCase={useCase} />)
+      expect(container.querySelector('svg')).not.toBeNull()
+      expect(texts(container)).not.toContain('BORDER LEAF')
+    }
+  })
+})
