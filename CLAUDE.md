@@ -1152,6 +1152,14 @@ config-gen tests must keep passing; add new tests alongside).
 | AB7 | Config-gen capability gap from AB3: backend Jinja2 templates cover 5 platform families vs the TS engine's 10 vendors. Nokia SRL, NVIDIA Cumulus, Dell OS10, Extreme EXOS, Fortinet, HPE Aruba and Palo Alto have no backend template, so `/api/generate-configs` silently returns less than the browser does for those vendors | [ ] | `backend/templates/`, `backend/config_gen.py` |
 | AB8 | Deployment **runbook** export: `backend/export/runbook.py` builds a markdown runbook (device table, deployment order, verification steps, config hashes) behind `/api/export/runbook`, which no UI calls. The frontend has rollback and Day-N change runbooks but no deployment one. Markdown is mirror-able client-side; the sibling `/runbook/pdf` is the one genuine live-only export, since a browser cannot render PDF without a new dependency (§21 rule 9 forbids adding one) | [ ] | `backend/export/runbook.py`, new `frontend/src/lib/runbook.ts` |
 
+### AC. HLD tier bifurcation (user request, 2026-08-10)
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| AC1 | **Tier bifurcation on the DC HLD** — the diagram had security *zones* (coarse trust bands) but no per-row tier names, so an engineer could not tell the Spine row from the Leaf row except by colour. Added four optional `Topo` fields, so every other builder is untouched: `tiers` (row labels on the right edge — WAN EDGE / FIREWALL / SPINE / LEAF / SERVER FARM), `regions` (a dashed translucent enclosure over spine..leaf labelled **FABRIC** with the protocol caption), `groups` (dashed callout around a node subset — the **BORDER LEAF** pair, derived with the same last-pair rule `configgen.borderLeaves()` uses, so the diagram and the generated handoff name the same devices), and `traffic` (NORTH–SOUTH vertical rail, EAST–WEST horizontal rail, each double-headed). "
+"Two bugs found while building it: SVG `<marker>` content does not resolve `currentColor` (it inherits from `<defs>`, not the referencing element) so the arrowheads were invisible — now explicit fills; and the fabric caption rendered the raw store enum `vxlan_evpn`, which a new `overlayLabel()` helper now formats as `VXLAN/EVPN` in all three places it appeared. 6 tests | [x] | `HLDTopologyDiagram.tsx`; `HLDTopologyDiagram.test.tsx` 20→26; 1354 tests |
+| AC2 | Apply the same bifurcation to the campus, GPU, WAN, multisite and O-RAN builders — they still render zones only. The `Topo` fields are already optional and rendered generically, so each is just a data addition in its builder | [ ] | `HLDTopologyDiagram.tsx` |
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
