@@ -124,7 +124,12 @@ LAYER_PLATFORM_MAP: dict[str, tuple[str, str]] = {
 VENDOR_PLATFORM_OVERRIDE: dict[str, str] = {
     "Arista":  "eos",
     "Juniper": "junos",
-    "NVIDIA":  "sonic",
+    # AB7b: Cumulus NVUE, not SONiC. Both run on Spectrum hardware, but the
+    # browser engine emits NVUE and the two must agree on what the device
+    # runs. NCLU was removed in Cumulus 5.x and `nv set qos roce` is what
+    # makes a GPU fabric genuinely lossless. The `sonic` family is retained
+    # for callers who explicitly select SONiC.
+    "NVIDIA":  "cumulus",
 }
 
 # Vendors the TypeScript engine generates for. Anything here WITHOUT a template
@@ -426,7 +431,12 @@ def generate_all_configs(state: dict[str, Any]) -> dict[str, str]:
                 # Determine platform dir + template from LAYER_PLATFORM_MAP
                 platform_dir, tpl_file = LAYER_PLATFORM_MAP.get(layer, ("ios_xe", "generic.j2"))
 
-                if vendor_platform and layer in ("dc-spine", "dc-leaf"):
+                # AB7b: the GPU layers take the vendor override too. A GPU
+                # fabric is where NVIDIA matters most, and it was pinned to
+                # the sonic/eos defaults regardless of the selected vendor.
+                if vendor_platform and layer in (
+                    "dc-spine", "dc-leaf", "gpu-spine", "gpu-tor",
+                ):
                     # Check template exists for this vendor before switching
                     candidate = TEMPLATE_DIR / vendor_platform / tpl_file
                     if candidate.exists():
