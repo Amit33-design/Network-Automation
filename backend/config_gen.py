@@ -127,6 +127,40 @@ VENDOR_PLATFORM_OVERRIDE: dict[str, str] = {
     "NVIDIA":  "sonic",
 }
 
+# Vendors the TypeScript engine generates for. Anything here WITHOUT a template
+# family above used to fall through to LAYER_PLATFORM_MAP — which for a DC leaf
+# is ("nxos", "leaf.j2") — so a Nokia, Dell, Extreme, Fortinet, Aruba or Palo
+# Alto design silently received Cisco NX-OS CLI, with the header even claiming
+# `Platform : nxos`. That is not "less than the browser"; it is confidently
+# wrong config for the wrong platform, and pushing it fails on the first line.
+#
+# Until those template families exist (tracker AB7), refuse explicitly rather
+# than guess. Fail loudly beats a plausible-looking artifact.
+FABRIC_VENDORS_WITHOUT_TEMPLATES: frozenset[str] = frozenset({
+    "Nokia", "Dell EMC", "Extreme Networks", "Fortinet", "HPE Aruba", "Palo Alto",
+})
+
+
+def _unsupported_vendor_config(hostname: str, layer: str, vendor: str) -> str:
+    """An unmistakable non-config, so a caller cannot mistake it for deployable."""
+    return (
+        "! ═══════════════════════════════════════════════════════════════\n"
+        f"! CONFIG NOT GENERATED — {vendor} is not supported by this API\n"
+        "! ═══════════════════════════════════════════════════════════════\n"
+        f"! Device   : {hostname}\n"
+        f"! Role     : {layer}\n"
+        f"! Vendor   : {vendor}\n"
+        "!\n"
+        f"! The backend has no {vendor} template family. It previously fell back\n"
+        "! to the Cisco NX-OS template and returned that as though it were a\n"
+        f"! {vendor} configuration — every line would be rejected by the device.\n"
+        "!\n"
+        "! The browser-side engine (frontend/src/lib/configgen.ts) DOES generate\n"
+        f"! {vendor} configuration. Generate in the UI, or use a supported vendor\n"
+        "! for API-side generation: Cisco, Arista, Juniper, NVIDIA.\n"
+        "! ═══════════════════════════════════════════════════════════════\n"
+    )
+
 
 def _get_jinja_env(platform_dir: str) -> Environment:
     loader = FileSystemLoader(str(TEMPLATE_DIR / platform_dir))
@@ -411,6 +445,16 @@ def generate_all_configs(state: dict[str, Any]) -> dict[str, str]:
                 ctx = _build_device_context(state, layer, i)
                 ctx["platform"] = platform_key
 
+                # AB7: refuse rather than emit another vendor's CLI. Only the
+                # fabric layers take the vendor override, so only those can be
+                # mislabelled; campus/WAN layers are Cisco by design.
+                if (detected_vendor in FABRIC_VENDORS_WITHOUT_TEMPLATES
+                        and layer in ("dc-spine", "dc-leaf", "gpu-spine", "gpu-tor")):
+                    results[ctx["hostname"]] = _unsupported_vendor_config(
+                        ctx["hostname"], layer, detected_vendor,
+                    )
+                    continue
+
                 rendered = _render(platform_dir, tpl_file, ctx)
                 full     = _append_policies(rendered, ctx, platform_key, state)
                 header   = _build_config_header(ctx, state)
@@ -481,6 +525,20 @@ def _detect_primary_vendor(state: dict[str, Any]) -> str:
         return "Arista"
     if "juniper" in v or "junos" in v:
         return "Juniper"
-    if "nvidia" in v or "sonic" in v:
+    if "nvidia" in v or "sonic" in v or "cumulus" in v:
         return "NVIDIA"
+    # Named so the caller can tell "vendor we cannot generate for" apart from
+    # "no vendor specified" — the latter legitimately uses the layer default.
+    if "nokia" in v or "srlinux" in v or "sr linux" in v:
+        return "Nokia"
+    if "dell" in v:
+        return "Dell EMC"
+    if "extreme" in v:
+        return "Extreme Networks"
+    if "fortinet" in v or "fortigate" in v:
+        return "Fortinet"
+    if "aruba" in v or "hpe" in v:
+        return "HPE Aruba"
+    if "palo" in v or "pan-os" in v:
+        return "Palo Alto"
     return ""
