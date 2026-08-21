@@ -115,3 +115,74 @@ def test_ported_playbooks_are_not_the_generic_fallback():
         got = t.build_troubleshooting(symptom=symptom, platform="nxos")
         assert got["summary"] != generic["summary"], f"{symptom} still falls through to generic"
         assert got["category"], f"{symptom} has no category"
+
+
+# ── AB4: structural content parity ──────────────────────────────────────────
+# The 11 playbooks that pre-dated AB1 were written independently on each side.
+# Measuring the divergence found it is almost entirely COSMETIC: `ospf_adjacency`
+# and `pfc_rocev2`, for example, cover the same four topics in different words
+# with slightly different `show` commands. A command-level diff reported 26
+# "backend-only steps" that were mostly the same topics re-worded — merging them
+# would have produced 26 near-duplicate steps, which is worse than the drift.
+#
+# Only `bgp_down` had genuinely extra topics (BFD state, route-map policy);
+# those were added to the frontend and re-transcribed. What is worth enforcing
+# from here is STRUCTURAL parity — same number of steps and causes, so a real
+# divergence in coverage is caught while wording is left free.
+
+def _fe_playbook_shape(src: str, key: str):
+    import re
+    m = re.search(r'\n  %s:\s*\{' % re.escape(key), src)
+    if not m:
+        return None
+    i, d = m.end() - 1, 0
+    for j in range(i, len(src)):
+        if src[j] == '{':
+            d += 1
+        elif src[j] == '}':
+            d -= 1
+            if d == 0:
+                break
+    block = src[i:j + 1]
+    return {
+        "steps": len(re.findall(r'order:\s*\d+', block)),
+        "causes": len(re.findall(r"cause:\s*'", block)),
+    }
+
+
+@pytest.fixture(scope="module")
+def tsx_source():
+    return TSX.read_text()
+
+
+def test_both_sides_cover_the_same_number_of_steps(tsx_source):
+    mismatched = []
+    for key, be in t.PLAYBOOKS.items():
+        fe = _fe_playbook_shape(tsx_source, key)
+        if fe is None:
+            continue
+        if fe["steps"] != len(be["steps"]):
+            mismatched.append(f"{key}: frontend {fe['steps']} vs backend {len(be['steps'])}")
+    assert not mismatched, (
+        "playbooks cover a different number of diagnostic steps per side — one "
+        "engine is giving the operator less than the other:\n  "
+        + "\n  ".join(mismatched)
+    )
+
+
+def test_both_sides_rank_the_same_number_of_causes(tsx_source):
+    mismatched = []
+    for key, be in t.PLAYBOOKS.items():
+        fe = _fe_playbook_shape(tsx_source, key)
+        if fe is None:
+            continue
+        if fe["causes"] != len(be["causes"]):
+            mismatched.append(f"{key}: frontend {fe['causes']} vs backend {len(be['causes'])}")
+    assert not mismatched, "likely-cause lists differ in length:\n  " + "\n  ".join(mismatched)
+
+
+def test_bgp_down_carries_the_steps_that_were_only_on_one_side():
+    """BFD and route-map policy were backend-only; the MTU check frontend-only."""
+    descs = " ".join(s["description"].lower() for s in t.PLAYBOOKS["bgp_down"]["steps"])
+    for topic in ("bfd", "route-map", "mtu"):
+        assert topic in descs, f"bgp_down lost the {topic} step during convergence"
