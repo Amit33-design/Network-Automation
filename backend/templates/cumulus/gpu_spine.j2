@@ -1,0 +1,77 @@
+{# ═══════════════════════════════════════════════════════════
+   NVIDIA Cumulus Linux 5.x — DC / GPU Spine (NVUE)
+   Template: cumulus/spine.j2
+
+   AB7b: NVIDIA previously resolved to the `sonic` family, which renders an
+   FRR unified config. The browser engine emits Cumulus NVUE (`nv set`) — a
+   different NOS on the same Spectrum hardware, so the two engines disagreed
+   about what an NVIDIA switch even runs.
+
+   Cumulus NVUE is canonical: NCLU was removed in Cumulus 5.x, and
+   `nv set qos roce` programs PFC, ECN/WRED and buffer carving in one profile,
+   which is what makes a GPU fabric genuinely lossless. Mirrors
+   frontend/src/lib/configgen.ts `nvidiaSpectrumConfig`. The `sonic` family is
+   retained for callers who explicitly select SONiC.
+═══════════════════════════════════════════════════════════ #}
+{%- set peer_count = spine_ips | length if spine_ips else 2 %}
+{%- set port_count = 32 %}
+# ═══════════════════════════════════════════════════════════════
+# Device : {{ hostname }}
+# Role   : Spine
+# OS     : NVIDIA Cumulus Linux 5.x (NVUE)
+# Apply  : source this file into the shell — it is a script of nv set lines,
+#          NOT an nv config replace YAML snapshot — then apply:
+#            bash <this-file> && nv config apply
+# ═══════════════════════════════════════════════════════════════
+
+# ── SYSTEM / MANAGEMENT (eth0 in the mgmt VRF) ───────────────────────────────
+nv set system hostname {{ hostname }}
+nv set system aaa user admin password <CHANGE-ME-admin-password>
+nv set system aaa user admin role system-admin
+nv set interface eth0 ip vrf mgmt
+nv set interface eth0 ip address <CHANGE-ME-mgmt-ip>/24
+nv set vrf mgmt router static 0.0.0.0/0 via <CHANGE-ME-oob-gateway>
+nv set service ntp mgmt server <CHANGE-ME-ntp-primary> iburst on
+nv set service ntp mgmt server <CHANGE-ME-ntp-secondary> iburst on
+nv set service syslog mgmt server <CHANGE-ME-syslog-ip> port 514
+nv set service snmp-server enable on
+nv set service snmp-server username netmon auth-sha <CHANGE-ME-snmp-auth-pass> encrypt-aes <CHANGE-ME-snmp-priv-pass>
+
+# ── LOOPBACK / FABRIC PORTS (jumbo MTU for RoCE/VXLAN payloads) ──────────────
+nv set interface lo ip address {{ loopback_ip }}/32
+nv set interface swp1-{{ port_count }} link mtu 9216
+nv set interface swp1-{{ port_count }} link state up
+
+# ── BGP eBGP spine-leaf, unnumbered (RFC 7938) ───────────────────────────────
+# Unnumbered peering: no per-link addressing to keep in step between the ends.
+nv set router bgp enable on
+nv set router bgp autonomous-system {{ bgp_asn }}
+nv set router bgp router-id {{ loopback_ip }}
+nv set vrf default router bgp address-family ipv4-unicast enable on
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected enable on
+nv set vrf default router bgp address-family ipv4-unicast multipaths ebgp 64
+nv set vrf default router bgp path-selection multipath aspath-ignore on
+{% for n in range(peer_count) -%}
+{%- set p = n + 1 %}
+nv set vrf default router bgp neighbor swp{{ p }} remote-as external
+nv set vrf default router bgp neighbor swp{{ p }} type unnumbered
+nv set vrf default router bgp neighbor swp{{ p }} timers keepalive 3
+nv set vrf default router bgp neighbor swp{{ p }} timers hold 9
+nv set vrf default router bgp neighbor swp{{ p }} bfd enable on
+{% endfor -%}
+{% if roce_enabled %}
+# ── RoCEv2 LOSSLESS (Spectrum) ───────────────────────────────────────────────
+# One profile programs PFC priority 3 no-drop, ECN/WRED on the lossy queues,
+# buffer carving and DSCP trust. Comments alone would ship a LOSSY fabric.
+nv set qos roce enable on
+nv set qos roce mode lossless
+#
+# ── HOST-SIDE RoCE — lossless is a CONTRACT ──────────────────────────────────
+# The switch half above is inert unless every attached NIC marks the same
+# priority. Run once per RDMA NIC on each compute node:
+#   mlnx_qos -i <nic> --trust dscp
+#   mlnx_qos -i <nic> --pfc 0,0,0,1,0,0,0,0
+#   cma_roce_tos -d <ib-dev> -t 106
+{% endif %}
+# ── APPLY ────────────────────────────────────────────────────────────────────
+nv config apply
