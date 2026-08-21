@@ -1200,6 +1200,12 @@ const TROUBLESHOOT_PLAYBOOKS: Record<string, TPlaybook> = {
       { order: 4, description: 'Check for MTU / path-MTU issues that break large BGP updates',
         command: tcmd(p, { nxos: 'ping <neighbor-ip> df-bit packet-size 8972', iosxe: 'ping <neighbor-ip> df-bit size 8972', eos: 'ping <neighbor-ip> df-bit size 8972', junos: 'ping <neighbor-ip> do-not-fragment size 8972' }),
         look_for: 'Fragmentation-needed / drops — an MTU mismatch can wedge the session in OpenSent/OpenConfirm' },
+      { order: 5, description: 'Check BFD session state for the peer (fast failure detection)',
+        command: tcmd(p, { nxos: 'show bfd neighbors', iosxe: 'show bfd neighbors', eos: 'show bfd peers', junos: 'show bfd session' }),
+        look_for: 'BFD Down on a session the BGP peer depends on — BGP follows BFD, so this fails first' },
+      { order: 6, description: 'Review route-map / prefix-list policy applied to the neighbor',
+        command: tcmd(p, { nxos: 'show route-map', iosxe: 'show route-map', eos: 'show route-map', junos: 'show policy-options policy-statement' }),
+        look_for: 'A policy denying everything — the session establishes but no prefixes are exchanged' },
     ],
     causes: [
       { cause: 'TCP/179 session never forms — underlay/L3 unreachability', confidence: 0.85,
@@ -1411,6 +1417,9 @@ const TROUBLESHOOT_PLAYBOOKS: Record<string, TPlaybook> = {
       { order: 4, description: 'Check VNI status and VLAN-to-VNI mapping',
         command: tcmd(p, { nxos: 'show nve vni', iosxe: 'show nve vni', eos: 'show vxlan vni', junos: 'show ethernet-switching vxlan-tunnel-end-point remote' }),
         look_for: 'VNI Up and mapped to the correct VLAN; route-target import/export mismatch' },
+      { order: 5, description: 'Inspect EVPN route-targets (import/export) for the L2/L3 VNI',
+        command: tcmd(p, { nxos: 'show bgp l2vpn evpn', iosxe: 'show bgp l2vpn evpn', eos: 'show bgp evpn route-type mac-ip', junos: 'show route table bgp.evpn.0 extensive' }),
+        look_for: 'Import/export RTs that do not match the far leaf — with per-leaf eBGP ASNs, auto-RT derives ASN:VNI and no leaf imports any other leaf (Y1)' },
     ],
     causes: [
       { cause: 'Route-target import/export mismatch (routes not imported)', confidence: 0.8,
