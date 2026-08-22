@@ -108,13 +108,39 @@ describe('SD-WAN cEdge config generation (G-A12)', () => {
     expect(cfg).toContain('color mpls')
   })
 
-  it('assigns unique site-ids based on device index', () => {
-    const dev0 = makeDevice({ hostname: 'SITE-WAN-A01' })
-    const dev1 = makeDevice({ hostname: 'SITE-WAN-A02' })
-    const cfg0 = generateConfig(dev0, 0)
-    const cfg1 = generateConfig(dev1, 1)
-    expect(cfg0).toContain('site-id               100')
-    expect(cfg1).toContain('site-id               101')
+  // The original version of this test asserted that A01 and A02 — the HA PAIR
+  // at one site — were given two DIFFERENT site-ids, which is not what an
+  // SD-WAN site is. A dual-router site shares one site-id and the routers
+  // differ by system-ip; the next site takes the next id.
+  it('gives an HA pair one shared site-id and distinct system-ips', () => {
+    const a01 = generateConfig(makeDevice({ hostname: 'SITE-WAN-A01' }), 0)
+    const a02 = generateConfig(makeDevice({ hostname: 'SITE-WAN-A02' }), 1)
+    expect(a01).toContain('site-id               101')
+    expect(a02).toContain('site-id               101')
+    expect(a01).toContain('system-ip             10.10.101.1')
+    expect(a02).toContain('system-ip             10.10.101.2')
+  })
+
+  it('advances the site-id at the next site, not the next router', () => {
+    const b01 = generateConfig(makeDevice({ hostname: 'SITE-WAN-B01' }), 2)
+    expect(b01).toContain('site-id               102')
+    expect(b01).toContain('system-ip             10.10.102.1')
+  })
+
+  it('scopes the site-id to the WAN tier, not the whole BOM', () => {
+    // AA2: a multicloud BOM holds cloud appliances before the on-ramps. With a
+    // global index those four routers became sites 104-107 — four SD-WAN sites
+    // for a two-site design.
+    const cloud = [1, 2, 3, 4].map(n => makeDevice({
+      hostname: `SITE-CGW-A0${n}`, subLayer: 'cloud-gw', id: `cloud-${n}`,
+    }))
+    const edges = [1, 2, 3, 4].map(n => makeDevice({
+      hostname: `SITE-WAN-${n <= 2 ? 'A' : 'B'}0${n <= 2 ? n : n - 2}`, id: `edge-${n}`,
+    }))
+    const all = [...cloud, ...edges]
+    const ids = edges.map((d, i) =>
+      /site-id\s+(\d+)/.exec(generateConfig(d, cloud.length + i, '', [], all))?.[1])
+    expect(ids).toEqual(['101', '101', '102', '102'])
   })
 })
 
