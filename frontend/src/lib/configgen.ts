@@ -4780,12 +4780,23 @@ function isSdWanEdge(dev: BOMDevice): boolean {
     && !(dev.features || []).includes('IOS-XR')
 }
 
-function sdwanEdgeConfig(dev: BOMDevice, idx: number): string {
-  const siteId = 100 + idx
-  const sysIp = `10.10.${siteId}.1`
-  const wanIp = `203.0.113.${idx * 4 + 1}`
-  const wanGw = `203.0.113.${idx * 4 + 2}`
-  const lanIp = `10.${siteId}.1.1`
+function sdwanEdgeConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  // Identity is tier-scoped and SITE-scoped (Z5). The site-id used to come
+  // from the GLOBAL device index, so a 2-site multicloud design whose BOM
+  // also holds four cloud appliances produced site-ids 104-107: four SD-WAN
+  // sites for two real ones, and the pair at each site did not agree. Both
+  // routers at a site now share the site-id — which is how SD-WAN models a
+  // dual-router site — and differ by system-ip.
+  const tierIdx = roleIndex(dev, allDevices, idx)
+  const siteOrd = Math.floor(tierIdx / 2)
+  const member = tierIdx % 2
+  const siteId = 101 + siteOrd
+  // Addresses go through ipAdd so a large site count walks into the next
+  // octet instead of emitting 10.10.300.1 (the Z7 overflow class).
+  const sysIp = ipAdd('10.10.101.0', siteOrd * 256 + member + 1)
+  const wanIp = ipAdd('203.0.113.0', tierIdx * 4 + 1)
+  const wanGw = ipAdd('203.0.113.0', tierIdx * 4 + 2)
+  const lanIp = ipAdd('10.101.1.0', siteOrd * 65536 + member + 1)
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -5795,7 +5806,7 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (isOranSubLayer(l))                                             return oranConfig(dev, idx)
   if (v === 'Cisco'     && l === 'firewall')                         return isFtdModel(dev.model) ? ciscoFtdFirewallConfig(dev, idx, useCase, allDevices) : ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'sdwan-controller')                 return sdwanControllerConfig(dev, idx)
-  if (v === 'Cisco'     && l === 'wan-edge' && isSdWanEdge(dev))     return sdwanEdgeConfig(dev, idx)
+  if (v === 'Cisco'     && l === 'wan-edge' && isSdWanEdge(dev))     return sdwanEdgeConfig(dev, idx, allDevices)
   if (v === 'Cisco'     && l === 'wan-edge' && isIosXrPlatform(dev))  return iosxrPeConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
   if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)

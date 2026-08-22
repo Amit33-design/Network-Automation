@@ -486,8 +486,16 @@ function assertRolePresence(j: Journey, p: ReturnType<typeof runPipeline>) {
     case 'oran':
       for (const r of ['oran-cu', 'oran-du', 'oran-ru', 'oran-fronthaul', 'oran-midhaul', 'oran-core', 'oran-timing']) need(r)
       break
-    case 'multicloud': case 'aviatrix': need('cloud-transit'); need('cloud-gw'); break
+    case 'multicloud': case 'aviatrix': need('cloud-transit'); need('cloud-gw'); need('wan-edge'); break
   }
+
+  // AA2, and permanent from here: a design whose endpoints have nowhere to
+  // attach is not a design. Multicloud and Aviatrix used to contain ONLY
+  // cloud gateways and transit VPCs — virtual appliances that terminate
+  // tunnels, with no on-premises device to originate them.
+  const physical = p.devices.filter(d => !NON_NETWORK.has(d.subLayer))
+  expect(physical.length, `${ctx}: every device is a cloud/host appliance — the endpoints have no on-ramp`)
+    .toBeGreaterThan(0)
 }
 
 // ── The matrix ──────────────────────────────────────────────────────────────

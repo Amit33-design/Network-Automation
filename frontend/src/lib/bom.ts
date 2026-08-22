@@ -44,8 +44,12 @@ const PREFERRED_PRODUCTS: Record<UseCase, Record<string, string>> = {
   campus:     { distribution: 'cat9500', access: 'cat9200',  firewall: 'ftd4145' },
   wan:        { 'wan-edge': 'asr1002hx' },
   multisite:  { spine: 'nxos-9336c',   leaf: 'nxos-93180yc', 'wan-edge': 'viptela-vedge', firewall: 'ftd4145' },
-  multicloud: { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
-  aviatrix:   { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw' },
+  // AA2: the cloud gateways are virtual appliances that terminate tunnels —
+  // something on the ground has to originate them. The default on-ramp is the
+  // Catalyst 8300 cEdge: 8x10G with IPsec/SD-WAN, which can actually carry a
+  // Direct Connect / ExpressRoute circuit.
+  multicloud: { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw', 'wan-edge': 'cat8300-edge' },
+  aviatrix:   { 'cloud-transit': 'aviatrix-transit', 'cloud-gw': 'aviatrix-gw', 'wan-edge': 'cat8300-edge' },
   oran:       { 'oran-cu': 'oran-cu', 'oran-du': 'oran-du', 'oran-ru': 'oran-ru', 'oran-fronthaul': 'oran-fronthaul-sw', 'oran-midhaul': 'oran-midhaul-rtr', 'oran-core': 'oran-core-upf', 'oran-timing': 'ptp-grandmaster' },
 }
 
@@ -64,7 +68,8 @@ const VENDOR_PRODUCT_MAP: Record<string, Partial<Record<UseCase, Record<string, 
     campus:    { distribution: 'juniper-ex4650', access: 'juniper-ex4400', firewall: 'juniper-srx4600' },
     wan:       { 'wan-edge': 'juniper-mx204' },
     multisite: { spine: 'juniper-qfx5130', leaf: 'juniper-qfx5120', 'wan-edge': 'juniper-mx204', firewall: 'juniper-srx4600' },
-    multicloud: { firewall: 'juniper-srx4600' },
+    multicloud: { firewall: 'juniper-srx4600', 'wan-edge': 'juniper-mx204' },
+    aviatrix:   { 'wan-edge': 'juniper-mx204' },
   },
   'Palo Alto': {
     dc:        { firewall: 'panos-pa5260' },
@@ -124,6 +129,8 @@ const BUDGET_TIER_PREFS: Record<string, Partial<Record<UseCase, Record<string, s
     campus:    { distribution: 'cat9300', access: 'cat9200', firewall: 'ftd1150' },
     wan:       { 'wan-edge': 'isr4331' },
     multisite: { spine: 'nxos-3232c',  leaf: 'nxos-93108tc', 'wan-edge': 'isr4331', firewall: 'ftd1150' },
+    multicloud: { 'wan-edge': 'isr4331' },
+    aviatrix:   { 'wan-edge': 'isr4331' },
   },
   mid: {
     dc:        { spine: 'nxos-9336c',  leaf: 'nxos-93180yc', firewall: 'ftd1150' },
@@ -131,6 +138,8 @@ const BUDGET_TIER_PREFS: Record<string, Partial<Record<UseCase, Record<string, s
     campus:    { distribution: 'cat9500', access: 'cat9200', firewall: 'ftd1150' },
     wan:       { 'wan-edge': 'asr1002hx' },
     multisite: { spine: 'nxos-9336c',  leaf: 'nxos-93180yc', 'wan-edge': 'asr1002hx', firewall: 'ftd1150' },
+    multicloud: { 'wan-edge': 'cat8300-edge' },
+    aviatrix:   { 'wan-edge': 'cat8300-edge' },
   },
 }
 
@@ -464,7 +473,17 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
       // Cloud virtual appliances: transit gateways per site, spoke gateways per endpoint group
       const transitCount = Math.max(1, numSites)
       const gwCount = Math.max(2, Math.ceil(endpointCount / 500))
-      scaleDef = { 'cloud-transit': transitCount, 'cloud-gw': gwCount }
+      // AA2: a multicloud design used to contain ONLY cloud gateways and
+      // transit VPCs, so its endpoints had nothing on the ground to attach to
+      // and the tunnels had no on-premises termination. Each site gets an edge
+      // PAIR — the on-ramp that terminates the Direct Connect / ExpressRoute
+      // circuit or the IPsec tunnel, with a second router so a single failure
+      // does not take the site off the cloud.
+      scaleDef = {
+        'cloud-transit': transitCount,
+        'cloud-gw': gwCount,
+        'wan-edge': Math.max(1, numSites) * 2,
+      }
 
     } else {
       scaleDef = (SCALE_DEFS[scale] ?? SCALE_DEFS.small)[useCase] ?? SCALE_DEFS.small.dc

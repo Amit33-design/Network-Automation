@@ -263,7 +263,7 @@ export const PRODUCTS: Product[] = [
     powerW: 150,
     priceUSD: 9500,
     features: ['SD-WAN', 'BGP', 'IPSec', 'ZTP', 'AppQoE'],
-    useCases: ['wan', 'multisite', 'multicloud'],
+    useCases: ['wan', 'multisite', 'multicloud', 'aviatrix'],
     detail: '8x1G SFP PIM + 2x10G SFP+ PIM, SD-WAN ZTP, AppQoE, 20Gbps',
   },
 
@@ -325,7 +325,7 @@ export const PRODUCTS: Product[] = [
     powerW: 220,
     priceUSD: 14000,
     features: ['SD-WAN', 'BGP', 'OSPF', 'IPSec', 'AppQoE', 'DPI', 'ZTP', 'ThousandEyes'],
-    useCases: ['wan', 'multisite', 'multicloud'],
+    useCases: ['wan', 'multisite', 'multicloud', 'aviatrix'],
     detail: 'Catalyst SD-WAN cEdge — IOS-XE SD-WAN mode, DPI, AppQoE, 8x10G, 40Gbps',
   },
 
@@ -776,7 +776,7 @@ export const PRODUCTS: Product[] = [
     powerW: 150,
     priceUSD: 5500,
     features: ['BGP', 'OSPF', 'IPSec', 'DMVPN'],
-    useCases: ['wan', 'multisite'],
+    useCases: ['wan', 'multisite', 'multicloud', 'aviatrix'],
     detail: '3x1G, 100Mbps aggregate, branch WAN router',
   },
   {
@@ -963,7 +963,7 @@ export const PRODUCTS: Product[] = [
     powerW: 350,
     priceUSD: 24000,
     features: ['BGP', 'MPLS', 'SR-MPLS', 'OSPF', 'IS-IS', 'L3VPN'],
-    useCases: ['wan', 'multisite'],
+    useCases: ['wan', 'multisite', 'multicloud', 'aviatrix'],
     detail: '4x100G, 400Gbps, universal edge router, Junos',
   },
 
@@ -1153,8 +1153,8 @@ export const LAYER_PAIRS: Record<UseCase, string[]> = {
   campus: ['distribution-access', 'core-distribution'],
   wan: ['wan-edge'],
   multisite: ['spine-leaf', 'wan-edge'],
-  multicloud: ['cloud-gw', 'cloud-transit'],
-  aviatrix: ['cloud-gw', 'cloud-transit'],
+  multicloud: ['cloud-gw', 'cloud-transit', 'wan-edge'],
+  aviatrix: ['cloud-gw', 'cloud-transit', 'wan-edge'],
   oran: ['oran-fronthaul', 'oran-midhaul', 'oran-core'],
 }
 

@@ -693,6 +693,55 @@ describe('Endpoint-driven port-math for all use cases', () => {
       const transit = devices.filter(d => d.subLayer === 'cloud-transit')
       expect(transit.length).toBe(5)
     })
+
+    // ── AA2: the on-prem on-ramp ──────────────────────────────────────────
+    // A multicloud design used to contain ONLY cloud gateways and transit
+    // VPCs — virtual appliances that terminate tunnels with nothing on the
+    // ground to originate them. An 800-endpoint design had no device those
+    // endpoints could physically attach to.
+    it('gives every site an on-prem edge PAIR to terminate the circuits', () => {
+      for (const useCase of ['multicloud', 'aviatrix'] as const) {
+        for (const numSites of [1, 2, 5]) {
+          const devices = buildDeviceList({
+            useCase, scale: 'medium', siteCode: 'CLD', totalEndpoints: 800, numSites,
+          })
+          const edges = devices.filter(d => d.subLayer === 'wan-edge')
+          expect(edges.length, `${useCase}/${numSites} sites`).toBe(numSites * 2)
+        }
+      }
+    })
+
+    it('picks an on-ramp that can actually carry a cloud circuit', () => {
+      const [edge] = buildDeviceList({
+        useCase: 'multicloud', scale: 'medium', siteCode: 'CLD',
+        totalEndpoints: 800, numSites: 1,
+      }).filter(d => d.subLayer === 'wan-edge')
+      // The gateway side is IPsec/Direct Connect, so the on-ramp needs
+      // encryption and real throughput — not a 100 Mbps branch router.
+      expect(edge.features).toContain('IPSec')
+      expect(parseInt(edge.speed, 10)).toBeGreaterThanOrEqual(10)
+    })
+
+    it('honours the budget tier and the vendor preference for the on-ramp', () => {
+      const pick = (o: Record<string, unknown>) => buildDeviceList({
+        useCase: 'multicloud', scale: 'medium', siteCode: 'CLD',
+        totalEndpoints: 800, numSites: 1, ...o,
+      }).filter(d => d.subLayer === 'wan-edge')[0]
+      expect(pick({ budgetTier: 'smb' }).model).toBe('ISR 4331')
+      expect(pick({ budgetTier: 'enterprise' }).model).toBe('Catalyst 8300 Edge')
+      expect(pick({ vendorPrefs: ['Juniper'] }).vendor).toBe('Juniper')
+    })
+
+    it('cables the on-ramps, so the tier is not billed and then orphaned', () => {
+      const devices = buildDeviceList({
+        useCase: 'multicloud', scale: 'medium', siteCode: 'CLD',
+        totalEndpoints: 800, numSites: 2,
+      })
+      const cabling = buildCabling(devices, { 'spine-leaf': 5, 'dist-access': 5, 'core-dist': 5, 'wan-edge': 2000 })
+      const wan = cabling.filter(c => c.fromLayer === 'wan-edge' || c.toLayer === 'wan-edge')
+      expect(wan.length).toBeGreaterThan(0)
+      expect(wan.reduce((n, c) => n + c.quantity, 0)).toBe(4)
+    })
   })
 
   it('all use cases produce devices when totalEndpoints > 0', () => {
