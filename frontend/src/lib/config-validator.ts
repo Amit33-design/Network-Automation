@@ -164,7 +164,7 @@ function checkSingleUnderlay(
     }
   }
 
-  const expectedISIS = ['dc', 'gpu', 'multisite', 'multicloud', 'aviatrix'].includes(useCase)
+  const expectedISIS = EVPN_FABRIC_USE_CASES.includes(useCase)
   const expectedOSPF = ['campus', 'wan'].includes(useCase)
 
   if (expectedISIS && hasISIS.length === 0 && hasOSPF.length > 0) {
@@ -230,14 +230,43 @@ function checkDuplicateRouterIds(configs: Record<string, string>): ValidationChe
   }
 }
 
+/**
+ * The use cases that build an EVPN/VXLAN fabric out of physical switches.
+ *
+ * This list was duplicated five times and four copies wrongly included
+ * `multicloud` and `aviatrix`. Those designs are cloud gateways and transit
+ * VPCs — Terraform-provisioned virtual appliances with no CLI (AA1) — plus
+ * the SD-WAN on-ramp added in AA2, whose overlay is OMP. There is no VXLAN
+ * fabric, no EVPN and no IS-IS underlay to find, so a clean multicloud design
+ * reported a hard V-03 FAIL ("requires BGP for EVPN/VXLAN"). It stayed latent
+ * until AA2 gave those designs any configs to validate at all.
+ *
+ * The fifth copy — V-14's — had already been written with the correct three
+ * entries, which is what a duplicated constant does: one copy learns and the
+ * others do not.
+ */
+const EVPN_FABRIC_USE_CASES: (UseCase | '')[] = ['dc', 'gpu', 'multisite']
+
+/** Designs whose overlay belongs to the cloud provider or the SD-WAN fabric. */
+const CLOUD_OVERLAY_USE_CASES: (UseCase | '')[] = ['multicloud', 'aviatrix']
+
 function checkBGPPresence(
   configs: Record<string, string>,
   useCase: UseCase | '',
 ): ValidationCheck {
   const hasBGP = hostnamesWithPattern(configs, RE_BGP)
-  const fabricUseCases: (UseCase | '')[] = ['dc', 'gpu', 'multisite', 'multicloud', 'aviatrix']
 
-  if (fabricUseCases.includes(useCase) && hasBGP.length === 0) {
+  if (CLOUD_OVERLAY_USE_CASES.includes(useCase) && hasBGP.length === 0) {
+    return {
+      id: 'V-03',
+      name: 'BGP fabric configuration',
+      category: 'Fabric',
+      severity: 'info',
+      detail: 'Cloud design — the transit overlay is provider-managed (see the Cloud Terraform export) and the on-prem on-ramp runs OMP, so no BGP is expected in the device CLI',
+    }
+  }
+
+  if (EVPN_FABRIC_USE_CASES.includes(useCase) && hasBGP.length === 0) {
     return {
       id: 'V-03',
       name: 'BGP fabric configuration',
@@ -415,14 +444,15 @@ function checkEVPNConsistency(
   configs: Record<string, string>,
   useCase: UseCase | '',
 ): ValidationCheck {
-  const fabricUseCases: (UseCase | '')[] = ['dc', 'gpu', 'multisite', 'multicloud', 'aviatrix']
-  if (!fabricUseCases.includes(useCase)) {
+  if (!EVPN_FABRIC_USE_CASES.includes(useCase)) {
     return {
       id: 'V-08',
       name: 'EVPN/VXLAN consistency',
       category: 'Fabric',
       severity: 'info',
-      detail: 'EVPN/VXLAN not expected for this use case',
+      detail: CLOUD_OVERLAY_USE_CASES.includes(useCase)
+        ? 'Cloud design — segmentation is the provider\'s (transit gateway / VPC), not a VXLAN fabric'
+        : 'EVPN/VXLAN not expected for this use case',
     }
   }
 
@@ -618,8 +648,7 @@ function checkBFDEnabled(
   configs: Record<string, string>,
   useCase: UseCase | '',
 ): ValidationCheck {
-  const fabricUseCases: (UseCase | '')[] = ['dc', 'gpu', 'multisite']
-  if (!fabricUseCases.includes(useCase)) {
+  if (!EVPN_FABRIC_USE_CASES.includes(useCase)) {
     return {
       id: 'V-13',
       name: 'BFD for fast failover',
@@ -658,8 +687,7 @@ function checkJumboMtu(
   configs: Record<string, string>,
   useCase: UseCase | '',
 ): ValidationCheck {
-  const fabricUseCases: (UseCase | '')[] = ['dc', 'gpu', 'multisite', 'multicloud', 'aviatrix']
-  if (!fabricUseCases.includes(useCase)) {
+  if (!EVPN_FABRIC_USE_CASES.includes(useCase)) {
     return {
       id: 'V-14',
       name: 'Jumbo MTU on VXLAN fabric',
