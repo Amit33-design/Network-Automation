@@ -445,6 +445,63 @@ function assertDcimExportInvariants(j: Journey, p: ReturnType<typeof runPipeline
  *  emits an 'oversubscription' warning (H4). So at year 0 either the effective
  *  ratio honors the target, or the validator flagged the degradation — a
  *  SILENT breach means the two capacity views have drifted apart. */
+/**
+ * AD1, permanent: the O-RAN fronthaul is ONE broadcast domain. The VLAN used
+ * to be derived from each switch's GLOBAL device index, so the two fronthaul
+ * switches at a site came out as 134 and 135 — a radio homed to one could
+ * never reach a DU behind the other — while the radios and DUs carried a
+ * placeholder, so neither end reconciled the other. Radio identity is checked
+ * here too: 24 byte-identical radios with no PCI is not a radio plan.
+ */
+function assertOranFabricInvariants(j: Journey, p: ReturnType<typeof runPipeline>) {
+  if (j.useCase !== 'oran') return
+  const ctx = `oran/${j.scale}/${j.totalEndpoints}ep`
+  const cfg = (d: { id: string }) => p.configs[d.id] ?? ''
+  const of = (role: string) => p.devices.filter(d => d.subLayer === role)
+
+  // Scanning every config is O(devices x config length) and an 8192-radio
+  // design has ~10k of them, so sample: every switch and DU (few, and the
+  // switch is where the bug was), plus a STRIDED sample of the radios — a
+  // stride catches an index-derived value, which is the failure mode.
+  const stride = Math.max(1, Math.ceil(of('oran-ru').length / 64))
+  const sampled = [
+    ...of('oran-fronthaul'), ...of('oran-du'),
+    ...of('oran-ru').filter((_, i) => i % stride === 0),
+  ]
+  const vlans = new Set<string>()
+  for (const dev of sampled) {
+    for (const re of [/vlan-id (\d+)/g, /^vlan (\d+)$/gm, /ptp vlan (\d+)/g]) {
+      for (const m of cfg(dev).matchAll(re)) {
+        if (m[1] !== '900' && m[1] !== '999') vlans.add(m[1])
+      }
+    }
+  }
+  expect(vlans.size, `${ctx}: fronthaul split across VLANs ${[...vlans].join('/')}`).toBe(1)
+
+  const pcis = of('oran-ru').map(r => /^pci (\d+)$/m.exec(cfg(r))?.[1])
+  expect(pcis.every(x => x !== undefined), `${ctx}: a radio has no PCI`).toBe(true)
+  if (pcis.length <= 1008) {
+    expect(new Set(pcis).size, `${ctx}: PCI collision across ${pcis.length} radios`).toBe(pcis.length)
+  } else {
+    // The PCI space is 1008 wide, so a larger design MUST reuse. What is not
+    // allowed is reusing SILENTLY: the reuse has to be spaced as widely as the
+    // space permits, said on the radio, and raised at design time.
+    expect(new Set(pcis).size, `${ctx}: reuse is tighter than the PCI space allows`).toBe(1008)
+    const sample = cfg(of('oran-ru')[1008])
+    expect(sample, `${ctx}: a radio reuses a PCI without saying so`).toContain('PCI REUSE')
+    const warned = validateBOM(p.devices, { useCase: 'oran', totalEndpoints: j.totalEndpoints })
+      .some(i => /PCI space/.test(i.message))
+    expect(warned, `${ctx}: PCI reuse never reaches the operator`).toBe(true)
+  }
+
+  // Every DU must point at an address a CU in this BOM actually owns.
+  const cuAddrs = new Set(of('oran-cu').map(c => /^  local-address (\S+)$/m.exec(cfg(c))?.[1]))
+  for (const du of of('oran-du')) {
+    const home = /cu-address (\S+)/.exec(cfg(du))?.[1]
+    expect(cuAddrs.has(home), `${ctx}: ${du.hostname} homes to ${home}, which no CU owns`).toBe(true)
+  }
+}
+
 function assertCapacityPlanInvariants(j: Journey, p: ReturnType<typeof runPipeline>) {
   const ctx = `${j.useCase}/${j.totalEndpoints}ep/${j.bandwidthPerServer}/${j.oversubscription}:1`
   const plan = computeCapacityPlan(p.devices, j.totalEndpoints, 0.2, 5, {
@@ -528,6 +585,7 @@ describe('E2E journey — universal invariants across full matrix', () => {
           assertZTPPlanInvariants(j, p)
           assertDcimExportInvariants(j, p)
           assertCapacityPlanInvariants(j, p)
+          assertOranFabricInvariants(j, p)
         })
       }
     }
@@ -632,7 +690,10 @@ describe('E2E journey — tiny & extreme scale edges', () => {
           expect(d.hostname, `${useCase}@${endpoints}: non-alnum hostname ${d.hostname}`)
             .toMatch(/^EDG-[A-Z0-9-]+$/)
         }
-      })
+        // O-RAN at 8192 endpoints builds ~10k devices and generates a config
+        // for every one, so this edge scenario legitimately takes several
+        // seconds. It is a scale check, not a latency check.
+      }, 30_000)
     }
   }
 })

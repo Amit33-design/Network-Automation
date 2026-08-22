@@ -5172,8 +5172,48 @@ function isIosXrPlatform(dev: BOMDevice): boolean {
 
 // ── O-RAN / Private 5G config generators (G-A10) ─────────────────────────────
 
-function oranCuConfig(dev: BOMDevice, idx: number): string {
-  const cuId = idx + 1
+/**
+ * O-RAN fronthaul is a SHARED broadcast domain, so its VLAN is a property of
+ * the fabric, not of any one switch. `oranFronthaulConfig` used to derive it
+ * from the GLOBAL device index (`idx + 100`), so in a 41-device design the two
+ * fronthaul switches at one cell site came out as VLAN 134 and 135 — a radio
+ * homed to one and its DU reached via the other could never exchange eCPRI.
+ * The radios and DUs carried a `<CHANGE-ME-ecpri-vlan>` placeholder, so
+ * nothing reconciled the two ends either.
+ */
+export const ORAN_FRONTHAUL_VLAN = 134
+export const ORAN_PTP_VLAN = 900
+export const ORAN_MGMT_VLAN = 999
+export const ORAN_PTP_DOMAIN = 24
+
+/** Physical Cell Identity range in 5G NR (TS 38.211): 0..1007. */
+const NR_PCI_MAX = 1008
+
+/**
+ * PCI for the nth radio. Consecutive assignment is deliberate: PCI mod 3 sets
+ * the SSB frequency-domain shift, so neighbouring cells — which are adjacent
+ * in this ordering — land on different shifts. The generated config still
+ * tells the operator to validate the plan against the real neighbour list;
+ * PCI collision/confusion is the classic 5G RAN outage.
+ */
+function oranPci(ruIdx: number): number {
+  return ruIdx % NR_PCI_MAX
+}
+
+/** The CU an O-DU homes to, round-robin over the CUs actually in the BOM. */
+function oranHomeCu(duIdx: number, allDevices: BOMDevice[]): { idx: number; hostname: string } {
+  const cus = allDevices.filter(d => d.subLayer === 'oran-cu')
+  if (!cus.length) return { idx: 0, hostname: '<CHANGE-ME-cu-hostname>' }
+  const i = duIdx % cus.length
+  return { idx: i, hostname: cus[i].hostname }
+}
+
+function oranCuConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  // Tier-scoped (Z5): the id used to come from the global device index.
+  const cuIdx = roleIndex(dev, allDevices, idx)
+  const cuId = cuIdx + 1
+  const f1cIp = ipAdd('10.240.1.0', cuIdx + 1)
+  const f1uIp = ipAdd('10.240.2.0', cuIdx + 1)
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : O-RAN Centralized Unit (O-CU-CP + O-CU-UP)
@@ -5190,10 +5230,10 @@ cell-id <CHANGE-ME-nci>
 
 # ── F1 Interface (CU ↔ DU) ──────────────────────────────────────────────────
 f1-c:
-  local-address <CHANGE-ME-cu-f1c-ip>
+  local-address ${f1cIp}
   sctp-port 38472
 f1-u:
-  local-address <CHANGE-ME-cu-f1u-ip>
+  local-address ${f1uIp}
   gtp-u-port 2152
 
 # ── E1 Interface (CU-CP ↔ CU-UP) ───────────────────────────────────────────
@@ -5213,7 +5253,7 @@ ng-u:
 # ── PTP Timing (ITU-T G.8275.1 Telecom Profile) ─────────────────────────────
 ptp:
   profile g8275.1
-  domain 24
+  domain ${ORAN_PTP_DOMAIN}
   clock-class slave
   transport ethernet
   announce-interval -3
@@ -5251,8 +5291,17 @@ qos:
 `
 }
 
-function oranDuConfig(dev: BOMDevice, idx: number): string {
-  const duId = idx + 1
+function oranDuConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  // Tier-scoped (Z5): with two CUs ahead of them in the BOM the DU ids used
+  // to start at 3, and every DU shared one <CHANGE-ME-du-f1c-ip> and pointed
+  // at one <CHANGE-ME-cu-f1c-ip> even though the design has two CUs.
+  const duIdx = roleIndex(dev, allDevices, idx)
+  const duId = duIdx + 1
+  const cu = oranHomeCu(duIdx, allDevices)
+  const duF1c = ipAdd('10.241.1.0', duIdx + 1)
+  const duF1u = ipAdd('10.241.2.0', duIdx + 1)
+  const cuF1c = ipAdd('10.240.1.0', cu.idx + 1)
+  const cuF1u = ipAdd('10.240.2.0', cu.idx + 1)
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : O-RAN Distributed Unit (O-DU)
@@ -5267,18 +5316,19 @@ plmn-id mcc <CHANGE-ME-mcc> mnc <CHANGE-ME-mnc>
 
 # ── F1 Interface (DU → CU) ──────────────────────────────────────────────────
 f1-c:
-  local-address <CHANGE-ME-du-f1c-ip>
-  cu-address <CHANGE-ME-cu-f1c-ip>
+  local-address ${duF1c}
+  cu-address ${cuF1c}            # ${cu.hostname}
   sctp-port 38472
 f1-u:
-  local-address <CHANGE-ME-du-f1u-ip>
-  cu-address <CHANGE-ME-cu-f1u-ip>
+  local-address ${duF1u}
+  cu-address ${cuF1u}            # ${cu.hostname}
   gtp-u-port 2152
 
 # ── eCPRI Fronthaul (DU ↔ RU — O-RAN 7.2x split) ───────────────────────────
 ecpri:
   transport ethernet
-  vlan-id <CHANGE-ME-ecpri-vlan>
+  vlan-id ${ORAN_FRONTHAUL_VLAN}
+  local-address ${ipAdd('10.242.0.0', duIdx + 1)}
   message-type iq-data
   # O-RAN 7.2x lower-layer split: RU handles RF + low-PHY (FFT/beamforming),
   # DU handles high-PHY + MAC + RLC
@@ -5292,7 +5342,7 @@ ecpri:
 # ── PTP Timing (ITU-T G.8275.1 Telecom Profile) ─────────────────────────────
 ptp:
   profile g8275.1
-  domain 24
+  domain ${ORAN_PTP_DOMAIN}
   clock-class slave
   transport ethernet
   sync-interval -4
@@ -5334,7 +5384,27 @@ management:
 `
 }
 
-function oranRuConfig(dev: BOMDevice, _idx: number): string {
+function oranRuConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  // Every O-RU in the dumped design was byte-identical apart from its
+  // hostname: no ru-id, no cell identity and no PCI. PCI planning is the
+  // defining O-RU parameter and PCI collision is the classic 5G RAN outage.
+  const ruIdx = roleIndex(dev, allDevices, idx)
+  const ruId = ruIdx + 1
+  const pci = oranPci(ruIdx)
+  // PCI reuse across a large deployment is normal and unavoidable — the space
+  // is 1008 wide. Silent reuse is not: say so on the radio that is reusing.
+  const ruTotal = allDevices.filter(d => d.subLayer === 'oran-ru').length
+  const pciReused = ruTotal > NR_PCI_MAX
+    ? `\n# PCI REUSE: this design has ${ruTotal} radios in a 1008-wide PCI space.
+# This PCI repeats every ${NR_PCI_MAX} radios. Confirm the reusing cells are far
+# enough apart that neither appears in the other's neighbour list.`
+    : ''
+  const ruIp = ipAdd('10.242.128.0', ruIdx + 1)
+  const mgmtIp = ipAdd('10.243.0.0', ruIdx + 1)
+  // Each radio homes to a DU; sectors are grouped three to a DU, which is the
+  // ratio buildDeviceList sizes the DU tier with.
+  const dus = allDevices.filter(d => d.subLayer === 'oran-du')
+  const duHost = dus.length ? dus[Math.floor(ruIdx / 3) % dus.length].hostname : '<CHANGE-ME-du-hostname>'
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : O-RAN Radio Unit (O-RU)
@@ -5344,11 +5414,20 @@ function oranRuConfig(dev: BOMDevice, _idx: number): string {
 
 # ── System Identity ──────────────────────────────────────────────────────────
 hostname ${dev.hostname}
+ru-id ${ruId}
+# Physical Cell Identity — 0..1007 (TS 38.211). PCI mod 3 sets the SSB
+# frequency-domain shift, so adjacent radios are given adjacent PCIs and
+# therefore different shifts. VALIDATE this plan against the real neighbour
+# list before go-live: a PCI collision is a silent, hard-to-find outage.${pciReused}
+pci ${pci}
+cell-id <CHANGE-ME-nci-prefix>${String(ruId).padStart(3, '0')}
+served-by ${duHost}
 
 # ── eCPRI Fronthaul (RU → DU — O-RAN 7.2x split) ───────────────────────────
 ecpri:
   transport ethernet
-  vlan-id <CHANGE-ME-ecpri-vlan>
+  vlan-id ${ORAN_FRONTHAUL_VLAN}
+  local-address ${ruIp}
   du-mac <CHANGE-ME-du-mac-address>
   ru-mac <CHANGE-ME-ru-mac-address>
   # O-RAN 7.2x split: RU performs RF + low-PHY (FFT, iFFT, beamforming)
@@ -5359,7 +5438,7 @@ ecpri:
 # ── PTP Timing (G.8275.1 — slave to DU/switch) ──────────────────────────────
 ptp:
   profile g8275.1
-  domain 24
+  domain ${ORAN_PTP_DOMAIN}
   clock-class slave-only
   transport ethernet
   sync-interval -4
@@ -5384,7 +5463,7 @@ radio:
 
 # ── Management ───────────────────────────────────────────────────────────────
 management:
-  ip-address <CHANGE-ME-mgmt-ip>/24
+  ip-address ${mgmtIp}/24
   gateway <CHANGE-ME-mgmt-gw>
   o1-interface:
     ves-collector <CHANGE-ME-ves-collector-ip>:8443
@@ -5395,7 +5474,8 @@ management:
 `
 }
 
-function oranFronthaulConfig(dev: BOMDevice, idx: number): string {
+function oranFronthaulConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  const fhIdx = roleIndex(dev, allDevices, idx)
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
 ! Role   : O-RAN Fronthaul Switch (PTP Transparent-Clock)
@@ -5419,24 +5499,29 @@ ntp server <CHANGE-ME-ntp-secondary>
 ! jitter for eCPRI Class C7 (±65ns requirement).
 ptp mode transparent
 ptp profile g8275.1
-ptp domain 24
-ptp vlan ${idx + 100}
+ptp domain ${ORAN_PTP_DOMAIN}
+ptp vlan ${ORAN_FRONTHAUL_VLAN}
 !
 ! ── eCPRI Fronthaul VLANs ────────────────────────────────────────────────────
-vlan ${idx + 100}
-  name ECPRI-FRONTHAUL-${idx + 1}
+! Fronthaul is ONE broadcast domain across the site: every fronthaul switch,
+! every O-RU and every O-DU must agree on this VLAN. It used to be derived
+! from the switch's global device index, so the two switches at a site came
+! out as VLAN 134 and 135 and a radio homed to one could not reach a DU
+! behind the other.
+vlan ${ORAN_FRONTHAUL_VLAN}
+  name ECPRI-FRONTHAUL
 !
-vlan 900
+vlan ${ORAN_PTP_VLAN}
   name PTP-TIMING
 !
-vlan 999
+vlan ${ORAN_MGMT_VLAN}
   name MGMT-OOB
 !
 ! ── Downlink interfaces (to O-RUs) ──────────────────────────────────────────
 interface range Ethernet1/1-48
   description O-RU-DOWNLINK
   switchport mode trunk
-  switchport trunk allowed vlan ${idx + 100},900,999
+  switchport trunk allowed vlan ${ORAN_FRONTHAUL_VLAN},${ORAN_PTP_VLAN},${ORAN_MGMT_VLAN}
   spanning-tree port type edge trunk
   priority-flow-control mode on
   mtu 9216
@@ -5448,7 +5533,7 @@ interface range Ethernet1/1-48
 interface range Ethernet1/49-54
   description UPLINK-TO-DU-MIDHAUL
   switchport mode trunk
-  switchport trunk allowed vlan ${idx + 100},900,999
+  switchport trunk allowed vlan ${ORAN_FRONTHAUL_VLAN},${ORAN_PTP_VLAN},${ORAN_MGMT_VLAN}
   mtu 9216
   priority-flow-control mode on
   no shutdown
@@ -5476,8 +5561,8 @@ policy-map type queuing PM-FRONTHAUL-QUEUING
     bandwidth remaining percent 100
 !
 ! ── Management ───────────────────────────────────────────────────────────────
-interface Vlan999
-  ip address <CHANGE-ME-mgmt-ip>/24
+interface Vlan${ORAN_MGMT_VLAN}
+  ip address ${ipAdd('10.243.128.0', fhIdx + 1)}/24
   no shutdown
 !
 ip route 0.0.0.0/0 <CHANGE-ME-mgmt-gw>
@@ -5493,9 +5578,13 @@ ip access-list MGMT-ACL
 `
 }
 
-function oranMidhaulConfig(dev: BOMDevice, idx: number): string {
-  const routerId = `10.250.1.${idx + 1}`
-  const isisNet = `49.0001.0102.5001.${String(idx + 1).padStart(4, '0')}.00`
+function oranMidhaulConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  // Tier-scoped (Z5): the router-id and NET came from the global device
+  // index, so in a 41-device design the two midhaul routers were numbered
+  // 37 and 38 rather than 1 and 2.
+  const mhIdx = roleIndex(dev, allDevices, idx)
+  const routerId = ipAdd('10.250.1.0', mhIdx + 1)
+  const isisNet = `49.0001.0102.5001.${String(mhIdx + 1).padStart(4, '0')}.00`
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
 ! Role   : O-RAN Midhaul/Backhaul Router (PTP Boundary-Clock)
@@ -5508,7 +5597,7 @@ hostname ${dev.hostname}
 ! ── PTP — IEEE 1588 Boundary Clock (G.8275.1) ────────────────────────────────
 ! Midhaul routers operate as boundary-clocks, regenerating PTP timing for
 ! each segment. SyncE provides physical-layer frequency reference.
-ptp clock boundary domain 24
+ptp clock boundary domain ${ORAN_PTP_DOMAIN}
   clock-port GM-UPSTREAM master
     transport ethernet multicast
     announce interval -3
@@ -5711,7 +5800,7 @@ gnss:
 # ── PTP Configuration (ITU-T G.8275.1 Telecom Profile) ──────────────────────
 ptp:
   profile g8275.1
-  domain 24
+  domain ${ORAN_PTP_DOMAIN}
   clock-class grandmaster
   clock-accuracy 0x21            # ±100ns (GNSS-locked)
   time-source gps
@@ -5778,13 +5867,13 @@ function isOranSubLayer(subLayer: string): boolean {
   return subLayer.startsWith('oran-')
 }
 
-function oranConfig(dev: BOMDevice, idx: number): string {
+function oranConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
   switch (dev.subLayer) {
-    case 'oran-cu':        return oranCuConfig(dev, idx)
-    case 'oran-du':        return oranDuConfig(dev, idx)
-    case 'oran-ru':        return oranRuConfig(dev, idx)
-    case 'oran-fronthaul': return oranFronthaulConfig(dev, idx)
-    case 'oran-midhaul':   return oranMidhaulConfig(dev, idx)
+    case 'oran-cu':        return oranCuConfig(dev, idx, allDevices)
+    case 'oran-du':        return oranDuConfig(dev, idx, allDevices)
+    case 'oran-ru':        return oranRuConfig(dev, idx, allDevices)
+    case 'oran-fronthaul': return oranFronthaulConfig(dev, idx, allDevices)
+    case 'oran-midhaul':   return oranMidhaulConfig(dev, idx, allDevices)
     case 'oran-core':      return oranCoreConfig(dev, idx)
     case 'oran-timing':    return oranTimingConfig(dev, idx)
     default:               return genericConfig(dev)
@@ -5803,7 +5892,7 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   const needsRoce = isGpu || ((v === 'Dell EMC' || v === 'NVIDIA') && useCase === 'dc')
 
   if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx)
-  if (isOranSubLayer(l))                                             return oranConfig(dev, idx)
+  if (isOranSubLayer(l))                                             return oranConfig(dev, idx, allDevices)
   if (v === 'Cisco'     && l === 'firewall')                         return isFtdModel(dev.model) ? ciscoFtdFirewallConfig(dev, idx, useCase, allDevices) : ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'sdwan-controller')                 return sdwanControllerConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge' && isSdWanEdge(dev))     return sdwanEdgeConfig(dev, idx, allDevices)

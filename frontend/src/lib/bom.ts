@@ -1165,6 +1165,22 @@ export function validateBOM(
   const uc = state.useCase ?? 'dc'
   const endpoints = state.totalEndpoints ?? 0
 
+  // ── O-RAN radio plan ──
+  // PCI is a 0..1007 identifier (TS 38.211). Past that the plan must reuse,
+  // which is normal in a large deployment but must be a decision, not a
+  // surprise: a PCI collision between cells that can see each other is the
+  // classic 5G RAN outage and is close to invisible once deployed.
+  if (uc === 'oran') {
+    const radios = devices.filter(d => d.subLayer === 'oran-ru').length
+    if (radios > 1008) {
+      issues.push({
+        severity: 'warning',
+        category: 'capacity',
+        message: `${radios} radios exceed the 1008-wide PCI space, so PCIs repeat every 1008 cells. Confirm reusing cells are geographically separated and do not appear in each other's neighbour lists.`,
+      })
+    }
+  }
+
   // ── Budget tier validation ──
   const tier = state.budgetTier
   if (tier && tier in BUDGET_BANDS) {
