@@ -141,9 +141,44 @@ VENDOR_PLATFORM_OVERRIDE: dict[str, str] = {
 #
 # Until those template families exist (tracker AB7), refuse explicitly rather
 # than guess. Fail loudly beats a plausible-looking artifact.
-FABRIC_VENDORS_WITHOUT_TEMPLATES: frozenset[str] = frozenset({
-    "Nokia", "Dell EMC", "Extreme Networks", "Fortinet", "HPE Aruba", "Palo Alto",
-})
+FABRIC_LAYERS = ("dc-spine", "dc-leaf", "gpu-spine", "gpu-tor")
+CAMPUS_LAYERS = ("campus-access", "campus-dist", "campus-core")
+
+# Which layers each unsupported vendor ACTUALLY supplies, so the refusal fires
+# exactly where the vendor's own hardware would be — and nowhere else.
+#
+# The first version of this guard keyed on the vendor alone and applied to the
+# fabric layers, which was wrong in both directions:
+#
+#   Too broad — Fortinet, HPE Aruba and Palo Alto were refused for spines and
+#   leaves. Picking "Palo Alto" for a DC design gives you Palo Alto FIREWALLS
+#   and Cisco Nexus switches, so the API refused to generate a Cisco fabric it
+#   generates perfectly well. (Aruba does sell DC switches, so its fabric
+#   refusal was correct; its campus gear was the part being missed.)
+#
+#   Too narrow — the layers those vendors DO supply were never guarded, so a
+#   Palo Alto firewall came back as Cisco IOS-XE zone-based firewall and Aruba
+#   campus switches came back as Catalyst IOS-XE. That is the very defect AB7
+#   set out to stop, one layer over.
+#
+# Layer sets mirror frontend `VENDOR_PRODUCT_MAP` (lib/bom.ts) — the source of
+# truth for which SKUs a vendor preference actually selects.
+VENDOR_UNSUPPORTED_LAYERS: dict[str, tuple[str, ...]] = {
+    "Nokia":            FABRIC_LAYERS,
+    "Dell EMC":         FABRIC_LAYERS,
+    "Extreme Networks": FABRIC_LAYERS + CAMPUS_LAYERS,
+    "HPE Aruba":        FABRIC_LAYERS + CAMPUS_LAYERS,
+    "Fortinet":         CAMPUS_LAYERS + ("fw",),
+    "Palo Alto":        ("fw",),
+}
+
+#: Vendors the API cannot generate for at all, for any layer they supply.
+FABRIC_VENDORS_WITHOUT_TEMPLATES: frozenset[str] = frozenset(VENDOR_UNSUPPORTED_LAYERS)
+
+
+def vendor_supports_layer(vendor: str, layer: str) -> bool:
+    """False when `vendor` builds this layer's hardware and we have no template."""
+    return layer not in VENDOR_UNSUPPORTED_LAYERS.get(vendor, ())
 
 
 def _unsupported_vendor_config(hostname: str, layer: str, vendor: str) -> str:
@@ -458,8 +493,7 @@ def generate_all_configs(state: dict[str, Any]) -> dict[str, str]:
                 # AB7: refuse rather than emit another vendor's CLI. Only the
                 # fabric layers take the vendor override, so only those can be
                 # mislabelled; campus/WAN layers are Cisco by design.
-                if (detected_vendor in FABRIC_VENDORS_WITHOUT_TEMPLATES
-                        and layer in ("dc-spine", "dc-leaf", "gpu-spine", "gpu-tor")):
+                if not vendor_supports_layer(detected_vendor, layer):
                     results[ctx["hostname"]] = _unsupported_vendor_config(
                         ctx["hostname"], layer, detected_vendor,
                     )
