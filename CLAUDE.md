@@ -1161,6 +1161,60 @@ config-gen tests must keep passing; add new tests alongside).
 "Two bugs found while building it: SVG `<marker>` content does not resolve `currentColor` (it inherits from `<defs>`, not the referencing element) so the arrowheads were invisible — now explicit fills; and the fabric caption rendered the raw store enum `vxlan_evpn`, which a new `overlayLabel()` helper now formats as `VXLAN/EVPN` in all three places it appeared. 6 tests | [x] | `HLDTopologyDiagram.tsx`; `HLDTopologyDiagram.test.tsx` 20→26; 1354 tests |
 | AC2 | **Tier bifurcation applied to every remaining builder** — campus (CORE / DISTRIBUTION / ACCESS / END USERS + a `CAMPUS LAN` region captioned with the IGP and FHRP), GPU (SPINE / ToR / GPU COMPUTE / STORAGE + `LOSSLESS FABRIC` captioned RoCEv2 · PFC pri-3 · ECN/DCQCN, and an EAST–WEST RDMA rail), WAN (SERVICE PROVIDER / HUB / WAN EDGE / BRANCH + `WAN OVERLAY`), O-RAN (5GC / O-CU / FRONTHAUL SW / O-DU / O-RU + a `FRONTHAUL` region captioned eCPRI 7.2x · PTP G.8275.1). All eight use cases are now covered, since multisite/multicloud/aviatrix route through the DC builder. **The BORDER LEAF callout is gated to `dc`/`multisite`** — multicloud and aviatrix reuse that builder but have no on-prem border pair, so the callout would name devices their design does not contain. New tests: a per-use-case tier/region matrix, every use case draws at least one traffic axis, and a sweep asserting **no builder leaks a raw store enum** (`vxlan_evpn`) into any caption | [x] | `HLDTopologyDiagram.tsx`; `HLDTopologyDiagram.test.tsx` 26→32; 1361 tests, tsc + build green |
 
+### AD. Non-DC config correctness — 5th-pass audit (sourced 2026-08-22)
+
+> Audits 1–3 (groups X/Y/Z) reviewed DC / GPU / campus **configs**. Group AA
+> reviewed the non-DC use cases' **BOM and cabling** but never the configs
+> those designs generate. This pass dumps WAN, multisite, multicloud, Aviatrix
+> and O-RAN artifacts and reviews them the way an architect would.
+>
+> Both structural themes from the 3rd-pass audit recur, in new places:
+> **fix-parity** (the Z5 "identity is tier-scoped" fix never reached the
+> O-RAN or SD-WAN generators) and **BOM↔config disagreement** (the fronthaul
+> switch hardcodes a VLAN the radios attached to it never learn).
+>
+> **Findings:**
+> - **CRIT (O-5)** `oranFronthaulConfig` sets the eCPRI VLAN to `idx + 100`
+>   — the GLOBAL device index. In a 41-device design the two fronthaul
+>   switches at one cell site came out as VLAN **134** and **135**, so a
+>   radio homed to one switch and its DU reached via the other are on
+>   different fronthaul VLANs. The defining link of the architecture is
+>   broken by construction.
+> - **CRIT (W-1)** `sdwanEdgeConfig` emits **vEdge / Viptela OS** CLI
+>   (top-level `vpn 0`, `system-ip`, `omp`) but the header claims IOS-XE
+>   SD-WAN, and two of the three SD-WAN SKUs — the ASR 1002-HX (the default
+>   WAN edge) and the Catalyst 8300 (the new AA2 cloud on-ramp) — are cEdges
+>   running IOS-XE, where that syntax does not exist.
+> - **MAJOR (O-3)** all 24 O-RUs in the dump were byte-identical apart from
+>   the hostname: no `ru-id`, no cell identity, and **no PCI**. PCI planning
+>   is the defining O-RU parameter and PCI collision is the classic 5G RAN
+>   outage.
+> - **MAJOR (O-4)** the O-RU and O-DU carry `<CHANGE-ME-ecpri-vlan>` while
+>   the switch they attach to hardcodes a concrete VLAN — the two ends of
+>   the fronthaul disagree.
+> - **MAJOR (O-1/O-2)** `gnb-cu-id`, `gnb-du-id` and the midhaul router-id /
+>   IS-IS NET all derive from the global device index (DU ids started at 3
+>   because two CUs preceded them); every DU shares one `<CHANGE-ME-du-f1c-ip>`
+>   and points at one `<CHANGE-ME-cu-f1c-ip>` although the design has two CUs.
+> - **MAJOR (W-2/W-3/W-4)** the SD-WAN edge configures NTP and syslog twice,
+>   in two dialects, with different placeholders (AA1 added the `system`-block
+>   services without removing the trailing ones); opens the top-level `policy`
+>   container three times; and mixes vEdge `policy / zone-based-fw` with
+>   IOS-XE `zone security` / `zone-pair` in one file.
+> - **MINOR (W-8)** OMP advertises `ospf external` with no OSPF anywhere.
+> - **MINOR (M-1)** the validator classifies multicloud/aviatrix as a
+>   VXLAN/EVPN fabric, so a clean design reports a hard V-03 FAIL
+>   ("requires BGP for EVPN/VXLAN"). Latent until AA2 gave those designs
+>   configs to validate.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| AD1 | **O-RAN fronthaul coherence + cell identity** (O-1..O-5) — (1) **the critical one**: the eCPRI VLAN was `idx + 100`, the switch's GLOBAL device index, so the two fronthaul switches at one site came out as VLAN **134 and 135** while the radios and DUs carried `<CHANGE-ME-ecpri-vlan>` — the fronthaul was broken by construction and neither end reconciled the other. New exported `ORAN_FRONTHAUL_VLAN`/`ORAN_PTP_VLAN`/`ORAN_MGMT_VLAN`/`ORAN_PTP_DOMAIN` fabric constants, used by the switch, the O-RU and the O-DU (and the 6 sites that hardcoded `domain 24`, so a PTP-domain split cannot happen the same way). (2) **Cell identity**: all 24 O-RUs were byte-identical apart from the hostname — now `ru-id`, a derived `cell-id`, `served-by <its DU>`, and a **PCI** (`oranPci`, consecutive so neighbours differ mod 3, which is what sets the SSB shift). (3) **Tier-scoped identity** (Z5 parity — the fix never reached these generators): `gnb-cu-id`, `gnb-du-id` and the midhaul router-id/IS-IS NET came from the global index, so DU ids started at 3 and the midhaul routers were numbered 37/38. (4) **Real addressing** via `ipAdd` for CU/DU F1-C/F1-U, RU fronthaul + mgmt, and the switch mgmt SVI — every DU used to share one `<CHANGE-ME-du-f1c-ip>` and point at one `<CHANGE-ME-cu-f1c-ip>` despite two CUs; DUs now home round-robin to a **real** CU address. (5) Writing the invariant surfaced a further truth: past **1008 radios** the PCI space must wrap. Reuse is correct, silent reuse is not — the reusing radio now says so and `validateBOM` raises it at design time. New permanent e2e invariant `assertOranFabricInvariants` (one fronthaul VLAN fleet-wide, unique in-range PCIs or explicit spaced reuse, every DU homed to an address a CU owns). 9 new tests | [x] | `configgen.ts` O-RAN generators + `bom.ts` `validateBOM` + `oran.test.ts` (34→43) + `e2e-journey.test.ts`; 1387 tests, tsc + build green |
+| AD2 | SD-WAN dialect correctness (W-1..W-4, W-8) | [ ] | `configgen.ts` `sdwanEdgeConfig` |
+| AD3 | Validator use-case classification for multicloud/aviatrix (M-1) | [ ] | `config-validator.ts` |
+
+---
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)
