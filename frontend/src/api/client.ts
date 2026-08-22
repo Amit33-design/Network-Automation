@@ -150,11 +150,16 @@ export const generateRemediation = (devices: RemediationDeviceInput[]) =>
   post<ConfigRemediationResponse>('/api/drift/remediate', { devices })
 
 // ── Config generation ─────────────────────────────────────────────────────────
+//
+// Deliberately NOT exposed. `POST /api/generate-configs` exists and works, but
+// the browser engine (`lib/configgen.ts`) is strictly better: it generates for
+// all 10 catalogue vendors, while the API has template families for 4 and
+// refuses the rest by design (AB7/AD4). A client function pointing at the
+// weaker engine is a trap for whoever wires it next, so the wizard always
+// generates client-side — in live mode too. Reintroduce this only if the
+// template gap is closed.
 
 import type { DesignState } from '@/types'
-
-export const generateConfigs = (state: DesignState) =>
-  post<{ configs: Record<string, string>; generated_at: number }>('/api/generate-configs', state)
 
 // ── Pre / Post checks ─────────────────────────────────────────────────────────
 
