@@ -647,3 +647,50 @@ describe('Management-plane detection and cloud-only designs (group AA1)', () => 
     expect(bad.checks[0].severity).toBe('fail')
   })
 })
+
+// ── AD3: use-case classification ─────────────────────────────────────────────
+// The 5th-pass audit found a clean multicloud design reporting a hard V-03
+// FAIL — "requires BGP for EVPN/VXLAN". A multicloud design is cloud gateways
+// and transit VPCs (Terraform-provisioned, no CLI) plus an SD-WAN on-ramp
+// whose overlay is OMP. There is no VXLAN fabric to find. The bug was latent
+// until AA2 gave those designs any configs to validate at all.
+describe('AD3 — cloud designs are not VXLAN fabrics', () => {
+  const design = (useCase: 'multicloud' | 'aviatrix') => {
+    const devices = buildDeviceList({
+      useCase, scale: 'medium', siteCode: 'CLD', totalEndpoints: 800, numSites: 2,
+    })
+    return validateConfigs({
+      configs: generateAllConfigs(devices, useCase), devices, useCase,
+    })
+  }
+  const check = (r: ReturnType<typeof validateConfigs>, id: string) =>
+    r.checks.find(c => c.id === id)!
+
+  for (const useCase of ['multicloud', 'aviatrix'] as const) {
+    it(`${useCase}: reports no failures or warnings on a clean design`, () => {
+      const bad = design(useCase).checks.filter(c => c.severity === 'fail' || c.severity === 'warn')
+      expect(bad.map(c => `${c.id}: ${c.detail}`)).toEqual([])
+    })
+
+    it(`${useCase}: V-03 explains the control plane instead of demanding BGP`, () => {
+      const c = check(design(useCase), 'V-03')
+      expect(c.severity).toBe('info')
+      expect(c.detail).toMatch(/OMP|provider-managed/)
+    })
+
+    it(`${useCase}: V-08 does not expect a VXLAN fabric`, () => {
+      const c = check(design(useCase), 'V-08')
+      expect(c.severity).toBe('info')
+      expect(c.detail).toMatch(/provider|not expected/)
+    })
+  }
+
+  it('still fails a real fabric that has no BGP', () => {
+    // The check must keep its teeth where it belongs.
+    const r = validateConfigs({
+      configs: { 'DC-LEAF-01': 'hostname DC-LEAF-01\ninterface Ethernet1/1\n' },
+      devices: [], useCase: 'dc',
+    })
+    expect(check(r, 'V-03').severity).toBe('fail')
+  })
+})
