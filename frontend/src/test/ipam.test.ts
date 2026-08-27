@@ -22,12 +22,20 @@ const dcDevices: BOMDevice[] = [
 ]
 
 describe('lib/ipam — data generators', () => {
-  it('genIPBlocks returns DC-specific overlay/underlay blocks for dc', () => {
+  it('genIPBlocks returns the real infrastructure blocks plus the DC overlay', () => {
+    // Was asserting 'MANAGEMENT OOB' (10.0.0.0/24) and 'DC UNDERLAY'
+    // (10.1.0.0/20). Neither existed in any generated config: management is
+    // the campus SVI inside 10.255.0.0/16, and the fabric P2P is 10.99.0.0/16
+    // — which the export separately, and contradictorily, called
+    // 10.100.0.0/23, the reserved loopback-overflow supernet (AF3).
     const blocks = genIPBlocks('dc', 500, 1, dcDevices)
     const labels = blocks.map(b => b.label).join(' | ')
-    expect(labels).toContain('MANAGEMENT OOB')
-    expect(labels).toContain('DC UNDERLAY')
+    expect(labels).toContain('P2P FABRIC LINKS')
+    expect(labels).toContain('LOOPBACKS + MGMT SVI')
     expect(labels).toContain('DC OVERLAY')
+    expect(labels).not.toContain('DC UNDERLAY')
+    // The P2P block is the one the generators actually allocate from.
+    expect(blocks.find(b => b.label === 'P2P FABRIC LINKS')!.subnet).toBe('10.99.0.0/16')
   })
 
   it('genIPBlocks adds GPU/storage blocks for gpu', () => {
