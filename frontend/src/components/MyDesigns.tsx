@@ -1,39 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAppStore } from '@/store/useAppStore'
-import { useAuthStore, authScopeKey } from '@/store/useAuthStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import { cn } from '@/lib/utils'
 import type { AppState, UserActivity } from '@/types'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface SavedDesign {
-  id: string
-  name: string
-  savedAt: string
-  state: AppState
-}
-
-const STORAGE_KEY_BASE = 'netdesign-saved-designs'
-
-function storageKey(): string {
-  const scope = authScopeKey()
-  return scope === 'guest' ? STORAGE_KEY_BASE : `${STORAGE_KEY_BASE}:${scope}`
-}
+import {
+  loadAllDesigns, saveDesign, removeDesign, isRemote, type SavedDesign,
+} from '@/lib/design-store'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function loadDesigns(): SavedDesign[] {
-  try {
-    const raw = localStorage.getItem(storageKey())
-    return raw ? (JSON.parse(raw) as SavedDesign[]) : []
-  } catch {
-    return []
-  }
-}
-
-function persistDesigns(designs: SavedDesign[]) {
-  localStorage.setItem(storageKey(), JSON.stringify(designs))
-}
 
 function formatDate(iso: string) {
   try {
@@ -96,10 +70,15 @@ export function MyDesigns({ open, onClose }: MyDesignsProps) {
   const [activities, setActivities] = useState<UserActivity[]>([])
 
   useEffect(() => {
-    if (open) {
-      setDesigns(loadDesigns())
-      setActivities(getActivities())
-    }
+    if (!open) return
+    let cancelled = false
+    setActivities(getActivities())
+    void loadAllDesigns().then(({ designs: loaded, error }) => {
+      if (cancelled) return
+      setDesigns(loaded)
+      if (error) showNote(error)
+    })
+    return () => { cancelled = true }
   }, [open, getActivities])
 
   const handleKeyDown = useCallback(
@@ -117,22 +96,15 @@ export function MyDesigns({ open, onClose }: MyDesignsProps) {
     setTimeout(() => setNotification(null), 2500)
   }
 
-  function handleSave() {
+  async function handleSave() {
     const rawName = window.prompt('Enter a name for this design:', 'My Design')
     if (rawName === null) return
     const name = rawName.trim() || `Design ${new Date().toLocaleString()}`
 
     const currentState = useAppStore.getState() as AppState
-    const newDesign: SavedDesign = {
-      id: crypto.randomUUID(),
-      name,
-      savedAt: new Date().toISOString(),
-      state: currentState,
-    }
+    const { design, degraded } = await saveDesign(name, currentState, designs)
 
-    const updated = [newDesign, ...designs]
-    persistDesigns(updated)
-    setDesigns(updated)
+    setDesigns([design, ...designs])
     logActivity('created', name, currentState.useCase || 'unknown')
     setActivities(getActivities())
 
@@ -140,7 +112,9 @@ export function MyDesigns({ open, onClose }: MyDesignsProps) {
       useAuthStore.getState().setPrefs({ lastUseCase: currentState.useCase || undefined })
     }
 
-    showNote(`"${name}" saved successfully.`)
+    // Say where it went. A save that silently landed nowhere is the one
+    // outcome worth being loud about.
+    showNote(degraded ?? `"${name}" saved${design.origin === 'server' ? ' to your account' : ''}.`)
   }
 
   function handleLoad(design: SavedDesign) {
@@ -150,20 +124,21 @@ export function MyDesigns({ open, onClose }: MyDesignsProps) {
     onClose()
   }
 
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     if (confirmDeleteId !== id) {
       setConfirmDeleteId(id)
       return
     }
     const target = designs.find(d => d.id === id)
-    const updated = designs.filter(d => d.id !== id)
-    persistDesigns(updated)
-    setDesigns(updated)
     setConfirmDeleteId(null)
-    if (target) {
-      logActivity('deleted', target.name, target.state.useCase || 'unknown')
-      setActivities(getActivities())
-    }
+    if (!target) return
+
+    const error = await removeDesign(target, designs)
+    if (error) { showNote(error); return }
+
+    setDesigns(designs.filter(d => d.id !== id))
+    logActivity('deleted', target.name, target.state.useCase || 'unknown')
+    setActivities(getActivities())
     showNote('Design deleted.')
   }
 
@@ -227,7 +202,15 @@ export function MyDesigns({ open, onClose }: MyDesignsProps) {
         {/* Body */}
         <div className="overflow-y-auto flex-1 px-6 py-4">
           {tab === 'designs' ? (
-            designs.length === 0 ? (
+            <>
+            {/* Where these live. A user who signs in on another machine needs
+                to know whether to expect their designs to follow them. */}
+            <div className="text-[11px] text-gray-500 mb-2">
+              {isRemote()
+                ? 'Synced to your account — available on any device you sign in from.'
+                : 'Saved in this browser. Sign in with a live backend to sync them to your account.'}
+            </div>
+            {designs.length === 0 ? (
               <div className="text-center py-12 text-gray-500">
                 <div className="text-4xl mb-3">&#x1F4BE;</div>
                 <div className="text-sm">No saved designs yet.</div>
@@ -276,7 +259,8 @@ export function MyDesigns({ open, onClose }: MyDesignsProps) {
                   </div>
                 ))}
               </div>
-            )
+            )}
+            </>
           ) : (
             // ── Activity tab ──
             activities.length === 0 ? (

@@ -24,19 +24,20 @@ const CLIENT_KEY = Object.keys(SOURCES).find(k => k.endsWith('api/client.ts'))!
 
 /** Unwired on purpose, each with the tracker item that will wire it. */
 const PENDING: Record<string, string> = {
-  fetchUserPrefs:     'AE2 — prefs sync',
-  saveUserPrefs:      'AE2 — prefs sync',
-  fetchUserActivity:  'AE2 — activity sync',
-  postUserActivity:   'AE2 — activity sync',
-  listDesigns:        'AE2 — server-side designs',
-  fetchDesign:        'AE2 — server-side designs',
-  createDesign:       'AE2 — server-side designs',
-  updateDesign:       'AE2 — server-side designs',
-  deleteDesign:       'AE2 — server-side designs',
-  runPreChecks:       'AE2 — Step 6 checks use the useChecks hook path',
-  runPostChecks:      'AE2 — Step 6 checks use the useChecks hook path',
-  listDeployments:    'AE2 — deployment history is not surfaced yet',
-  rollbackDeployment: 'AE2 — rollback is generated, never pushed',
+  // AE2 wired the design CRUD through lib/design-store.ts. These two have no
+  // feature behind them yet: `listDesigns` already returns full state, so
+  // nothing needs to re-fetch one, and there is no rename/overwrite UI.
+  fetchDesign:        'no caller needed — listDesigns returns full state',
+  updateDesign:       'awaiting a rename / overwrite-in-place UI',
+  // Step 6 checks run through the useChecks hook, which has its own demo
+  // fallback path; these raw functions duplicate it.
+  runPreChecks:       'superseded by the useChecks hook path',
+  runPostChecks:      'superseded by the useChecks hook path',
+  // Deployment history and one-click rollback are not surfaced. The Rollback
+  // Advisor (K1) generates commands for an operator to run; nothing in the
+  // product pushes a rollback itself, by design.
+  listDeployments:    'deployment history is not surfaced yet',
+  rollbackDeployment: 'rollback is generated for an operator, never auto-pushed',
 }
 
 describe('API client surface', () => {

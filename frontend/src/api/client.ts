@@ -159,7 +159,7 @@ export const generateRemediation = (devices: RemediationDeviceInput[]) =>
 // generates client-side — in live mode too. Reintroduce this only if the
 // template gap is closed.
 
-import type { DesignState } from '@/types'
+import type { AppState } from '@/types'
 
 // ── Pre / Post checks ─────────────────────────────────────────────────────────
 
@@ -177,7 +177,11 @@ export const deploy = (req: DeployRequest) => post<DeployResponse>('/api/deploy'
 export const listDesigns  = (uc?: string) =>
   get<{ designs: Design[] }>(`/api/designs${uc ? `?use_case=${encodeURIComponent(uc)}` : ''}`)
 export const fetchDesign  = (id: string) => get<Design>(`/api/designs/${id}`)
-export const createDesign = (body: { name: string; use_case: string; state: DesignState }) =>
+// The backend's `state` column is opaque JSON and what a "saved design" means
+// to the user is the whole wizard state, not the 4-field DesignState summary
+// the deploy request carries. Typing it as AppState makes the signature match
+// what is actually stored.
+export const createDesign = (body: { name: string; use_case: string; state: AppState }) =>
   post<Design>('/api/designs', body)
 export const updateDesign = (id: string, body: Partial<Design>) => put<Design>(`/api/designs/${id}`, body)
 export const deleteDesign = (id: string) => del<null>(`/api/designs/${id}`)
