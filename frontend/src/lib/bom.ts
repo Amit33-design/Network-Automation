@@ -762,9 +762,19 @@ function rackUnitsFor(subLayer: string): number {
   }
 }
 
-/** Power draw (W) for a device — look up model in PRODUCTS, else role/global fallback. */
-function devicePowerW(dev: BOMDevice, defaultPowerW: number): number {
-  const product = PRODUCTS.find(p => p.model === dev.model || p.id === dev.id.replace(/-\d+$/, ''))
+/**
+ * Power draw (W) for one device — the single answer to that question (AF2).
+ *
+ * There were three: this one, an inline `PRODUCTS.find(...)?.powerW ?? 500` in
+ * `validateBOM`, and a `ROLE_POWER[subLayer] ?? 400` table inside
+ * `RackElevation` that ignored the catalogue entirely. Three lookups, three
+ * different fallbacks, three different totals for the same design — and the
+ * rack layout, which decides how many cabinets you need, used the least
+ * accurate of them.
+ */
+export function devicePowerW(dev: BOMDevice, defaultPowerW = 500): number {
+  const idBase = (dev.id ?? '').replace(/-\d+$/, '')
+  const product = PRODUCTS.find(p => p.model === dev.model || (!!idBase && p.id === idBase))
   if (product && typeof product.powerW === 'number') return product.powerW
   return ROLE_DEFAULT_POWER_W[dev.subLayer] ?? defaultPowerW
 }
@@ -1362,13 +1372,17 @@ export function validateBOM(
   }
 
   // ── Power draw (all use cases) ──
-  const totalPowerW = devices.reduce((s, d) => {
-    const prod = PRODUCTS.find(p => p.model === d.model)
-    return s + (prod?.powerW ?? 500)
-  }, 0)
-  if (totalPowerW > 40000) {
+  const totalPowerW = devices.reduce((s, d) => s + devicePowerW(d) * (d.count || 1), 0)
+  const gpuPowerW = devices
+    .filter(d => d.subLayer === 'gpu-compute')
+    .reduce((s, d) => s + devicePowerW(d) * (d.count || 1), 0)
+  if (gpuPowerW > 0) {
+    // A GPU design is a facilities requirement before it is a parts list.
+    issues.push({ severity: 'warning', category: 'power',
+      message: `${(totalPowerW / 1000).toFixed(1)} kW total, ${(gpuPowerW / 1000).toFixed(1)} kW of it GPU compute. Compute racks are laid out to a 40 kW high-density budget — confirm the facility provides that per cabinet, with matching cooling. A standard cabinet is 5-10 kW.` })
+  } else if (totalPowerW > 40000) {
     issues.push({ severity: 'info', category: 'power',
-      message: `Total power draw is ${(totalPowerW / 1000).toFixed(1)} kW. Verify data center power and cooling capacity.` })
+      message: `Total power draw is ${(totalPowerW / 1000).toFixed(1)} kW, needing at least ${Math.ceil(totalPowerW / 10000)} cabinets at a standard 10 kW each. Verify data center power and cooling capacity.` })
   }
 
   return issues
