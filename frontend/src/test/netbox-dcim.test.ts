@@ -8,6 +8,7 @@ import {
   netboxInterfaceType,
   netboxCableType,
 } from '@/lib/netbox-dcim'
+import { buildDeviceList, buildCabling } from '@/lib/bom'
 import type { BOMDevice, CableLink } from '@/types'
 
 function dev(p: Partial<BOMDevice>): BOMDevice {
@@ -177,5 +178,40 @@ describe('rack export (F3)', () => {
     // and omits them when not
     const bare = buildNetBoxDcimExport(devices, cabling, 'Ashburn')
     expect(bare.racksCsv).toBeUndefined()
+  })
+})
+
+// ── AF1 ──────────────────────────────────────────────────────────────────────
+describe('cable medium in the DCIM export (AF1)', () => {
+  it('records an OM4 trunk as mmf, not the smf default', () => {
+    // "MPO" is a CONNECTOR, not a glass, so type-sniffing matched none of the
+    // branches and every MPO run fell through to `return 'smf'`. A customer
+    // importing this into NetBox got a fibre plant that was wrong about the
+    // one property that decides which optics they can buy.
+    expect(netboxCableType('MPO'), 'the old, inferred answer').toBe('smf')
+    expect(netboxCableType('MPO', 'mmf')).toBe('mmf')
+    expect(netboxCableType('MPO', 'smf')).toBe('smf')
+  })
+
+  it('lets the declared medium win over the type name', () => {
+    expect(netboxCableType('DAC', 'copper')).toBe('dac-passive')
+    expect(netboxCableType('AOC', 'aoc')).toBe('aoc')
+    expect(netboxCableType('LC-LC', 'mmf')).toBe('mmf')
+  })
+
+  it('carries the medium of every real run through to the CSV', () => {
+    const devices = buildDeviceList({
+      useCase: 'dc', scale: 'medium', siteCode: 'AF1', totalEndpoints: 1024,
+    })
+    const cabling = buildCabling(devices, {
+      'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000,
+    })
+    const csv = toNetBoxCableCsv(expandCablePlan(devices, cabling))
+    const types = new Set(csv.trim().split('\n').slice(1)
+      .map(r => r.split(',')[6]?.replace(/"/g, '')))
+    // The 100 m spine-leaf trunks are OM4 and the peer-links are twinax; with
+    // the old inference BOTH came back as plain smf.
+    expect(types.has('mmf'), 'no multimode run reached the CSV').toBe(true)
+    expect(types.has('dac-passive')).toBe(true)
   })
 })

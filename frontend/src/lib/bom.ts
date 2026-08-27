@@ -861,8 +861,33 @@ export function computeTCO(devices: BOMDevice[], opts: Partial<TCOOpts> = {}): T
 
 // ── Cable catalog ─────────────────────────────────────────────────────────────
 
+/**
+ * What a link is physically made of.
+ *
+ * `copper` covers DAC twinax; `aoc` is active optical cable, which has its
+ * transceivers moulded on. `mmf` (OM4) and `smf` (OS2) are the two glass
+ * types, and they are NOT interchangeable — a single-mode transceiver will
+ * not light multimode fibre.
+ *
+ * This attribute did not exist. `selectCable` chose by distance and
+ * `buildOptics` then chose the cheapest optic with enough reach, so a 100 m
+ * 100G run got an OM4 MPO trunk paired with QSFP-100G-PSM4 — a single-mode
+ * optic. 208 transceivers that cannot link, and $17,680 under-quoted because
+ * the correct SR4 costs more than the PSM4 the price sort preferred (AF1).
+ */
+export type FibreMedium = 'copper' | 'aoc' | 'mmf' | 'smf'
+
+/** Human label for the cable schedule — a contractor orders by this. */
+export const MEDIUM_LABEL: Record<FibreMedium, string> = {
+  copper: 'Twinax copper',
+  aoc:    'AOC (integrated optics)',
+  mmf:    'OM4 multimode',
+  smf:    'OS2 single-mode',
+}
+
 interface CableSpec {
   type: 'DAC' | 'AOC' | 'LC-LC' | 'MPO'
+  medium: FibreMedium
   maxDist: number
   speeds: string[]
   unitCost: number
@@ -870,22 +895,30 @@ interface CableSpec {
 }
 
 const CABLE_SPECS: CableSpec[] = [
-  { type: 'DAC',   maxDist: 1,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 25,  costPerM: 0   },
-  { type: 'DAC',   maxDist: 3,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 35,  costPerM: 0   },
-  { type: 'DAC',   maxDist: 5,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 45,  costPerM: 0   },
-  { type: 'DAC',   maxDist: 3,     speeds: ['40G','100G','400G'],           unitCost: 65,  costPerM: 0   },
-  { type: 'AOC',   maxDist: 10,    speeds: ['10G','25G','40G','100G'],      unitCost: 80,  costPerM: 8   },
-  { type: 'AOC',   maxDist: 30,    speeds: ['10G','25G','40G','100G'],      unitCost: 240, costPerM: 8   },
-  { type: 'MPO',   maxDist: 100,   speeds: ['40G','100G','400G'],           unitCost: 20,  costPerM: 1.2 },
-  { type: 'LC-LC', maxDist: 10000, speeds: ['1G','10G','25G','100G'],       unitCost: 15,  costPerM: 0.5 },
+  { type: 'DAC',   medium: 'copper', maxDist: 1,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 25,  costPerM: 0   },
+  { type: 'DAC',   medium: 'copper', maxDist: 3,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 35,  costPerM: 0   },
+  { type: 'DAC',   medium: 'copper', maxDist: 5,     speeds: ['1G','10G','25G','40G','100G'], unitCost: 45,  costPerM: 0   },
+  { type: 'DAC',   medium: 'copper', maxDist: 3,     speeds: ['40G','100G','400G'],           unitCost: 65,  costPerM: 0   },
+  { type: 'AOC',   medium: 'aoc',    maxDist: 10,    speeds: ['10G','25G','40G','100G'],      unitCost: 80,  costPerM: 8   },
+  { type: 'AOC',   medium: 'aoc',    maxDist: 30,    speeds: ['10G','25G','40G','100G'],      unitCost: 240, costPerM: 8   },
+  // MPO parallel trunks: OM4 to 100 m, then an OS2 trunk so the long runs
+  // have a home that PSM4/DR4 optics can actually light.
+  { type: 'MPO',   medium: 'mmf',    maxDist: 100,   speeds: ['40G','100G','400G'],           unitCost: 20,  costPerM: 1.2 },
+  { type: 'MPO',   medium: 'smf',    maxDist: 500,   speeds: ['40G','100G','400G'],           unitCost: 30,  costPerM: 1.6 },
+  // Duplex LC: OM4 for in-building, OS2 for anything beyond it.
+  { type: 'LC-LC', medium: 'mmf',    maxDist: 300,   speeds: ['1G','10G','25G','100G'],       unitCost: 15,  costPerM: 0.5 },
+  { type: 'LC-LC', medium: 'smf',    maxDist: 10000, speeds: ['1G','10G','25G','40G','100G'], unitCost: 18,  costPerM: 0.6 },
 ]
 
 const CABLE_PRIORITY: Record<string, number> = { DAC: 0, AOC: 1, MPO: 2, 'LC-LC': 3 }
 
 function selectCable(distM: number, speed: string): CableSpec {
   const candidates = CABLE_SPECS.filter(c => c.maxDist >= distM && c.speeds.includes(speed))
-  if (!candidates.length) return CABLE_SPECS.find(c => c.type === 'LC-LC')!
-  return candidates.sort((a, b) => CABLE_PRIORITY[a.type] - CABLE_PRIORITY[b.type])[0]
+  if (!candidates.length) return CABLE_SPECS.find(c => c.type === 'LC-LC' && c.medium === 'smf')!
+  // Cheapest medium first (copper, then AOC, then glass), and within glass the
+  // shortest-reach spec that covers the run — OM4 before OS2.
+  return candidates.sort((a, b) =>
+    (CABLE_PRIORITY[a.type] - CABLE_PRIORITY[b.type]) || (a.maxDist - b.maxDist))[0]
 }
 
 /** Gbps value of a speed label ('400G'→400, '1T'→1000, '10G'→10). */
@@ -1032,6 +1065,7 @@ export function buildCabling(
 
     links.push({
       id:           `cable-${id++}`,
+      medium:       cable.medium,
       fromLayer:    conn.from,
       toLayer:      conn.to,
       fromDevice:   `${froms.length}x ${conn.from}`,
@@ -1062,6 +1096,7 @@ export function buildCabling(
     const unit = cable.unitCost + cable.costPerM * distM
     links.push({
       id:           `cable-${id++}`,
+      medium:       cable.medium,
       fromLayer:    layer,
       toLayer:      layer,
       fromDevice:   `${pairs}x ${layer} pair`,
@@ -1081,6 +1116,8 @@ export function buildCabling(
 // ── Optics catalog ────────────────────────────────────────────────────────────
 
 interface OpticSpec {
+  /** The glass this optic needs. SR/SX are multimode; LR/LH/FR/PSM/DR are not. */
+  medium:     FibreMedium
   formFactor: string
   speed:      string
   reach:      string
@@ -1091,19 +1128,19 @@ interface OpticSpec {
 }
 
 const OPTIC_CATALOG: OpticSpec[] = [
-  { formFactor: 'SFP',     speed: '1G',   reach: '550m',  reachM: 550,   priceUSD: 15,   vendor: 'Generic', partNumber: 'GLC-SX-MMD'       },
-  { formFactor: 'SFP',     speed: '1G',   reach: '10km',  reachM: 10000, priceUSD: 30,   vendor: 'Generic', partNumber: 'GLC-LH-SMD'       },
-  { formFactor: 'SFP+',    speed: '10G',  reach: '300m',  reachM: 300,   priceUSD: 25,   vendor: 'Generic', partNumber: 'SFP-10G-SR'       },
-  { formFactor: 'SFP+',    speed: '10G',  reach: '10km',  reachM: 10000, priceUSD: 55,   vendor: 'Generic', partNumber: 'SFP-10G-LR'       },
-  { formFactor: 'SFP28',   speed: '25G',  reach: '100m',  reachM: 100,   priceUSD: 45,   vendor: 'Generic', partNumber: 'SFP28-25G-SR'     },
-  { formFactor: 'SFP28',   speed: '25G',  reach: '10km',  reachM: 10000, priceUSD: 120,  vendor: 'Generic', partNumber: 'SFP28-25G-LR'     },
-  { formFactor: 'QSFP+',   speed: '40G',  reach: '150m',  reachM: 150,   priceUSD: 60,   vendor: 'Generic', partNumber: 'QSFP-40G-SR4'     },
-  { formFactor: 'QSFP+',   speed: '40G',  reach: '10km',  reachM: 10000, priceUSD: 250,  vendor: 'Generic', partNumber: 'QSFP-40G-LR4'     },
-  { formFactor: 'QSFP28',  speed: '100G', reach: '100m',  reachM: 100,   priceUSD: 180,  vendor: 'Generic', partNumber: 'QSFP-100G-SR4'    },
-  { formFactor: 'QSFP28',  speed: '100G', reach: '10km',  reachM: 10000, priceUSD: 420,  vendor: 'Generic', partNumber: 'QSFP-100G-LR4'    },
-  { formFactor: 'QSFP28',  speed: '100G', reach: '500m',  reachM: 500,   priceUSD: 95,   vendor: 'Generic', partNumber: 'QSFP-100G-PSM4'   },
-  { formFactor: 'QSFP-DD', speed: '400G', reach: '100m',  reachM: 100,   priceUSD: 950,  vendor: 'Generic', partNumber: 'QSFP-DD-400G-SR4' },
-  { formFactor: 'QSFP-DD', speed: '400G', reach: '2km',   reachM: 2000,  priceUSD: 1800, vendor: 'Generic', partNumber: 'QSFP-DD-400G-FR4' },
+  { medium: 'mmf' , formFactor: 'SFP',     speed: '1G',   reach: '550m',  reachM: 550,   priceUSD: 15,   vendor: 'Generic', partNumber: 'GLC-SX-MMD'       },
+  { medium: 'smf' , formFactor: 'SFP',     speed: '1G',   reach: '10km',  reachM: 10000, priceUSD: 30,   vendor: 'Generic', partNumber: 'GLC-LH-SMD'       },
+  { medium: 'mmf' , formFactor: 'SFP+',    speed: '10G',  reach: '300m',  reachM: 300,   priceUSD: 25,   vendor: 'Generic', partNumber: 'SFP-10G-SR'       },
+  { medium: 'smf' , formFactor: 'SFP+',    speed: '10G',  reach: '10km',  reachM: 10000, priceUSD: 55,   vendor: 'Generic', partNumber: 'SFP-10G-LR'       },
+  { medium: 'mmf' , formFactor: 'SFP28',   speed: '25G',  reach: '100m',  reachM: 100,   priceUSD: 45,   vendor: 'Generic', partNumber: 'SFP28-25G-SR'     },
+  { medium: 'smf' , formFactor: 'SFP28',   speed: '25G',  reach: '10km',  reachM: 10000, priceUSD: 120,  vendor: 'Generic', partNumber: 'SFP28-25G-LR'     },
+  { medium: 'mmf' , formFactor: 'QSFP+',   speed: '40G',  reach: '150m',  reachM: 150,   priceUSD: 60,   vendor: 'Generic', partNumber: 'QSFP-40G-SR4'     },
+  { medium: 'smf' , formFactor: 'QSFP+',   speed: '40G',  reach: '10km',  reachM: 10000, priceUSD: 250,  vendor: 'Generic', partNumber: 'QSFP-40G-LR4'     },
+  { medium: 'mmf' , formFactor: 'QSFP28',  speed: '100G', reach: '100m',  reachM: 100,   priceUSD: 180,  vendor: 'Generic', partNumber: 'QSFP-100G-SR4'    },
+  { medium: 'smf' , formFactor: 'QSFP28',  speed: '100G', reach: '10km',  reachM: 10000, priceUSD: 420,  vendor: 'Generic', partNumber: 'QSFP-100G-LR4'    },
+  { medium: 'smf' , formFactor: 'QSFP28',  speed: '100G', reach: '500m',  reachM: 500,   priceUSD: 95,   vendor: 'Generic', partNumber: 'QSFP-100G-PSM4'   },
+  { medium: 'mmf' , formFactor: 'QSFP-DD', speed: '400G', reach: '100m',  reachM: 100,   priceUSD: 950,  vendor: 'Generic', partNumber: 'QSFP-DD-400G-SR4' },
+  { medium: 'smf' , formFactor: 'QSFP-DD', speed: '400G', reach: '2km',   reachM: 2000,  priceUSD: 1800, vendor: 'Generic', partNumber: 'QSFP-DD-400G-FR4' },
 ]
 
 export function buildOptics(
@@ -1118,8 +1155,13 @@ export function buildOptics(
     // run double-counts the BOM (X7). Optics apply to fiber runs only.
     if (link.cableType === 'DAC' || link.cableType === 'AOC') continue
 
+    // The optic must match the GLASS, not just the reach and the price. A
+    // cheapest-first sort over reach alone put single-mode PSM4 on an OM4
+    // multimode trunk: 208 transceivers that cannot link (AF1).
     const optic = OPTIC_CATALOG
-      .filter(o => o.speed === link.speed && o.reachM >= link.lengthM)
+      .filter(o => o.speed === link.speed
+        && o.reachM >= link.lengthM
+        && o.medium === link.medium)
       .sort((a, b) => a.priceUSD - b.priceUSD)[0]
     if (!optic) continue
 
@@ -1128,6 +1170,7 @@ export function buildOptics(
 
     entries.push({
       id:          `optic-${link.id}`,
+      medium:      optic.medium,
       linkGroup:   `${link.fromLayer} → ${link.toLayer}`,
       formFactor:  optic.formFactor,
       speed:       optic.speed,

@@ -96,6 +96,13 @@ export interface BOMDevice {
 
 export interface CableLink {
   id: string
+  /**
+   * The glass or copper this run is made of (AF1). Optional so an externally
+   * supplied plan without one still type-checks; `buildCabling` always sets it.
+   * Without it a contractor cannot order the trunk and the optic selection has
+   * nothing to match against.
+   */
+  medium?: 'copper' | 'aoc' | 'mmf' | 'smf'
   fromLayer: string
   toLayer: string
   fromDevice: string
@@ -111,6 +118,8 @@ export interface CableLink {
 // ── Optics entry ──────────────────────────────────────────────────────────────
 
 export interface OpticsEntry {
+  /** The glass this optic requires — must equal its link's medium. */
+  medium?: 'copper' | 'aoc' | 'mmf' | 'smf'
   id: string
   linkGroup: string
   formFactor: string
