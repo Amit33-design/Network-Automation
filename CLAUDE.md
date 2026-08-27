@@ -1240,6 +1240,31 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### AF. Procurement-artifact audit (sourced 2026-08-27)
+
+> Groups X/Y/Z/AA/AD audited generated **configs**; AA audited BOM
+> **quantities**. Nobody had reviewed the artifacts a user hands to
+> procurement and to a cabling contractor — the cable schedule, the optics
+> list and the DCIM export — the way those people would read them.
+>
+> **Finding: neither the cable catalogue nor the optic catalogue records a
+> fibre medium**, and the two are chosen independently. `selectCable` picks
+> by distance and priority; `buildOptics` then picks the **cheapest** optic
+> whose reach covers the run. For a 100 m 100G spine-leaf link that is an
+> **MPO** trunk (priced as OM4 multimode) paired with **QSFP-100G-PSM4**, a
+> **single-mode** optic. PSM4 will not light OM4 fibre. On a 32-device DC
+> design that is 208 transceivers that do not work, and — since the correct
+> `QSFP-100G-SR4` is $180 against PSM4's $95 — the BOM also **understates
+> the quote by $17,680**. The same gap makes `netboxCableType('MPO')` fall
+> through to its `return 'smf'` default, so every MPO run in the NetBox
+> DCIM export is recorded as single-mode.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| AF1 | **Fibre medium as a first-class property of a link** — new exported `FibreMedium` (`copper`/`aoc`/`mmf`/`smf`) + `MEDIUM_LABEL` on `CableSpec`, `OpticSpec`, `CableLink` and `OpticsEntry`. `buildOptics` now filters on `o.medium === link.medium` before the price sort, so the glass decides the optic and not the price alone. Catalogue gained the specs that pairing needs: an **OS2 MPO trunk** (500 m) so PSM4/DR4 have a home, and LC-LC split into OM4 (300 m) / OS2 (10 km); `selectCable` breaks ties on shortest-reach-that-covers, i.e. OM4 before OS2. Results now coherent at every distance: 3 m → DAC copper, no optics; 50–100 m → OM4 MPO + **SR4** (was PSM4, which cannot light it); 200–400 m → OS2 MPO + PSM4 at **$95**, where the run previously fell through to LC-LC + LR4 at $420 — so the fix makes long runs *cheaper* as well as correct. `netboxCableType(type, medium)` prefers the declared medium: "MPO" is a connector, not a glass, so it matched no branch and every MPO run hit the `return 'smf'` default. 9 + 3 new tests; reverting the medium filter trips 3 | [x] | `bom.ts` `FibreMedium`/`CABLE_SPECS`/`OPTIC_CATALOG`/`buildOptics`, `netbox-dcim.ts`, `types/index.ts`; `bom.test.ts` 102→108, `netbox-dcim.test.ts` 14→17; 1422 tests, tsc + build green |
+
+---
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)

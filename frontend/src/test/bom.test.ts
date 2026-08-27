@@ -1079,3 +1079,78 @@ describe('WAN sizing and DCI rate (groups AA3 / AA4)', () => {
     expect(dci.speed).toBe(edge.uplinkSpeed)
   })
 })
+
+// ── AF1: cable and optic must agree on the glass ─────────────────────────────
+// Neither catalogue recorded a fibre medium, and the two were chosen
+// independently: `selectCable` by distance, `buildOptics` by cheapest optic
+// with enough reach. A 100 m 100G spine-leaf run therefore paired an OM4
+// multimode MPO trunk with QSFP-100G-PSM4 — a SINGLE-MODE optic that cannot
+// light it. 208 transceivers per design that do not work.
+describe('fibre medium coherence (AF1)', () => {
+  const design = (spineLeafM: number) => {
+    const state = {
+      useCase: 'dc' as const, scale: 'medium' as const, siteCode: 'AF1',
+      totalEndpoints: 1024, oversubscription: 3, bandwidthPerServer: '25G',
+    }
+    const devices = buildDeviceList(state)
+    const distances = {
+      'spine-leaf': spineLeafM, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000,
+    }
+    return {
+      cabling: buildCabling(devices, distances),
+      optics: buildOptics(devices, distances),
+    }
+  }
+  const spineLeaf = (c: ReturnType<typeof design>['cabling']) =>
+    c.find(x => x.fromLayer === 'spine' && x.toLayer === 'leaf')!
+
+  it('every cable run declares what it is made of', () => {
+    for (const link of design(100).cabling) {
+      expect(link.medium, `${link.fromLayer}->${link.toLayer} has no medium`).toBeTruthy()
+    }
+  })
+
+  it('every optic matches the glass of the link it is bought for', () => {
+    // The invariant the whole item exists for.
+    for (const distance of [3, 30, 50, 100, 200, 400, 2000]) {
+      const { cabling, optics } = design(distance)
+      for (const optic of optics) {
+        const link = cabling.find(c => `optic-${c.id}` === optic.id)!
+        expect(optic.medium, `${distance}m: ${optic.partNumber} on ${link.medium} fibre`)
+          .toBe(link.medium)
+      }
+    }
+  })
+
+  it('uses multimode SR4 on an OM4 trunk, not single-mode PSM4', () => {
+    const { cabling, optics } = design(100)
+    expect(spineLeaf(cabling).medium).toBe('mmf')
+    const optic = optics.find(o => o.linkGroup.includes('spine'))!
+    expect(optic.partNumber).toBe('QSFP-100G-SR4')
+    expect(optic.medium).toBe('mmf')
+  })
+
+  it('reaches for single-mode only when the run needs it', () => {
+    const { cabling, optics } = design(400)
+    expect(spineLeaf(cabling).medium).toBe('smf')
+    expect(optics.find(o => o.linkGroup.includes('spine'))!.partNumber).toBe('QSFP-100G-PSM4')
+  })
+
+  it('buys no optics for copper or AOC, which have them built in', () => {
+    const { cabling, optics } = design(3)
+    expect(spineLeaf(cabling).medium).toBe('copper')
+    expect(optics.some(o => o.linkGroup.includes('spine'))).toBe(false)
+  })
+
+  it('prices the fix — the old pairing under-quoted the design', () => {
+    // SR4 costs more than the PSM4 a price-only sort preferred, so the
+    // corrected BOM is HIGHER. Quoting parts that cannot link is not a saving.
+    const { optics } = design(100)
+    const spineOptic = optics.find(o => o.linkGroup.includes('spine'))!
+    expect(spineOptic.priceUSD).toBe(180)
+    expect(spineOptic.quantity, 'two transceivers per fibre run').toBe(
+      // 26 leaves x 4 uplinks x 2 ends
+      104 * 2,
+    )
+  })
+})
