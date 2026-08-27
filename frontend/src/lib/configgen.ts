@@ -657,12 +657,54 @@ function ipAdd(base: string, offset: number): string {
  * (10.255.1.x spines, 10.255.2.x leaves, 10.254.0.x VTEPs, …) so existing
  * designs are byte-identical; device 255 onward continues here.
  */
-const OVERFLOW_SUPERNET = '10.100.0.0'
+// Well clear of every allocated block. It used to be 10.100.0.0, and with six
+// role slots of 16384 it spans into 10.101.x — which is where the SD-WAN
+// service VPNs live, so a fabric with more than 254 leaves would have put
+// loopbacks on top of site LANs. Writing the plan down as ADDRESS_PLAN is
+// what surfaced it (AF3).
+const OVERFLOW_SUPERNET = '10.128.0.0'
 const OVERFLOW_SLOT_SIZE = 16384
 const ROLE_POOL = 254
 
 /** Overflow slots — one per role that addresses out of a single /24. */
-const RoleSlot = {
+/**
+ * Every address range the generators can emit — the one place that says so.
+ *
+ * `lib/ipam.ts` used to author its own list, so the artifact whose entire job
+ * is to be the source of truth contradicted the running config on every
+ * documented block, and declared `10.100.0.0/23` as P2P fabric — which is
+ * OVERFLOW_SUPERNET, the range reserved below for loopbacks past device 254.
+ * NetBox would have handed out addresses the generators were already using.
+ *
+ * Anything added to a generator belongs here too; the IPAM export is built
+ * from this list and a test asserts no generated IP falls outside it (AF3).
+ */
+export interface AddressRange {
+  label: string
+  /** CIDR the generators allocate from. */
+  prefix: string
+  purpose: string
+  /** Use cases this range appears in; omitted = all. */
+  useCases?: string[]
+}
+
+export const ADDRESS_PLAN: AddressRange[] = [
+  { label: 'FIREWALL HANDOFF',   prefix: '10.98.0.0/16',  purpose: '/31 per firewall↔border-leaf link (Z3)' },
+  { label: 'P2P FABRIC LINKS',   prefix: '10.99.0.0/16',  purpose: '/31 per leaf↔spine link, flat index (Z7)' },
+  { label: 'ROLE OVERFLOW',      prefix: '10.128.0.0/14', purpose: 'Reserved — loopbacks past the 254th device of a role (Z7). Do NOT allocate.' },
+  { label: 'SD-WAN SERVICE VPN', prefix: '10.101.0.0/16', purpose: 'Per-site LAN (10.101.<site>.x) and guest (10.101.<128+site>.x) on an SD-WAN edge',
+    useCases: ['wan', 'multisite', 'multicloud', 'aviatrix'] },
+  { label: 'O-RAN F1 / eCPRI',   prefix: '10.240.0.0/14', purpose: 'CU F1-C/F1-U (.240.x), DU F1-C/F1-U (.241.x), RU fronthaul (.242.x), RU + switch mgmt (.243.x) (AD1)',
+    useCases: ['oran'] },
+  { label: 'O-RAN MIDHAUL',      prefix: '10.250.1.0/24', purpose: 'Midhaul router-ids (AD1)',
+    useCases: ['oran'] },
+  { label: 'MLAG PEERING',       prefix: '10.253.0.0/16', purpose: '/31 per MLAG pair across the peer-link (Z7)' },
+  { label: 'VTEP / vPC VIP',     prefix: '10.254.0.0/16', purpose: 'Anycast VTEP source and vPC virtual IP (X7)' },
+  { label: 'LOOPBACKS + MGMT SVI', prefix: '10.255.0.0/16', purpose: 'Router-IDs (spine .1.x, leaf .2.x, campus .3.x) and the campus management SVI (.99.x, HSRP VIP .99.254)' },
+  { label: 'TENANT / SERVER',    prefix: '10.10.0.0/16',  purpose: 'Anycast gateway and tenant subnets behind the fabric; also the SD-WAN system-ip block at 10.10.101.x' },
+]
+
+export const RoleSlot = {
   SpineLoopback:  0,
   LeafLoopback:   1,
   Vtep:           2,
@@ -673,7 +715,7 @@ const RoleSlot = {
 type RoleSlot = (typeof RoleSlot)[keyof typeof RoleSlot]
 
 /** Nth address of a role (0-based), overflowing safely past the /24. */
-function roleIp(primary: string, slot: RoleSlot, idx: number): string {
+export function roleIp(primary: string, slot: RoleSlot, idx: number): string {
   if (idx < ROLE_POOL) return ipAdd(primary, idx)
   return ipAdd(ipAdd(OVERFLOW_SUPERNET, slot * OVERFLOW_SLOT_SIZE), idx - ROLE_POOL)
 }
@@ -682,7 +724,7 @@ function roleIp(primary: string, slot: RoleSlot, idx: number): string {
  * Firewall↔fabric handoff /31, shared by BOTH ends (the fabric generator and
  * the FTD manifest) so they can never drift. Flat index inside 10.98.0.0/16.
  */
-function fwHandoffIp(peerIdx: number, fwIdx: number, fwCount: number): string {
+export function fwHandoffIp(peerIdx: number, fwIdx: number, fwCount: number): string {
   return ipAdd('10.98.1.0', (peerIdx * Math.max(1, fwCount) + fwIdx) * 2)
 }
 
@@ -2896,6 +2938,12 @@ commit
 function iosxeCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[], allDevices: BOMDevice[] = []): string {
   idx = roleIndex(dev, allDevices, idx)
   const isDist = dev.subLayer === 'distribution'
+  // Both tiers address the mgmt SVI out of ONE /24, and both were indexed
+  // from 0 within their own tier — so C-DIST-A01 and C-ACC-A01 were both
+  // given 10.255.99.1. Two devices fighting for one management address, in
+  // every campus design. Access starts after the distribution block (AF3).
+  const nDist = allDevices.filter(d => d.subLayer === 'distribution').length
+  const mgmtIdx = isDist ? idx : nDist + idx
   const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx, allDevices)
   const hasVoice = appTypes.includes('voice')
   const hasVideo = appTypes.includes('video')
@@ -3000,7 +3048,7 @@ ${voiceSvi}!
 ! 802.1X port failed closed. HSRP on Vlan99 now actually owns that address.
 interface Vlan99
   description MGMT
-  ip address ${roleIp('10.255.99.1', RoleSlot.CampusMgmt, idx)} 255.255.255.0
+  ip address ${roleIp('10.255.99.1', RoleSlot.CampusMgmt, mgmtIdx)} 255.255.255.0
   standby version 2
   standby 99 ip 10.255.99.254
   standby 99 priority ${hsrpPriority}
@@ -3099,7 +3147,7 @@ spanning-tree portfast bpduguard default
 ! ── MGMT SVI (Vlan99 — the mgmt plane sources from this; C-1) ────────────────
 interface Vlan99
   description MGMT
-  ip address ${roleIp('10.255.99.1', RoleSlot.CampusMgmt, idx)} 255.255.255.0
+  ip address ${roleIp('10.255.99.1', RoleSlot.CampusMgmt, mgmtIdx)} 255.255.255.0
 !
 ip default-gateway 10.255.99.254
 !
@@ -4821,8 +4869,11 @@ function sdwanEdgeConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = 
     sysIp: ipAdd('10.10.101.0', siteOrd * 256 + member + 1),
     wanIp: ipAdd('203.0.113.0', tierIdx * 4 + 1),
     wanGw: ipAdd('203.0.113.0', tierIdx * 4 + 2),
-    lanIp: ipAdd('10.101.1.0', siteOrd * 65536 + member + 1),
-    guestIp: ipAdd('10.101.2.0', siteOrd * 65536 + member + 1),
+    // A /24 per site inside 10.101.0.0/16, guest in the upper half — the old
+    // stride was a whole /16 PER SITE, so an 8-site design reached 10.108.x
+    // and straight through the reserved overflow supernet (AF3).
+    lanIp: ipAdd('10.101.0.0', siteOrd * 256 + member + 1),
+    guestIp: ipAdd('10.101.128.0', siteOrd * 256 + member + 1),
   }
   return isViptelaOs(dev) ? sdwanVedgeConfig(ctx) : sdwanCedgeConfig(ctx)
 }
