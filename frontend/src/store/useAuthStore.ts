@@ -17,7 +17,10 @@
  */
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { login as apiLogin, verifyTotp as apiVerifyTotp, saveSettings } from '@/api/client'
+import {
+  login as apiLogin, verifyTotp as apiVerifyTotp, saveSettings,
+  isLiveMode, getToken, saveUserPrefs, postUserActivity,
+} from '@/api/client'
 import type { UserActivity, ActivityAction } from '@/types'
 
 export type Role = 'viewer' | 'designer' | 'operator' | 'admin'
@@ -89,6 +92,32 @@ function slug(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'user'
 }
 
+
+/**
+ * Server mirroring for preferences and activity (AE2).
+ *
+ * §22 J2 recorded "full preferences sync" as delivered; the client functions
+ * existed and nothing called them. These are deliberately fire-and-forget:
+ * the local store is the source of truth for the session, the server copy is
+ * what makes a preference follow the user to another device, and a failure to
+ * reach it must never block or undo a local write.
+ */
+function serverBacked(): boolean {
+  return isLiveMode() && !!getToken()
+}
+
+function syncPrefsToServer(prefs: UserPrefs): void {
+  if (!serverBacked()) return
+  void saveUserPrefs(prefs as Record<string, unknown>).catch(() => {
+    /* offline or unauthorised — the local copy already holds the change */
+  })
+}
+
+function syncActivityToServer(activity: UserActivity): void {
+  if (!serverBacked()) return
+  const { id: _id, ...rest } = activity
+  void postUserActivity(rest).catch(() => { /* best effort */ })
+}
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -167,6 +196,10 @@ export const useAuthStore = create<AuthState>()(
         set(s => ({
           prefsByUser: { ...s.prefsByUser, [u.id]: { ...s.prefsByUser[u.id], ...patch } },
         }))
+        // Mirror to the account when there is one to mirror to. Local state
+        // is written first and unconditionally, so a backend outage costs the
+        // user nothing (AE2).
+        void syncPrefsToServer(get().prefsByUser[u.id] ?? {})
       },
 
       logActivity: (action, designName, useCase) => {
@@ -179,6 +212,7 @@ export const useAuthStore = create<AuthState>()(
           useCase,
           timestamp: new Date().toISOString(),
         }
+        void syncActivityToServer(activity)
         set(s => {
           const key = u.id
           const prev = s.activitiesByUser[key] ?? []
