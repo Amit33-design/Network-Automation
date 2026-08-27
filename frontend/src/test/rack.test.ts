@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { computeRackLayout, buildCableSchedule } from '@/components/RackElevation'
+import {
+  computeRackLayout, buildCableSchedule,
+  RACK_POWER_BUDGET_W, GPU_RACK_POWER_BUDGET_W,
+} from '@/components/RackElevation'
 import type { BOMDevice, CableLink } from '@/types'
 
 function makeDevice(overrides: Partial<BOMDevice> = {}): BOMDevice {
@@ -49,13 +52,44 @@ describe('computeRackLayout (G-A14)', () => {
     expect(fw?.heightU).toBe(1)
   })
 
-  it('calculates total power consumption', () => {
+  it('calculates total power from the real SKU, not a role average', () => {
+    // Was 2x800, a `ROLE_POWER` guess. The layout now uses the catalogue
+    // figure for this actual model (AF2) — the Nexus 9336C-FX2 draws 650 W,
+    // and the rack layout is what decides how many cabinets are needed.
     const devices = [
       makeDevice({ id: 's1', subLayer: 'spine' }),
       makeDevice({ id: 's2', subLayer: 'spine' }),
     ]
     const racks = computeRackLayout(devices)
-    expect(racks[0].totalPowerW).toBe(1600)
+    expect(racks[0].totalPowerW).toBe(1300)
+  })
+
+  it('closes a rack on POWER, not only on units (AF2)', () => {
+    // The layout tracked totalPowerW and never used it. A 1024-endpoint DC
+    // put 32 devices and 17.3 kW into one 42U cabinet — a standard cabinet is
+    // 5-10 kW — and the cable schedule simultaneously priced every
+    // spine-leaf run at the 100 m the user had specified.
+    const devices = Array.from({ length: 20 }, (_, i) =>
+      makeDevice({ id: `s${i}`, hostname: `SPINE-${i}`, subLayer: 'spine' }),
+    )
+    const racks = computeRackLayout(devices)
+    for (const rack of racks) {
+      expect(rack.totalPowerW, `${rack.label} draws over budget`)
+        .toBeLessThanOrEqual(RACK_POWER_BUDGET_W)
+      expect(rack.usedU).toBeLessThanOrEqual(42)
+    }
+    // 20 x 650 W = 13 kW, so it cannot be one rack even though 40U fits.
+    expect(racks.length).toBeGreaterThan(1)
+    expect(racks.flatMap(r => r.slots).length, 'a device was dropped').toBe(20)
+  })
+
+  it('still places a device that alone exceeds the budget, rather than looping', () => {
+    const hog = makeDevice({
+      id: 'hog', hostname: 'HOG', subLayer: 'gpu-compute',
+      model: 'GPU Server 4U (8x H100)',
+    })
+    const racks = computeRackLayout([hog, hog, hog].map((d, i) => ({ ...d, id: `h${i}` })))
+    expect(racks.flatMap(r => r.slots).length).toBe(3)
   })
 
   it('splits into multiple racks when exceeding 42U', () => {
@@ -133,16 +167,25 @@ describe('computeRackLayout — ToR + GPU compute', () => {
     expect(computeRacks[0].slots[2].device.subLayer).toBe('gpu-compute')
   })
 
-  it('places 10 compute servers per rack (40U / 4U = 10)', () => {
+  it('fills a compute rack to its POWER budget, not just its units', () => {
+    // This asserted 10 servers per rack, from 40U / 4U. Ten 8xH100 nodes at
+    // 6.5 kW each is 65 kW in one 42U cabinet, which nothing delivers — the
+    // layout was fitting boxes it could never energise (AF2). Servers per
+    // rack now comes from min(units, 40 kW budget).
     const leaves = Array.from({ length: 4 }, (_, i) =>
       makeDevice({ id: `l${i}`, hostname: `LEAF-${i}`, subLayer: 'leaf' }),
     )
     const servers = Array.from({ length: 20 }, (_, i) => makeCompute(`${i}`))
     const racks = computeRackLayout([...leaves, ...servers])
     const computeRacks = racks.filter(r => r.rackId.startsWith('CR'))
-    expect(computeRacks.length).toBe(2) // 20 servers / 10 per rack
-    expect(computeRacks[0].slots.filter(s => s.device.subLayer === 'gpu-compute').length).toBe(10)
-    expect(computeRacks[1].slots.filter(s => s.device.subLayer === 'gpu-compute').length).toBe(10)
+    for (const rack of computeRacks) {
+      expect(rack.totalPowerW, `${rack.label} exceeds the high-density budget`)
+        .toBeLessThanOrEqual(GPU_RACK_POWER_BUDGET_W)
+    }
+    // ...and every server is still placed somewhere.
+    const placed = computeRacks
+      .flatMap(r => r.slots).filter(s => s.device.subLayer === 'gpu-compute').length
+    expect(placed).toBe(20)
   })
 
   it('assigns gpu-compute 4U height', () => {
@@ -179,7 +222,7 @@ describe('computeRackLayout — ToR + GPU compute', () => {
     expect(computeRacks[2].label).toBe('Compute C')
   })
 
-  it('handles large GPU fabric — 256 servers yield ~26 compute racks', () => {
+  it('handles a large GPU fabric, at a power density that exists', () => {
     const leaves = Array.from({ length: 52 }, (_, i) =>
       makeDevice({ id: `l${i}`, hostname: `LEAF-${i}`, subLayer: 'leaf' }),
     )
@@ -190,7 +233,14 @@ describe('computeRackLayout — ToR + GPU compute', () => {
     const racks = computeRackLayout([...spines, ...leaves, ...servers])
     const computeRacks = racks.filter(r => r.rackId.startsWith('CR'))
     const netRacks = racks.filter(r => r.rackId.startsWith('NW'))
-    expect(computeRacks.length).toBe(26) // 256 / 10 = 25.6 → 26
+    // Was 26, i.e. 10 servers and 65 kW per cabinet. At the 40 kW budget it
+    // takes roughly twice as many racks — which is the real facilities cost
+    // of 256 H100 nodes, and the number the data-centre team needs (AF2).
+    expect(computeRacks.length).toBe(52)
+    for (const rack of racks) {
+      expect(rack.totalPowerW, `${rack.label} over budget`)
+        .toBeLessThanOrEqual(GPU_RACK_POWER_BUDGET_W)
+    }
     expect(netRacks.length).toBeGreaterThanOrEqual(1)
     // Each compute rack should have leaf pair + servers
     expect(computeRacks[0].slots[0].device.subLayer).toBe('leaf')

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { alphaLabel } from '@/lib/bom'
+import { alphaLabel, devicePowerW } from '@/lib/bom'
 import type { BOMDevice, CableLink } from '@/types'
 
 // ── Rack assignment types ──────────────────────────────────────────────────────
@@ -34,6 +34,22 @@ export interface CableRun {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const RACK_U = 42
+
+/**
+ * Power a cabinet can actually be given, in watts (AF2).
+ *
+ * The layout tracked `totalPowerW` and never used it, packing purely by rack
+ * units — so a 1024-endpoint DC put 32 devices and **17.3 kW** into one 42U
+ * rack, and a 512-GPU design produced a **66 kW** compute rack. A standard
+ * colo cabinet is sold at 5–10 kW; 15–20 kW is high-density and needs
+ * specific cooling and busway. Nothing delivers 66 kW to a standard rack.
+ *
+ * 10 kW is the common enterprise/colo cabinet. High-density GPU rows are
+ * genuinely provisioned higher, so the compute layout is allowed more — but
+ * a number, not infinity.
+ */
+export const RACK_POWER_BUDGET_W = 10_000
+export const GPU_RACK_POWER_BUDGET_W = 40_000
 const U_HEIGHT = 14
 const RACK_W = 320
 const LABEL_W = 30
@@ -87,7 +103,11 @@ const ROLE_POWER: Record<string, number> = {
 }
 
 function devicePower(d: BOMDevice): number {
-  return ROLE_POWER[d.subLayer] ?? 400
+  // One power lookup for the whole codebase (AF2). This used to be a private
+  // role-average table that ignored the catalogue, so the rack layout — the
+  // thing that decides how many cabinets you buy — ran on the least accurate
+  // of the three power numbers in the repo.
+  return devicePowerW(d, ROLE_POWER[d.subLayer] ?? 400)
 }
 
 // ── Rack layout computation ──────────────────────────────────────────────────
@@ -114,7 +134,13 @@ function computeDenseLayout(devices: BOMDevice[]): RackAssignment[] {
 
   for (const dev of sorted) {
     const h = ruForRole(dev.subLayer)
-    if (currentU + h - 1 > RACK_U) {
+    const pwNext = devicePower(dev)
+    // A rack is full when it runs out of EITHER units or power. `hasSlots`
+    // keeps a single device that exceeds the budget on its own from looping
+    // forever — it is placed alone and validateBOM reports the density.
+    const hasSlots = currentRack.slots.length > 0
+    const outOfPower = hasSlots && currentRack.totalPowerW + pwNext > RACK_POWER_BUDGET_W
+    if (currentU + h - 1 > RACK_U || outOfPower) {
       racks.push(currentRack)
       const nextIdx = racks.length + 1
       currentRack = {
@@ -161,7 +187,14 @@ function computeToRLayout(devices: BOMDevice[]): RackAssignment[] {
   const computeRU = ruForRole('gpu-compute')
   const leafRU = ruForRole('leaf')
   const torU = leafRU * 2
-  const serversPerRack = Math.floor((RACK_U - torU) / computeRU)
+  // How many servers FIT is not how many can be POWERED. Eight H100 nodes at
+  // 6.5 kW each is 52 kW; the U-only answer was 10, i.e. 66 kW with the ToR
+  // pair on top — which no cabinet delivers.
+  const serverPowerW = compute.length ? devicePower(compute[0]) : ROLE_POWER['gpu-compute']
+  const torPowerW = leaves.length ? devicePower(leaves[0]) * 2 : ROLE_POWER['leaf'] * 2
+  const byUnits = Math.floor((RACK_U - torU) / computeRU)
+  const byPower = Math.floor((GPU_RACK_POWER_BUDGET_W - torPowerW) / Math.max(1, serverPowerW))
+  const serversPerRack = Math.max(1, Math.min(byUnits, byPower))
 
   const racks: RackAssignment[] = []
   let computeIdx = 0
