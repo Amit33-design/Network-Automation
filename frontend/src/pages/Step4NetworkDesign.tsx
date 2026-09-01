@@ -2018,12 +2018,28 @@ export function Step4NetworkDesign() {
                   )}>
                     CapEx {designDiff.summary.capexDelta >= 0 ? '+' : ''}{formatUSD(designDiff.summary.capexDelta)}
                   </span>
+                  {/* AG4: run lengths and the cable plant were invisible here,
+                      so a review could report "nothing changed" while the whole
+                      site had been re-cabled. */}
+                  <span className="px-2 py-1 rounded bg-white/5 border border-white/10 text-gray-300">
+                    Inputs: {designDiff.summary.inputsChanged}
+                  </span>
+                  <span className={cn(
+                    'px-2 py-1 rounded border',
+                    designDiff.summary.plantDelta !== 0
+                      ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                      : 'bg-white/5 border-white/10 text-gray-300',
+                  )}>
+                    Cable plant {designDiff.summary.plantDelta >= 0 ? '+' : ''}{formatUSD(designDiff.summary.plantDelta)}
+                    {designDiff.summary.cablesChanged > 0 && ` (${designDiff.summary.cablesChanged} run${designDiff.summary.cablesChanged === 1 ? '' : 's'})`}
+                  </span>
                 </div>
 
                 {/* Field change tables */}
                 {[
                   { title: 'Intent changes', rows: designDiff.intentChanges },
                   { title: 'Requirement changes', rows: designDiff.requirementChanges },
+                  { title: 'Design input changes', rows: designDiff.inputChanges },
                 ].filter(s => s.rows.length > 0).map(section => (
                   <div key={section.title}>
                     <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">{section.title}</div>
@@ -2045,6 +2061,36 @@ export function Step4NetworkDesign() {
                     </div>
                   </div>
                 ))}
+
+                {/* Cable-plant delta — re-cabling is the most disruptive change */}
+                {designDiff.cableDelta.length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">Cable plant delta</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead><tr className="border-b border-white/10 text-gray-400">
+                          <th className="px-2 py-1 text-left">Run</th><th className="px-2 py-1 text-left">Change</th>
+                          <th className="px-2 py-1 text-left">Qty</th><th className="px-2 py-1 text-left">Type</th>
+                          <th className="px-2 py-1 text-left">Length</th><th className="px-2 py-1 text-left">Cost</th>
+                        </tr></thead>
+                        <tbody>
+                          {designDiff.cableDelta.map(c => (
+                            <tr key={c.key} className="border-b border-white/5">
+                              <td className="px-2 py-1 text-gray-300 font-mono">{c.key}</td>
+                              <td className="px-2 py-1 text-amber-300">{c.status}</td>
+                              <td className="px-2 py-1 text-gray-400 font-mono">{c.before?.quantity ?? '—'} → {c.after?.quantity ?? '—'}</td>
+                              <td className="px-2 py-1 text-gray-400 font-mono">
+                                {c.before ? `${c.before.cableType}/${c.before.medium ?? '?'}` : '—'} → {c.after ? `${c.after.cableType}/${c.after.medium ?? '?'}` : '—'}
+                              </td>
+                              <td className="px-2 py-1 text-gray-400 font-mono">{c.before?.lengthM ?? '—'} → {c.after?.lengthM ?? '—'} m</td>
+                              <td className="px-2 py-1 text-gray-400 font-mono">{formatUSD(c.before?.totalPrice ?? 0)} → {formatUSD(c.after?.totalPrice ?? 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 {/* BOM delta */}
                 {designDiff.bomDelta.length > 0 && (
