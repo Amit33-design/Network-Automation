@@ -30,24 +30,69 @@ describe('K1 — vendorToPlatform', () => {
     expect(vendorToPlatform('Cisco', 'distribution')).toBe('iosxe')
   })
 
-  it('maps the other vendors correctly', () => {
+  it('maps every catalogue vendor to the NOS it actually runs', () => {
+    // Dell EMC and NVIDIA used to both return 'sonic', and everything else
+    // fell through to 'iosxe' — so a Palo Alto firewall, a Nokia SR Linux
+    // switch, a FortiSwitch, an Aruba CX and an EXOS box were all handed
+    // Cisco `configure replace` as their recovery command (AG5).
     expect(vendorToPlatform('Arista', 'leaf')).toBe('eos')
     expect(vendorToPlatform('Juniper', 'leaf')).toBe('junos')
-    expect(vendorToPlatform('Dell EMC', 'spine')).toBe('sonic')
-    expect(vendorToPlatform('NVIDIA', 'leaf')).toBe('sonic')
+    expect(vendorToPlatform('Dell EMC', 'spine')).toBe('dellos10')
+    expect(vendorToPlatform('NVIDIA', 'leaf')).toBe('cumulus')
+    expect(vendorToPlatform('Nokia', 'leaf')).toBe('srl')
+    expect(vendorToPlatform('Extreme Networks', 'access')).toBe('exos')
+    expect(vendorToPlatform('Fortinet', 'firewall')).toBe('fortios')
+    expect(vendorToPlatform('HPE Aruba', 'access')).toBe('arubaoscx')
+    expect(vendorToPlatform('Palo Alto', 'firewall')).toBe('panos')
+  })
+
+  it('resolves Cisco by model when one is given', () => {
+    expect(vendorToPlatform('Cisco', 'wan-edge', 'ASR 9904')).toBe('iosxr')
+    expect(vendorToPlatform('Cisco', 'leaf', 'Nexus 93180YC-FX')).toBe('nxos')
+    expect(vendorToPlatform('Cisco', 'access', 'Catalyst 9200')).toBe('iosxe')
   })
 
   it('defaults unknown vendors to iosxe', () => {
     expect(vendorToPlatform('Acme', 'leaf')).toBe('iosxe')
   })
+
+  it('gives every catalogue vendor a complete, usable strategy', () => {
+    // A recovery runbook that omits the restore step, or prescribes another
+    // vendor's, is discovered during an outage.
+    const vendors = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC',
+                     'Extreme Networks', 'Fortinet', 'HPE Aruba', 'Palo Alto']
+    for (const v of vendors) {
+      for (const role of ['spine', 'leaf', 'access', 'firewall', 'wan-edge']) {
+        const p = vendorToPlatform(v, role)
+        const strat = ROLLBACK_STRATEGIES[p]
+        expect(strat, `${v}/${role} → ${p} has no strategy`).toBeTruthy()
+        expect(strat.pre, `${v}/${role} → ${p} has no checkpoint step`).toBeTruthy()
+        expect(strat.exec, `${v}/${role} → ${p} has no restore step`).toBeTruthy()
+      }
+    }
+  })
+
+  it('never prescribes one vendor\'s CLI to another', () => {
+    // Spot-check the commands that were actually being mis-issued.
+    expect(ROLLBACK_STRATEGIES.panos.exec).not.toContain('configure replace')
+    expect(ROLLBACK_STRATEGIES.srl.exec).not.toContain('configure replace')
+    expect(ROLLBACK_STRATEGIES.fortios.exec).not.toContain('configure replace')
+    expect(ROLLBACK_STRATEGIES.dellos10.exec).not.toContain('config load')
+    expect(ROLLBACK_STRATEGIES.panos.exec).toContain('load config from')
+    expect(ROLLBACK_STRATEGIES.srl.exec).toContain('checkpoint')
+  })
 })
 
 describe('K1 — ROLLBACK_STRATEGIES mirrors CLAUDE.md §9', () => {
-  it('has all five platforms with exec commands', () => {
-    const platforms: Platform[] = ['nxos', 'iosxe', 'eos', 'junos', 'sonic']
+  it('has an exec command for every platform it declares', () => {
+    // Was a hard-coded list of five. The catalogue produces twelve NOSes, and
+    // the seven that were missing all silently resolved to Cisco IOS-XE (AG5),
+    // so enumerate the record rather than a list that can fall behind it.
+    const platforms = Object.keys(ROLLBACK_STRATEGIES) as Platform[]
+    expect(platforms.length).toBeGreaterThanOrEqual(12)
     for (const p of platforms) {
-      expect(ROLLBACK_STRATEGIES[p]).toBeDefined()
-      expect(ROLLBACK_STRATEGIES[p].exec).toBeTruthy()
+      expect(ROLLBACK_STRATEGIES[p], p).toBeDefined()
+      expect(ROLLBACK_STRATEGIES[p].exec, `${p} has no restore step`).toBeTruthy()
     }
   })
 
