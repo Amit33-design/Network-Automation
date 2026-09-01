@@ -79,6 +79,57 @@ export interface DcimCable {
  * endpoints). Interface names are allocated sequentially per device as the
  * cabling is walked (deterministic given the same device/cabling order).
  */
+/**
+ * Expand the aggregate cable plan into concrete device-to-device runs.
+ *
+ * This used to emit a full `fromDevs x toDevs` mesh and ignore `quantity`
+ * entirely, so a 20-device DC design whose BOM billed **74** runs exported
+ * **280**: every leaf cabled to every other leaf and to itself (196 runs for
+ * a 14-member peer-link tier), and every firewall cabled to every leaf rather
+ * than to the two border leaves Z3 actually wires. A customer importing that
+ * into NetBox received a fabricated cable plant nearly four times the real
+ * size — in the artifact whose purpose is to be the source of truth (AG2).
+ *
+ * The count is now exactly `link.quantity`, always. Pair ORDER is chosen to
+ * match how the fabric is really wired so the endpoints are meaningful too:
+ * spine-leaf is staggered the way `closFabricLinks` assigns uplinks, a
+ * same-layer peer-link runs between consecutive HA pair members, and anything
+ * else walks the cross-product in order.
+ */
+function candidatePairs(
+  link: CableLink, fromDevs: BOMDevice[], toDevs: BOMDevice[],
+): Array<[BOMDevice, BOMDevice]> {
+  const pairs: Array<[BOMDevice, BOMDevice]> = []
+
+  // Same-layer runs are HA peer-links: A01<->A02, B01<->B02, ...
+  if (link.fromLayer === link.toLayer) {
+    for (let i = 0; i + 1 < fromDevs.length; i += 2) pairs.push([fromDevs[i], fromDevs[i + 1]])
+    return pairs
+  }
+
+  const isSpineLeaf =
+    (link.fromLayer === 'spine' && link.toLayer === 'leaf') ||
+    (link.fromLayer === 'leaf' && link.toLayer === 'spine')
+  if (isSpineLeaf) {
+    const leaves = link.fromLayer === 'leaf' ? fromDevs : toDevs
+    const spines = link.fromLayer === 'leaf' ? toDevs : fromDevs
+    const uplinks = Math.max(1, leaves[0]?.uplinks ?? 1)
+    // Staggered round-robin, matching configgen's closFabricLinks: leaf i's
+    // k-th uplink lands on spine (i + k) % spineCount, so no spine goes dark.
+    for (let i = 0; i < leaves.length; i++) {
+      for (let k = 0; k < uplinks; k++) {
+        const spine = spines[(i + k) % spines.length]
+        if (!spine) continue
+        pairs.push(link.fromLayer === 'leaf' ? [leaves[i], spine] : [spine, leaves[i]])
+      }
+    }
+    return pairs
+  }
+
+  for (const fd of fromDevs) for (const td of toDevs) pairs.push([fd, td])
+  return pairs
+}
+
 export function expandCablePlan(devices: BOMDevice[], cabling: CableLink[]): DcimCable[] {
   const cables: DcimCable[] = []
   const portCounter = new Map<string, number>()
@@ -87,37 +138,37 @@ export function expandCablePlan(devices: BOMDevice[], cabling: CableLink[]): Dci
     portCounter.set(device, n)
     return `Ethernet1/${n}`
   }
+  const push = (a: string, b: string, link: CableLink) => cables.push({
+    a: { device: a, iface: nextIface(a) },
+    b: { device: b, iface: nextIface(b) },
+    cableType: link.cableType, medium: link.medium, speed: link.speed, lengthM: link.lengthM,
+  })
 
   for (const link of cabling) {
     const fromDevs = devices.filter(d => d.subLayer === link.fromLayer)
     const toDevs   = devices.filter(d => d.subLayer === link.toLayer)
+    const qty = Math.max(0, link.quantity)
 
     if (fromDevs.length === 0 || toDevs.length === 0) {
       // Fall back to the aggregate labels when the layer isn't in the BOM.
       const a = link.fromDevice || link.fromLayer
       const b = link.toDevice || link.toLayer
-      cables.push({
-        a: { device: a, iface: nextIface(a) },
-        b: { device: b, iface: nextIface(b) },
-        cableType: link.cableType, medium: link.medium, speed: link.speed, lengthM: link.lengthM,
-      })
+      for (let i = 0; i < qty; i++) push(a, b, link)
       continue
     }
 
-    for (const fd of fromDevs) {
-      for (const td of toDevs) {
-        const a = fd.hostname || fd.model
-        const b = td.hostname || td.model
-        cables.push({
-          a: { device: a, iface: nextIface(a) },
-          b: { device: b, iface: nextIface(b) },
-          cableType: link.cableType, medium: link.medium, speed: link.speed, lengthM: link.lengthM,
-        })
-      }
+    const pairs = candidatePairs(link, fromDevs, toDevs)
+    if (!pairs.length) continue
+    // Exactly `quantity` runs: the plan and the schedule must agree on how
+    // many cables a contractor is being asked to pull.
+    for (let i = 0; i < qty; i++) {
+      const [fd, td] = pairs[i % pairs.length]
+      push(fd.hostname || fd.model, td.hostname || td.model, link)
     }
   }
   return cables
 }
+
 
 // ── Rack layout structural types (F3) ─────────────────────────────────────────
 // Structurally compatible with RackElevation's RackAssignment/RackSlot so the

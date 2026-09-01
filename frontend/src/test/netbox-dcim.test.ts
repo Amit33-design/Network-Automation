@@ -54,9 +54,12 @@ describe('expandCablePlan', () => {
   })
 
   it('falls back to aggregate labels when a layer is absent from the BOM', () => {
+    // Still `quantity` runs, not one: expanding a plan that says four cables
+    // into a single row is the same under-count the main path used to
+    // over-count (AG2). Only the endpoint NAMES fall back here.
     const orphan: CableLink[] = [{ ...cabling[0], fromLayer: 'core', toLayer: 'nowhere', fromDevice: 'CORE-01', toDevice: 'EDGE-01' }]
     const cables = expandCablePlan(devices, orphan)
-    expect(cables.length).toBe(1)
+    expect(cables.length).toBe(orphan[0].quantity)
     expect(cables[0].a.device).toBe('CORE-01')
     expect(cables[0].b.device).toBe('EDGE-01')
   })
