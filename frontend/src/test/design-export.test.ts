@@ -6,6 +6,9 @@ import {
   buildDesignMarkdown,
 } from '../lib/design-export'
 import type { AppState } from '../types'
+import { useAppStore } from '@/store/useAppStore'
+import { buildDeviceList, buildCabling, buildOptics } from '@/lib/bom'
+import { generateAllConfigs } from '@/lib/configgen'
 
 const MOCK_STATE: AppState = {
   useCase: 'dc',
@@ -222,5 +225,85 @@ describe('buildDesignMarkdown', () => {
     expect(md).not.toContain('Compliance Frameworks')
     expect(md).not.toContain('Vendor Preferences')
     expect(md).not.toContain('Additional Notes')
+  })
+})
+
+// ── AG3: a saved design must come back as the same design ────────────────────
+// The export dropped `linkDistances` — the run lengths the user typed, which
+// drive cable selection, fibre medium, optic choice and cost. A design
+// exported with 400 m spine-leaf runs reimported as 3 m DAC: $63,180 of
+// cabling and $18,720 of optics became $5,680 and $0, silently, with the
+// import reporting success. Also dropped: the custom deploy-gate policy, the
+// selected policy blocks, the ZTP settings and any NetBox-imported inventory.
+describe('AG3 — round-trip fidelity against the real store', () => {
+  const populate = () => {
+    useAppStore.setState({
+      useCase: 'dc', siteCode: 'AG3', siteName: 'Round Trip', orgName: 'Acme',
+      scale: 'medium', totalEndpoints: 1024, oversubscription: 3,
+      bandwidthPerServer: '25G', vendorPrefs: ['Arista'], budgetTier: 'enterprise',
+      redundancy: 'dual', compliance: ['PCI'], protoFeatures: ['BFD'],
+      overlayProtocols: ['vxlan_evpn'], appTypes: ['storage'], numSites: 3,
+      customPolicyRules: 'no deploy on friday',
+      policyBlocks: ['hardening'],
+      linkDistances: { 'spine-leaf': 400, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 },
+    } as never)
+    const devices = buildDeviceList(useAppStore.getState() as never)
+    useAppStore.setState({ devices, configs: generateAllConfigs(devices, 'dc') } as never)
+    return useAppStore.getState() as never as Record<string, unknown>
+  }
+
+  const roundTrip = (before: Record<string, unknown>) => {
+    const ser = serializeDesign(before as never)
+    const wire = JSON.parse(JSON.stringify(ser))
+    expect(validateDesignImport(wire).ok, 'export did not validate').toBe(true)
+    return applyDesignImport(wire) as Record<string, unknown>
+  }
+
+  it('preserves every design INPUT, keeping only derived output out', () => {
+    const before = populate()
+    const after = roundTrip(before)
+    // Regenerable artifacts and UI state are deliberately not carried.
+    const DERIVED = new Set([
+      'policies', 'preCheckScript', 'postCheckScript', 'prometheusAlerts',
+      'grafanaDashboard', 'ansiblePlaybook', 'ansibleInventory',
+      'step', 'activeDeployTab', 'theme', 'demoTopologyId', '_savedAt',
+    ])
+    const dataKeys = Object.keys(before).filter(k => typeof before[k] !== 'function')
+    const dropped = dataKeys.filter(k => !(k in after) && !DERIVED.has(k))
+    expect(dropped, 'these design inputs do not survive a save/load').toEqual([])
+  })
+
+  it('never changes the value of a field it does carry', () => {
+    const before = populate()
+    const after = roundTrip(before)
+    const changed = Object.keys(after).filter(k =>
+      JSON.stringify(after[k]) !== JSON.stringify(before[k]))
+    expect(changed).toEqual([])
+  })
+
+  it('rebuilds the identical cable and optics BOM after a reload', () => {
+    // The property that actually matters: reload a design and procurement
+    // gets the same quote. Losing linkDistances quietly changed both.
+    const before = populate()
+    const after = roundTrip(before)
+    const devices = before.devices as never
+    const cost = (ld: never) => ({
+      cabling: buildCabling(devices, ld).reduce((n, c) => n + c.totalPrice, 0),
+      optics: buildOptics(devices, ld).reduce((n, o) => n + o.totalPrice, 0),
+      medium: buildCabling(devices, ld)
+        .find(c => c.fromLayer === 'spine' && c.toLayer === 'leaf')?.medium,
+    })
+    expect(cost(after.linkDistances as never)).toEqual(cost(before.linkDistances as never))
+    expect((cost(after.linkDistances as never)).cabling).toBeGreaterThan(0)
+  })
+
+  it('still imports a file written before the inputs section existed', () => {
+    const before = populate()
+    const legacy = JSON.parse(JSON.stringify(serializeDesign(before as never)))
+    delete legacy.inputs
+    expect(validateDesignImport(legacy).ok).toBe(true)
+    const after = applyDesignImport(legacy) as Record<string, unknown>
+    expect(after.devices).toBeTruthy()
+    expect('linkDistances' in after, 'must not clobber with undefined').toBe(false)
   })
 })
