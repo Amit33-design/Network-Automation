@@ -56,6 +56,25 @@ export interface DesignExport {
     cabling: CableLink[]
     optics: OpticsEntry[]
   }
+  /**
+   * Design INPUTS that live outside intent/requirements (AG3).
+   *
+   * These were simply not serialized. `linkDistances` is the worst of them:
+   * it is the run lengths the user typed, and it drives cable selection,
+   * fibre medium, optic choice and therefore cost. A design exported with
+   * 400 m spine-leaf runs reimported as 3 m DAC — $63,180 of cabling and
+   * $18,720 of optics became $5,680 and $0, silently, with the import
+   * reporting success.
+   *
+   * Optional so files written before this section still import.
+   */
+  inputs?: {
+    linkDistances?: AppState['linkDistances']
+    customPolicyRules?: string
+    policyBlocks?: string[]
+    ztpConfig?: AppState['ztpConfig']
+    netboxDevices?: AppState['netboxDevices']
+  }
   configs: Record<string, string>
 }
 
@@ -105,6 +124,13 @@ export function serializeDesign(state: AppState): DesignExport {
       devices: state.devices,
       cabling: state.cabling,
       optics: state.optics,
+    },
+    inputs: {
+      linkDistances: state.linkDistances,
+      customPolicyRules: state.customPolicyRules,
+      policyBlocks: state.policyBlocks,
+      ztpConfig: state.ztpConfig,
+      netboxDevices: state.netboxDevices,
     },
     configs: state.configs,
   }
@@ -188,6 +214,17 @@ export function applyDesignImport(data: DesignExport): Partial<AppState> {
     if (r.bgpAsn !== undefined) state.bgpAsn = r.bgpAsn
     if (r.orgCidr !== undefined) state.orgCidr = r.orgCidr
     if (r.aviatrixOptions) state.aviatrixOptions = r.aviatrixOptions
+  }
+
+  // Design inputs (AG3). Absent in files written before this section existed,
+  // so each is applied only when present rather than clobbering with undefined.
+  const inp = data.inputs
+  if (inp) {
+    if (inp.linkDistances) state.linkDistances = inp.linkDistances
+    if (inp.customPolicyRules !== undefined) state.customPolicyRules = inp.customPolicyRules
+    if (inp.policyBlocks) state.policyBlocks = inp.policyBlocks
+    if (inp.ztpConfig) state.ztpConfig = inp.ztpConfig
+    if (inp.netboxDevices) state.netboxDevices = inp.netboxDevices
   }
 
   if (data.bom) {
