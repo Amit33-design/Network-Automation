@@ -13,7 +13,7 @@ import { buildNetBoxDcimExport } from '@/lib/netbox-dcim'
 import { downloadDesignJSON, downloadDesignMarkdown, validateDesignImport, applyDesignImport, serializeDesign } from '@/lib/design-export'
 import { diffDesigns, diffToMarkdown, type DesignDiff } from '@/lib/design-diff'
 import { computeCapacityPlan } from '@/lib/capacity-planning'
-import { buildContainerlabTopology, topologyToYAML } from '@/lib/containerlab'
+import { buildContainerlabTopology, containerlabBundle } from '@/lib/containerlab'
 import { buildCloudTerraform, cloudTerraformFilename } from '@/lib/cloud-terraform'
 import { buildDrawio, drawioFilename } from '@/lib/drawio-export'
 import type { DesignExport } from '@/lib/design-export'
@@ -1841,18 +1841,22 @@ export function Step4NetworkDesign() {
                     state.configs,
                     `${siteCode || useCase || 'lab'}`,
                   )
-                  const yaml = topologyToYAML(topo)
-                  const blob = new Blob([yaml], { type: 'text/yaml' })
+                  // The topology references configs/<host>.cfg for every node.
+                  // Downloading the YAML alone left those files unwritten, so
+                  // the lab booted bare devices (AG1) — ship the bundle that
+                  // writes the whole tree and deploys it.
+                  const script = containerlabBundle(topo, state.configs)
+                  const blob = new Blob([script], { type: 'text/x-shellscript' })
                   const url = URL.createObjectURL(blob)
                   const a = document.createElement('a')
                   a.href = url
-                  a.download = `${topo.name}.clab.yml`
+                  a.download = `${topo.name}-lab.sh`
                   a.click()
                   URL.revokeObjectURL(url)
                 }}
                 className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-orange-500/40 bg-orange-600/20 text-orange-300 text-sm font-medium hover:bg-orange-600/30 transition-colors cursor-pointer"
               >
-                Containerlab (.yml)
+                Containerlab lab (.sh)
               </button>
 
               <button

@@ -1267,6 +1267,25 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### AG. Lab-export fidelity (sourced 2026-08-27)
+
+> N1 exports a containerlab topology so a user can "spin up a faithful
+> replica of their design with one command" — a stated differentiator. It was
+> audited the way a user would experience it: build a real DC design, export,
+> and read what you would actually be given.
+>
+> **A 20-device design exported 20 nodes, ZERO links and ZERO startup
+> configs** — twenty isolated, unconfigured switches. Three independent
+> causes, and 19 passing tests over the top of them because the test helper
+> fabricated a `CableLink` shape `buildCabling` never produces.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| AG1 | **The containerlab export produced isolated, unconfigured devices** — three independent causes. (1) **Zero links**: `generateLinks` read `cable.fromDevice` as a hostname, but `buildCabling` puts a human summary there (`"16x leaf"`), so the node lookup missed on every cable and `continue` fired every time. (2) **Zero startup configs**: nodes were matched with `configs[node.hostname]` while `generateAllConfigs` keys its output by **BOM id**, so no node ever found its config — `ClabNode` now carries `deviceId`. (3) **The UI downloaded only the YAML**, so even once fixed the topology pointed at `configs/*.cfg` files nothing wrote; new `containerlabBundle()` emits one runnable shell script that writes the tree (heredocs, no zip dependency — §21 rule 9) and runs `clab deploy`. Links now come from `expandCablePlan` rather than a third expansion, so the lab and the cable schedule describe the same wiring. New tests drive a **real** BOM: links > 0, link count == cables billed, every node configured, every referenced file written, no self-links, no interface used twice | [x] | `lib/containerlab.ts`, `Step4NetworkDesign.tsx`; `containerlab.test.ts` 19→26 |
+| AG2 | **`expandCablePlan` emitted a full mesh and ignored `quantity`** — found while fixing AG1 and the more serious of the two, because this function also feeds the **NetBox DCIM export** (F2/F3), the customer's source of truth. A 20-device DC billing **74** cable runs exported **280**: firewall→leaf meshed every firewall to every leaf (28) instead of the two border leaves Z3 wires (4), and the same-layer peer-link meshed all 14 leaves against each other (196) instead of 7 pairs × 2 members (14). Spine-leaf matched only by coincidence — `4 spines × 14 leaves` happened to equal `14 leaves × 4 uplinks`, and would over-count as soon as `uplinks < spineCount` (the Y2 staggered case). Now the count is exactly `link.quantity`, and pair ORDER matches how the fabric is really wired: spine-leaf staggered as `closFabricLinks` assigns uplinks, same-layer runs between consecutive HA pair members, everything else in cross-product order. The I5 e2e invariant compared the CSV against the expanded plan — self-consistent, so it never caught this; the new tests compare against the **BOM** | [x] | `lib/netbox-dcim.ts` `candidatePairs`/`expandCablePlan`; 1436 tests, tsc + build green |
+
+---
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)

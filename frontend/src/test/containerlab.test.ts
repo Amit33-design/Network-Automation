@@ -4,7 +4,10 @@ import {
   topologyToYAML,
   generateStartupConfigs,
   containerlabReadme,
+  containerlabBundle,
 } from '@/lib/containerlab'
+import { buildDeviceList, buildCabling } from '@/lib/bom'
+import { generateAllConfigs } from '@/lib/configgen'
 import type { BOMDevice, CableLink } from '@/types'
 
 const leaf = (hostname: string, vendor = 'Cisco', count = 1): BOMDevice => ({
@@ -249,5 +252,101 @@ describe('containerlab', () => {
       expect(yaml).toContain('kind: cisco_n9kv')
       expect(yaml).toContain('kind: crpd')
     })
+  })
+})
+
+// ── AG1: the export must reproduce the design, not just name it ──────────────
+// Audited the way a user experiences it — build a real design, export, read
+// what you get. A 20-device DC produced 20 nodes, ZERO links and ZERO startup
+// configs: twenty isolated, unconfigured switches. Every test in this file
+// passed over the top of that, because the helper above builds a CableLink
+// with a HOSTNAME in `fromDevice`, and `buildCabling` puts a summary string
+// like "16x leaf" there.
+describe('AG1 — a real design round-trips into a usable lab', () => {
+  const real = () => {
+    const state = {
+      useCase: 'dc' as const, scale: 'medium' as const, siteCode: 'AG1',
+      totalEndpoints: 512, oversubscription: 3, bandwidthPerServer: '25G',
+    }
+    const devices = buildDeviceList(state)
+    const cabling = buildCabling(devices, {
+      'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000,
+    })
+    const configs = generateAllConfigs(devices, 'dc')
+    return {
+      devices, cabling, configs,
+      topo: buildContainerlabTopology(devices, cabling, configs, 'AG1'),
+    }
+  }
+
+  it('wires the nodes together', () => {
+    const { topo } = real()
+    expect(topo.nodes.length).toBeGreaterThan(10)
+    expect(topo.links.length, 'a lab with no links is isolated devices').toBeGreaterThan(0)
+  })
+
+  it('emits exactly as many links as the BOM bills cables', () => {
+    // The lab and the cable schedule must describe the same wiring.
+    const { cabling, topo } = real()
+    const billed = cabling.reduce((n, c) => n + c.quantity, 0)
+    expect(topo.links.length).toBe(billed)
+  })
+
+  it('gives every node its generated startup config', () => {
+    // `generateAllConfigs` keys by BOM id; this looked up by hostname, so the
+    // match never happened and every device booted bare.
+    const { topo, configs } = real()
+    const withConfig = topo.nodes.filter(n => n.startupConfig)
+    expect(withConfig.length).toBe(topo.nodes.filter(n => configs[n.deviceId]).length)
+    expect(withConfig.length).toBe(topo.nodes.length)
+  })
+
+  it('writes the config files the topology references', () => {
+    const { topo, configs } = real()
+    const files = generateStartupConfigs(topo, configs)
+    const referenced = topo.nodes.map(n => n.startupConfig).filter(Boolean)
+    expect(files.length).toBe(referenced.length)
+    for (const path of referenced) {
+      expect(files.some(f => f.filename === path), `${path} referenced but not written`).toBe(true)
+    }
+    for (const f of files) expect(f.content.length).toBeGreaterThan(100)
+  })
+
+  it('bundles the topology and every config into one runnable script', () => {
+    const { topo, configs } = real()
+    const sh = containerlabBundle(topo, configs)
+    expect(sh.startsWith('#!/usr/bin/env bash')).toBe(true)
+    expect(sh).toContain(`${topo.name}.clab.yml`)
+    expect(sh).toContain('clab deploy')
+    // Every referenced config is written by the script, not just named.
+    for (const node of topo.nodes) {
+      if (!node.startupConfig) continue
+      expect(sh, `${node.startupConfig} is referenced but never written`)
+        .toContain(`cat > '${node.startupConfig}'`)
+    }
+    // The heredoc delimiter must not occur inside any payload, or the script
+    // terminates early and writes a truncated config.
+    const delim = 'NETDESIGN_EOF'
+    const opens = (sh.match(new RegExp(`<<'${delim}'`, 'g')) ?? []).length
+    const closes = (sh.match(new RegExp(`^${delim}$`, 'gm')) ?? []).length
+    expect(closes).toBe(opens)
+  })
+
+  it('never links a node to itself', () => {
+    const { topo } = real()
+    for (const l of topo.links) {
+      expect(l.a.split(':')[0], `self-link on ${l.a}`).not.toBe(l.b.split(':')[0])
+    }
+  })
+
+  it('uses each container interface at most once', () => {
+    const { topo } = real()
+    const seen = new Set<string>()
+    for (const l of topo.links) {
+      for (const ep of [l.a, l.b]) {
+        expect(seen.has(ep), `${ep} used twice`).toBe(false)
+        seen.add(ep)
+      }
+    }
   })
 })

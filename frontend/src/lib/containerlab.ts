@@ -6,6 +6,7 @@
  */
 
 import type { BOMDevice, CableLink } from '@/types'
+import { expandCablePlan } from '@/lib/netbox-dcim'
 
 // ── Vendor → container image mapping ──────────────────────────────────────────
 
@@ -55,6 +56,9 @@ export interface ClabNode {
   kind: string
   image: string
   hostname: string
+  /** BOM device id — `generateAllConfigs` keys its output by this, not by
+   *  hostname, so without it no node ever found its startup config (AG1). */
+  deviceId: string
   startupConfig?: string
 }
 
@@ -68,6 +72,7 @@ function expandDevices(devices: BOMDevice[]): ClabNode[] {
         kind: resolveImage(dev).kind,
         image: resolveImage(dev).image,
         hostname: dev.hostname,
+        deviceId: dev.id,
       })
     } else {
       for (let i = 1; i <= dev.count; i++) {
@@ -79,6 +84,7 @@ function expandDevices(devices: BOMDevice[]): ClabNode[] {
           kind: resolveImage(dev).kind,
           image: resolveImage(dev).image,
           hostname,
+          deviceId: dev.id,
         })
       }
     }
@@ -106,34 +112,40 @@ function interfacePrefix(kind: string): string {
   }
 }
 
+/**
+ * Concrete node-to-node links.
+ *
+ * This used to read `cable.fromDevice` as a hostname. It is not: `buildCabling`
+ * sets it to a human summary like "16x leaf", so the node lookup missed on
+ * every cable and the topology came out with ZERO links — twenty isolated
+ * switches. The 19 tests over this passed because the test helper built a
+ * CableLink with a hostname in that field, a shape the BOM never produces.
+ *
+ * The aggregate plan is expanded by `expandCablePlan`, which already does
+ * exactly this for the NetBox DCIM export (F2). Reusing it keeps the lab and
+ * the cable schedule describing the same physical wiring — writing a third
+ * expansion is how they would drift.
+ */
 function generateLinks(
   nodes: ClabNode[],
+  devices: BOMDevice[],
   cabling: CableLink[],
 ): ClabLink[] {
   const links: ClabLink[] = []
-  const nodeMap = new Map(nodes.map(n => [n.hostname, n]))
+  const byHostname = new Map(nodes.map(n => [n.hostname, n]))
   const portCounters = new Map<string, number>()
 
-  function nextPort(nodeName: string, kind: string): string {
-    const count = portCounters.get(nodeName) ?? 1
-    portCounters.set(nodeName, count + 1)
-    const prefix = interfacePrefix(kind)
-    return `${prefix}${count}`
+  function nextPort(node: ClabNode): string {
+    const count = portCounters.get(node.name) ?? 1
+    portCounters.set(node.name, count + 1)
+    return `${interfacePrefix(node.kind)}${count}`
   }
 
-  for (const cable of cabling) {
-    const fromNode = nodeMap.get(cable.fromDevice)
-    const toNode = nodeMap.get(cable.toDevice)
-    if (!fromNode || !toNode) continue
-
-    for (let i = 0; i < cable.quantity; i++) {
-      const fromPort = nextPort(fromNode.name, fromNode.kind)
-      const toPort = nextPort(toNode.name, toNode.kind)
-      links.push({
-        a: `${fromNode.name}:${fromPort}`,
-        b: `${toNode.name}:${toPort}`,
-      })
-    }
+  for (const run of expandCablePlan(devices, cabling)) {
+    const a = byHostname.get(run.a.device)
+    const b = byHostname.get(run.b.device)
+    if (!a || !b) continue
+    links.push({ a: `${a.name}:${nextPort(a)}`, b: `${b.name}:${nextPort(b)}` })
   }
 
   return links
@@ -160,12 +172,14 @@ export function buildContainerlabTopology(
   const nodes = expandDevices(devices)
 
   for (const node of nodes) {
-    if (configs[node.hostname]) {
+    // Keyed by BOM id — the hostname lookup this used to do never matched, so
+    // every lab booted bare devices with none of the generated config (AG1).
+    if (configs[node.deviceId]) {
       node.startupConfig = `configs/${node.hostname}.cfg`
     }
   }
 
-  const links = generateLinks(nodes, cabling)
+  const links = generateLinks(nodes, devices, cabling)
   return { name: sanitizeName(name), nodes, links }
 }
 
@@ -208,7 +222,7 @@ export function generateStartupConfigs(
 ): { filename: string; content: string }[] {
   const files: { filename: string; content: string }[] = []
   for (const node of topo.nodes) {
-    const cfg = configs[node.hostname]
+    const cfg = configs[node.deviceId]
     if (cfg) {
       files.push({
         filename: `configs/${node.hostname}.cfg`,
@@ -217,6 +231,51 @@ export function generateStartupConfigs(
     }
   }
   return files
+}
+
+/**
+ * A single self-contained file that stands up the whole lab.
+ *
+ * The topology references `configs/<host>.cfg` for every node, but the UI only
+ * ever downloaded the YAML — so the lab pointed at config files that were
+ * never written, and the user got bare devices even once the wiring was fixed
+ * (AG1). Browsers cannot hand over a directory and this project takes no new
+ * dependencies for a zip, so the bundle is a shell script that writes the
+ * tree and deploys it.
+ */
+export function containerlabBundle(
+  topo: ContainerlabTopology,
+  configs: Record<string, string>,
+): string {
+  const files = generateStartupConfigs(topo, configs)
+  // A heredoc delimiter that cannot appear inside a device config.
+  const EOF = 'NETDESIGN_EOF'
+  const write = (path: string, body: string) => [
+    `mkdir -p "$(dirname '${path}')"`,
+    `cat > '${path}' <<'${EOF}'`,
+    body.replace(/\r/g, ''),
+    EOF,
+    '',
+  ].join('\n')
+
+  return [
+    '#!/usr/bin/env bash',
+    '# Generated by NetDesign AI — containerlab lab bundle',
+    '#',
+    `# Writes ${topo.name}.clab.yml plus ${files.length} startup config(s), then deploys.`,
+    '#   chmod +x this file and run it from an empty directory.',
+    'set -euo pipefail',
+    '',
+    write(`${topo.name}.clab.yml`, topologyToYAML(topo)),
+    ...files.map(f => write(f.filename, f.content)),
+    `echo "Wrote ${topo.name}.clab.yml and ${files.length} config file(s)."`,
+    'if command -v clab >/dev/null 2>&1; then',
+    `  clab deploy -t "${topo.name}.clab.yml"`,
+    'else',
+    '  echo "containerlab not found — install it, then: clab deploy -t ' + topo.name + '.clab.yml"',
+    'fi',
+    '',
+  ].join('\n')
 }
 
 export function containerlabReadme(topo: ContainerlabTopology): string {
