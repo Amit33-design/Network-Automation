@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { diffDesigns, diffToMarkdown } from '@/lib/design-diff'
 import type { DesignExport } from '@/lib/design-export'
 import type { BOMDevice } from '@/types'
+import { useAppStore } from '@/store/useAppStore'
+import { buildDeviceList, buildCabling, buildOptics } from '@/lib/bom'
+import { serializeDesign } from '@/lib/design-export'
 
 function dev(p: Partial<BOMDevice>): BOMDevice {
   return {
@@ -163,5 +166,70 @@ describe('diffToMarkdown', () => {
     expect(md).toContain('BOM delta')
     expect(md).toContain('```diff')
     expect(md).toContain('CapEx')
+  })
+})
+
+// ── AG4: the change review must see the cable plant ──────────────────────────
+// `diffDesigns` covered intent, requirements, devices and configs — but not
+// the cabling, nor the design inputs that drive it. Comparing a 3 m baseline
+// against a 400 m candidate ($4,690 of cable against $71,622, plus a new
+// deploy-gate policy) reported `hasChanges: false` and zero changes of every
+// kind. Re-cabling a site is the most physically disruptive thing a redeploy
+// can do, and the review said nothing.
+describe('AG4 — cable plant and design inputs are part of a change review', () => {
+  const snapshot = (spineLeafM: number, policy: string) => {
+    useAppStore.setState({
+      useCase: 'dc', siteCode: 'AG4', scale: 'medium', totalEndpoints: 1024,
+      oversubscription: 3, bandwidthPerServer: '25G', vendorPrefs: [], numSites: 1,
+      linkDistances: { 'spine-leaf': spineLeafM, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 },
+      customPolicyRules: policy,
+    } as never)
+    const st = useAppStore.getState() as never as { linkDistances: never }
+    const devices = buildDeviceList(useAppStore.getState() as never)
+    useAppStore.setState({
+      devices, configs: {},
+      cabling: buildCabling(devices, st.linkDistances),
+      optics: buildOptics(devices, st.linkDistances),
+    } as never)
+    return serializeDesign(useAppStore.getState() as never)
+  }
+
+  it('notices that the entire cable plant was re-specified', () => {
+    const diff = diffDesigns(snapshot(3, ''), snapshot(400, 'FRIDAY FREEZE'))
+    expect(diff.summary.hasChanges, 'reported no changes at all').toBe(true)
+    expect(diff.cableDelta.length).toBeGreaterThan(0)
+    expect(diff.summary.plantDelta).toBeGreaterThan(50_000)
+    // The device list is untouched, so capex alone shows nothing — which is
+    // exactly why the plant has to be reported separately.
+    expect(diff.summary.capexDelta).toBe(0)
+  })
+
+  it('reports the design inputs that changed', () => {
+    const diff = diffDesigns(snapshot(3, ''), snapshot(400, 'FRIDAY FREEZE'))
+    const fields = diff.inputChanges.map(c => c.field)
+    expect(fields).toContain('linkDistances')
+    expect(fields).toContain('customPolicyRules')
+  })
+
+  it('says what each run changed from and to', () => {
+    const diff = diffDesigns(snapshot(3, ''), snapshot(400, ''))
+    const run = diff.cableDelta.find(c => c.key.includes('spine'))!
+    expect(run.status).toBe('changed')
+    expect(run.before!.lengthM).toBe(3)
+    expect(run.after!.lengthM).toBe(400)
+    expect(run.before!.medium).not.toBe(run.after!.medium)
+  })
+
+  it('still reports no changes when nothing changed', () => {
+    const diff = diffDesigns(snapshot(100, 'x'), snapshot(100, 'x'))
+    expect(diff.summary.hasChanges).toBe(false)
+    expect(diff.cableDelta).toEqual([])
+    expect(diff.inputChanges).toEqual([])
+  })
+
+  it('puts the plant delta in the markdown report', () => {
+    const md = diffToMarkdown(diffDesigns(snapshot(3, ''), snapshot(400, 'FRIDAY FREEZE')))
+    expect(md).toContain('Cable plant delta')
+    expect(md).toContain('Design input changes')
   })
 })
