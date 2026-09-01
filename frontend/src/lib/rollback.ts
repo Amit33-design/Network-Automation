@@ -18,10 +18,24 @@
  * exact commands that restore would run.
  */
 import type { CheckResult, BOMDevice } from '@/types'
+import { ztpPlatform } from '@/lib/ztp'
 
 // ── Platform model ──────────────────────────────────────────────────────────
 
-export type Platform = 'nxos' | 'iosxe' | 'eos' | 'junos' | 'sonic'
+/**
+ * Every NOS the catalogue can put in a BOM (AG5).
+ *
+ * This used to be five, with everything unrecognised defaulting to `iosxe` —
+ * so a Palo Alto firewall, a Nokia SR Linux switch, a FortiSwitch, an Aruba
+ * CX and an Extreme EXOS box were all told to roll back with
+ * `configure replace flash:...`, which is Cisco IOS-XE and is rejected on all
+ * of them. Dell EMC was sent SONiC commands for hardware running OS10. That
+ * is the AD4 defect in the recovery path: the operator finds out during an
+ * outage, while trying to restore.
+ */
+export type Platform =
+  | 'nxos' | 'iosxe' | 'iosxr' | 'eos' | 'junos' | 'sonic'
+  | 'cumulus' | 'srl' | 'dellos10' | 'fortios' | 'arubaoscx' | 'exos' | 'panos'
 
 export interface RollbackStrategy {
   /** Checkpoint/backup command to run *before* deploy (uses `{ts}` token). */
@@ -51,13 +65,57 @@ export const ROLLBACK_STRATEGIES: Record<Platform, RollbackStrategy> = {
     exec: 'rollback clean-config checkpoint://pre-deploy-{ts}',
   },
   junos: {
+    // Junos keeps the last 50 commits on-box, so `rollback 1` needs no
+    // checkpoint; the rescue config pins a known-good state to fall back to
+    // if the history itself is not enough. Without a `pre` the runbook told
+    // operators to "take an offline config backup" — poor advice on the
+    // platform with the strongest native rollback (AG5).
+    pre: 'request system configuration rescue save',
     deployCmd: 'commit confirmed 5',
     exec: 'rollback 1\ncommit',
-    note: 'commit confirmed auto-reverts if the change is not confirmed within the window',
+    note: 'commit confirmed auto-reverts if the change is not confirmed within the window; `rollback rescue` restores the saved rescue config',
   },
   sonic: {
     pre: 'config save /etc/sonic/config_db_pre_{ts}.json',
     exec: 'config load /etc/sonic/config_db_pre_{ts}.json -y',
+  },
+  iosxr: {
+    pre: 'commit label pre-deploy-{ts}',
+    exec: 'rollback configuration to pre-deploy-{ts}',
+    note: 'IOS-XR keeps its own commit history — the label marks the point to return to',
+  },
+  cumulus: {
+    pre: 'nv config save',
+    exec: 'nv config apply <revision-before-change>\nnv config save',
+    note: 'NVUE: list revisions with `nv config history` and apply the one taken before the change',
+  },
+  srl: {
+    pre: 'tools system configuration checkpoint save name pre-deploy-{ts}',
+    exec: 'tools system configuration checkpoint pre-deploy-{ts} load\ncommit now',
+  },
+  dellos10: {
+    pre: 'copy running-configuration flash://pre-deploy-{ts}.cfg',
+    exec: 'copy flash://pre-deploy-{ts}.cfg running-configuration',
+    note: 'OS10, not SONiC — these boxes were previously given `config load` commands they do not have',
+  },
+  fortios: {
+    pre: 'execute backup config flash pre-deploy-{ts}',
+    exec: 'execute restore config flash pre-deploy-{ts}',
+    note: 'FortiOS reboots after restoring a configuration',
+  },
+  arubaoscx: {
+    pre: 'copy running-config checkpoint pre-deploy-{ts}',
+    exec: 'checkpoint rollback pre-deploy-{ts}',
+  },
+  exos: {
+    pre: 'save configuration pre-deploy-{ts}',
+    exec: 'use configuration pre-deploy-{ts}\nreboot',
+    note: 'EXOS selects the configuration for the NEXT boot — restoring requires a reboot',
+  },
+  panos: {
+    pre: 'save config to pre-deploy-{ts}.xml',
+    exec: 'load config from pre-deploy-{ts}.xml\ncommit',
+    note: 'PAN-OS: `revert config` discards uncommitted changes; this restores a saved snapshot',
   },
 }
 
@@ -66,20 +124,37 @@ export const ROLLBACK_STRATEGIES: Record<Platform, RollbackStrategy> = {
  * config-gen dispatch (Cisco spine/leaf = NX-OS, Cisco edge/campus = IOS-XE)
  * and `telemetry-gen.ts::deviceOS`.
  */
-export function vendorToPlatform(vendor: string, subLayer: string): Platform {
-  switch (vendor) {
-    case 'Cisco':
-      return subLayer === 'spine' || subLayer === 'leaf' ? 'nxos' : 'iosxe'
-    case 'Arista':
-      return 'eos'
-    case 'Juniper':
-      return 'junos'
-    case 'Dell EMC':
-    case 'NVIDIA':
-      return 'sonic'
-    default:
-      return 'iosxe'
-  }
+/** ZTP platform keys → rollback platform keys (the two name IOS-XE differently). */
+const ZTP_TO_ROLLBACK: Record<string, Platform> = {
+  nxos: 'nxos', 'ios-xe': 'iosxe', iosxr: 'iosxr', eos: 'eos', junos: 'junos',
+  srl: 'srl', cumulus: 'cumulus', dellos10: 'dellos10', fortios: 'fortios',
+  arubaoscx: 'arubaoscx', exos: 'exos', panos: 'panos',
+}
+
+/**
+ * Map a BOM device to its rollback platform.
+ *
+ * Delegates to `ztpPlatform`, which already resolves all twelve NOSes the
+ * catalogue can produce and is model-aware (Cisco Nexus vs Catalyst vs
+ * ASR9k). This used to be a second, independent switch statement that knew
+ * five platforms and silently defaulted the rest to Cisco IOS-XE — two
+ * mappings that must agree is precisely the drift this codebase keeps paying
+ * for, and here it meant handing an operator another vendor's recovery
+ * commands (AG5).
+ *
+ * `model` is optional so existing two-argument callers keep working; passing
+ * it lets Cisco resolve by hardware rather than by role.
+ */
+export function vendorToPlatform(vendor: string, subLayer: string, model = ''): Platform {
+  const dev = { vendor, subLayer, model } as BOMDevice
+  const inferred = model ? ztpPlatform(dev) : ztpPlatform({ ...dev, model: fallbackModel(vendor, subLayer) })
+  return ZTP_TO_ROLLBACK[inferred] ?? 'iosxe'
+}
+
+/** Without a model, Cisco still needs to split spine/leaf (NX-OS) from the rest. */
+function fallbackModel(vendor: string, subLayer: string): string {
+  if (vendor !== 'Cisco') return ''
+  return subLayer === 'spine' || subLayer === 'leaf' ? 'Nexus' : 'Catalyst'
 }
 
 // ── Regression detection ────────────────────────────────────────────────────
