@@ -141,11 +141,11 @@ export function buildRunbook(input: RunbookInput): string {
   // ── 3. Backup ────────────────────────────────────────────────────────────
   h('3. Capture a restore point — every device, before any change')
   out.push('A rollback is only as good as the checkpoint taken beforehand. Run these first and confirm each succeeded.\n')
-  const platforms = [...new Set(deployable.map(d => vendorToPlatform(d.vendor, d.subLayer)))]
+  const platforms = [...new Set(deployable.map(d => vendorToPlatform(d.vendor, d.subLayer, d.model)))]
   for (const p of platforms) {
     const pre = ROLLBACK_STRATEGIES[p as Platform]?.pre
     const hosts = deployable
-      .filter(d => vendorToPlatform(d.vendor, d.subLayer) === p)
+      .filter(d => vendorToPlatform(d.vendor, d.subLayer, d.model) === p)
       .map(d => d.hostname || d.id)
     out.push(`**${p}** — ${hosts.length} device(s): ${hosts.slice(0, 6).map(x => `\`${x}\``).join(', ')}${hosts.length > 6 ? ` … +${hosts.length - 6}` : ''}\n`)
     out.push('```\n' + (pre ? pre.replace(/\{ts\}/g, ts) : '! no platform-native checkpoint — take an offline config backup') + '\n```\n')

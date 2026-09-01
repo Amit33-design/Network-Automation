@@ -8,7 +8,9 @@ import {
   genSNMPExporterConfig,
   genSNMPPrometheusJob,
   GNMI_PORT,
+  speaksGnmi,
 } from '@/lib/telemetry-gen'
+import { buildDeviceList } from '@/lib/bom'
 import type { BOMDevice } from '@/types'
 
 function makeDevice(overrides: Partial<BOMDevice> = {}): BOMDevice {
@@ -55,7 +57,7 @@ describe('buildTelemetryTargets', () => {
   it('maps Cisco spine/leaf to NX-OS gNMI port, Cisco edge to IOS-XE', () => {
     const devs = [
       makeDevice({ hostname: 'NX-LEAF', subLayer: 'leaf', vendor: 'Cisco', count: 1 }),
-      makeDevice({ hostname: 'EDGE', subLayer: 'wan-edge', vendor: 'Cisco', count: 1 }),
+      makeDevice({ hostname: 'EDGE', subLayer: 'wan-edge', vendor: 'Cisco', count: 1, model: 'Catalyst 8300 Edge' }),
     ]
     const targets = buildTelemetryTargets(devs)
     expect(targets[0].os).toBe('nxos')
@@ -96,7 +98,7 @@ describe('genGNMICCollectorConfig', () => {
   })
 
   it('marks IOS-XE targets as not insecure (TLS)', () => {
-    const devs = [makeDevice({ hostname: 'EDGE', subLayer: 'wan-edge', vendor: 'Cisco', count: 1 })]
+    const devs = [makeDevice({ hostname: 'EDGE', subLayer: 'wan-edge', vendor: 'Cisco', count: 1, model: 'Catalyst 8300 Edge' })]
     const cfg = genGNMICCollectorConfig(devs)
     expect(cfg).toContain('insecure: false')
   })
@@ -126,7 +128,7 @@ describe('genTelegrafGNMIConfig', () => {
 
   it('sets TLS verification for IOS-XE and skips for other NOS', () => {
     const devs = [
-      makeDevice({ hostname: 'EDGE', subLayer: 'wan-edge', vendor: 'Cisco', count: 1 }),
+      makeDevice({ hostname: 'EDGE', subLayer: 'wan-edge', vendor: 'Cisco', count: 1, model: 'Catalyst 8300 Edge' }),
       makeDevice({ hostname: 'AR-SPINE', subLayer: 'spine', vendor: 'Arista', count: 1 }),
     ]
     const cfg = genTelegrafGNMIConfig(devs)
@@ -281,5 +283,54 @@ describe('genSNMPPrometheusJob (G-A17)', () => {
     expect(cfg).toContain('replacement: snmp-exporter:9116')
     expect(cfg).toContain('target_label: __param_target')
     expect(cfg).toContain('target_label: instance')
+  })
+})
+
+// ── AG6: the NOS in a telemetry target must be the NOS the device runs ───────
+// `deviceOS` was a third independent vendor map (after ZTP's and rollback's).
+// It knew five platforms and defaulted the rest to **Arista EOS**, so a Nokia
+// SR Linux or Aruba CX switch went into the generated gNMI collector as an
+// EOS target on port 6030, with EOS subscription paths.
+describe('AG6 — telemetry targets name the real NOS', () => {
+  const build = (vendor: string) => {
+    const devices = buildDeviceList({
+      useCase: 'dc', scale: 'medium', siteCode: 'AG6',
+      totalEndpoints: 512, oversubscription: 3, bandwidthPerServer: '25G',
+      vendorPrefs: [vendor],
+    })
+    return { devices, targets: buildTelemetryTargets(devices) }
+  }
+
+  it('resolves each vendor to its own NOS, never a stand-in', () => {
+    const expected: Record<string, string> = {
+      Arista: 'eos', Juniper: 'junos', Nokia: 'srl',
+      NVIDIA: 'cumulus', 'Dell EMC': 'dellos10',
+    }
+    for (const [vendor, os] of Object.entries(expected)) {
+      const { targets } = build(vendor)
+      const own = targets.filter(t => t.role === 'spine' || t.role === 'leaf')
+      expect(own.length, `${vendor}: no fabric targets`).toBeGreaterThan(0)
+      for (const t of own) expect(t.os, `${vendor}/${t.hostname}`).toBe(os)
+    }
+  })
+
+  it('gives every target the port its own NOS listens on', () => {
+    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC']) {
+      for (const t of build(vendor).targets) {
+        expect(GNMI_PORT[t.os], `${vendor}/${t.os} has no port`).toBeDefined()
+        expect(t.port).toBe(GNMI_PORT[t.os])
+      }
+    }
+  })
+
+  it('excludes a NOS with no gNMI server rather than mislabelling it', () => {
+    // A target the collector cannot speak to is worse than an absent one,
+    // because it looks monitored.
+    expect(speaksGnmi('fortios')).toBe(false)
+    expect(speaksGnmi('panos')).toBe(false)
+    expect(speaksGnmi('exos')).toBe(false)
+    for (const vendor of ['Fortinet', 'Palo Alto', 'Extreme Networks']) {
+      for (const t of build(vendor).targets) expect(speaksGnmi(t.os)).toBe(true)
+    }
   })
 })

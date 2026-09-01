@@ -15,6 +15,7 @@
  */
 
 import type { BOMDevice, UseCase } from '@/types'
+import { ztpPlatform } from '@/lib/ztp'
 
 // ── OpenConfig gNMI subscription paths ──────────────────────────────────────
 export const GNMI_SUBS: Array<{ name: string; interval: string; paths: string[] }> = [
@@ -48,25 +49,45 @@ export const GNMI_SUBS: Array<{ name: string; interval: string; paths: string[] 
 ]
 
 // ── gNMI port per OS ─────────────────────────────────────────────────────────
+// A NOS absent from this map does not speak gNMI and is EXCLUDED from the
+// collector rather than mislabelled. `deviceOS` used to default to 'eos', so
+// a Nokia, Extreme or Aruba switch was declared to be running Arista EOS and
+// the collector was pointed at port 6030 with EOS subscription paths (AG6).
 export const GNMI_PORT: Record<string, number> = {
-  'ios-xe': 9339,
-  'nxos':   50051,
-  'eos':    6030,
-  'junos':  32767,
-  'sonic':  8080,
+  'ios-xe':    9339,
+  'nxos':      50051,
+  'iosxr':     57400,
+  'eos':       6030,
+  'junos':     32767,
+  'sonic':     8080,
+  'srl':       57400,
+  'cumulus':   9339,
+  'dellos10':  50051,
+  'arubaoscx': 50051,
 }
 
 const OS_LABELS: Record<string, string> = {
-  'ios-xe': 'IOS-XE', nxos: 'NX-OS', eos: 'EOS', junos: 'JunOS', sonic: 'SONiC',
+  'ios-xe': 'IOS-XE', nxos: 'NX-OS', iosxr: 'IOS-XR', eos: 'EOS', junos: 'JunOS',
+  sonic: 'SONiC', srl: 'SR Linux', cumulus: 'Cumulus', dellos10: 'Dell OS10',
+  arubaoscx: 'AOS-CX',
 }
 
-/** Map BOM vendor + role to a gNMI-capable NOS identifier. */
-function deviceOS(vendor: string, subLayer: string): string {
-  if (vendor === 'Cisco')                          return (subLayer === 'spine' || subLayer === 'leaf') ? 'nxos' : 'ios-xe'
-  if (vendor === 'Arista')                         return 'eos'
-  if (vendor === 'Juniper')                        return 'junos'
-  if (vendor === 'Dell EMC' || vendor === 'NVIDIA') return 'sonic'
-  return 'eos'
+/**
+ * The NOS a BOM device runs.
+ *
+ * Delegates to `ztpPlatform` — the one vendor→NOS resolver in the codebase,
+ * model-aware and covering all twelve platforms. This was a third independent
+ * copy (after ZTP's and rollback's), knowing five and defaulting the rest to
+ * **Arista EOS**, so a Nokia SR Linux or Aruba CX switch went into the
+ * generated gNMI collector as an EOS target on port 6030.
+ */
+function deviceOS(dev: BOMDevice): string {
+  return ztpPlatform(dev)
+}
+
+/** FortiOS and PAN-OS have no gNMI server; they are monitored via SNMP/API. */
+export function speaksGnmi(os: string): boolean {
+  return os in GNMI_PORT
 }
 
 export interface TelemetryTarget {
@@ -84,8 +105,11 @@ export function buildTelemetryTargets(devices: BOMDevice[]): TelemetryTarget[] {
   let octet = 11
   for (const dev of devices) {
     if (dev.subLayer === 'firewall' || dev.subLayer === 'gpu-compute') continue
-    const os   = deviceOS(dev.vendor, dev.subLayer)
-    const port = GNMI_PORT[os] ?? 6030
+    const os = deviceOS(dev)
+    // Excluded rather than mislabelled: a target the collector cannot speak
+    // to is worse than an absent one, because it looks monitored (AG6).
+    if (!speaksGnmi(os)) continue
+    const port = GNMI_PORT[os]
     const count = Math.min(dev.count, 4)
     for (let i = 1; i <= count; i++) {
       targets.push({
