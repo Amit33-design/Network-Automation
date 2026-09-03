@@ -4,6 +4,7 @@ import {
   buildChangeSet, changeSetToScript, changeSetRollbackScript, analyzeChangeSet,
 } from '@/lib/config-update'
 import type { BOMDevice } from '@/types'
+import { buildDeviceList } from '@/lib/bom'
 
 const dev = (o: Partial<BOMDevice>): BOMDevice => ({
   id: o.hostname ?? 'd', hostname: 'H', role: 'leaf', subLayer: 'leaf',
@@ -293,5 +294,94 @@ describe('analyzeChangeSet', () => {
     const w = analyzeChangeSet(cs)
     expect(w.some(x => x.severity === 'danger')).toBe(false)
     expect(w.some(x => x.severity === 'warn')).toBe(false)
+  })
+})
+
+// ── AG8: the change tool must speak each device's own CLI ────────────────────
+// `cliFamily` was a fourth vendor map (after ZTP's, rollback's and
+// telemetry's) and its default was `ios`, so Extreme EXOS and NVIDIA Cumulus
+// were marked SUPPORTED and handed Cisco commands — for a change pushed to a
+// live device, and for its rollback. AG5 was this defect in the recovery
+// path; this is it in the change path.
+describe('AG8 — CLI family per vendor', () => {
+  it('resolves the two dialects that are not IOS-like', () => {
+    expect(cliFamily('Extreme Networks')).toBe('exos')
+    expect(cliFamily('NVIDIA')).toBe('nvue')
+  })
+
+  it('keeps the genuinely IOS-style vendors on ios', () => {
+    // OS10 and AOS-CX really do use `vlan`, `interface`, `ip route`.
+    for (const v of ['Cisco', 'Arista', 'Dell EMC', 'HPE Aruba']) {
+      expect(cliFamily(v)).toBe('ios')
+    }
+  })
+
+  it('never emits Cisco syntax to an EXOS or Cumulus box', () => {
+    const devices = buildDeviceList({
+      useCase: 'dc', scale: 'medium', siteCode: 'AG8', totalEndpoints: 256,
+      oversubscription: 3, bandwidthPerServer: '25G', vendorPrefs: ['Extreme Networks'],
+    })
+    const nvidia = buildDeviceList({
+      useCase: 'dc', scale: 'medium', siteCode: 'AG8', totalEndpoints: 256,
+      oversubscription: 3, bandwidthPerServer: '25G', vendorPrefs: ['NVIDIA'],
+    })
+    const IOS_ONLY = [/^vlan \d+$/, /^ no shutdown$/, /^ switchport access vlan/, /^no vlan /]
+    for (const [vendor, devs] of [['Extreme', devices], ['NVIDIA', nvidia]] as const) {
+      for (const op of CHANGE_CATALOG) {
+        const targets = devs.filter(d => d.vendor === (vendor === 'Extreme' ? 'Extreme Networks' : 'NVIDIA'))
+        if (!targets.length) continue
+        const cs = buildChangeSet(op, {
+          vlan_id: '120', name: 'PCI', iface: 'swp1', prefix: '10.50.0.0/24',
+          next_hop: '10.0.0.1', server: '10.0.0.100', peer_ip: '10.0.0.2', remote_as: '65010',
+        }, targets)
+        for (const e of cs.devices) {
+          if (!e.supported) continue
+          for (const line of [...e.commands, ...e.rollback]) {
+            for (const re of IOS_ONLY) {
+              expect(re.test(line), `${vendor}/${op.id}: emitted Cisco syntax "${line}"`).toBe(false)
+            }
+          }
+        }
+      }
+    }
+  })
+
+  it('marks a device unsupported rather than guessing, when an op has no template', () => {
+    // EXOS and Cumulus express policy/firewall changes very differently, so
+    // those ops are not templated — the device is skipped and the pre-flight
+    // warns, which is honest. What is not allowed is silent wrong CLI.
+    const devs = buildDeviceList({
+      useCase: 'dc', scale: 'medium', siteCode: 'AG8', totalEndpoints: 256,
+      oversubscription: 3, bandwidthPerServer: '25G', vendorPrefs: ['Extreme Networks'],
+    }).filter(d => d.vendor === 'Extreme Networks')
+    const cs = buildChangeSet(getChangeOp('firewall-rule')!, { name: 'X', action: 'deny' }, devs)
+    for (const e of cs.devices) {
+      expect(e.supported).toBe(false)
+      // A placeholder comment is fine; an executable line is not.
+      for (const line of e.commands) expect(line.trimStart().startsWith('!')).toBe(true)
+    }
+    // ...and nothing unsupported reaches the push runbook.
+    const script = changeSetToScript(cs)
+    for (const e of cs.devices) expect(script).not.toContain(e.device.hostname)
+    expect(analyzeChangeSet(cs).some(w => /skip/i.test(w.message))).toBe(true)
+  })
+
+  it('gives every generated change a rollback', () => {
+    for (const vendor of ['Extreme Networks', 'NVIDIA']) {
+      const devs = buildDeviceList({
+        useCase: 'dc', scale: 'medium', siteCode: 'AG8', totalEndpoints: 256,
+        oversubscription: 3, bandwidthPerServer: '25G', vendorPrefs: [vendor],
+      }).filter(d => d.vendor === vendor)
+      for (const op of CHANGE_CATALOG) {
+        const cs = buildChangeSet(op, {
+          vlan_id: '120', name: 'PCI', iface: 'swp1', prefix: '10.50.0.0/24',
+          next_hop: '10.0.0.1', server: '10.0.0.100', peer_ip: '10.0.0.2', remote_as: '65010',
+        }, devs)
+        for (const e of cs.devices) {
+          if (!e.supported) continue
+          expect(e.rollback.length, `${vendor}/${op.id} is irreversible`).toBeGreaterThan(0)
+        }
+      }
+    }
   })
 })
