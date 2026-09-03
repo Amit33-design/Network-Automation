@@ -18,22 +18,42 @@ import type { BOMDevice } from '@/types'
 
 // ── CLI families ───────────────────────────────────────────────────────────
 // Day-2 deltas only need the operator-CLI family, not the full platform key.
-export type CliFamily = 'ios' | 'junos' | 'nokia' | 'fortios' | 'panos'
+export type CliFamily = 'ios' | 'junos' | 'nokia' | 'fortios' | 'panos' | 'exos' | 'nvue'
 
+/**
+ * The CLI dialect a device speaks.
+ *
+ * Extreme EXOS and NVIDIA Cumulus used to fall into the `ios` default, so a
+ * VLAN add or an interface shutdown for those devices — and its ROLLBACK —
+ * came out as Cisco IOS, which neither accepts. These commands are pushed to
+ * live production devices, so this is the AG5 defect one step further along
+ * the blast radius (AG8).
+ *
+ * Dell OS10 and Aruba AOS-CX genuinely are IOS-style for the operations in
+ * this catalogue (`vlan`, `interface`, `ip route`, `ntp server`, `router
+ * bgp`), so they stay on `ios` — but listed explicitly, so adding a vendor is
+ * a decision rather than a silent default.
+ */
 export function cliFamily(vendor: string): CliFamily {
   switch (vendor) {
-    case 'Juniper':          return 'junos'
-    case 'Nokia':            return 'nokia'
-    case 'Fortinet':         return 'fortios'
-    case 'Palo Alto':        return 'panos'
-    // Cisco / Arista / Dell EMC / Extreme / HPE Aruba / NVIDIA → IOS-like CLI
-    default:                 return 'ios'
+    case 'Juniper':           return 'junos'
+    case 'Nokia':             return 'nokia'
+    case 'Fortinet':          return 'fortios'
+    case 'Palo Alto':         return 'panos'
+    case 'Extreme Networks':  return 'exos'
+    case 'NVIDIA':            return 'nvue'
+    case 'Cisco':
+    case 'Arista':
+    case 'Dell EMC':
+    case 'HPE Aruba':
+    default:                  return 'ios'
   }
 }
 
 export const FAMILY_LABEL: Record<CliFamily, string> = {
-  ios: 'Cisco/Arista IOS-style', junos: 'Juniper Junos',
+  ios: 'Cisco/Arista/Dell/Aruba IOS-style', junos: 'Juniper Junos',
   nokia: 'Nokia SR Linux', fortios: 'Fortinet FortiOS', panos: 'Palo Alto PAN-OS',
+  exos: 'Extreme EXOS', nvue: 'NVIDIA Cumulus NVUE',
 }
 
 // ── Change operations ──────────────────────────────────────────────────────
@@ -77,7 +97,7 @@ const bgpNeighbor: ChangeOperation = {
   category: 'Routing',
   description: 'Add a BGP neighbor (peer IP, remote-AS, optional in/out policy).',
   appliesTo: ['spine', 'leaf', 'core', 'wan-edge', 'border', 'distribution'],
-  families: ['ios', 'junos', 'nokia'],
+  families: ['ios', 'junos', 'nokia', 'exos', 'nvue'],
   fields: [
     { key: 'local_as', label: 'Local ASN', default: '<CHANGE-ME-local-asn>', required: true },
     { key: 'peer_ip', label: 'Neighbor IP', placeholder: '10.0.0.2', required: true },
@@ -103,6 +123,22 @@ const bgpNeighbor: ChangeOperation = {
       if (rin) c.push(`set protocols bgp group EXTERNAL neighbor ${peer} import ${rin}`)
       if (rout) c.push(`set protocols bgp group EXTERNAL neighbor ${peer} export ${rout}`)
       return { commands: c, rollback: [`delete protocols bgp group EXTERNAL neighbor ${peer}`] }
+    }
+    if (fam === 'exos') {
+      const c = [`configure bgp AS-number ${las}`, `create bgp neighbor ${peer} remote-AS-number ${ras}`]
+      if (rin) c.push(`configure bgp neighbor ${peer} route-policy in ${rin}`)
+      if (rout) c.push(`configure bgp neighbor ${peer} route-policy out ${rout}`)
+      c.push(`enable bgp neighbor ${peer}`)
+      return { commands: c, rollback: [`disable bgp neighbor ${peer}`, `delete bgp neighbor ${peer}`] }
+    }
+    if (fam === 'nvue') {
+      const base = `nv set vrf default router bgp neighbor ${peer}`
+      const c = [`nv set router bgp autonomous-system ${las}`, `${base} remote-as ${ras}`, `${base} type numbered`]
+      if (desc) c.push(`${base} description "${desc}"`)
+      if (rin) c.push(`${base} address-family ipv4-unicast policy inbound route-map ${rin}`)
+      if (rout) c.push(`${base} address-family ipv4-unicast policy outbound route-map ${rout}`)
+      c.push('nv config apply')
+      return { commands: c, rollback: [`nv unset vrf default router bgp neighbor ${peer}`, 'nv config apply'] }
     }
     // nokia
     const base = `set / network-instance default protocols bgp neighbor ${peer}`
@@ -237,7 +273,7 @@ const vlanAdd: ChangeOperation = {
   category: 'L2',
   description: 'Add a VLAN (id + name) and optional SVI gateway.',
   appliesTo: ['leaf', 'access', 'distribution', 'core'],
-  families: ['ios', 'junos'],
+  families: ['ios', 'junos', 'exos', 'nvue'],
   fields: [
     { key: 'vlan_id', label: 'VLAN ID', placeholder: '120', required: true },
     { key: 'name', label: 'VLAN name', placeholder: 'PCI-DATA', required: true },
@@ -253,6 +289,23 @@ const vlanAdd: ChangeOperation = {
         c.push(`interface Vlan${id}`, ` ip address ${ip}${mask ? ` /${mask}` : ''}`, ' no shutdown')
         rb.unshift(`no interface Vlan${id}`)
       }
+      return { commands: c, rollback: rb }
+    }
+    if (fam === 'exos') {
+      // EXOS names the VLAN and tags it; there is no `vlan <id>` form.
+      const c = [`create vlan ${name} tag ${id}`]
+      const rb = [`delete vlan ${name}`]
+      if (svi) c.push(`configure vlan ${name} ipaddress ${svi.replace('/', ' /')}`, `enable ipforwarding vlan ${name}`)
+      return { commands: c, rollback: rb }
+    }
+    if (fam === 'nvue') {
+      const c = [`nv set bridge domain br_default vlan ${id}`]
+      const rb = [`nv unset bridge domain br_default vlan ${id}`, 'nv config apply']
+      if (svi) {
+        c.push(`nv set interface vlan${id} ip address ${svi}`, `nv set interface vlan${id} type svi`)
+        rb.unshift(`nv unset interface vlan${id}`)
+      }
+      c.push('nv config apply')
       return { commands: c, rollback: rb }
     }
     // junos
@@ -274,7 +327,7 @@ const staticRoute: ChangeOperation = {
   category: 'Routing',
   description: 'Add a static route (prefix → next-hop), optional VRF.',
   appliesTo: ['*'],
-  families: ['ios', 'junos', 'nokia'],
+  families: ['ios', 'junos', 'nokia', 'exos', 'nvue'],
   fields: [
     { key: 'prefix', label: 'Prefix', placeholder: '10.50.0.0/24', required: true },
     { key: 'next_hop', label: 'Next hop', placeholder: '10.0.0.1', required: true },
@@ -293,6 +346,21 @@ const staticRoute: ChangeOperation = {
       return {
         commands: [`set ${ri} static route ${prefix} next-hop ${nh}`],
         rollback: [`delete ${ri} static route ${prefix}`],
+      }
+    }
+    if (fam === 'exos') {
+      const [net, mask] = prefix.split('/')
+      const vrPart = vrf ? ` vr ${vrf}` : ''
+      return {
+        commands: [`configure iproute add ${net}/${mask ?? '32'} ${nh}${vrPart}`],
+        rollback: [`configure iproute delete ${net}/${mask ?? '32'} ${nh}${vrPart}`],
+      }
+    }
+    if (fam === 'nvue') {
+      const ni = vrf || 'default'
+      return {
+        commands: [`nv set vrf ${ni} router static ${prefix} via ${nh}`, 'nv config apply'],
+        rollback: [`nv unset vrf ${ni} router static ${prefix}`, 'nv config apply'],
       }
     }
     // nokia
@@ -315,7 +383,7 @@ const mgmtServer: ChangeOperation = {
   category: 'Management',
   description: 'Add an NTP, syslog, or SNMP trap host to live devices.',
   appliesTo: ['*'],
-  families: ['ios', 'junos', 'nokia'],
+  families: ['ios', 'junos', 'nokia', 'exos', 'nvue'],
   fields: [
     { key: 'service', label: 'Service (ntp/syslog/snmp)', default: 'ntp', required: true },
     { key: 'server', label: 'Server IP', placeholder: '10.0.0.100', required: true },
@@ -335,6 +403,33 @@ const mgmtServer: ChangeOperation = {
         : `system ntp server ${ip}`
       return { commands: [`set ${cmd}`], rollback: [`delete ${cmd}`] }
     }
+    if (fam === 'exos') {
+      if (svc === 'syslog') {
+        return {
+          commands: [`configure syslog add ${ip}:514 vr VR-Default local0`],
+          rollback: [`configure syslog delete ${ip}:514 vr VR-Default local0`],
+        }
+      }
+      if (svc === 'snmp') {
+        return {
+          commands: [`configure snmp add trapreceiver ${ip} community <CHANGE-ME-snmp-community>`],
+          rollback: [`configure snmp delete trapreceiver ${ip}`],
+        }
+      }
+      return {
+        commands: [`configure ntp server add ${ip}`, 'enable ntp'],
+        rollback: [`configure ntp server delete ${ip}`],
+      }
+    }
+    if (fam === 'nvue') {
+      const path = svc === 'syslog' ? `service syslog default server ${ip}`
+        : svc === 'snmp' ? `service snmp-server trap-destination ${ip}`
+        : `service ntp default server ${ip}`
+      return {
+        commands: [`nv set ${path}`, 'nv config apply'],
+        rollback: [`nv unset ${path}`, 'nv config apply'],
+      }
+    }
     // nokia
     const cmd = svc === 'syslog' ? `/ system logging remote-server ${ip}`
       : svc === 'snmp' ? `/ system snmp trap-group NMS target ${ip}`
@@ -351,7 +446,7 @@ const interfaceConfig: ChangeOperation = {
   category: 'L2',
   description: 'Set an interface description, admin state, and optional access VLAN.',
   appliesTo: ['*'],
-  families: ['ios', 'junos'],
+  families: ['ios', 'junos', 'exos', 'nvue'],
   fields: [
     { key: 'iface', label: 'Interface', placeholder: 'GigabitEthernet1/0/1', required: true },
     { key: 'description', label: 'Description', placeholder: 'uplink-to-core' },
@@ -372,6 +467,30 @@ const interfaceConfig: ChangeOperation = {
       if (desc) rb.push(' no description')
       rb.push(up ? ' shutdown' : ' no shutdown')
       if (vlan) rb.push(' no switchport access vlan')
+      return { commands: c, rollback: rb }
+    }
+    if (fam === 'exos') {
+      const c: string[] = []
+      if (desc) c.push(`configure ports ${iface} description-string "${desc}"`)
+      c.push(up ? `enable ports ${iface}` : `disable ports ${iface}`)
+      if (vlan) c.push(`configure vlan ${vlan} add ports ${iface} untagged`)
+      const rb: string[] = []
+      if (desc) rb.push(`unconfigure ports ${iface} description-string`)
+      rb.push(up ? `disable ports ${iface}` : `enable ports ${iface}`)
+      if (vlan) rb.push(`configure vlan ${vlan} delete ports ${iface}`)
+      return { commands: c, rollback: rb }
+    }
+    if (fam === 'nvue') {
+      const c: string[] = []
+      if (desc) c.push(`nv set interface ${iface} description "${desc}"`)
+      c.push(`nv set interface ${iface} link state ${up ? 'up' : 'down'}`)
+      if (vlan) c.push(`nv set interface ${iface} bridge domain br_default access ${vlan}`)
+      c.push('nv config apply')
+      const rb: string[] = []
+      if (desc) rb.push(`nv unset interface ${iface} description`)
+      rb.push(`nv set interface ${iface} link state ${up ? 'down' : 'up'}`)
+      if (vlan) rb.push(`nv unset interface ${iface} bridge domain br_default access`)
+      rb.push('nv config apply')
       return { commands: c, rollback: rb }
     }
     // junos
