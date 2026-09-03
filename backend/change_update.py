@@ -23,17 +23,38 @@ from typing import Any, Callable
 # ── CLI families ────────────────────────────────────────────────────────────
 
 def cli_family(vendor: str) -> str:
+    """The CLI dialect a device speaks.
+
+    Extreme EXOS and NVIDIA Cumulus used to fall into the ``ios`` default, so a
+    VLAN add or an interface shutdown for those devices — and its ROLLBACK —
+    came out as Cisco IOS, which neither accepts. These commands are pushed to
+    live production devices (AG8/AG9).
+
+    Dell OS10 and Aruba AOS-CX genuinely are IOS-style for the operations in
+    this catalogue, so they stay on ``ios`` — but listed explicitly, so adding
+    a vendor is a decision rather than a silent default.
+
+    Must stay identical to frontend ``lib/config-update.ts::cliFamily``;
+    ``test_change_update_parity.py`` asserts it.
+    """
     return {
         "Juniper": "junos",
         "Nokia": "nokia",
         "Fortinet": "fortios",
         "Palo Alto": "panos",
-    }.get(vendor, "ios")  # Cisco/Arista/Dell/Extreme/HPE/NVIDIA → IOS-like
+        "Extreme Networks": "exos",
+        "NVIDIA": "nvue",
+        "Cisco": "ios",
+        "Arista": "ios",
+        "Dell EMC": "ios",
+        "HPE Aruba": "ios",
+    }.get(vendor, "ios")
 
 
 FAMILY_LABEL = {
-    "ios": "Cisco/Arista IOS-style", "junos": "Juniper Junos",
+    "ios": "Cisco/Arista/Dell/Aruba IOS-style", "junos": "Juniper Junos",
     "nokia": "Nokia SR Linux", "fortios": "Fortinet FortiOS", "panos": "Palo Alto PAN-OS",
+    "exos": "Extreme EXOS", "nvue": "NVIDIA Cumulus NVUE",
 }
 
 FABRIC_ROLES = ("spine", "leaf", "core", "super-spine", "border")
@@ -68,6 +89,28 @@ def _bgp_neighbor(fam: str, p: dict) -> dict:
         if rout:
             c.append(f"set protocols bgp group EXTERNAL neighbor {peer} export {rout}")
         return {"commands": c, "rollback": [f"delete protocols bgp group EXTERNAL neighbor {peer}"]}
+    if fam == "exos":
+        c = [f"configure bgp AS-number {las}", f"create bgp neighbor {peer} remote-AS-number {ras}"]
+        if rin:
+            c.append(f"configure bgp neighbor {peer} route-policy in {rin}")
+        if rout:
+            c.append(f"configure bgp neighbor {peer} route-policy out {rout}")
+        c.append(f"enable bgp neighbor {peer}")
+        return {"commands": c,
+                "rollback": [f"disable bgp neighbor {peer}", f"delete bgp neighbor {peer}"]}
+    if fam == "nvue":
+        base = f"nv set vrf default router bgp neighbor {peer}"
+        c = [f"nv set router bgp autonomous-system {las}", f"{base} remote-as {ras}",
+             f"{base} type numbered"]
+        if desc:
+            c.append(f'{base} description "{desc}"')
+        if rin:
+            c.append(f"{base} address-family ipv4-unicast policy inbound route-map {rin}")
+        if rout:
+            c.append(f"{base} address-family ipv4-unicast policy outbound route-map {rout}")
+        c.append("nv config apply")
+        return {"commands": c,
+                "rollback": [f"nv unset vrf default router bgp neighbor {peer}", "nv config apply"]}
     # nokia
     base = f"set / network-instance default protocols bgp neighbor {peer}"
     c = [f"{base} peer-as {ras}", f"{base} admin-state enable"]
@@ -173,6 +216,22 @@ def _vlan(fam: str, p: dict) -> dict:
             c += [f"interface Vlan{vid}", f" ip address {ip}{(' /' + mask) if mask else ''}", " no shutdown"]
             rb.insert(0, f"no interface Vlan{vid}")
         return {"commands": c, "rollback": rb}
+    if fam == "exos":
+        # EXOS names the VLAN and tags it; there is no `vlan <id>` form.
+        c, rb = [f"create vlan {name} tag {vid}"], [f"delete vlan {name}"]
+        if svi:
+            c += [f"configure vlan {name} ipaddress {svi.replace('/', ' /')}",
+                  f"enable ipforwarding vlan {name}"]
+        return {"commands": c, "rollback": rb}
+    if fam == "nvue":
+        c = [f"nv set bridge domain br_default vlan {vid}"]
+        rb = [f"nv unset bridge domain br_default vlan {vid}", "nv config apply"]
+        if svi:
+            c += [f"nv set interface vlan{vid} ip address {svi}",
+                  f"nv set interface vlan{vid} type svi"]
+            rb.insert(0, f"nv unset interface vlan{vid}")
+        c.append("nv config apply")
+        return {"commands": c, "rollback": rb}
     # junos
     c, rb = [f"set vlans {name} vlan-id {vid}"], [f"delete vlans {name}"]
     if svi:
@@ -194,6 +253,16 @@ def _static_route(fam: str, p: dict) -> dict:
         ri = f"routing-instances {vrf} routing-options" if vrf else "routing-options"
         return {"commands": [f"set {ri} static route {prefix} next-hop {nh}"],
                 "rollback": [f"delete {ri} static route {prefix}"]}
+    if fam == "exos":
+        net = prefix.split("/")[0]
+        mask = prefix.split("/")[1] if "/" in prefix else "32"
+        vr_part = f" vr {vrf}" if vrf else ""
+        return {"commands": [f"configure iproute add {net}/{mask} {nh}{vr_part}"],
+                "rollback": [f"configure iproute delete {net}/{mask} {nh}{vr_part}"]}
+    if fam == "nvue":
+        ni = vrf or "default"
+        return {"commands": [f"nv set vrf {ni} router static {prefix} via {nh}", "nv config apply"],
+                "rollback": [f"nv unset vrf {ni} router static {prefix}", "nv config apply"]}
     # nokia
     ni = vrf or "default"
     nhg = "nh-" + nh.replace(".", "-")
@@ -214,6 +283,21 @@ def _mgmt_server(fam: str, p: dict) -> dict:
                else f"snmp trap-group NMS targets {ip}" if svc == "snmp"
                else f"system ntp server {ip}")
         return {"commands": [f"set {cmd}"], "rollback": [f"delete {cmd}"]}
+    if fam == "exos":
+        if svc == "syslog":
+            return {"commands": [f"configure syslog add {ip}:514 vr VR-Default local0"],
+                    "rollback": [f"configure syslog delete {ip}:514 vr VR-Default local0"]}
+        if svc == "snmp":
+            return {"commands": [f"configure snmp add trapreceiver {ip} community <CHANGE-ME-snmp-community>"],
+                    "rollback": [f"configure snmp delete trapreceiver {ip}"]}
+        return {"commands": [f"configure ntp server add {ip}", "enable ntp"],
+                "rollback": [f"configure ntp server delete {ip}"]}
+    if fam == "nvue":
+        path = (f"service syslog default server {ip}" if svc == "syslog"
+                else f"service snmp-server trap-destination {ip}" if svc == "snmp"
+                else f"service ntp default server {ip}")
+        return {"commands": [f"nv set {path}", "nv config apply"],
+                "rollback": [f"nv unset {path}", "nv config apply"]}
     # nokia
     cmd = (f"/ system logging remote-server {ip}" if svc == "syslog"
            else f"/ system snmp trap-group NMS target {ip}" if svc == "snmp"
@@ -238,6 +322,36 @@ def _interface_config(fam: str, p: dict) -> dict:
         rb.append(" shutdown" if up else " no shutdown")
         if vlan:
             rb.append(" no switchport access vlan")
+        return {"commands": c, "rollback": rb}
+    if fam == "exos":
+        c = []
+        if desc:
+            c.append(f'configure ports {iface} description-string "{desc}"')
+        c.append(f"enable ports {iface}" if up else f"disable ports {iface}")
+        if vlan:
+            c.append(f"configure vlan {vlan} add ports {iface} untagged")
+        rb = []
+        if desc:
+            rb.append(f"unconfigure ports {iface} description-string")
+        rb.append(f"disable ports {iface}" if up else f"enable ports {iface}")
+        if vlan:
+            rb.append(f"configure vlan {vlan} delete ports {iface}")
+        return {"commands": c, "rollback": rb}
+    if fam == "nvue":
+        c = []
+        if desc:
+            c.append(f'nv set interface {iface} description "{desc}"')
+        c.append(f"nv set interface {iface} link state {'up' if up else 'down'}")
+        if vlan:
+            c.append(f"nv set interface {iface} bridge domain br_default access {vlan}")
+        c.append("nv config apply")
+        rb = []
+        if desc:
+            rb.append(f"nv unset interface {iface} description")
+        rb.append(f"nv set interface {iface} link state {'down' if up else 'up'}")
+        if vlan:
+            rb.append(f"nv unset interface {iface} bridge domain br_default access")
+        rb.append("nv config apply")
         return {"commands": c, "rollback": rb}
     # junos
     c, rb = [], []
@@ -269,7 +383,7 @@ _RENDERERS: dict[str, Callable[[str, dict], dict]] = {
 CHANGE_CATALOG: list[dict[str, Any]] = [
     {"id": "bgp-neighbor", "label": "BGP neighbor", "category": "Routing",
      "appliesTo": ["spine", "leaf", "core", "wan-edge", "border", "distribution"],
-     "families": ["ios", "junos", "nokia"],
+     "families": ["ios", "junos", "nokia", "exos", "nvue"],
      "fields": [
          {"key": "local_as", "label": "Local ASN", "default": "<CHANGE-ME-local-asn>", "required": True},
          {"key": "peer_ip", "label": "Neighbor IP", "required": True},
@@ -298,27 +412,27 @@ CHANGE_CATALOG: list[dict[str, Any]] = [
          {"key": "port", "label": "Dest port (optional)"},
      ]},
     {"id": "vlan", "label": "VLAN", "category": "L2",
-     "appliesTo": ["leaf", "access", "distribution", "core"], "families": ["ios", "junos"],
+     "appliesTo": ["leaf", "access", "distribution", "core"], "families": ["ios", "junos", "exos", "nvue"],
      "fields": [
          {"key": "vlan_id", "label": "VLAN ID", "required": True},
          {"key": "name", "label": "VLAN name", "required": True},
          {"key": "svi_ip", "label": "SVI gateway (optional)"},
      ]},
     {"id": "static-route", "label": "Static route", "category": "Routing",
-     "appliesTo": ["*"], "families": ["ios", "junos", "nokia"],
+     "appliesTo": ["*"], "families": ["ios", "junos", "nokia", "exos", "nvue"],
      "fields": [
          {"key": "prefix", "label": "Prefix", "required": True},
          {"key": "next_hop", "label": "Next hop", "required": True},
          {"key": "vrf", "label": "VRF (optional)"},
      ]},
     {"id": "mgmt-server", "label": "Management server (NTP/Syslog/SNMP)", "category": "Management",
-     "appliesTo": ["*"], "families": ["ios", "junos", "nokia"],
+     "appliesTo": ["*"], "families": ["ios", "junos", "nokia", "exos", "nvue"],
      "fields": [
          {"key": "service", "label": "Service (ntp/syslog/snmp)", "default": "ntp", "required": True},
          {"key": "server", "label": "Server IP", "required": True},
      ]},
     {"id": "interface-config", "label": "Interface config", "category": "L2",
-     "appliesTo": ["*"], "families": ["ios", "junos"],
+     "appliesTo": ["*"], "families": ["ios", "junos", "exos", "nvue"],
      "fields": [
          {"key": "iface", "label": "Interface", "required": True},
          {"key": "description", "label": "Description"},
