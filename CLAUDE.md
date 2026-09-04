@@ -1294,6 +1294,23 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### AH. Visual design pass (user request, 2026-09-04)
+
+> "Improve layout and design like a top enterprise level application with
+> appealing text and font and image for router switches tab buttons."
+>
+> The single thing making the product read as a hobby project was **emoji as
+> iconography** — 14 in the sidebar, 8 on the use-case cards, more in the tab
+> bar and the policy gate. Emoji render differently on every OS, cannot
+> inherit colour, weight or theme, and sit at the wrong optical size next to
+> UI text.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| AH1 | **Icon system, typeface and tab-button redesign** — (1) new `components/icons/index.tsx`: 30 hand-drawn SVG glyphs, no npm package (§21 rule 9). House style documented in the file header so a new icon matches: 24×24, stroke-based, `currentColor`, 1.5 width, round caps. Includes a **network-device set** — router, switch, spine, leaf, firewall, server, GPU, cloud, cloud-mesh, radio, sites — drawn to be told apart at 16px, where port dots vanish and only the link DIRECTION distinguishes a spine from a leaf. `deviceIcon(subLayer)` and `USE_CASE_ICONS` map BOM/wizard data onto them. (2) **Typeface**: Inter for UI and JetBrains Mono for the configs, CLI blocks and IP addresses that fill this product — a face where `0/O` and `1/l/I` cannot be confused. Both loaded `display=swap` behind a full native fallback. Added a type scale (tracking tightens as size rises), and `tabular-nums` globally so price and port columns line up. (3) **Tab buttons**: the Step 6 bar was a row of underlined words reading as prose; now a segmented control with icons, a solid active pill and a focus ring. (4) Device glyphs in the **BOM Model column**, so a reader can pick the spines out of a 200-row table without reading the Layer column. Icons inherit `currentColor`, so light mode needed no extra work. One test disambiguated two sidebar buttons by the emoji in their text; both sharing one accessible name was a real a11y defect, so the section toggle now names what it does | [x] | `components/icons/index.tsx` (new), `index.css`, `Sidebar.tsx`, `Step1UseCase.tsx`, `Step2Design.tsx`, `Step6Deploy.tsx`, `DemoLoader.tsx`, `NetBoxImportPanel.tsx`; 1456 tests, tsc + build green |
+
+---
+
 ---
 
 ## 23. Autonomous "Start Improving" Mode (2026-06-11 →)

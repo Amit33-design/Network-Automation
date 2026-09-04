@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { DEMO_TOPOLOGIES } from '@/data/demoTopologies'
+import { IconDeploy } from '@/components/icons'
 
 const USE_CASE_COLORS: Record<string, string> = {
   dc:         'bg-blue-500/20 text-blue-300 border-blue-500/30',
@@ -45,7 +46,7 @@ export function DemoLoader() {
             : 'bg-white/5 border-white/10 text-gray-400 hover:border-blue-500/30 hover:text-blue-300'
           }`}
       >
-        <span className="text-base">{active ? active.icon : '🚀'}</span>
+        {active ? <span className="text-base">{active.icon}</span> : <IconDeploy size={17} className="shrink-0" />}
         <span className="flex-1 text-left truncate">
           {active ? active.label : 'Load Demo Topology'}
         </span>

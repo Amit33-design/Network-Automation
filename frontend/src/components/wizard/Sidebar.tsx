@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import * as Icons from '@/components/icons'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -24,27 +25,27 @@ interface SidebarProps {
 }
 
 const DESIGN_STEPS = [
-  { step: 1, label: 'Use Case',      icon: '🎯' },
-  { step: 2, label: 'Requirements',  icon: '📋' },
+  { step: 1, label: 'Use Case',      Icon: Icons.IconTarget },
+  { step: 2, label: 'Requirements',  Icon: Icons.IconClipboard },
 ]
 const CONFIG_STEPS = [
-  { step: 3, label: 'Products & BOM',  icon: '🛒' },
-  { step: 4, label: 'Network Design',  icon: '📐' },
-  { step: 5, label: 'Config Gen',      icon: '⚙️' },
+  { step: 3, label: 'Products & BOM',  Icon: Icons.IconCatalog },
+  { step: 4, label: 'Network Design',  Icon: Icons.IconBlueprint },
+  { step: 5, label: 'Config Gen',      Icon: Icons.IconCog },
 ]
 const DEPLOY_STEPS = [
-  { step: 6, label: 'Deploy & Validate', icon: '🚀' },
+  { step: 6, label: 'Deploy & Validate', Icon: Icons.IconDeploy },
 ]
 
 const DEPLOY_SUB_ITEMS = [
-  { tab: 'deploy',   icon: '🚀', label: 'Deploy Pipeline'  },
-  { tab: 'ztp',      icon: '📡', label: 'ZTP Provisioning' },
-  { tab: 'checks',   icon: '✅', label: 'Pre/Post Checks'  },
-  { tab: 'netconf',  icon: '🖧', label: 'NETCONF'          },
-  { tab: 'monitor',  icon: '📊', label: 'Monitoring'       },
-  { tab: 'day2ops',  icon: '⚙️', label: 'Day-2 Ops'       },
-  { tab: 'troubleshoot', icon: '🩺', label: 'Troubleshoot' },
-  { tab: 'batfish',  icon: '🦟', label: 'Batfish Validate' },
+  { tab: 'deploy',       Icon: Icons.IconDeploy,       label: 'Deploy Pipeline'  },
+  { tab: 'ztp',          Icon: Icons.IconSatellite,    label: 'ZTP Provisioning' },
+  { tab: 'checks',       Icon: Icons.IconCheckShield,  label: 'Pre/Post Checks'  },
+  { tab: 'netconf',      Icon: Icons.IconTerminal,     label: 'NETCONF'          },
+  { tab: 'monitor',      Icon: Icons.IconChart,        label: 'Monitoring'       },
+  { tab: 'day2ops',      Icon: Icons.IconWrench,       label: 'Day-2 Ops'        },
+  { tab: 'troubleshoot', Icon: Icons.IconStethoscope,  label: 'Troubleshoot'     },
+  { tab: 'batfish',      Icon: Icons.IconBug,          label: 'Batfish Validate' },
 ]
 
 export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, onNavigate, mobileOpen = false, onMobileClose }: SidebarProps) {
@@ -218,7 +219,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
           {DESIGN_STEPS.map(s => (
             <button key={s.step} onClick={() => closeAndNav(s.step)} className={itemCls(s.step)}
               aria-current={step === s.step ? 'step' : undefined}>
-              <span className="text-base" aria-hidden="true">{s.icon}</span>
+              <s.Icon size={18} className="shrink-0" />
               <span>{s.label}</span>
               {s.step < step && <span className="ml-auto text-xs text-green-500" aria-label="completed">✓</span>}
             </button>
@@ -231,7 +232,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
           {CONFIG_STEPS.map(s => (
             <button key={s.step} onClick={() => closeAndNav(s.step)} className={itemCls(s.step)}
               aria-current={step === s.step ? 'step' : undefined}>
-              <span className="text-base" aria-hidden="true">{s.icon}</span>
+              <s.Icon size={18} className="shrink-0" />
               <span>{s.label}</span>
               {s.step < step && <span className="ml-auto text-xs text-green-500" aria-label="completed">✓</span>}
             </button>
@@ -242,6 +243,10 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
         <nav aria-label="Deploy & Validate" className="px-3 mb-1 mt-3">
           <button onClick={() => setDeployOpen(o => !o)}
             aria-expanded={deployOpen}
+            /* The step button below carries the same visible words, so without
+               a distinct accessible name a screen reader announces two
+               identical "Deploy & Validate" buttons that do different things. */
+            aria-label={`${deployOpen ? 'Collapse' : 'Expand'} Deploy & Validate section`}
             className="flex items-center justify-between w-full text-xs font-bold text-gray-500 uppercase tracking-widest px-3 mb-2 cursor-pointer hover:text-gray-300">
             <span>Deploy & Validate</span>
             <span className={cn('transition-transform', deployOpen ? 'rotate-90' : '')} aria-hidden="true">{deployOpen ? '▼' : '▶'}</span>
@@ -252,7 +257,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
               {DEPLOY_STEPS.map(s => (
                 <button key={s.step} onClick={() => { onNavigate?.(); setStep(6); setActiveDeployTab('deploy'); onClose?.() }}
                   className={itemCls(s.step)}>
-                  <span className="text-base">{s.icon}</span>
+                  <s.Icon size={18} className="shrink-0" />
                   <span>{s.label}</span>
                   {s.step < step && <span className="ml-auto text-xs text-green-500">✓</span>}
                 </button>
@@ -272,7 +277,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
                         : 'text-gray-500 hover:bg-white/5 hover:text-gray-300',
                     )}
                   >
-                    <span aria-hidden="true">{sub.icon}</span>
+                    <sub.Icon size={16} className="shrink-0" />
                     <span>{sub.label}</span>
                   </button>
                 ))}
@@ -289,35 +294,35 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
               showTroubleshooting
                 ? 'bg-orange-600/20 border border-orange-500/30 text-orange-300 font-semibold'
                 : 'text-gray-400 hover:bg-white/5 hover:text-gray-200')}>
-            <span className="text-base">🔬</span>
+            <Icons.IconSearch size={18} className="shrink-0" />
             <span>Troubleshooting Engine</span>
           </button>
           <button onClick={() => setShowMyDesigns(true)}
             className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-            <span className="text-base">💾</span>
+            <Icons.IconSave size={18} className="shrink-0" />
             <span>My Designs</span>
           </button>
           {gated('designs:write') && (
             <button onClick={() => setShowConfigPolicy(true)}
               className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-              <span className="text-base">📜</span>
+              <Icons.IconScroll size={18} className="shrink-0" />
               <span>Config Policy</span>
             </button>
           )}
           <button onClick={() => setShowExport(true)}
             className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-            <span className="text-base">📤</span>
+            <Icons.IconExport size={18} className="shrink-0" />
             <span>Export</span>
           </button>
           <button onClick={handleShare}
             className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-            <span className="text-base">🔗</span>
+            <Icons.IconLink size={18} className="shrink-0" />
             <span>{shareCopied ? 'Copied!' : 'Share Design'}</span>
           </button>
           {gated('designs:write') && (
             <button onClick={() => setShowPolicyRules(true)}
               className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-              <span className="text-base">📋</span>
+              <Icons.IconClipboard size={18} className="shrink-0" />
               <span>Policy Rules</span>
             </button>
           )}
@@ -330,14 +335,14 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
             {gated('approvals:read') && (
               <button onClick={() => setShowApprovals(true)}
                 className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-                <span className="text-base">✅</span>
+                <Icons.IconApproval size={18} className="shrink-0" />
                 <span>Approvals</span>
               </button>
             )}
             {gated('org:admin') && (
               <button onClick={() => setShowIntegrations(true)}
                 className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer text-gray-400 hover:bg-white/5 hover:text-gray-200">
-                <span className="text-base">🔌</span>
+                <Icons.IconPlug size={18} className="shrink-0" />
                 <span>Integrations</span>
               </button>
             )}
@@ -365,7 +370,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
             <button key={s.step} onClick={() => nav(s.step)} title={s.label}
               className={cn('w-8 h-8 rounded-lg text-base flex items-center justify-center cursor-pointer',
                 step === s.step ? 'bg-blue-600/30 text-blue-300' : 'text-gray-500 hover:text-gray-300')}>
-              {s.icon}
+              <s.Icon size={18} />
             </button>
           ))}
           <div className="mt-auto">

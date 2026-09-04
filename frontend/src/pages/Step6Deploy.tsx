@@ -1,4 +1,9 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react'
+import {
+  IconDeploy, IconSatellite, IconCheckShield, IconChart,
+  IconTerminal, IconWrench, IconBug, IconCheckCircle, IconWarnTriangle,
+  type IconProps,
+} from '@/components/icons'
 import { useTopologySummary, useTopologyDevices } from '@/hooks/useTopology'
 import { useRunZTP } from '@/hooks/useZTP'
 import { useRunChecks } from '@/hooks/useChecks'
@@ -2906,14 +2911,14 @@ export function Step6Deploy() {
   const [postResults, setPostResults] = useState<CheckResult[]>([])
 
   // ── Tab bar ───────────────────────────────────────────────────────────────
-  const tabs: Array<{ id: Tab; label: string }> = [
-    { id: 'deploy',  label: 'Deploy Pipeline' },
-    { id: 'ztp',     label: 'ZTP Provisioning' },
-    { id: 'checks',  label: 'Pre / Post Checks' },
-    { id: 'monitor', label: 'Monitoring' },
-    { id: 'netconf', label: 'NETCONF' },
-    { id: 'day2ops', label: 'Day-2 Ops' },
-    { id: 'batfish', label: 'Batfish' },
+  const tabs: Array<{ id: Tab; label: string; Icon: (p: IconProps) => React.ReactElement }> = [
+    { id: 'deploy',  label: 'Deploy Pipeline',   Icon: IconDeploy },
+    { id: 'ztp',     label: 'ZTP Provisioning',  Icon: IconSatellite },
+    { id: 'checks',  label: 'Pre / Post Checks', Icon: IconCheckShield },
+    { id: 'monitor', label: 'Monitoring',        Icon: IconChart },
+    { id: 'netconf', label: 'NETCONF',           Icon: IconTerminal },
+    { id: 'day2ops', label: 'Day-2 Ops',         Icon: IconWrench },
+    { id: 'batfish', label: 'Batfish',           Icon: IconBug },
   ]
 
   return (
@@ -2924,7 +2929,10 @@ export function Step6Deploy() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-0 border-b border-white/10" role="tablist" aria-label="Deploy & Validate sections">
+      <div
+        className="flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/10 overflow-x-auto"
+        role="tablist" aria-label="Deploy & Validate sections"
+      >
         {tabs.map(t => (
           <button
             key={t.id}
@@ -2943,12 +2951,21 @@ export function Step6Deploy() {
               if (e.key === 'End') { e.preventDefault(); setTab(tabs[tabs.length - 1].id) }
             }}
             className={cn(
-              'px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer',
+              'group flex items-center gap-2 px-3.5 py-2 rounded-lg whitespace-nowrap',
+              'text-[13px] font-medium tracking-[-0.01em] transition-all duration-150 cursor-pointer',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60',
               tab === t.id
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-gray-500 hover:text-gray-300',
+                ? 'bg-blue-600 text-white shadow-sm shadow-blue-900/40'
+                : 'text-gray-400 hover:text-gray-100 hover:bg-white/[0.07]',
             )}
           >
+            <t.Icon
+              size={16}
+              className={cn(
+                'shrink-0 transition-opacity',
+                tab === t.id ? 'opacity-100' : 'opacity-70 group-hover:opacity-100',
+              )}
+            />
             {t.label}
           </button>
         ))}
@@ -2967,17 +2984,24 @@ export function Step6Deploy() {
                   policyApproved
                     ? 'bg-green-500/15 border-green-500/40 text-green-300'
                     : 'bg-yellow-500/15 border-yellow-500/40 text-yellow-300')}>
-                  {policyApproved ? '🔒 LOCKED & APPROVED' : '⚠ PENDING APPROVAL'}
+                  <span className="inline-flex items-center gap-1.5">
+                    {policyApproved
+                      ? <IconCheckShield size={14} />
+                      : <IconWarnTriangle size={14} />}
+                    {policyApproved ? 'LOCKED & APPROVED' : 'PENDING APPROVAL'}
+                  </span>
                 </span>
               </div>
               <div className="space-y-1.5 text-xs">
                 <div className="flex items-center gap-2">
-                  <span className="text-green-400">✅</span>
+                  <IconCheckCircle size={16} className="text-green-400 shrink-0" />
                   <span className="text-gray-300">Change window: Business hours (Mon–Fri 06:00–22:00)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={customPolicyRules ? 'text-green-400' : 'text-yellow-400'}>
-                    {customPolicyRules ? '✅' : '⚠️'}
+                    {customPolicyRules
+                      ? <IconCheckCircle size={16} className="text-green-400 shrink-0" />
+                      : <IconWarnTriangle size={16} className="text-amber-400 shrink-0" />}
                   </span>
                   <span className="text-gray-300">
                     {customPolicyRules ? 'Custom policy rules loaded' : 'Peer review: Required (0 of 1 approver confirmed)'}
@@ -2985,7 +3009,9 @@ export function Step6Deploy() {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={simDevices.length > 3 ? 'text-yellow-400' : 'text-green-400'}>
-                    {simDevices.length > 3 ? '⚠️' : '✅'}
+                    {simDevices.length > 3
+                      ? <IconWarnTriangle size={16} className="text-amber-400 shrink-0" />
+                      : <IconCheckCircle size={16} className="text-green-400 shrink-0" />}
                   </span>
                   <span className="text-gray-300">
                     Blast radius: {Math.max(simDevices.length, storeDevices.length)} device(s)
@@ -2993,7 +3019,7 @@ export function Step6Deploy() {
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-green-400">✅</span>
+                  <IconCheckCircle size={16} className="text-green-400 shrink-0" />
                   <span className="text-gray-300">Rollback plan: Platform-native checkpoint strategy configured</span>
                 </div>
               </div>
@@ -3047,7 +3073,9 @@ export function Step6Deploy() {
             )}
 
             <Button onClick={handleStartDeploy} disabled={isDeploying || (!deployDone && !policyApproved)}>
-              {isDeploying ? '⏳ Deploying…' : '🚀 Start Deploy'}
+              {isDeploying ? 'Deploying…' : (
+                <span className="inline-flex items-center gap-2"><IconDeploy size={16} />Start Deploy</span>
+              )}
             </Button>
             {!deployDone && !policyApproved && !isDeploying && (
               <span className="text-xs text-yellow-400 italic">Approve policy gate to enable deployment</span>

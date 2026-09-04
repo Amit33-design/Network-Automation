@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { useAppStore } from '@/store/useAppStore'
+import { IconLink } from '@/components/icons'
 import {
   fetchNetBoxInventory, summarizeInventory, inventoryToStorePatch, SAMPLE_INVENTORY,
   type NetBoxInventory, type NetBoxImportPreview,
@@ -76,7 +77,11 @@ export function NetBoxImportPanel() {
   return (
     <Card>
       <h3 className="text-sm font-semibold text-gray-300 mb-1">
-        🔗 Import from NetBox / Nautobot <span className="text-gray-500 font-normal">(optional)</span>
+        <span className="inline-flex items-center gap-2">
+          <IconLink size={17} className="text-gray-400" />
+          Import from NetBox / Nautobot
+          <span className="text-gray-500 font-normal">(optional)</span>
+        </span>
       </h3>
       <p className="text-xs text-gray-500 mb-3">
         Connect to your NetBox or Nautobot instance to pre-fill organisation name, sites,
