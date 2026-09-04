@@ -11,7 +11,11 @@ import type { BOMSummaryRow } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { cn, formatUSD, downloadCSV } from '@/lib/utils'
-import { deviceIcon } from '@/components/icons'
+import {
+  deviceIcon, IconCatalog, IconLink, IconPlug, IconBlueprint,
+  IconScroll, IconServer, IconChart,
+} from '@/components/icons'
+import { TabBar } from '@/components/ui/TabBar'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import type { CableLink, OpticsEntry } from '@/types'
 
@@ -469,30 +473,20 @@ export function Step2Design() {
       )}
 
       {/* Sub-tabs */}
-      <div className="flex gap-1 flex-wrap">
-        {([
-          { id: 'devices',  label: 'Devices & BOM' },
-          { id: 'cabling',  label: 'Cabling Schedule' },
-          { id: 'optics',   label: 'Optics' },
-          { id: 'topology', label: 'HLD Topology' },
-          { id: 'ipplan',   label: 'IP Plan' },
-          { id: 'rack',     label: 'Rack Plan' },
-          { id: 'capacity', label: 'Port Capacity' },
-        ] as const).map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              'px-4 py-2 text-sm rounded-lg border transition-colors',
-              activeTab === tab.id
-                ? 'bg-blue-600 border-blue-500 text-white'
-                : 'bg-white/5 border-white/10 text-gray-400 hover:text-gray-200 hover:border-white/30',
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <TabBar
+        label="Bill of materials views"
+        value={activeTab}
+        onChange={setActiveTab}
+        items={[
+          { id: 'devices',  label: 'Devices & BOM',   Icon: IconCatalog },
+          { id: 'cabling',  label: 'Cabling Schedule', Icon: IconLink },
+          { id: 'optics',   label: 'Optics',          Icon: IconPlug },
+          { id: 'topology', label: 'HLD Topology',    Icon: IconBlueprint },
+          { id: 'ipplan',   label: 'IP Plan',         Icon: IconScroll },
+          { id: 'rack',     label: 'Rack Plan',       Icon: IconServer },
+          { id: 'capacity', label: 'Port Capacity',   Icon: IconChart },
+        ] as const}
+      />
 
       {/* Devices & BOM */}
       {activeTab === 'devices' && (

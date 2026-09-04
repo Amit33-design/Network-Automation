@@ -1,9 +1,10 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react'
 import {
   IconDeploy, IconSatellite, IconCheckShield, IconChart,
-  IconTerminal, IconWrench, IconBug, IconCheckCircle, IconWarnTriangle,
+  IconTerminal, IconWrench, IconBug, IconCheckCircle, IconWarnTriangle, IconStethoscope,
   type IconProps,
 } from '@/components/icons'
+import { TabBar } from '@/components/ui/TabBar'
 import { useTopologySummary, useTopologyDevices } from '@/hooks/useTopology'
 import { useRunZTP } from '@/hooks/useZTP'
 import { useRunChecks } from '@/hooks/useChecks'
@@ -2929,47 +2930,13 @@ export function Step6Deploy() {
       </div>
 
       {/* Tab bar */}
-      <div
-        className="flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/10 overflow-x-auto"
-        role="tablist" aria-label="Deploy & Validate sections"
-      >
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            id={`tab-${t.id}`}
-            aria-selected={tab === t.id}
-            aria-controls={`tabpanel-${t.id}`}
-            tabIndex={tab === t.id ? 0 : -1}
-            onClick={() => setTab(t.id)}
-            onKeyDown={e => {
-              const idx = tabs.findIndex(x => x.id === tab)
-              if (e.key === 'ArrowRight') { e.preventDefault(); setTab(tabs[(idx + 1) % tabs.length].id) }
-              if (e.key === 'ArrowLeft') { e.preventDefault(); setTab(tabs[(idx - 1 + tabs.length) % tabs.length].id) }
-              if (e.key === 'Home') { e.preventDefault(); setTab(tabs[0].id) }
-              if (e.key === 'End') { e.preventDefault(); setTab(tabs[tabs.length - 1].id) }
-            }}
-            className={cn(
-              'group flex items-center gap-2 px-3.5 py-2 rounded-lg whitespace-nowrap',
-              'text-[13px] font-medium tracking-[-0.01em] transition-all duration-150 cursor-pointer',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60',
-              tab === t.id
-                ? 'bg-blue-600 text-white shadow-sm shadow-blue-900/40'
-                : 'text-gray-400 hover:text-gray-100 hover:bg-white/[0.07]',
-            )}
-          >
-            <t.Icon
-              size={16}
-              className={cn(
-                'shrink-0 transition-opacity',
-                tab === t.id ? 'opacity-100' : 'opacity-70 group-hover:opacity-100',
-              )}
-            />
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <TabBar
+        label="Deploy & Validate sections"
+        value={tab}
+        onChange={setTab}
+        items={tabs}
+        panelIdPrefix="tabpanel"
+      />
 
       {/* ── Deploy Pipeline tab ─────────────────────────────────────────── */}
       {tab === 'deploy' && (
@@ -3552,29 +3519,17 @@ export function Step6Deploy() {
             </button>
             {showObservability && (
               <div id="observability-content" className="border-t border-white/10">
-                <div className="flex border-b border-white/10" role="tablist" aria-label="Observability views">
-                  {([
-                    { key: 'alerts' as const, label: 'Alerts' },
-                    { key: 'rca' as const, label: 'Root Cause Analysis' },
-                    { key: 'feed' as const, label: 'Deploy Feed' },
-                  ]).map(t => (
-                    <button
-                      key={t.key}
-                      role="tab"
-                      aria-selected={observabilityTab === t.key}
-                      tabIndex={observabilityTab === t.key ? 0 : -1}
-                      onClick={() => setObservabilityTab(t.key)}
-                      className={cn(
-                        'px-4 py-2 text-xs font-medium transition-colors cursor-pointer',
-                        observabilityTab === t.key
-                          ? 'text-blue-400 border-b-2 border-blue-400 bg-blue-500/5'
-                          : 'text-gray-500 hover:text-gray-300',
-                      )}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
+<TabBar
+                  size="sm"
+                  label="Observability views"
+                  value={observabilityTab}
+                  onChange={setObservabilityTab}
+                  items={[
+                    { id: 'alerts', label: 'Alerts', Icon: IconWarnTriangle },
+                    { id: 'rca',    label: 'Root Cause Analysis', Icon: IconStethoscope },
+                    { id: 'feed',   label: 'Deploy Feed', Icon: IconTerminal },
+                  ] as const}
+                />
                 <div className="p-4 max-h-96 overflow-y-auto">
                   {observabilityTab === 'alerts' && <AlertsPanel />}
                   {observabilityTab === 'rca' && <RcaPanel />}
