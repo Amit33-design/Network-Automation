@@ -1,14 +1,57 @@
 @import "tailwindcss";
 
+/* ── Typeface ────────────────────────────────────────────────────────────────
+   Inter is the de-facto UI face for this class of tool: it was drawn for
+   screen UI at small sizes, its digits line up in tables, and it has the
+   weight range a type scale needs. Loaded with `display=swap` and a full
+   native fallback, so an offline or blocked load renders in the previous
+   system stack rather than a blank page.
+
+   JetBrains Mono carries every device config, CLI block and IP address in the
+   product — those need a face where 0/O and 1/l/I cannot be confused.
+──────────────────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Inter's own spacing is tuned for display sizes; UI text wants it tighter. */
+  letter-spacing: -0.011em;
+  /* Tabular figures so a column of prices and port counts lines up. */
+  font-variant-numeric: tabular-nums;
 }
+
+/* ── Type scale ──────────────────────────────────────────────────────────────
+   Headings were the same family, weight and tracking as body copy, so a page
+   read as one undifferentiated block. Tightening tracking as size goes up is
+   what makes large text look set rather than scaled.
+──────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4 {
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  line-height: 1.2;
+}
+h1 { letter-spacing: -0.03em; }
+
+code, pre, kbd, samp {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+}
+
+/* Numeric cells in a data table: fixed-width digits, never proportional. */
+.tabular { font-variant-numeric: tabular-nums; }
 
 #root {
   min-height: 100vh;

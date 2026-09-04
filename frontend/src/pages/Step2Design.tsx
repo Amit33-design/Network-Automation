@@ -11,6 +11,7 @@ import type { BOMSummaryRow } from '@/lib/bom'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { cn, formatUSD, downloadCSV } from '@/lib/utils'
+import { deviceIcon } from '@/components/icons'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import type { CableLink, OpticsEntry } from '@/types'
 
@@ -316,12 +317,23 @@ export function Step2Design() {
     helper.accessor('vendor',   { header: 'Vendor',  cell: i => <span className="text-gray-300">{i.getValue()}</span> }),
     helper.accessor('model',    {
       header: 'Model',
-      cell: i => (
-        <div>
-          <div className="font-medium text-gray-100">{i.getValue()}</div>
-          <div className="text-xs text-gray-500">{i.row.original.detail}</div>
-        </div>
-      ),
+      // The glyph is the point of this cell: it lets a reader pick the spines
+      // out of a 200-row BOM without reading the Layer column.
+      cell: i => {
+        const Glyph = deviceIcon(i.row.original.subLayer)
+        return (
+          <div className="flex items-center gap-3">
+            <span className="shrink-0 w-9 h-9 rounded-lg bg-blue-500/[0.08] border border-blue-400/20
+                             flex items-center justify-center text-blue-300/90">
+              <Glyph size={20} />
+            </span>
+            <div className="min-w-0">
+              <div className="font-medium text-gray-100 truncate">{i.getValue()}</div>
+              <div className="text-xs text-gray-500 truncate">{i.row.original.detail}</div>
+            </div>
+          </div>
+        )
+      },
     }),
     helper.accessor('subLayer', { header: 'Layer',   cell: i => <code className="text-xs text-blue-400">{i.getValue()}</code> }),
     helper.accessor('speed',    { header: 'Speed' }),

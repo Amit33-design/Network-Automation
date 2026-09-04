@@ -6,17 +6,18 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { NetBoxImportPanel } from '@/components/NetBoxImportPanel'
 import { cn } from '@/lib/utils'
+import { USE_CASE_ICONS, IconServer, IconSpark } from '@/components/icons'
 import type { UseCase, OrgSize, BudgetTier } from '@/types'
 
-const USE_CASES: Array<{ id: UseCase; label: string; icon: string; desc: string }> = [
-  { id: 'campus',     icon: '🏢', label: 'Campus',       desc: 'Access/dist/core with PoE, QoS, SDA' },
-  { id: 'dc',         icon: '🖥️',  label: 'Data Centre',  desc: 'Spine-leaf with VXLAN/EVPN BGP' },
-  { id: 'gpu',        icon: '🤖', label: 'GPU Cluster',   desc: 'AI/ML fabric with RoCE & PFC/ECN' },
-  { id: 'wan',        icon: '🌐', label: 'WAN / SD-WAN',  desc: 'Edge routers and SD-WAN gateways' },
-  { id: 'multisite',  icon: '🔗', label: 'Multi-Site',    desc: 'Spine-leaf with WAN interconnect' },
-  { id: 'multicloud', icon: '☁️',  label: 'Multi-Cloud',   desc: 'Cloud transit and spoke gateways' },
-  { id: 'aviatrix',   icon: '🚀', label: 'Aviatrix',      desc: 'Cloud-native Aviatrix overlay mesh' },
-  { id: 'oran',       icon: '📡', label: 'Private 5G',    desc: 'O-RAN with eCPRI fronthaul & PTP timing' },
+const USE_CASES: Array<{ id: UseCase; label: string; desc: string }> = [
+  { id: 'campus',     label: 'Campus',       desc: 'Access/dist/core with PoE, QoS, SDA' },
+  { id: 'dc',         label: 'Data Centre',  desc: 'Spine-leaf with VXLAN/EVPN BGP' },
+  { id: 'gpu',        label: 'GPU Cluster',  desc: 'AI/ML fabric with RoCE & PFC/ECN' },
+  { id: 'wan',        label: 'WAN / SD-WAN', desc: 'Edge routers and SD-WAN gateways' },
+  { id: 'multisite',  label: 'Multi-Site',   desc: 'Spine-leaf with WAN interconnect' },
+  { id: 'multicloud', label: 'Multi-Cloud',  desc: 'Cloud transit and spoke gateways' },
+  { id: 'aviatrix',   label: 'Aviatrix',     desc: 'Cloud-native Aviatrix overlay mesh' },
+  { id: 'oran',       label: 'Private 5G',   desc: 'O-RAN with eCPRI fronthaul & PTP timing' },
 ]
 
 const VENDORS = ['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Dell EMC', 'HPE Aruba', 'Fortinet', 'Palo Alto', 'Extreme Networks']
@@ -109,7 +110,9 @@ export function Step1UseCase({ onBack }: Props) {
             disabled={!description.trim() || intentParse.isPending || !isLive}
             size="sm"
           >
-            {intentParse.isPending ? 'Parsing…' : '✨ Parse with AI'}
+            {intentParse.isPending ? 'Parsing…' : (
+              <span className="inline-flex items-center gap-1.5"><IconSpark size={15} />Parse with AI</span>
+            )}
           </Button>
           {!isLive && (
             <span className="text-xs text-gray-500">Requires live backend (see Backend Mode toggle)</span>
@@ -152,12 +155,12 @@ export function Step1UseCase({ onBack }: Props) {
               <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600" />
             )}
             <div className={cn(
-              'text-2xl mb-3 w-10 h-10 flex items-center justify-center rounded-lg transition-colors',
+              'mb-3 w-11 h-11 flex items-center justify-center rounded-xl border transition-colors',
               useCase === uc.id
-                ? 'bg-blue-500/20'
-                : 'bg-white/5 group-hover:bg-white/10',
+                ? 'bg-blue-500/15 border-blue-400/40 text-blue-300'
+                : 'bg-white/5 border-white/10 text-gray-400 group-hover:bg-white/10 group-hover:text-gray-200',
             )}>
-              {uc.icon}
+              {(() => { const I = USE_CASE_ICONS[uc.id] ?? IconServer; return <I size={22} /> })()}
             </div>
             <div className={cn(
               'text-sm font-semibold tracking-tight',
