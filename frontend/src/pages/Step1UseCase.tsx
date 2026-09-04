@@ -22,17 +22,19 @@ const USE_CASES: Array<{ id: UseCase; label: string; desc: string }> = [
 
 const VENDORS = ['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Dell EMC', 'HPE Aruba', 'Fortinet', 'Palo Alto', 'Extreme Networks']
 
-const INDUSTRIES: Array<{ icon: string; label: string }> = [
-  { icon: '💰', label: 'Financial' },
-  { icon: '🏥', label: 'Healthcare' },
-  { icon: '🎓', label: 'Education' },
-  { icon: '💻', label: 'Technology' },
-  { icon: '🏗️', label: 'Manufacturing' },
-  { icon: '🛒', label: 'Retail' },
-  { icon: '🏛️', label: 'Government' },
-  { icon: '📡', label: 'Media/Telecom' },
-  { icon: '⚡', label: 'Energy' },
-  { icon: '🔧', label: 'Other' },
+// Industry is a plain taxonomy — inventing ten more glyphs for it would
+// add noise, and the emoji it used to carry no longer match the icon set.
+const INDUSTRIES: string[] = [
+  'Financial',
+  'Healthcare',
+  'Education',
+  'Technology',
+  'Manufacturing',
+  'Retail',
+  'Government',
+  'Media/Telecom',
+  'Energy',
+  'Other',
 ]
 
 interface Props {
@@ -270,16 +272,16 @@ export function Step1UseCase({ onBack }: Props) {
         <div className="flex flex-wrap gap-2">
           {INDUSTRIES.map(ind => (
             <button
-              key={ind.label}
-              onClick={() => toggleIndustry(ind.label)}
+              key={ind}
+              onClick={() => toggleIndustry(ind)}
               className={cn(
                 'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer',
-                industry === ind.label
+                industry === ind
                   ? 'bg-purple-600/30 border-purple-500 text-purple-300'
                   : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30',
               )}
             >
-              {ind.icon} {ind.label}
+              {ind}
             </button>
           ))}
         </div>

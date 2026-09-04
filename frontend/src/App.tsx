@@ -31,12 +31,55 @@ const STEP_NAMES = [
   'Deploy & Validate',
 ]
 
+/**
+ * Desktop app bar — breadcrumb and progress on the left, global controls on
+ * the right, in normal flow.
+ *
+ * The controls used to be an `absolute top-4 right-6` overlay. That resolves
+ * against the app SHELL, not the content column, so on a desktop viewport it
+ * sat on top of `<main>`'s scrollbar and the Live/Sim switch was clipped off
+ * the edge of the window. A header row is also what a reader expects to find
+ * these in (AH2).
+ */
+function AppBar({ step, children }: { step: number; children?: React.ReactNode }) {
+  const pct = Math.round((step / STEP_NAMES.length) * 100)
+  const label = STEP_NAMES[step - 1] ?? ''
+
+  return (
+    <header className="hidden lg:block sticky top-0 z-30 bg-gray-950/85 backdrop-blur-md border-b border-white/10">
+      <div className="flex items-center gap-4 px-6 h-14">
+        <div className="flex items-baseline gap-2 min-w-0">
+          <span className="text-[13px] font-semibold text-gray-200 truncate">{label}</span>
+          <span className="text-xs text-gray-600">·</span>
+          <span className="text-xs text-gray-500 whitespace-nowrap">
+            Step {step} of {STEP_NAMES.length}
+          </span>
+        </div>
+
+        {/* Progress reads as a measure of the whole flow, so give it room. */}
+        <div className="flex items-center gap-2.5 flex-1 min-w-0 max-w-md">
+          <div className="h-1.5 flex-1 bg-white/10 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <span className="text-[11px] font-medium text-gray-500 tabular-nums w-8 text-right">{pct}%</span>
+        </div>
+
+        <div className="ml-auto flex items-center gap-2 shrink-0">{children}</div>
+      </div>
+    </header>
+  )
+}
+
+/** Mobile keeps the compact progress strip above the content. */
 function BreadcrumbBar({ step }: { step: number }) {
   const pct = Math.round((step / STEP_NAMES.length) * 100)
   const label = STEP_NAMES[step - 1] ?? ''
 
   return (
-    <div className="mb-6">
+    <div className="lg:hidden mb-6">
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xs text-gray-400">
           Step {step} of {STEP_NAMES.length}
@@ -123,7 +166,11 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
           <BackendToggleProvider value={{ isLive, baseUrl: backendUrl }}>
-            <div className="relative flex min-h-screen bg-gray-950 text-gray-200">
+            {/* h-screen + overflow-hidden makes <main> the scroll container. With
+                 min-h-screen the WINDOW scrolled instead, so main was never a
+                 scrollport and its sticky header scrolled away with the
+                 content (AH2). */}
+            <div className="relative flex h-screen overflow-hidden bg-gray-950 text-gray-200">
               <Sidebar
                 onGoHome={goHome}
                 onShowTroubleshooting={() => setShowTroubleshooting(t => !t)}
@@ -157,10 +204,8 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Page content */}
-                <div className="flex-1 px-4 sm:px-6 py-4 sm:py-8">
-                  {/* Desktop backend toggle — floating top-right, hidden on mobile */}
-                  <div className="hidden lg:flex items-center gap-2 absolute top-4 right-6 z-40">
+                {!showTroubleshooting && (
+                  <AppBar step={step}>
                     <ThemeToggle compact />
                     <BackendToggle
                       isLive={isLive}
@@ -168,7 +213,11 @@ export default function App() {
                       onToggle={setIsLive}
                       onUrlChange={setBackendUrl}
                     />
-                  </div>
+                  </AppBar>
+                )}
+
+                {/* Page content */}
+                <div className="flex-1 px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
                   {showTroubleshooting
                     ? <TroubleshootingEngine />
                     : (
