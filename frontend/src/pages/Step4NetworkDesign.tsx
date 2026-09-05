@@ -18,22 +18,24 @@ import { buildCloudTerraform, cloudTerraformFilename } from '@/lib/cloud-terrafo
 import { buildDrawio, drawioFilename } from '@/lib/drawio-export'
 import type { DesignExport } from '@/lib/design-export'
 import type { BOMDevice, AppType, AppState } from '@/types'
+import * as Icons from '@/components/icons'
+import { TabBar, type TabItem } from '@/components/ui/TabBar'
 
 // ── Tab types ────────────────────────────────────────────────────
 type DesignTab = 'hld' | 'lld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'rack' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
 
-const TAB_LABELS: Array<{ id: DesignTab; label: string }> = [
-  { id: 'hld',        label: '📐 High Level Design' },
-  { id: 'lld',        label: '📋 Low Level Design' },
-  { id: 'ipplan',     label: '🌐 IP Plan' },
-  { id: 'vlan',       label: '🏷 VLAN Design' },
-  { id: 'routing',    label: '🔀 Routing & Protocols' },
-  { id: 'physical',   label: '🔌 Physical Links' },
-  { id: 'rack',       label: '🗄 Rack & Cabling' },
-  { id: 'mermaid',    label: '📊 Mermaid Diagram' },
-  { id: 'simulate',   label: '⚡ Simulate' },
-  { id: 'summary',    label: '📋 Summary' },
-  { id: 'refdesigns', label: '📚 Reference Designs' },
+const TAB_LABELS: ReadonlyArray<TabItem<DesignTab>> = [
+  { id: 'hld',        label: 'High Level Design',   Icon: Icons.IconBlueprint },
+  { id: 'lld',        label: 'Low Level Design',    Icon: Icons.IconClipboard },
+  { id: 'ipplan',     label: 'IP Plan',             Icon: Icons.IconScroll },
+  { id: 'vlan',       label: 'VLAN Design',         Icon: Icons.IconSwitch },
+  { id: 'routing',    label: 'Routing & Protocols', Icon: Icons.IconRouter },
+  { id: 'physical',   label: 'Physical Links',      Icon: Icons.IconLink },
+  { id: 'rack',       label: 'Rack & Cabling',      Icon: Icons.IconServer },
+  { id: 'mermaid',    label: 'Mermaid Diagram',     Icon: Icons.IconChart },
+  { id: 'simulate',   label: 'Simulate',            Icon: Icons.IconSpark },
+  { id: 'summary',    label: 'Summary',             Icon: Icons.IconCatalog },
+  { id: 'refdesigns', label: 'Reference Designs',   Icon: Icons.IconSave },
 ]
 
 // ── Reference Designs data (M-24) ────────────────────────────────
@@ -867,19 +869,12 @@ export function Step4NetworkDesign() {
       )}
 
       {/* Design tab bar */}
-      <div className="flex gap-0 border-b border-white/10 overflow-x-auto">
-        {TAB_LABELS.map(t => (
-          <button key={t.id} type="button" onClick={() => setActiveTab(t.id)}
-            className={cn(
-              'px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer whitespace-nowrap',
-              activeTab === t.id
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-gray-500 hover:text-gray-300',
-            )}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <TabBar
+        label="Network design views"
+        value={activeTab}
+        onChange={setActiveTab}
+        items={TAB_LABELS}
+      />
 
       {/* ── HLD tab ─────────────────────────────────────────────────── */}
       {activeTab === 'hld' && (
