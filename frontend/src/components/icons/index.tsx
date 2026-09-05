@@ -377,6 +377,28 @@ export function deviceIcon(subLayer: string): IconCmp {
   return DEVICE_ICONS[subLayer] ?? IconSwitch
 }
 
+/**
+ * Diagram tier → glyph.
+ *
+ * The LLD builders use a wider vocabulary than the BOM's `subLayer` — dmz,
+ * loadbalancer, database, endpoint and so on. Falling back to a generic
+ * switch for those would be worse than the emoji it replaces, so they are
+ * mapped explicitly and only genuinely unknown tiers take the default.
+ */
+const TIER_ICONS: Record<string, IconCmp> = {
+  ...DEVICE_ICONS,
+  internet: IconGlobe, wan: IconGlobe, transit: IconGlobe,
+  dmz: IconFirewall, internal: IconFirewall,
+  loadbalancer: IconSites,
+  application: IconServer, database: IconServer, storage: IconServer,
+  gpu: IconGpu, endpoint: IconUser, oob: IconTerminal,
+  cloud: IconCloud, spoke: IconCloud,
+}
+
+export function tierIcon(tier: string): IconCmp {
+  return TIER_ICONS[tier] ?? IconSwitch
+}
+
 /** Use-case → glyph, for the Step 1 cards. */
 export const USE_CASE_ICONS: Record<string, IconCmp> = {
   campus: IconBuilding, dc: IconServer, gpu: IconGpu, wan: IconGlobe,

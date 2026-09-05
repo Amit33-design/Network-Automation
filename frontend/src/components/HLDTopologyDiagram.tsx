@@ -3,6 +3,7 @@ import type { BOMDevice, DeviceMetrics } from '@/types'
 import { formatUptime } from '@/lib/utils'
 import { DCI_RT_ASN } from '@/lib/configgen'
 import { evaluateDevice } from '@/lib/monitoring'
+import { deviceIcon } from '@/components/icons'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -152,6 +153,22 @@ const SVG_W    = 1280
 const LEFT_W   = 148   // zone label column
 const RIGHT_PAD = 16
 const CONTENT_W = SVG_W - LEFT_W - RIGHT_PAD
+/**
+ * Device glyph inside an HLD node.
+ *
+ * Reuses the shared icon set rather than drawing a second one — the BOM table
+ * and the diagram should agree about what a spine looks like. Scaled from the
+ * icons' 24px grid to 18px and tinted with the node's own border colour.
+ */
+function NodeGlyph({ layer, color }: { layer: string; color: string }) {
+  const Glyph = deviceIcon(layer)
+  return (
+    <g transform="scale(0.75)" color={color}>
+      <Glyph size={24} />
+    </g>
+  )
+}
+
 const NW = 136  // node width
 const NH = 66   // node height
 
@@ -1593,13 +1610,19 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                     {node.haRole === 'active' ? 'ACTIVE' : 'STBY'}
                   </text>
                 )}
+                {/* Device glyph — the diagram is the artefact people put in
+                    design documents, and a row of identical boxes makes the
+                    reader work out the tier from the text every time (AH4). */}
+                <g transform="translate(9,15)" opacity={0.9}>
+                  <NodeGlyph layer={node.layer} color={node.border} />
+                </g>
                 {/* Hostname */}
-                <text x={NW / 2} y={24} textAnchor="middle"
+                <text x={NW / 2 + 11} y={24} textAnchor="middle"
                   fill={node.textColor} fontSize={8.5} fontWeight="700">
                   {node.label}
                 </text>
                 {/* Model */}
-                <text x={NW / 2} y={38} textAnchor="middle"
+                <text x={NW / 2 + 11} y={38} textAnchor="middle"
                   fill={node.border} fontSize={7.5} opacity={0.95}>
                   {node.model}
                 </text>

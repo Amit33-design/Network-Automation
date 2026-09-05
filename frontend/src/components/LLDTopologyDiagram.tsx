@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import type { BOMDevice } from '@/types'
+import { tierIcon } from '@/components/icons'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -9,6 +10,11 @@ interface LLDInterface {
   vlan?: string
   mac?: string
   speed?: string
+}
+
+function LldGlyph({ tier }: { tier: string }) {
+  const Glyph = tierIcon(tier)
+  return <Glyph size={24} />
 }
 
 interface LLDNode {
@@ -1520,10 +1526,13 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
                   </text>
                 )}
 
-                {/* Icon + hostname */}
-                <text x={6} y={16} fill={node.textColor} fontSize={6}>
-                  {node.icon}
-                </text>
+                {/* Device glyph — the emoji here rendered at a different
+                    size on every OS and could not take the node's colour.
+                    Shares the icon set with the BOM table and the HLD, so
+                    both diagrams agree on what a spine looks like (AH4). */}
+                <g transform="translate(5,7) scale(0.55)" color={node.border} opacity={0.9}>
+                  <LldGlyph tier={node.tier} />
+                </g>
                 <text x={node.w / 2} y={16} textAnchor="middle"
                   fill={node.textColor} fontSize={8.5} fontWeight="700">
                   {node.hostname}
