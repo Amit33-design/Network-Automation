@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import type { BOMDevice } from '@/types'
 import { tierIcon } from '@/components/icons'
+import { CloseButton } from '@/components/ui/CloseButton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1614,8 +1615,7 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
                 </span>
               )}
             </div>
-            <button onClick={() => setSelectedNode(null)}
-              className="text-gray-600 hover:text-gray-300 transition-colors text-base cursor-pointer">✕</button>
+            <CloseButton onClick={() => setSelectedNode(null)} label="Close device details" />
           </div>
 
           {/* Interfaces table */}

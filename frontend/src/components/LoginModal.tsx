@@ -6,6 +6,7 @@
 import { useState, type FormEvent } from 'react'
 import { useAuthStore, ROLES, type Role } from '@/store/useAuthStore'
 import { getBackendUrl } from '@/api/client'
+import { CloseButton } from '@/components/ui/CloseButton'
 
 interface LoginModalProps {
   open: boolean
@@ -65,7 +66,7 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
             <img src="/favicon.svg" alt="" className="w-6 h-6" />
             <h2 className="text-lg font-bold text-white">Sign in to NetDesign <span className="text-blue-400">AI</span></h2>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-200 cursor-pointer text-xl leading-none" aria-label="Close">×</button>
+          <CloseButton onClick={onClose} label="Close sign-in" />
         </div>
 
         {/* Mode tabs */}

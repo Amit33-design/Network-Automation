@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import type { AppState, UserActivity } from '@/types'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { IconSave } from '@/components/icons'
+import { CloseButton } from '@/components/ui/CloseButton'
 import {
   loadAllDesigns, saveDesign, removeDesign, isRemote, type SavedDesign,
 } from '@/lib/design-store'
@@ -166,9 +167,7 @@ export function MyDesigns({ open, onClose }: MyDesignsProps) {
             >
               + Save Current
             </button>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-200 transition-colors cursor-pointer text-xl leading-none" aria-label="Close">
-              x
-            </button>
+            <CloseButton onClick={onClose} label="Close My Designs" />
           </div>
         </div>
 

@@ -353,6 +353,10 @@ export const IconCloudMesh = (p: IconProps) => (
   </Svg>
 )
 
+export const IconClose = (p: IconProps) => (
+  <Svg {...p}><path d="m6 6 12 12M18 6 6 18" /></Svg>
+)
+
 // ── Lookup helpers ──────────────────────────────────────────────────────────
 
 type IconCmp = (p: IconProps) => React.ReactElement
