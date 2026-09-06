@@ -8,6 +8,7 @@ import { NetBoxImportPanel } from '@/components/NetBoxImportPanel'
 import { cn } from '@/lib/utils'
 import { USE_CASE_ICONS, IconServer, IconSpark } from '@/components/icons'
 import type { UseCase, OrgSize, BudgetTier } from '@/types'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 const USE_CASES: Array<{ id: UseCase; label: string; desc: string }> = [
   { id: 'campus',     label: 'Campus',       desc: 'Access/dist/core with PoE, QoS, SDA' },
@@ -84,10 +85,10 @@ export function Step1UseCase({ onBack }: Props) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-gray-50 mb-1 tracking-tight">Select Use Case</h2>
-        <p className="text-sm text-gray-400">Choose the network topology that matches your deployment</p>
-      </div>
+      <PageHeader
+        title="Select Use Case"
+        description="Choose the network topology that matches your deployment"
+      />
 
       {/* G-A1: Free-text intent parser (AI-assisted) */}
       <Card>
