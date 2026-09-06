@@ -20,6 +20,7 @@ import type { DesignExport } from '@/lib/design-export'
 import type { BOMDevice, AppType, AppState } from '@/types'
 import * as Icons from '@/components/icons'
 import { TabBar, type TabItem } from '@/components/ui/TabBar'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 // ── Tab types ────────────────────────────────────────────────────
 type DesignTab = 'hld' | 'lld' | 'ipplan' | 'vlan' | 'routing' | 'physical' | 'rack' | 'mermaid' | 'simulate' | 'summary' | 'refdesigns'
@@ -809,10 +810,10 @@ export function Step4NetworkDesign() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-100 mb-1">Network Design</h2>
-          <p className="text-sm text-gray-400">Auto-generated HLD topology, IP plan, VLAN design and routing tables</p>
-        </div>
+        <PageHeader
+          title="Network Design"
+          description="Auto-generated HLD topology, IP plan, VLAN design and routing tables"
+        />
         {/* Export action bar */}
         <div className="flex gap-2 shrink-0">
           <button onClick={handleExportSVG}

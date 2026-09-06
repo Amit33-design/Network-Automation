@@ -18,6 +18,8 @@ import {
 import { TabBar } from '@/components/ui/TabBar'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import type { CableLink, OpticsEntry } from '@/types'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { StatCard } from '@/components/ui/StatCard'
 
 // ── M-15: AI Product Scoring ─────────────────────────────────────────────────
 
@@ -385,34 +387,26 @@ export function Step2Design() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-100 mb-1">Bill of Materials &amp; Cabling</h2>
-          <p className="text-sm text-gray-400">
-            {devices.length} devices · <span className="text-green-400 font-semibold">{formatUSD(grandTotal)}</span> hardware
-          </p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
+      <PageHeader
+        title="Bill of Materials & Cabling"
+        description={<>
+          {devices.length} devices · <span className="text-green-400 font-semibold">{formatUSD(grandTotal)}</span> hardware
+        </>}
+        actions={<>
           <Button variant="secondary" size="sm" onClick={exportBOM}>&#8595; BOM CSV</Button>
           <Button variant="secondary" size="sm" onClick={exportCabling}>&#8595; Cabling CSV</Button>
           <Button variant="secondary" size="sm" onClick={exportOptics}>&#8595; Optics CSV</Button>
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <Card className="text-center">
-          <div className="text-xl sm:text-2xl font-bold text-blue-400">{devices.length}</div>
-          <div className="text-xs text-gray-400 mt-1">Total Devices</div>
-        </Card>
-        <Card className="text-center">
-          <div className="text-xl sm:text-2xl font-bold text-purple-400">{rows.length}</div>
-          <div className="text-xs text-gray-400 mt-1">Unique Models</div>
-        </Card>
-        <Card className="col-span-2 sm:col-span-1 text-center">
-          <div className="text-xl sm:text-2xl font-bold text-green-400 truncate">{formatUSD(grandTotal)}</div>
-          <div className="text-xs text-gray-400 mt-1">Grand Total</div>
-        </Card>
+        <StatCard label="Total Devices" value={devices.length} tone="blue" Icon={IconServer} />
+        <StatCard label="Unique Models" value={rows.length} tone="purple" Icon={IconCatalog} />
+        <StatCard
+          label="Grand Total" value={formatUSD(grandTotal)} hint="hardware, excl. cabling"
+          tone="green" className="col-span-2 sm:col-span-1"
+        />
       </div>
 
       {/* M-16: EOL Alert Panel */}

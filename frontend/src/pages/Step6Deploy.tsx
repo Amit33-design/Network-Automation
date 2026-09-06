@@ -37,6 +37,7 @@ import { buildRunbook, runbookFilename } from '@/lib/runbook'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
 import { evaluateFleet, alertsToText, forecastMetric, correlateAlerts, recordAvailability, availabilityReport, updateAlertHistory, ackAlert, alertHistoryList, simulateInterfaces, analyzeInterfaces, type AvailabilityAcc, type AlertHistory } from '@/lib/monitoring'
 import type { ZTPEvent, BOMDevice, CheckResult, MonitoringResult, ZTPResult, ChecksResult, DeviceMetrics, MetricsSummary, ConfigDriftResponse, ConfigDriftDevice, ConfigRemediationResponse, RemediationDeviceInput, TroubleshootResult } from '@/types'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 const STATUS_BADGE: Record<string, 'pass' | 'warn' | 'fail' | 'neutral'> = {
   healthy: 'pass', degraded: 'warn', down: 'fail', unknown: 'neutral',
@@ -2924,10 +2925,10 @@ export function Step6Deploy() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-gray-100 mb-1">Deploy &amp; Validate</h2>
-        <p className="text-sm text-gray-400">Zero-touch provisioning, pre/post checks, and live monitoring</p>
-      </div>
+      <PageHeader
+        title="Deploy & Validate"
+        description="Zero-touch provisioning, pre/post checks, and live monitoring"
+      />
 
       {/* Tab bar */}
       <TabBar

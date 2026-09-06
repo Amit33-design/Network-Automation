@@ -6,6 +6,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { generateAllConfigs } from '@/lib/configgen'
 import { Button } from '@/components/ui/Button'
 import { downloadText } from '@/lib/utils'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 // ── Diff engine (M-34) ────────────────────────────────────────────────────────
 
@@ -217,13 +218,11 @@ export function Step3Config() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-100 mb-1">Device Configurations</h2>
-          <p className="text-sm text-gray-400">{devices.length} configs generated</p>
-        </div>
-        <Button variant="secondary" size="sm" onClick={downloadAll}>&#8595; Download All</Button>
-      </div>
+      <PageHeader
+        title="Device Configurations"
+        description={`${devices.length} configs generated`}
+        actions={<Button variant="secondary" size="sm" onClick={downloadAll}>&#8595; Download All</Button>}
+      />
 
       <div className="flex gap-4 min-h-[500px]">
         {/* Device list sidebar with layer filter chips (M-35) */}
