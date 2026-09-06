@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { CloseButton } from '@/components/ui/CloseButton'
 
 type Provider = 'slack' | 'teams' | 'servicenow' | 'jira' | 'netbox' | 'awx' | 'gitops'
 type Status = 'idle' | 'testing' | 'ok' | 'error'
@@ -75,7 +76,7 @@ export function IntegrationsPanel({ open, onClose }: Props) {
               Connect to external systems  ·  {enabledCount} active integration{enabledCount !== 1 ? 's' : ''}
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-xl cursor-pointer">✕</button>
+          <CloseButton onClick={onClose} label="Close Integrations" />
         </div>
 
         <div className="flex flex-1 min-h-0">

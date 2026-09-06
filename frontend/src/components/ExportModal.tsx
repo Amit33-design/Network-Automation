@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from 'react'
 import type { BOMDevice } from '@/types'
+import { CloseButton } from '@/components/ui/CloseButton'
 
 interface ExportModalProps {
   open: boolean
@@ -215,13 +216,7 @@ export function ExportModal({ open, onClose, devices, configs }: ExportModalProp
             <h2 className="text-lg font-bold text-white">Export Design</h2>
             <p className="text-xs text-gray-400 mt-0.5">Download your network design in multiple formats</p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-200 transition-colors cursor-pointer text-xl leading-none"
-            aria-label="Close"
-          >
-            ×
-          </button>
+          <CloseButton onClick={onClose} label="Close Export" />
         </div>
 
         {/* Body */}

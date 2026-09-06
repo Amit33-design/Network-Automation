@@ -4,6 +4,7 @@ import { formatUptime } from '@/lib/utils'
 import { DCI_RT_ASN } from '@/lib/configgen'
 import { evaluateDevice } from '@/lib/monitoring'
 import { deviceIcon } from '@/components/icons'
+import { CloseButton } from '@/components/ui/CloseButton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1685,8 +1686,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                 </span>
               )}
             </div>
-            <button onClick={() => setSelectedNode(null)}
-              className="text-gray-600 hover:text-gray-300 transition-colors text-base cursor-pointer">✕</button>
+            <CloseButton onClick={() => setSelectedNode(null)} label="Close device details" />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
             <div>

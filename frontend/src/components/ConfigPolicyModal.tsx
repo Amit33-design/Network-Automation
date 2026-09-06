@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAppStore } from '@/store/useAppStore'
+import { CloseButton } from '@/components/ui/CloseButton'
 import {
   POLICY_CATALOG,
   POLICY_CATEGORIES,
@@ -156,9 +157,7 @@ export function ConfigPolicyModal({ open, onClose }: ConfigPolicyModalProps) {
               Select enterprise policies to overlay onto generated device configs — applied per role &amp; platform
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-200 transition-colors cursor-pointer text-xl leading-none" aria-label="Close">
-            ×
-          </button>
+          <CloseButton onClick={onClose} label="Close Config Policy" />
         </div>
 
         {/* Toolbar */}

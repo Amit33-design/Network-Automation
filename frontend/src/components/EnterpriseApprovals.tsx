@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/Badge'
 import { useAppStore } from '@/store/useAppStore'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { IconApproval } from '@/components/icons'
+import { CloseButton } from '@/components/ui/CloseButton'
 
 interface Approval {
   id: string
@@ -110,7 +111,7 @@ export function EnterpriseApprovals({ open, onClose }: Props) {
             <h2 className="text-lg font-bold text-gray-100">Enterprise Approvals</h2>
             <p className="text-xs text-gray-500 mt-0.5">Review and manage deployment approval workflows</p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-xl cursor-pointer">✕</button>
+          <CloseButton onClick={onClose} label="Close Approvals" />
         </div>
 
         {/* Tab bar */}

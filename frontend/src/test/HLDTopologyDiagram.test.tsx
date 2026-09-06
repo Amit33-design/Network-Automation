@@ -119,7 +119,9 @@ describe('HLDTopologyDiagram — computed topology (D1)', () => {
     expect(screen.getByText('Fabric Pairing')).toBeInTheDocument()
     expect(screen.getByText(/vPC\/MLAG Pair #1.*peer: LEAF-002/)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByText('✕'))
+    // Targeted by accessible name, not the glyph: the close control is now a
+    // named button, which is what made the glyph selector unnecessary (AH9).
+    fireEvent.click(screen.getByRole('button', { name: /close device details/i }))
     fireEvent.click(screen.getByText('LEAF-002'))
     expect(screen.getByText(/vPC\/MLAG Pair #1.*peer: LEAF-001/)).toBeInTheDocument()
   })
