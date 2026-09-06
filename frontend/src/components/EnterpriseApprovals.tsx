@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { useAppStore } from '@/store/useAppStore'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { IconApproval } from '@/components/icons'
 
 interface Approval {
   id: string
@@ -157,10 +159,11 @@ export function EnterpriseApprovals({ open, onClose }: Props) {
               </Button>
             </div>
           ) : displayed.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <div className="text-3xl mb-3">📭</div>
-              <div>No {tab === 'pending' ? 'pending' : ''} approvals</div>
-            </div>
+            <EmptyState
+              Icon={IconApproval}
+              title={tab === 'pending' ? 'Nothing awaiting approval' : 'No approvals'}
+              description="Deployments that trip the policy gate — a large blast radius, or a change outside the window — appear here for sign-off."
+            />
           ) : (
             displayed.map(a => (
               <div key={a.id} className="bg-white/5 border border-white/10 rounded-xl p-4">

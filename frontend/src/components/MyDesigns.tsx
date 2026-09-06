@@ -3,6 +3,8 @@ import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { cn } from '@/lib/utils'
 import type { AppState, UserActivity } from '@/types'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { IconSave } from '@/components/icons'
 import {
   loadAllDesigns, saveDesign, removeDesign, isRemote, type SavedDesign,
 } from '@/lib/design-store'
@@ -211,11 +213,11 @@ export function MyDesigns({ open, onClose }: MyDesignsProps) {
                 : 'Saved in this browser. Sign in with a live backend to sync them to your account.'}
             </div>
             {designs.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">
-                <div className="text-4xl mb-3">&#x1F4BE;</div>
-                <div className="text-sm">No saved designs yet.</div>
-                <div className="text-xs mt-1">Click &quot;Save Current&quot; to create one.</div>
-              </div>
+              <EmptyState
+                Icon={IconSave}
+                title="No saved designs yet"
+                description={'Save the design you are working on to come back to it, compare it against a later version, or hand it to someone else.'}
+              />
             ) : (
               <div className="flex flex-col gap-2">
                 {designs.map(design => (

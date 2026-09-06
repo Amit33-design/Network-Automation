@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { StatCard } from '@/components/ui/StatCard'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { IconServer } from '@/components/icons'
 
 describe('PageHeader', () => {
@@ -54,5 +55,30 @@ describe('StatCard', () => {
     const { container } = render(<StatCard label="L" value="1" tone="green" />)
     const accent = container.querySelector('span[aria-hidden="true"]')
     expect(accent).toBeTruthy()
+  })
+})
+
+describe('EmptyState', () => {
+  it('states what is missing and why', () => {
+    render(
+      <EmptyState
+        Icon={IconServer}
+        title="No saved designs yet"
+        description="Save the design you are working on to come back to it."
+      />,
+    )
+    expect(screen.getByText('No saved designs yet')).toBeTruthy()
+    expect(screen.getByText(/Save the design/)).toBeTruthy()
+  })
+
+  it('renders the action that resolves it', () => {
+    render(<EmptyState title="Nothing here" action={<button>Create one</button>} />)
+    expect(screen.getByRole('button', { name: 'Create one' })).toBeTruthy()
+  })
+
+  it('works with only a title', () => {
+    const { container } = render(<EmptyState title="Empty" />)
+    expect(screen.getByText('Empty')).toBeTruthy()
+    expect(container.querySelector('svg')).toBeNull()
   })
 })

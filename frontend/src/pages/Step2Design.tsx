@@ -20,6 +20,7 @@ import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import type { CableLink, OpticsEntry } from '@/types'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { StatCard } from '@/components/ui/StatCard'
+import { EmptyState } from '@/components/ui/EmptyState'
 
 // ── M-15: AI Product Scoring ─────────────────────────────────────────────────
 
@@ -542,7 +543,11 @@ export function Step2Design() {
       {activeTab === 'cabling' && (
         <div className="overflow-x-auto rounded-xl border border-white/10">
           {cabling.length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-gray-500">No cabling data — generate a BOM first.</p>
+            <EmptyState
+              size="sm" Icon={IconLink}
+              title="No cabling yet"
+              description="The cable schedule is derived from the BOM. Pick a use case and scale on the earlier steps to generate one."
+            />
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -585,7 +590,11 @@ export function Step2Design() {
       {activeTab === 'optics' && (
         <div className="overflow-x-auto rounded-xl border border-white/10">
           {optics.length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-gray-500">No optics data — generate a BOM first.</p>
+            <EmptyState
+              size="sm" Icon={IconPlug}
+              title="No optics yet"
+              description="Transceivers are chosen from the cable runs — their length and fibre type. Generate a BOM to see them."
+            />
           ) : (
             <table className="w-full text-sm">
               <thead>
