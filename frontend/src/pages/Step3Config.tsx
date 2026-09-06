@@ -402,7 +402,7 @@ export function Step3Config() {
                     readOnly
                     value={configText}
                     className="w-full h-40 rounded-lg border border-white/10 bg-[#080E1A] font-mono text-xs
-                               text-gray-300 p-2 resize-none focus:outline-none"
+                               text-gray-300 p-2 resize-none"
                   />
                 </div>
                 {/* Right: paste previous config */}

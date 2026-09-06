@@ -50,6 +50,36 @@ code, pre, kbd, samp {
   letter-spacing: 0;
 }
 
+/* ── Focus ───────────────────────────────────────────────────────────────────
+   Measured before writing this: 14 of 14 sampled focusable elements had
+   `outline: none`, no box-shadow and no border change on focus. A keyboard
+   user could not see where they were anywhere in the app — WCAG 2.4.7 (Focus
+   Visible, AA) is a hard requirement, not a preference.
+
+   Tailwind's preflight removes the UA outline and much of the codebase adds
+   `focus:outline-none` without a replacement, so one global rule is both the
+   smallest fix and the one a new component cannot forget. `:focus-visible`
+   means it appears for keyboard navigation and not on mouse clicks.
+
+   `outline` rather than a ring: it follows border-radius, never shifts
+   layout, and is not clipped by an ancestor's `overflow: hidden` the way a
+   box-shadow ring can be.
+──────────────────────────────────────────────────────────────────────────── */
+:where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+/* On a light ground the sky-400 ring is too pale to hit 3:1. */
+html.light :where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline-color: #1d4ed8;
+}
+
+/* Components that already draw their own indicator opt out rather than
+   stacking two. */
+:where(.focus-ring-none):focus-visible { outline: none; }
+
 /* Numeric cells in a data table: fixed-width digits, never proportional. */
 .tabular { font-variant-numeric: tabular-nums; }
 
