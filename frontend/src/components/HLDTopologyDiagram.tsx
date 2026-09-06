@@ -3,7 +3,7 @@ import type { BOMDevice, DeviceMetrics } from '@/types'
 import { formatUptime } from '@/lib/utils'
 import { DCI_RT_ASN } from '@/lib/configgen'
 import { evaluateDevice } from '@/lib/monitoring'
-import { deviceIcon } from '@/components/icons'
+import { deviceIcon, IconGlobe } from '@/components/icons'
 import { CloseButton } from '@/components/ui/CloseButton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1374,10 +1374,13 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                 fill={z.fill} stroke={z.stroke} strokeWidth={0.8} opacity={1} />
               {/* Left accent rail for clear zone separation */}
               <rect x={0} y={z.yStart} width={3} height={z.yEnd - z.yStart} fill={z.stroke} opacity={0.85} />
-              {/* Left zone label */}
-              <text x={10} y={z.yStart + 16} fill={z.stroke} fontSize={8.5} fontWeight="700" opacity={1}>
-                {z.icon}
-              </text>
+              {/* Left zone label.
+                  The swatch used to be a coloured-circle EMOJI in a <text>.
+                  These diagrams are exported as SVG into design documents,
+                  where emoji depend on the viewing application's font and
+                  frequently render as tofu; a real circle also matches the
+                  zone's own stroke exactly rather than approximating it. */}
+              <circle cx={13.5} cy={z.yStart + 12.5} r={3.5} fill={z.stroke} />
               <text x={10} y={z.yStart + 28} fill={z.stroke} fontSize={8} fontWeight="700" opacity={1}>
                 {z.label}
               </text>
@@ -1581,7 +1584,12 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                   onClick={(e) => { e.stopPropagation(); setSelectedNode(isSelected ? null : node.id) }}
                   style={{ cursor: 'pointer' }}>
                   <ellipse cx={NW / 2} cy={30} rx={64} ry={22} fill={isInFlow ? '#111827' : '#0F172A'} stroke={isInFlow ? '#60A5FA' : '#374151'} strokeWidth={isSelected ? 2 : 1} />
-                  <text x={NW / 2} y={34} textAnchor="middle" fill={isInFlow ? '#BAE6FD' : '#9CA3AF'} fontSize={11}>🌐 {node.label}</text>
+                  {/* Drawn, not typed: this SVG gets exported into design
+                      documents where an emoji glyph may not resolve. */}
+                  <g transform={`translate(${NW / 2 - 40},22)`} color={isInFlow ? '#BAE6FD' : '#9CA3AF'}>
+                    <g transform="scale(0.62)"><IconGlobe size={24} /></g>
+                  </g>
+                  <text x={NW / 2 + 6} y={34} textAnchor="middle" fill={isInFlow ? '#BAE6FD' : '#9CA3AF'} fontSize={11}>{node.label}</text>
                 </g>
               )
             }
@@ -1666,7 +1674,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
             ━━ Active path  · · · HA sync / OOB  ·  Click device for details  ·  Select flow scenario above to animate packet path
           </text>
           <text x={SVG_W - RIGHT_PAD} y={LEGEND_Y + 14} textAnchor="end" fill="#1D4ED8" fontSize={7} opacity={0.6}>
-            ⚡ NetDesign AI HLD
+            NetDesign AI · HLD
           </text>
         </svg>
       </div>

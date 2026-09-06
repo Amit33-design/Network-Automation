@@ -341,3 +341,31 @@ describe('Tier bifurcation across every use case', () => {
     }
   })
 })
+
+// ── AH10: the exported SVG must not depend on emoji fonts ───────────────────
+// These diagrams are exported as SVG into design documents. An emoji glyph in
+// a <text> element resolves against whatever font the VIEWING application
+// has, so it renders as tofu in Illustrator, Visio and most PDF pipelines —
+// this is an export-correctness problem, not only a styling one.
+describe('HLD diagram — export safety', () => {
+  const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u
+
+  for (const useCase of ['dc', 'campus', 'gpu', 'wan', 'oran'] as const) {
+    it(`${useCase}: renders no emoji into the SVG`, () => {
+      const { container } = render(<HLDTopologyDiagram devices={[]} useCase={useCase} />)
+      const svg = container.querySelector('svg')
+      expect(svg).toBeTruthy()
+      const found = (svg!.outerHTML.match(new RegExp(EMOJI, 'gu')) ?? [])
+      expect(found, `${useCase}: emoji in exported SVG: ${found.join(' ')}`).toEqual([])
+    })
+  }
+
+  it('draws zone swatches as real marks tinted with the zone colour', () => {
+    // A coloured-circle emoji can only approximate the zone's stroke; a
+    // circle element takes it exactly.
+    const { container } = render(<HLDTopologyDiagram devices={[]} useCase="dc" />)
+    const zoneDots = [...container.querySelectorAll('circle[r="3.5"]')]
+    expect(zoneDots.length).toBeGreaterThan(0)
+    for (const d of zoneDots) expect(d.getAttribute('fill')).toMatch(/^#[0-9A-Fa-f]{6}$/)
+  })
+})

@@ -36,7 +36,6 @@ interface LLDNode {
   color: string
   border: string
   textColor: string
-  icon: string
 }
 
 interface LLDLink {
@@ -160,7 +159,6 @@ function mkNode(
     services?: string[]
     specs?: string
     haRole?: 'active' | 'standby'
-    icon?: string
   } = {},
 ): LLDNode {
   const s = sty(tier)
@@ -171,7 +169,6 @@ function mkNode(
     services: opts.services ?? [],
     specs: opts.specs ?? '',
     haRole: opts.haRole,
-    icon: opts.icon ?? '',
   }
 }
 
@@ -211,7 +208,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const [ix] = xCenter(1, 0, NW)
   const inet = mkNode('inet', 'INTERNET', 'Dual-ISP', 'internet', 'ISP',
     ix + NW/2 - 60, Y.inet, 120, 50, {
-      icon: '🌐',
       interfaces: [
         { name: 'Egress ISP', ip: '10.21.10/30', speed: '1G' },
         { name: 'Ingress ISP', ip: '10.21.10/30', speed: '1G' },
@@ -221,7 +217,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const [fw1x, fw2x] = xCenter(2, 160, NW)
   const fw1 = mkNode('fw1', 'FW-01', 'PA-5450', 'dmz', 'Palo Alto', fw1x, Y.fw, NW, 120, {
     haRole: 'active',
-    icon: '🛡',
     interfaces: [
       { name: 'port 1', ip: '10.1.1.1/24', vlan: 'Outside' },
       { name: 'port 2', ip: '10.1.2.1/24', vlan: 'Inside' },
@@ -232,7 +227,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   })
   const fw2 = mkNode('fw2', 'FW-02', 'PA-5450', 'dmz', 'Palo Alto', fw2x, Y.fw, NW, 120, {
     haRole: 'standby',
-    icon: '🛡',
     interfaces: [
       { name: 'port 1', ip: '10.1.1.2/24', vlan: 'Outside' },
       { name: 'port 2', ip: '10.1.2.2/24', vlan: 'Inside' },
@@ -244,7 +238,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
 
   const [r1x, r2x] = xCenter(2, 160, NW)
   const rtr1 = mkNode('rtr1', 'ROUTER-CORE', 'ASR-1002-HX', 'internal', 'Cisco', r1x, Y.router, NW, 120, {
-    icon: '🔀',
     interfaces: [
       { name: 'Gi0/0', ip: '10.2.1.1/30', vlan: 'vlan_trunks' },
       { name: 'Gi0/1', ip: '10.2.1.5/30', vlan: 'vlanI01' },
@@ -258,7 +251,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     services: ['BGP', 'OSPF', 'QoS', 'Redundant Path A'],
   })
   const rtr2 = mkNode('rtr2', 'ROUTER-EDGE', 'ASR-1002-HX', 'internal', 'Cisco', r2x, Y.router, NW, 120, {
-    icon: '🔀',
     interfaces: [
       { name: 'Gi0/0', ip: '10.2.1.2/30', vlan: 'vlan_trunks' },
       { name: 'Gi0/1', ip: '10.2.1.6/30', vlan: 'vlanI01' },
@@ -276,7 +268,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const [lbx] = xCenter(1, 0, 260)
   const lb = mkNode('lb', 'F5-HA Cluster', 'BIG-IP i5800', 'loadbalancer', 'F5', lbx, Y.lb, 260, 110, {
     haRole: 'active',
-    icon: '⚖',
     interfaces: [
       { name: 'vlan101', ip: '10.2.1.0/30', vlan: 'Frontside VLAN' },
       { name: 'vlan102', ip: '10.2.1.0/30', vlan: 'Backside VLAN' },
@@ -293,7 +284,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const webXs = xCenter(3, 30, webW)
   const webs = webXs.map((x, i) => mkNode(
     `web${i+1}`, `WEB SERVER 0${i+1}`, 'Dell R750', 'server', 'Dell', x, Y.web, webW, 110, {
-      icon: '🖥',
       interfaces: [
         { name: 'eth0', ip: `192.168.10.1${i+1}`, mac: '00:0c:29:ab:cd:ef' },
         { name: 'eth1', ip: '10.3.1.1', vlan: 'Backside VLAN' },
@@ -307,7 +297,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
   const appW = 180
   const appXs = xCenter(3, 40, appW)
   const apiGw = mkNode('apigw', 'API GATEWAY', 'Kong / Envoy', 'application', 'OSS', appXs[0], Y.app, appW, 110, {
-    icon: '🔌',
     interfaces: [
       { name: 'eth0', ip: '10.3.1.11', mac: '00:0c:29:ab:cd:ef' },
       { name: 'eth1', ip: '10.3.1.1', vlan: 'API' },
@@ -316,7 +305,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     services: ['Auth', 'Rate Limit', 'Routing'],
   })
   const appSrv = mkNode('appsrv', 'APP SERVER', 'Dell R750', 'application', 'Dell', appXs[1], Y.app, appW, 110, {
-    icon: '⚙',
     interfaces: [
       { name: 'eth0', ip: '10.3.1.11', mac: '00:0c:29:ab:cd:ef' },
       { name: 'eth1', ip: '10.3.1.1', vlan: 'App' },
@@ -326,7 +314,6 @@ function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
     specs: '16 vCPU · 64GB RAM',
   })
   const db = mkNode('db', 'DATABASE', 'Dell R750', 'database', 'Dell', appXs[2], Y.app, appW, 110, {
-    icon: '🗄',
     interfaces: [
       { name: 'eth0', ip: '10.3.1.35', mac: '00:0c:29:ab:cd:ef' },
       { name: 'eth1', ip: '10.3.1.32', vlan: 'DB' },
@@ -401,8 +388,7 @@ function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [w1x, w2x] = xCenter(2, 200, NW)
   const wan1 = mkNode('wan1', wanRole.name(0), wanRole.model(0), 'wan', wanRole.vendor(0), w1x, Y.wan, NW, 100, {
-    haRole: 'active', icon: '🌐',
-    interfaces: [
+    haRole: 'active',    interfaces: [
       { name: 'Gi0/0/0', ip: '203.0.113.1/30', vlan: 'ISP-A' },
       { name: 'Gi0/0/1', ip: '10.0.0.1/30', vlan: 'Core-uplink' },
       { name: 'Lo0', ip: '10.255.0.1/32' },
@@ -411,8 +397,7 @@ function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['BGP eBGP', 'OSPF', 'BFD'],
   })
   const wan2 = mkNode('wan2', wanRole.name(1), wanRole.model(1), 'wan', wanRole.vendor(1), w2x, Y.wan, NW, 100, {
-    haRole: 'standby', icon: '🌐',
-    interfaces: [
+    haRole: 'standby',    interfaces: [
       { name: 'Gi0/0/0', ip: '198.51.100.1/30', vlan: 'ISP-B' },
       { name: 'Gi0/0/1', ip: '10.0.0.5/30', vlan: 'Core-uplink' },
       { name: 'Lo0', ip: '10.255.0.2/32' },
@@ -423,8 +408,7 @@ function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [c1x, c2x] = xCenter(2, 200, NW)
   const core1 = mkNode('core1', coreRole.name(0), coreRole.model(0), 'core', coreRole.vendor(0), c1x, Y.core, NW, 120, {
-    haRole: 'active', icon: '🏛',
-    interfaces: [
+    haRole: 'active',    interfaces: [
       { name: 'Te1/0/1', ip: '10.0.0.2/30', vlan: 'WAN-uplink' },
       { name: 'Te1/0/48', ip: '—', vlan: 'VSS link' },
       { name: 'Lo0', ip: '10.255.0.21/32' },
@@ -434,8 +418,7 @@ function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['VSS', 'OSPF', 'HSRP', 'DHCP'],
   })
   const core2 = mkNode('core2', coreRole.name(1), coreRole.model(1), 'core', coreRole.vendor(1), c2x, Y.core, NW, 120, {
-    haRole: 'standby', icon: '🏛',
-    interfaces: [
+    haRole: 'standby',    interfaces: [
       { name: 'Te1/0/1', ip: '10.0.0.6/30', vlan: 'WAN-uplink' },
       { name: 'Te1/0/48', ip: '—', vlan: 'VSS link' },
       { name: 'Lo0', ip: '10.255.0.22/32' },
@@ -449,7 +432,6 @@ function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const [d1x, d2x, d3x, d4x] = xCenter(4, 20, distW)
   const dists = [d1x, d2x, d3x, d4x].map((x, i) => mkNode(
     `dist${i+1}`, distRole.name(i), distRole.model(i), 'distribution', distRole.vendor(i), x, Y.dist, distW, 110, {
-      icon: '🔗',
       interfaces: [
         { name: 'Te1/0/1', ip: `10.0.${1+Math.floor(i/2)*2}.${i%2 === 0 ? 1 : 2}/31`, vlan: 'Core-uplink' },
         { name: 'Po1', ip: '—', vlan: 'MLAG Peer-Link' },
@@ -469,7 +451,6 @@ function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const accXs = xCenter(4, 20, accW)
   const accs = accXs.map((x, i) => mkNode(
     `acc${i+1}`, accRole.name(i), accRole.model(i), 'access', accRole.vendor(i), x, Y.access, accW, 120, {
-      icon: '🔌',
       interfaces: [
         { name: 'Gi0/1', ip: '—', vlan: 'Trunk to Dist' },
         { name: 'Gi1/0/1-24', ip: '—', vlan: 'VLAN 20 Data' },
@@ -489,10 +470,8 @@ function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const epW = 100
   const epXs = xCenter(5, 30, epW)
   const epLabels = ['PC-01', 'IP-PHONE', 'AP-01', 'PRINTER', 'SERVER']
-  const epIcons = ['💻', '📞', '📡', '🖨', '🖥']
   const eps = epXs.map((x, i) => mkNode(
     `ep${i+1}`, epLabels[i], 'Endpoint', 'endpoint', '—', x, Y.hosts, epW, 70, {
-      icon: epIcons[i],
       interfaces: [{ name: 'eth0', ip: `10.10.0.${10+i}/24`, vlan: i === 1 ? 'VLAN30 Voice' : 'VLAN20 Data' }],
       configLines: [i === 1 ? 'LLDP-MED Voice' : i === 2 ? 'WPA3-Enterprise' : '802.1X MAB'],
     },
@@ -559,7 +538,6 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [oobX] = xCenter(1, 0, 200)
   const oob = mkNode('oob', 'OOB-MGMT-SW', 'C9300-24T', 'oob', 'Cisco', oobX, Y.oob, 200, 90, {
-    icon: '⚙',
     interfaces: [
       { name: 'Gi0/1-8', ip: '10.0.0.250/24', vlan: 'VLAN 10 OOB' },
     ],
@@ -569,8 +547,7 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [s1x, s2x] = xCenter(2, 280, NW)
   const sp1 = mkNode('sp1', spineName(0), spineModel, 'spine', spineVendor, s1x, Y.spine, NW, 110, {
-    haRole: 'active', icon: '🔷',
-    interfaces: [
+    haRole: 'active',    interfaces: [
       { name: 'e1/1-4', ip: '10.1.0.x/31', speed: '400G' },
       { name: 'Lo0', ip: '10.255.1.1/32' },
       { name: 'Gi0/48', ip: '10.0.0.31/24', vlan: 'OOB VLAN10' },
@@ -579,8 +556,7 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['IS-IS', 'BFD', 'PFC', 'ECN', 'DCQCN'],
   })
   const sp2 = mkNode('sp2', spineName(1), spineModel, 'spine', spineVendor, s2x, Y.spine, NW, 110, {
-    haRole: 'active', icon: '🔷',
-    interfaces: [
+    haRole: 'active',    interfaces: [
       { name: 'e1/1-4', ip: '10.1.1.x/31', speed: '400G' },
       { name: 'Lo0', ip: '10.255.1.2/32' },
       { name: 'Gi0/48', ip: '10.0.0.32/24', vlan: 'OOB VLAN10' },
@@ -593,7 +569,6 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
   const leafXs = xCenter(4, 20, leafW)
   const leaves = leafXs.map((x, i) => mkNode(
     `lf${i+1}`, leafName(i), leafModel, 'leaf', leafVendor, x, Y.leaf, leafW, 120, {
-      icon: '🟢',
       interfaces: [
         { name: 'e1/1', ip: `10.1.0.${i*4+1}/31`, speed: '400G', vlan: 'Spine-01 uplink' },
         { name: 'e1/2', ip: `10.1.1.${i*4+1}/31`, speed: '400G', vlan: 'Spine-02 uplink' },
@@ -615,7 +590,6 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
   const gpuXs = xCenter(4, 20, gpuW)
   const gpus = gpuXs.map((x, i) => mkNode(
     `gpu${i+1}`, `A100-SRV-0${i+1}`, 'DGX A100', 'gpu', 'NVIDIA', x, Y.gpu, gpuW, 110, {
-      icon: '⚡',
       interfaces: [
         { name: 'mlx0', ip: `192.168.100.${i*4+1}/30`, speed: '400G', vlan: 'RoCEv2' },
         { name: 'mlx1', ip: `192.168.100.${i*4+5}/30`, speed: '400G', vlan: 'RoCEv2 backup' },
@@ -634,7 +608,6 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
   const storW = 180
   const [st1x, st2x] = xCenter(2, 200, storW)
   const stor1 = mkNode('stor1', 'NVMe-STOR-01', 'EF-570', 'storage', 'NetApp', st1x, Y.stor, storW, 90, {
-    icon: '💾',
     interfaces: [
       { name: 'e0a', ip: '192.168.200.1/30', speed: '400G' },
       { name: 'e0b', ip: '192.168.200.5/30', speed: '400G' },
@@ -643,7 +616,6 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['NVMe-oF', 'GPUDirect Storage'],
   })
   const stor2 = mkNode('stor2', 'NVMe-STOR-02', 'EF-570', 'storage', 'NetApp', st2x, Y.stor, storW, 90, {
-    icon: '💾',
     interfaces: [
       { name: 'e0a', ip: '192.168.200.9/30', speed: '400G' },
       { name: 'e0b', ip: '192.168.200.13/30', speed: '400G' },
@@ -704,7 +676,6 @@ function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [spX] = xCenter(1, 0, 200)
   const sp = mkNode('sp', 'SP-BACKBONE', 'MPLS/Internet', 'internet', 'ISP', spX, Y.sp, 200, 80, {
-    icon: '🌐',
     interfaces: [
       { name: 'PE1', ip: '203.0.0.1/30', vlan: 'MPLS Core' },
       { name: 'PE2', ip: '203.0.0.5/30', vlan: 'MPLS Core' },
@@ -715,8 +686,7 @@ function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [h1x, h2x] = xCenter(2, 200, NW)
   const hub1 = mkNode('hub1', wanRole.name(0), wanRole.model(0), 'wan', wanRole.vendor(0), h1x, Y.hub, NW, 110, {
-    haRole: 'active', icon: '🔷',
-    interfaces: [
+    haRole: 'active',    interfaces: [
       { name: 'Gi0/0/0', ip: '203.0.0.2/30', vlan: 'SP-uplink' },
       { name: 'Gi0/1', ip: '10.0.0.1/30', vlan: 'iBGP peer' },
       { name: 'Lo0', ip: '10.0.0.1/32' },
@@ -725,8 +695,7 @@ function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['BGP RR', 'MPLS', 'SR-MPLS', 'BFD'],
   })
   const hub2 = mkNode('hub2', wanRole.name(1), wanRole.model(1), 'wan', wanRole.vendor(1), h2x, Y.hub, NW, 110, {
-    haRole: 'standby', icon: '🔷',
-    interfaces: [
+    haRole: 'standby',    interfaces: [
       { name: 'Gi0/0/0', ip: '203.0.0.6/30', vlan: 'SP-uplink' },
       { name: 'Gi0/1', ip: '10.0.0.2/30', vlan: 'iBGP peer' },
       { name: 'Lo0', ip: '10.0.0.2/32' },
@@ -739,7 +708,6 @@ function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const cpeXs = xCenter(3, 40, cpeW)
   const cpes = cpeXs.map((x, i) => mkNode(
     `cpe${i+1}`, `WAN-CPE-0${i+1}`, 'ISR-4331', 'branch', 'Cisco', x, Y.cpe, cpeW, 110, {
-      icon: '🔗',
       interfaces: [
         { name: 'Gi0/0/0', ip: `10.100.${i}.1/30`, vlan: 'MPLS PE-link' },
         { name: 'Gi0/0/1', ip: `10.100.${i}.5/30`, vlan: 'MPLS backup' },
@@ -760,7 +728,6 @@ function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const brXs = xCenter(3, 40, brW)
   const branches = brXs.map((x, i) => mkNode(
     `br${i+1}`, `BR-RTR-0${i+1}`, 'ISR-1100', 'distribution', 'Cisco', x, Y.branch, brW, 100, {
-      icon: '🏢',
       interfaces: [
         { name: 'Gi0/0', ip: `10.10.${i+1}.2/24`, vlan: 'WAN-link' },
         { name: 'Gi0/1', ip: `10.10.${i+1}.1/24`, vlan: 'LAN' },
@@ -774,7 +741,6 @@ function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const epXs = xCenter(3, 120, epW)
   const eps = epXs.map((x, i) => mkNode(
     `ep${i+1}`, `BR${i+1}-HOST`, 'Endpoint', 'endpoint', '—', x, Y.ep, epW, 60, {
-      icon: '💻',
       interfaces: [{ name: 'eth0', ip: `10.10.${i+1}.10/24`, vlan: 'VLAN20' }],
       configLines: ['DHCP Client'],
     },
@@ -833,8 +799,7 @@ function buildMultisiteLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const siteBSpineXs = [siteASpineXs[0] + 480, siteASpineXs[1] + 480]
 
   const dciGw1 = mkNode('dci1', 'DCI-GW-SITE-A', dciRole.model(0), 'wan', dciRole.vendor(0),
-    siteASpineXs[0] + NW/2, Y.dci, NW, 90, {
-      icon: '🔗', haRole: 'active',
+    siteASpineXs[0] + NW/2, Y.dci, NW, 90, { haRole: 'active',
       interfaces: [
         { name: 'e1/1', ip: '172.16.0.1/30', speed: '100G', vlan: 'DCI trunk' },
         { name: 'Lo0', ip: '10.255.0.100/32' },
@@ -843,8 +808,7 @@ function buildMultisiteLLD(devices: BOMDevice[], sc: string): LLDTopo {
       services: ['EVPN DCI', 'BGP Multi-AS'],
     })
   const dciGw2 = mkNode('dci2', 'DCI-GW-SITE-B', dciRole.model(0), 'wan', dciRole.vendor(0),
-    siteBSpineXs[0] + NW/2, Y.dci, NW, 90, {
-      icon: '🔗', haRole: 'active',
+    siteBSpineXs[0] + NW/2, Y.dci, NW, 90, { haRole: 'active',
       interfaces: [
         { name: 'e1/1', ip: '172.16.0.2/30', speed: '100G', vlan: 'DCI trunk' },
         { name: 'Lo0', ip: '10.255.0.200/32' },
@@ -856,7 +820,6 @@ function buildMultisiteLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const mkSiteSpine = (site: string, xs: number[], baseIp: number) =>
     xs.map((x, i) => mkNode(
       `${site}sp${i+1}`, `${site.toUpperCase()}-SPINE-0${i+1}`, spineRole.model(i), 'spine', spineRole.vendor(i), x, Y.spine, NW, 100, {
-        icon: '🔷',
         interfaces: [
           { name: `e1/1-4`, ip: `10.${baseIp}.0.${i*4}/31`, speed: '100G' },
           { name: 'Lo0', ip: `10.255.${baseIp}.${i+1}/32` },
@@ -870,7 +833,6 @@ function buildMultisiteLLD(devices: BOMDevice[], sc: string): LLDTopo {
     const xs = site === 'a' ? xCenter(2, 40, NW) : [siteASpineXs[0] + 480, siteASpineXs[1] + 480]
     return xs.map((x, i) => mkNode(
       `${site}lf${i+1}`, `${site.toUpperCase()}-LEAF-0${i+1}`, leafRole.model(i), 'leaf', leafRole.vendor(i), x, Y.leaf, NW, 100, {
-        icon: '🟢',
         interfaces: [
           { name: 'e1/1-2', ip: `10.${baseIp}.1.${i*4}/31`, speed: '25G' },
           { name: 'nve1', ip: `10.255.${baseIp+10}.${i+1}/32` },
@@ -891,7 +853,6 @@ function buildMultisiteLLD(devices: BOMDevice[], sc: string): LLDTopo {
     const xs = site === 'a' ? xCenter(2, 40, 160) : [siteASpineXs[0] + 480, siteASpineXs[1] + 470]
     return xs.map((x, i) => mkNode(
       `${site}srv${i+1}`, `${site.toUpperCase()}-SRV-0${i+1}`, 'x86 2U', 'endpoint', 'Dell', x, Y.srv, 160, 80, {
-        icon: '🖥',
         interfaces: [{ name: 'eth0', ip: `10.100.${baseIp}.${i+10}/24`, speed: '25G' }],
         configLines: ['25GE dual-homed LAG', 'jumbo 9000'],
       },
@@ -956,7 +917,6 @@ function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [s1x, s2x] = xCenter(2, 200, NW)
   const dcSpine1 = mkNode('dcsp1', 'DC-SPINE-01', spineRole.model(0), 'spine', spineRole.vendor(0), s1x, Y.onprem, NW, 90, {
-    icon: '🔷',
     interfaces: [
       { name: 'e1/1-4', ip: '10.1.0.x/31', speed: '100G' },
       { name: 'Lo0', ip: '10.255.1.1/32' },
@@ -965,7 +925,6 @@ function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['IS-IS', 'BGP EVPN', 'VXLAN'],
   })
   const dcSpine2 = mkNode('dcsp2', 'DC-SPINE-02', spineRole.model(1), 'spine', spineRole.vendor(1), s2x, Y.onprem, NW, 90, {
-    icon: '🔷',
     interfaces: [
       { name: 'e1/1-4', ip: '10.1.1.x/31', speed: '100G' },
       { name: 'Lo0', ip: '10.255.1.2/32' },
@@ -976,7 +935,6 @@ function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const gwXs = xCenter(3, 40, NW)
   const awsGw = mkNode('awsgw', 'AWS DX Gateway', 'DirectConnect', 'cloud', 'AWS', gwXs[0], Y.gw, NW, 100, {
-    icon: '☁',
     interfaces: [
       { name: 'dxcon-01', ip: '169.254.0.1/30', speed: '10G', vlan: 'VLAN 100' },
       { name: 'vgw', ip: '10.200.0.1/24', vlan: 'VPC CIDR' },
@@ -985,7 +943,6 @@ function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['DirectConnect', 'BGP', 'Private VIF'],
   })
   const azureGw = mkNode('azuregw', 'Azure ER Gateway', 'ExpressRoute', 'cloud', 'Azure', gwXs[1], Y.gw, NW, 100, {
-    icon: '☁',
     interfaces: [
       { name: 'er-circuit', ip: '169.254.1.1/30', speed: '10G', vlan: 'VLAN 200' },
       { name: 'vnet-gw', ip: '10.201.0.1/24', vlan: 'VNet CIDR' },
@@ -994,7 +951,6 @@ function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['ExpressRoute', 'BGP', 'Private Peering'],
   })
   const gcpGw = mkNode('gcpgw', 'GCP Interconnect', 'Cloud Interconnect', 'cloud', 'GCP', gwXs[2], Y.gw, NW, 100, {
-    icon: '☁',
     interfaces: [
       { name: 'attach-01', ip: '169.254.2.1/30', speed: '10G', vlan: 'VLAN 300' },
       { name: 'vpc-gw', ip: '10.202.0.1/24', vlan: 'VPC CIDR' },
@@ -1005,19 +961,16 @@ function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const cloudXs = xCenter(3, 40, NW)
   const awsVpc = mkNode('awsvpc', 'AWS VPC', 'us-east-1', 'cloud', 'AWS', cloudXs[0], Y.cloud, NW, 80, {
-    icon: '☁',
     interfaces: [{ name: 'subnet-a', ip: '10.200.1.0/24', vlan: 'Private' }],
     configLines: ['VPC 10.200.0.0/16', 'Security Groups', 'NACLs'],
     services: ['VPC', 'SG', 'NACL'],
   })
   const azureVnet = mkNode('azurevnet', 'Azure VNet', 'eastus2', 'cloud', 'Azure', cloudXs[1], Y.cloud, NW, 80, {
-    icon: '☁',
     interfaces: [{ name: 'subnet-a', ip: '10.201.1.0/24', vlan: 'Private' }],
     configLines: ['VNet 10.201.0.0/16', 'NSG · UDR', 'Private Endpoints'],
     services: ['VNet', 'NSG', 'PE'],
   })
   const gcpVpc = mkNode('gcpvpc', 'GCP VPC', 'us-central1', 'cloud', 'GCP', cloudXs[2], Y.cloud, NW, 80, {
-    icon: '☁',
     interfaces: [{ name: 'subnet-a', ip: '10.202.1.0/24', vlan: 'Private' }],
     configLines: ['VPC 10.202.0.0/16', 'Firewall Rules', 'Private Google Access'],
     services: ['VPC', 'FW Rules'],
@@ -1025,17 +978,14 @@ function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const wlXs = xCenter(3, 40, 160)
   const awsWl = mkNode('awswl', 'EC2 / EKS', 'i3.2xlarge', 'application', 'AWS', wlXs[0], Y.workload, 160, 80, {
-    icon: '⚙',
     interfaces: [{ name: 'eni-0', ip: '10.200.1.10/24' }],
     configLines: ['K8s cluster (EKS)', 'Auto Scaling Group'],
   })
   const azureWl = mkNode('azurewl', 'AKS / VMs', 'Standard_D4', 'application', 'Azure', wlXs[1], Y.workload, 160, 80, {
-    icon: '⚙',
     interfaces: [{ name: 'nic-0', ip: '10.201.1.10/24' }],
     configLines: ['AKS managed K8s', 'VM Scale Sets'],
   })
   const gcpWl = mkNode('gcpwl', 'GKE / VMs', 'n2-standard-4', 'application', 'GCP', wlXs[2], Y.workload, 160, 80, {
-    icon: '⚙',
     interfaces: [{ name: 'nic0', ip: '10.202.1.10/24' }],
     configLines: ['GKE Autopilot', 'Managed Instance Groups'],
   })
@@ -1092,8 +1042,7 @@ function buildAviatrixLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [e1x, e2x] = xCenter(2, 200, NW)
   const edge1 = mkNode('edge1', 'DC-EDGE-RTR-01', edgeRole.model(0), 'wan', edgeRole.vendor(0), e1x, Y.onprem, NW, 90, {
-    haRole: 'active', icon: '🔷',
-    interfaces: [
+    haRole: 'active',    interfaces: [
       { name: 'Gi0/0/0', ip: '10.0.0.1/30', vlan: 'WAN' },
       { name: 'Tu1', ip: '169.254.10.1/30', vlan: 'IPSec to Transit' },
       { name: 'Lo0', ip: '10.255.0.1/32' },
@@ -1102,8 +1051,7 @@ function buildAviatrixLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['BGP', 'IPSec', 'BFD'],
   })
   const edge2 = mkNode('edge2', 'DC-EDGE-RTR-02', edgeRole.model(1), 'wan', edgeRole.vendor(1), e2x, Y.onprem, NW, 90, {
-    haRole: 'standby', icon: '🔷',
-    interfaces: [
+    haRole: 'standby',    interfaces: [
       { name: 'Gi0/0/0', ip: '10.0.0.5/30', vlan: 'WAN' },
       { name: 'Tu1', ip: '169.254.10.5/30', vlan: 'IPSec to Transit' },
       { name: 'Lo0', ip: '10.255.0.2/32' },
@@ -1114,7 +1062,6 @@ function buildAviatrixLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const txXs = xCenter(3, 40, NW)
   const txAws = mkNode('txaws', 'Aviatrix Transit GW', 'AWS us-east-1', 'transit', 'Aviatrix', txXs[0], Y.transit, NW, 100, {
-    icon: '🔶',
     interfaces: [
       { name: 'eth0', ip: '10.200.0.10/24', vlan: 'Transit VPC' },
       { name: 'tun-onprem', ip: '169.254.10.2/30', vlan: 'IPSec' },
@@ -1123,7 +1070,6 @@ function buildAviatrixLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['BGP', 'IPSec', 'FQDN', 'HPE'],
   })
   const txAzure = mkNode('txazure', 'Aviatrix Transit GW', 'Azure eastus2', 'transit', 'Aviatrix', txXs[1], Y.transit, NW, 100, {
-    icon: '🔶',
     interfaces: [
       { name: 'eth0', ip: '10.201.0.10/24', vlan: 'Transit VNet' },
       { name: 'peering', ip: '10.201.0.100/30', vlan: 'Multi-cloud peering' },
@@ -1132,7 +1078,6 @@ function buildAviatrixLLD(devices: BOMDevice[], sc: string): LLDTopo {
     services: ['BGP', 'Connected Transit'],
   })
   const txGcp = mkNode('txgcp', 'Aviatrix Transit GW', 'GCP us-central1', 'transit', 'Aviatrix', txXs[2], Y.transit, NW, 100, {
-    icon: '🔶',
     interfaces: [
       { name: 'eth0', ip: '10.202.0.10/24', vlan: 'Transit VPC' },
       { name: 'peering', ip: '10.202.0.100/30', vlan: 'Multi-cloud peering' },
@@ -1143,34 +1088,28 @@ function buildAviatrixLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const spXs = xCenter(3, 40, NW)
   const spAws = mkNode('spaws', 'AWS Spoke GW', 'us-east-1a/b', 'spoke', 'Aviatrix', spXs[0], Y.spoke, NW, 80, {
-    icon: '🟢',
     interfaces: [{ name: 'eth0', ip: '10.200.1.10/24', vlan: 'Spoke VPC' }],
     configLines: ['Spoke Gateway (HA)', 'Network Domain: Prod', 'NAT + SNAT'],
   })
   const spAzure = mkNode('spazure', 'Azure Spoke GW', 'eastus2', 'spoke', 'Aviatrix', spXs[1], Y.spoke, NW, 80, {
-    icon: '🟢',
     interfaces: [{ name: 'eth0', ip: '10.201.1.10/24', vlan: 'Spoke VNet' }],
     configLines: ['Spoke Gateway', 'Network Domain: Dev', 'FQDN Filter'],
   })
   const spGcp = mkNode('spgcp', 'GCP Spoke GW', 'us-central1', 'spoke', 'Aviatrix', spXs[2], Y.spoke, NW, 80, {
-    icon: '🟢',
     interfaces: [{ name: 'eth0', ip: '10.202.1.10/24', vlan: 'Spoke VPC' }],
     configLines: ['Spoke Gateway', 'Network Domain: Staging', 'Smart Egress'],
   })
 
   const wlXs = xCenter(3, 40, 160)
   const wlAws = mkNode('wlaws', 'EC2 / EKS', 'Prod workloads', 'application', 'AWS', wlXs[0], Y.workload, 160, 80, {
-    icon: '⚙',
     interfaces: [{ name: 'eni-0', ip: '10.200.1.100/24' }],
     configLines: ['Production EKS', 'Auto Scaling Group'],
   })
   const wlAzure = mkNode('wlazure', 'AKS / VMs', 'Dev workloads', 'application', 'Azure', wlXs[1], Y.workload, 160, 80, {
-    icon: '⚙',
     interfaces: [{ name: 'nic-0', ip: '10.201.1.100/24' }],
     configLines: ['Development AKS', 'VM Scale Sets'],
   })
   const wlGcp = mkNode('wlgcp', 'GKE / VMs', 'Staging workloads', 'application', 'GCP', wlXs[2], Y.workload, 160, 80, {
-    icon: '⚙',
     interfaces: [{ name: 'nic0', ip: '10.202.1.100/24' }],
     configLines: ['Staging GKE', 'Managed Instance Groups'],
   })
@@ -1228,8 +1167,7 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [coreX, gmX] = xCenter(2, 260, NW)
   const upf = mkNode('upf', '5GC-UPF-01', '5G Core UPF', 'oran-core', 'Dell EMC', coreX, Y.core, NW, 110, {
-    haRole: 'active', icon: '🛰',
-    interfaces: [
+    haRole: 'active',    interfaces: [
       { name: 'N3', ip: '10.250.0.1/30', speed: '100G', vlan: 'GTP-U' },
       { name: 'N6', ip: '10.250.6.1/24', speed: '100G', vlan: 'Data Network' },
       { name: 'N4', ip: '10.250.4.1/30', vlan: 'PFCP' },
@@ -1239,7 +1177,6 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
     specs: 'COTS + SmartNIC offload',
   })
   const gm = mkNode('ptpgm', 'PTP-GM-01', 'Calnex PTP GM', 'oran-timing', 'Calnex', gmX, Y.core, NW, 110, {
-    icon: '⏱',
     interfaces: [
       { name: 'GNSS', ip: 'GPS+Galileo', vlan: 'Antenna' },
       { name: 'p1-4', ip: '10.250.9.1/24', speed: '1G', vlan: 'PTP master' },
@@ -1251,8 +1188,7 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
   const [mhX, cuX] = xCenter(2, 260, NW)
   const mh = mkNode('mh1', '5G-MH-RTR-01', 'ASR 9901', 'oran-midhaul', 'Cisco', mhX, Y.mid, NW, 120, {
-    haRole: 'active', icon: '🔗',
-    interfaces: [
+    haRole: 'active',    interfaces: [
       { name: 'Gi0/0/0/0', ip: '10.250.10.1/30', speed: '100G', vlan: 'upstream/core' },
       { name: 'Gi0/0/0/1', ip: '10.250.11.1/30', speed: '100G', vlan: 'midhaul/DU' },
       { name: 'Lo0', ip: '10.250.1.1/32' },
@@ -1262,7 +1198,6 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
     specs: 'Timing-grade aggregation',
   })
   const cu = mkNode('cu1', 'O-CU-01', 'O-CU Server', 'oran-cu', 'Dell EMC', cuX, Y.mid, NW, 120, {
-    icon: '🧠',
     interfaces: [
       { name: 'F1-C/U', ip: '10.250.2.1/24', speed: '25G', vlan: 'F1 to DU' },
       { name: 'E1', ip: '10.250.2.5/30', vlan: 'CU-CP↔CU-UP' },
@@ -1276,7 +1211,6 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const fhW = 220
   const [fhX] = xCenter(1, 0, fhW)
   const fh = mkNode('fh1', '5G-FH-SW-01', 'N9K-93180YC-FX3', 'oran-fronthaul', 'Cisco', fhX, Y.fh, fhW, 110, {
-    icon: '📡',
     interfaces: [
       { name: 'e1/1-48', ip: '—', speed: '25G', vlan: 'eCPRI fronthaul' },
       { name: 'e1/49-54', ip: '10.250.3.1/24', speed: '100G', vlan: 'uplink to DU/MH' },
@@ -1290,7 +1224,6 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const duXs = xCenter(nDU, 24, duW)
   const dus = duXs.map((x, i) => mkNode(
     `du${i+1}`, `O-DU-0${i+1}`, 'O-DU Server', 'oran-du', 'Dell EMC', x, Y.du, duW, 120, {
-      icon: '🖥',
       interfaces: [
         { name: 'eth0', ip: `10.250.4.${i+1}/24`, speed: '25G', vlan: 'F1 to CU' },
         { name: 'ecpri', ip: `10.250.14.${i*4}/30`, speed: '25G', vlan: 'eCPRI to RU' },
@@ -1305,7 +1238,6 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
   const ruXs = xCenter(nRU, 16, ruW)
   const rus = ruXs.map((x, i) => mkNode(
     `ru${i+1}`, `O-RU-0${i+1}`, 'O-RU Radio', 'oran-ru', 'Fujitsu', x, Y.ru, ruW, 110, {
-      icon: '📶',
       interfaces: [
         { name: 'sfp0', ip: `10.250.15.${i*4+1}/30`, speed: '25G', vlan: 'eCPRI to DU' },
         { name: 'mgmt', ip: `10.250.5.${i+1}/24`, vlan: 'O1/M-plane' },
@@ -1594,7 +1526,7 @@ export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: P
             ━━ Active link  · · · HA sync / Peer  ·  Hover link for port details  ·  Click device for full specs
           </text>
           <text x={SVG_W - RIGHT_PAD} y={topo.svgH - 22} textAnchor="end" fill="#7E22CE" fontSize={7} opacity={0.6}>
-            ⚡ NetDesign AI LLD
+            NetDesign AI · LLD
           </text>
         </svg>
       </div>
