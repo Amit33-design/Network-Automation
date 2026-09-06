@@ -2,6 +2,7 @@ import React, { useState, useRef, useMemo, useEffect } from 'react'
 import {
   IconDeploy, IconSatellite, IconCheckShield, IconChart,
   IconTerminal, IconWrench, IconBug, IconCheckCircle, IconWarnTriangle, IconStethoscope,
+  IconClipboard,
   type IconProps,
 } from '@/components/icons'
 import { TabBar } from '@/components/ui/TabBar'
@@ -3481,7 +3482,7 @@ export function Step6Deploy() {
                       <button key={s} onClick={() => setScriptType(s)}
                         className={cn('px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer',
                           scriptType === s ? 'bg-blue-600/20 border-blue-500/40 text-blue-300' : 'border-white/10 text-gray-400 hover:border-white/20')}>
-                        {s === 'push' ? '🚀 Push Configs' : s === 'precheck' ? '🔍 Pre-Check' : '✅ Post-Check'}
+                        {s === 'push' ? 'Push Configs' : s === 'precheck' ? 'Pre-Check' : 'Post-Check'}
                       </button>
                     ))}
                   </div>
@@ -3567,7 +3568,7 @@ export function Step6Deploy() {
           {ztpPlan && (
             <Card>
               <CardHeader>
-                <CardTitle>🏭 Enterprise ZTP Plan — vendor-aware identify &amp; provision</CardTitle>
+                <CardTitle Icon={IconSatellite}>Enterprise ZTP Plan — vendor-aware identify &amp; provision</CardTitle>
               </CardHeader>
               <p className="text-xs text-gray-500 mb-3">
                 Each device is identified by vendor + hardware model + role, mapped to its
@@ -3939,7 +3940,7 @@ export function Step6Deploy() {
                   if (plan.summary.total === 0) {
                     return (
                       <Card>
-                        <CardHeader><CardTitle>🛟 Rollback Advisor</CardTitle></CardHeader>
+                        <CardHeader><CardTitle Icon={IconCheckShield}>Rollback Advisor</CardTitle></CardHeader>
                         <div className="mt-2 flex items-center gap-2 text-sm text-green-400">
                           <span className="text-lg">✓</span>
                           <span>No regressions detected between pre and post checks — no rollback required.</span>
@@ -3951,7 +3952,7 @@ export function Step6Deploy() {
                     <Card className={cn(plan.recommended && 'border-red-500/40')}>
                       <CardHeader>
                         <div className="flex items-center justify-between w-full">
-                          <CardTitle>🛟 Rollback Advisor</CardTitle>
+                          <CardTitle Icon={IconCheckShield}>Rollback Advisor</CardTitle>
                           <button
                             onClick={() => { downloadBlob('rollback-runbook.txt', rollbackPlanToText(plan, ts)); showToast('rollback-runbook.txt downloaded', 'success') }}
                             className="px-3 py-1 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition-colors cursor-pointer"
@@ -4102,7 +4103,7 @@ export function Step6Deploy() {
               <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer"
                 className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium border
                   bg-orange-500/10 border-orange-500/30 text-orange-300 hover:bg-orange-500/20 transition-colors">
-                📊 Open Grafana →
+                <span className="inline-flex items-center gap-1.5"><IconChart size={14} />Open Grafana →</span>
               </a>
             )}
             {isLive && (
@@ -4219,7 +4220,7 @@ export function Step6Deploy() {
                   return (
                     <Card>
                       <CardHeader>
-                        <CardTitle>🔔 Active Alerts &amp; Fleet Health</CardTitle>
+                        <CardTitle Icon={IconWarnTriangle}>Active Alerts &amp; Fleet Health</CardTitle>
                       </CardHeader>
                       <div className="flex flex-wrap gap-2 mb-3">
                         <span className="px-2 py-1 rounded-full text-xs bg-green-600/20 border border-green-500/40 text-green-300">{fs.healthy} healthy</span>
@@ -4714,7 +4715,7 @@ export function Step6Deploy() {
 
           {/* L1: Day-N incremental change push (BGP/firewall/ACL/VLAN/route) */}
           <Card>
-            <CardHeader><CardTitle>🔧 Push Incremental Change (Day-N)</CardTitle></CardHeader>
+            <CardHeader><CardTitle Icon={IconWrench}>Push Incremental Change (Day-N)</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-3">
               After ZTP builds a device, push a targeted change — a BGP policy, firewall/ACL rule,
               VLAN, or static route — to selected live devices. Generates the vendor-correct delta
@@ -5118,7 +5119,7 @@ export function Step6Deploy() {
 
           {/* K3: Scheduled / periodic compliance + drift scans */}
           <Card>
-            <CardHeader><CardTitle>📅 Scheduled Scans</CardTitle></CardHeader>
+            <CardHeader><CardTitle Icon={IconClipboard}>Scheduled Scans</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
               Define periodic compliance and drift scan watchers. Export the schedule
               as a cron job, systemd timer, or shell script for automated execution.
@@ -5282,7 +5283,7 @@ export function Step6Deploy() {
 
           {/* K2: Closed-Loop Remediation — detect → plan → apply → verify */}
           <Card>
-            <CardHeader><CardTitle>🔁 Closed-Loop Remediation</CardTitle></CardHeader>
+            <CardHeader><CardTitle Icon={IconWrench}>Closed-Loop Remediation</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
               Run the full Day-2 loop end-to-end: detect drift, generate platform-aware
               remediation, apply it, then re-verify until the design converges.
@@ -5439,7 +5440,9 @@ export function Step6Deploy() {
                     <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     Running…
                   </span>
-                ) : '🩺 Run Diagnostics'}
+                ) : (
+                  <span className="inline-flex items-center gap-2"><IconStethoscope size={15} />Run Diagnostics</span>
+                )}
               </Button>
             </div>
           </Card>
