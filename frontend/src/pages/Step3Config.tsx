@@ -7,6 +7,8 @@ import { generateAllConfigs } from '@/lib/configgen'
 import { Button } from '@/components/ui/Button'
 import { downloadText } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { IconSwitch, IconTerminal } from '@/components/icons'
 
 // ── Diff engine (M-34) ────────────────────────────────────────────────────────
 
@@ -247,7 +249,11 @@ export function Step3Config() {
           {/* Device list */}
           <div className="flex-1 overflow-y-auto rounded-xl border border-white/10 bg-white/5 p-2 space-y-1">
             {filteredDevices.length === 0 ? (
-              <p className="text-xs text-gray-600 px-2 py-3 text-center">No devices match</p>
+              <EmptyState
+                size="sm" Icon={IconSwitch}
+                title="No devices match"
+                description="Clear the layer filter, or generate a BOM in Products & BOM first."
+              />
             ) : (
               filteredDevices.map(dev => (
                 <button
@@ -334,11 +340,26 @@ export function Step3Config() {
             </div>
           )}
 
+          {/* Nothing selected — a full-height blank rectangle is the worst
+              thing this panel can show, since it is most of the page (AH8). */}
+          {!selectedId && viewMode === 'config' && (
+            <div className="flex-1 rounded-xl border border-white/10 bg-white/[0.02] flex items-center justify-center"
+              style={{ minHeight: 460 }}>
+              <EmptyState
+                Icon={IconTerminal}
+                title={devices.length === 0 ? 'No configs generated yet' : 'Select a device'}
+                description={devices.length === 0
+                  ? 'Configs are generated from the BOM. Choose a use case and scale on the earlier steps, and every device here gets a vendor-correct config.'
+                  : 'Pick a device on the left to read its generated configuration.'}
+              />
+            </div>
+          )}
+
           {/* CodeMirror viewer — hidden in diff mode or when sections collapsed (M-36) */}
           <div
             ref={editorRef}
             className={`flex-1 rounded-xl overflow-hidden border border-white/10 text-sm ${
-              viewMode === 'diff' || sectionsCollapsed ? 'hidden' : ''
+              viewMode === 'diff' || sectionsCollapsed || !selectedId ? 'hidden' : ''
             }`}
             style={{ minHeight: 460 }}
           />
