@@ -1,5 +1,6 @@
 import { useAppStore } from '@/store/useAppStore'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import * as Icons from '@/components/icons'
 
 interface Props {
   onStart: () => void
@@ -7,44 +8,44 @@ interface Props {
 
 const FEATURES = [
   {
-    icon: '🧩',
+    Icon: Icons.IconClipboard,
     title: 'Intent Model',
     desc: 'Describe your network in plain terms — use case, scale, compliance, and vendor preferences.',
   },
   {
-    icon: '🏆',
+    Icon: Icons.IconTarget,
     title: 'AI Product Scoring',
     desc: 'Automatically selects the best-fit SKUs from 40+ hardware products scored against your intent.',
   },
   {
-    icon: '📐',
+    Icon: Icons.IconBlueprint,
     title: 'Auto Topology + Config',
     desc: 'Generates HLD topology diagrams and production-ready device configs for 5 OS platforms.',
   },
   {
-    icon: '🛡️',
+    Icon: Icons.IconCheckShield,
     title: 'Safe Deployment Pipeline',
     desc: 'Pre/post checks, platform-native rollback, and canary-first deployment flow.',
   },
   {
-    icon: '🧪',
+    Icon: Icons.IconSpark,
     title: 'Network Simulation',
     desc: 'ZTP state-machine demo with fault injection to validate provisioning logic before go-live.',
   },
   {
-    icon: '📤',
+    Icon: Icons.IconExport,
     title: 'Export & Report',
     desc: 'Export BOM, cabling schedule, optics, and device configs as CSV and text files.',
   },
 ]
 
 const USE_CASES = [
-  { icon: '🏢', label: 'Campus/Enterprise' },
-  { icon: '🗄️', label: 'Data Center Leaf-Spine' },
-  { icon: '⚡', label: 'AI/GPU Cluster' },
-  { icon: '🌍', label: 'WAN/SD-WAN' },
-  { icon: '🔗', label: 'Hybrid' },
-  { icon: '🗺️', label: 'Multi-Site DCI' },
+  { Icon: Icons.IconBuilding, label: 'Campus/Enterprise' },
+  { Icon: Icons.IconServer,   label: 'Data Center Leaf-Spine' },
+  { Icon: Icons.IconGpu,      label: 'AI/GPU Cluster' },
+  { Icon: Icons.IconGlobe,    label: 'WAN/SD-WAN' },
+  { Icon: Icons.IconCloudMesh, label: 'Hybrid' },
+  { Icon: Icons.IconSites,    label: 'Multi-Site DCI' },
 ]
 
 const STATS = [
@@ -129,15 +130,16 @@ export function LandingPage({ onStart }: Props) {
             {/* Feature pills matching logo */}
             <div className="flex flex-wrap gap-2 justify-center mb-8">
               {[
-                { icon: '🧩', label: 'Design' },
-                { icon: '⚙️', label: 'Automate' },
-                { icon: '🛡', label: 'Validate' },
-                { icon: '📊', label: 'Assure' },
+                { Icon: Icons.IconBlueprint,   label: 'Design' },
+                { Icon: Icons.IconCog,         label: 'Automate' },
+                { Icon: Icons.IconCheckShield, label: 'Validate' },
+                { Icon: Icons.IconChart,       label: 'Assure' },
               ].map(p => (
                 <span key={p.label}
                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold
                              bg-blue-600/10 border border-blue-500/25 text-blue-300">
-                  {p.icon} {p.label}
+                  <p.Icon size={13} className="opacity-90" />
+                  {p.label}
                 </span>
               ))}
             </div>
@@ -191,7 +193,10 @@ export function LandingPage({ onStart }: Props) {
               className="rounded-2xl border border-white/10 bg-white/[0.03] p-6
                          hover:border-blue-500/30 hover:bg-blue-500/5 transition-colors"
             >
-              <div className="text-3xl mb-3">{f.icon}</div>
+              <div className="mb-4 w-11 h-11 rounded-xl bg-blue-500/10 border border-blue-400/25
+                              flex items-center justify-center text-blue-300">
+                <f.Icon size={22} />
+              </div>
               <h3 className="font-semibold text-white mb-1.5">{f.title}</h3>
               <p className="text-sm text-gray-400 leading-relaxed">{f.desc}</p>
             </div>
@@ -211,7 +216,8 @@ export function LandingPage({ onStart }: Props) {
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm
                          bg-white/5 border border-white/10 text-gray-300"
             >
-              {uc.icon} {uc.label}
+              <uc.Icon size={15} className="shrink-0 opacity-80" />
+              {uc.label}
             </span>
           ))}
         </div>
