@@ -173,7 +173,11 @@ export function Step1UseCase({ onBack }: Props) {
             </div>
             <div className={cn(
               'text-xs mt-1.5 leading-relaxed',
-              useCase === uc.id ? 'text-blue-200/70' : 'text-gray-500',
+              // blue-200/70 measured 1.24:1 on the light theme's pale
+              // selected-card ground — effectively invisible. A gray token
+              // reads on both themes because index.css already remaps the
+              // ramp for light mode; a fixed blue does not (AH13).
+              useCase === uc.id ? 'text-gray-300' : 'text-gray-500',
             )}>
               {uc.desc}
             </div>
