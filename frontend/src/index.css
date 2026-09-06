@@ -13,6 +13,20 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @theme {
+  /* ── Muted text tones ──────────────────────────────────────────────────────
+     Measured on the app's own background: `text-gray-500` came out at 4.02:1
+     and `text-gray-600` at 2.46:1, both under the WCAG AA 4.5:1 floor for
+     body text — and between them they carry 343 text nodes (descriptions,
+     hints, section labels, the breadcrumb). Lifting the two tokens fixes all
+     of them at once; the ~15 non-text uses (a border, a few backgrounds)
+     move by one perceptual step, which is not noticeable.
+
+     Values were chosen by measuring, not by eye — see the contrast probe in
+     the AH12 tracker note.
+  ──────────────────────────────────────────────────────────────────────── */
+  --color-gray-500: #8b94a3;
+  --color-gray-600: #78828f;
+
   --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
