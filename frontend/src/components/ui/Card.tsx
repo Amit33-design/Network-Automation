@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils'
+import type { IconProps } from '@/components/icons'
 
 interface CardProps {
   className?: string
@@ -26,9 +27,20 @@ export function CardHeader({ className, children }: CardProps) {
   )
 }
 
-export function CardTitle({ className, children }: CardProps) {
+/**
+ * `Icon` renders a glyph before the title. Card titles used to lead with an
+ * emoji baked into the string (`🛟 Rollback Advisor`), which sized and
+ * coloured itself independently of the heading (AH6).
+ */
+export function CardTitle({ className, children, Icon }: CardProps & {
+  Icon?: (p: IconProps) => React.ReactElement
+}) {
   return (
-    <h3 className={cn('text-sm font-semibold text-gray-200 uppercase tracking-wide', className)}>
+    <h3 className={cn(
+      'flex items-center gap-2 text-sm font-semibold text-gray-200 uppercase tracking-wide',
+      className,
+    )}>
+      {Icon && <Icon size={15} className="shrink-0 text-gray-500" />}
       {children}
     </h3>
   )
