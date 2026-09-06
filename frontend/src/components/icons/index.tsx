@@ -353,6 +353,10 @@ export const IconCloudMesh = (p: IconProps) => (
   </Svg>
 )
 
+export const IconMenu = (p: IconProps) => (
+  <Svg {...p}><path d="M3.5 6.5h17M3.5 12h17M3.5 17.5h17" /></Svg>
+)
+
 export const IconClose = (p: IconProps) => (
   <Svg {...p}><path d="m6 6 12 12M18 6 6 18" /></Svg>
 )

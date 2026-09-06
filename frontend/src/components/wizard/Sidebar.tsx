@@ -365,7 +365,8 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
     return (
       <>
         <aside className="hidden lg:flex w-12 bg-gray-900/80 border-r border-white/10 flex-col items-center py-4 gap-4 shrink-0">
-          <button onClick={() => setCollapsed(false)} className="text-gray-400 hover:text-gray-200 cursor-pointer text-lg" title="Expand sidebar">☰</button>
+          <button onClick={() => setCollapsed(false)} className="text-gray-400 hover:text-gray-200 cursor-pointer" title="Expand sidebar"
+            aria-label="Expand sidebar"><Icons.IconMenu size={18} /></button>
           {[...DESIGN_STEPS, ...CONFIG_STEPS, ...DEPLOY_STEPS].map(s => (
             <button key={s.step} onClick={() => nav(s.step)} title={s.label}
               className={cn('w-8 h-8 rounded-lg text-base flex items-center justify-center cursor-pointer',
@@ -377,7 +378,7 @@ export function Sidebar({ onGoHome, onShowTroubleshooting, showTroubleshooting, 
             <button onClick={onShowTroubleshooting} title="Troubleshooting Engine"
               className={cn('w-8 h-8 rounded-lg text-base flex items-center justify-center cursor-pointer',
                 showTroubleshooting ? 'bg-orange-600/30 text-orange-300' : 'text-gray-500 hover:text-gray-300')}>
-              🔬
+              <Icons.IconSearch size={18} />
             </button>
           </div>
         </aside>
