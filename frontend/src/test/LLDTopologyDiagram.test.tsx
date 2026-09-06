@@ -120,3 +120,18 @@ describe('LLDTopologyDiagram — vendor-aware (D2)', () => {
     expect(text).toContain('Aviatrix')
   })
 })
+
+// ── AH10: same export-safety rule as the HLD ────────────────────────────────
+describe('LLD diagram — export safety', () => {
+  const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u
+
+  for (const useCase of ['dc', 'campus', 'gpu', 'wan'] as const) {
+    it(`${useCase}: renders no emoji into the SVG`, () => {
+      const { container } = render(<LLDTopologyDiagram devices={[]} useCase={useCase} />)
+      const svg = container.querySelector('svg')
+      expect(svg).toBeTruthy()
+      const found = (svg!.outerHTML.match(new RegExp(EMOJI, 'gu')) ?? [])
+      expect(found, `${useCase}: emoji in exported SVG: ${found.join(' ')}`).toEqual([])
+    })
+  }
+})
