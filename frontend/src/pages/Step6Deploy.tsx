@@ -20,7 +20,7 @@ import { useBackendMode } from '@/components/BackendToggle'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { formatUptime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON, genSNMPExporterConfig, genSNMPPrometheusJob } from '@/lib/telemetry-gen'
+import { genGNMICCollectorConfig, genTelegrafGNMIConfig, genPrometheusAlertRules, genGrafanaDashboardJSON, genSNMPExporterConfig, genSNMPPrometheusJob, telemetryCoverage } from '@/lib/telemetry-gen'
 import { useTroubleshoot } from '@/hooks/useTroubleshoot'
 import { runComplianceScan, exportComplianceReport } from '@/lib/compliance-scan'
 import type { ComplianceScanResult } from '@/lib/compliance-scan'
@@ -2741,6 +2741,8 @@ export function Step6Deploy() {
   // and default the selector to a platform the fleet actually has rather than
   // a hardcoded 'nxos'.
   const tsCoverage = useMemo(() => troubleshootCoverage(storeDevices), [storeDevices])
+  // AI1 — how the generated collector configs actually cover this fleet.
+  const telCoverage = useMemo(() => telemetryCoverage(storeDevices), [storeDevices])
   const [tsPlatform, setTsPlatform] = useState<string>(tsCoverage.suggested)
   const tsPlatformPinned = useRef(false)
   useEffect(() => {
@@ -4551,6 +4553,33 @@ export function Step6Deploy() {
               SNMP exporter config, Logstash Grok patterns, NetFlow/sFlow, gNMI collector configs,
               Prometheus alert rules, and Grafana dashboard — all derived from your BOM device list.
             </p>
+
+            {/* AI1 — say how each device is covered. Streaming telemetry and SNMP
+                polling reach different parts of the fleet, and a device in
+                neither looks monitored to anyone reading a dashboard. */}
+            {(telCoverage.gnmi.length > 0 || telCoverage.snmpOnly.length > 0) && (
+              <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="text-gray-500">Coverage:</span>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-semibold tabular-nums">
+                  {new Set(telCoverage.gnmi.map(t => t.hostname)).size} streaming (gNMI)
+                </span>
+                <span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 font-semibold tabular-nums">
+                  {new Set(telCoverage.snmpOnly.map(t => t.hostname)).size} SNMP-polled only
+                </span>
+                {telCoverage.snmpOnly.length > 0 && (
+                  <span className="text-gray-500">
+                    — no gNMI server on {[...new Set(telCoverage.snmpOnly.map(t => t.os))].join(', ')};
+                    they are in <code className="text-gray-400">snmp.yml</code>, not{' '}
+                    <code className="text-gray-400">gnmic.yml</code>
+                  </span>
+                )}
+                {telCoverage.unmonitored.length > 0 && (
+                  <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-300 font-semibold">
+                    {telCoverage.unmonitored.length} in NO collector: {telCoverage.unmonitored.slice(0, 4).join(', ')}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="flex flex-wrap gap-3">
               <Button variant="secondary" size="sm"
                 onClick={() => { downloadBlob('snmp.yml', genSNMPExporterConfig(storeDevices)); showToast('snmp.yml downloaded', 'success') }}>

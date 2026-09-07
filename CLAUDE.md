@@ -1294,6 +1294,24 @@ config-gen tests must keep passing; add new tests alongside).
 
 ---
 
+### AI. Monitoring coverage (sourced 2026-09-07)
+
+> Found while sweeping for more AG5–AG10-class silent gaps. The Monitoring tab
+> hands the operator a gnmic collector config and an SNMP exporter config, and
+> both are built from **one** target list that filters out anything without a
+> gNMI server *and* every firewall. So the SNMP exporter — the universal
+> fallback, which exists precisely for boxes that cannot stream — excludes
+> exactly the devices it should cover.
+>
+> Measured on generated designs: **every** design loses both firewalls from
+> both configs (a Cisco DC monitors 12 of 14). An Extreme Networks DC design
+> monitors **0 of 14**. A Fortinet campus design monitors **0 of 18**. Nothing
+> in the UI says so, so the fleet looks monitored.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| AI1 | **The SNMP exporter inherited the gNMI filter, so it omitted exactly the devices it exists to cover** — `genSNMPExporterConfig` and `genSNMPPrometheusJob` both called `buildTelemetryTargets`, which drops anything without a gNMI server *and* every firewall. Measured before the fix: **every** design lost both firewalls from **both** configs (a Cisco DC monitored 12 of 14); an **Extreme Networks DC design monitored 0 of 14**, and a **Fortinet campus design 0 of 18** — with nothing in the UI saying so, so the fleet looked monitored. Split into `buildTelemetryTargets` (gNMI: excludes firewalls, whose NOSes expose management APIs rather than an OpenConfig server, and anything `speaksGnmi` rejects) and new `buildSnmpTargets` (every network element — SNMP is universal; only compute/host tiers are out of scope, and they are named). New `telemetryCoverage(devices)` → `{gnmi, snmpOnly, excluded, unmonitored}` drives a coverage line in the Monitoring tab's Observability Downloads card: how many stream, how many are SNMP-polled only and which NOSes those are, and a red chip if anything lands in **no** collector. 5 tests including a 5-vendor × 3-use-case sweep asserting `unmonitored` is empty everywhere; reverting the SNMP target list trips 1 | [x] | `lib/telemetry-gen.ts` `buildSnmpTargets`/`telemetryCoverage`/`SNMP_PORT`/`HOST_SUBLAYERS`, `Step6Deploy.tsx`; `telemetry-gen.test.ts` 29→34; 1501 tests, tsc + build green |
+
 ### AH. Visual design pass (user request, 2026-09-04)
 
 > "Improve layout and design like a top enterprise level application with

@@ -7,6 +7,8 @@ import {
   genGrafanaDashboardJSON,
   genSNMPExporterConfig,
   genSNMPPrometheusJob,
+  buildSnmpTargets,
+  telemetryCoverage,
   GNMI_PORT,
   speaksGnmi,
 } from '@/lib/telemetry-gen'
@@ -332,5 +334,57 @@ describe('AG6 — telemetry targets name the real NOS', () => {
     for (const vendor of ['Fortinet', 'Palo Alto', 'Extreme Networks']) {
       for (const t of build(vendor).targets) expect(speaksGnmi(t.os)).toBe(true)
     }
+  })
+})
+
+
+// ── AI1: SNMP must not inherit the gNMI filter ───────────────────────────────
+describe('telemetry coverage (AI1)', () => {
+  it('puts every network device in at least one collector', () => {
+    // Before the fix, genSNMPExporterConfig reused buildTelemetryTargets, so
+    // the universal fallback inherited the gNMI filter AND the firewall
+    // exclusion. EVERY design lost both firewalls from both configs; an
+    // Extreme DC design monitored 0 of 14 devices.
+    for (const prefs of [['Cisco'], ['Palo Alto'], ['Fortinet'], ['Extreme Networks'], ['Nokia']]) {
+      for (const uc of ['dc', 'campus', 'gpu'] as const) {
+        const devices = buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs: prefs })
+        const cov = telemetryCoverage(devices)
+        expect(cov.unmonitored, `${prefs[0]}/${uc}`).toEqual([])
+      }
+    }
+  })
+
+  it('includes firewalls in the SNMP exporter config', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T' })
+    const fw = devices.filter(d => d.subLayer === 'firewall')
+    expect(fw.length, 'guard: the fixture must contain firewalls').toBeGreaterThan(0)
+    const snmp = genSNMPExporterConfig(devices)
+    for (const d of fw) expect(snmp).toContain(d.hostname)
+  })
+
+  it('keeps firewalls OUT of the gNMI collector', () => {
+    // PAN-OS / FortiOS / FTD expose management APIs, not an OpenConfig gNMI
+    // server — a gnmic target for one would never connect.
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T' })
+    const gnmi = genGNMICCollectorConfig(devices)
+    for (const d of devices.filter(x => x.subLayer === 'firewall')) {
+      expect(gnmi).not.toContain(d.hostname)
+    }
+  })
+
+  it('gives every SNMP target port 161 and every gNMI target its real port', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T' })
+    for (const t of buildSnmpTargets(devices)) expect(t.port).toBe(161)
+    for (const t of buildTelemetryTargets(devices)) expect(t.port).toBe(GNMI_PORT[t.os])
+  })
+
+  it('reports an all-SNMP fleet as SNMP-only rather than as covered', () => {
+    // Extreme EXOS has no gNMI server at all — the operator must be able to
+    // see that nothing in this design streams.
+    const devices = buildDeviceList({ useCase: 'campus', scale: 'medium', siteCode: 'T', vendorPrefs: ['Extreme Networks'] })
+    const cov = telemetryCoverage(devices)
+    expect(cov.gnmi).toEqual([])
+    expect(cov.snmpOnly.length).toBeGreaterThan(0)
+    expect(cov.unmonitored).toEqual([])
   })
 })
