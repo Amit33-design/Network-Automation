@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { CloseButton } from '@/components/ui/CloseButton'
 import {
   POLICY_CATALOG,
   POLICY_CATEGORIES,
   policyByCategory,
+  policyCoverage,
+  type PolicyCoverage,
   type PolicyDef,
 } from '@/lib/policies'
 
@@ -26,6 +28,17 @@ const CATEGORY_ICON: Record<string, string> = {
 export function ConfigPolicyModal({ open, onClose }: ConfigPolicyModalProps) {
   const policyBlocks = useAppStore(s => s.policyBlocks)
   const setPolicyBlocks = useAppStore(s => s.setPolicyBlocks)
+  const devices = useAppStore(s => s.devices)
+  const useCase = useAppStore(s => s.useCase)
+
+  // AG7 — how much of THIS design each policy can actually reach. A policy
+  // whose render() returns null for a vendor is skipped silently (the right
+  // behaviour — see AB7 — but invisible), so state it up front.
+  const coverageById = useMemo<Record<string, PolicyCoverage>>(() => {
+    const out: Record<string, PolicyCoverage> = {}
+    for (const p of POLICY_CATALOG) out[p.id] = policyCoverage(p, devices, useCase)
+    return out
+  }, [devices, useCase])
 
   // Local copy so we can cancel without persisting
   const [selected, setSelected] = useState<Set<string>>(new Set(policyBlocks))
@@ -83,11 +96,19 @@ export function ConfigPolicyModal({ open, onClose }: ConfigPolicyModalProps) {
     })
   }
 
+  // Selected policies that cannot reach every eligible device in this design.
+  const gaps = POLICY_CATALOG.filter(
+    p => selected.has(p.id) && (coverageById[p.id]?.missingVendors.length ?? 0) > 0,
+  )
+  const gapCount = gaps.length
+  const gapVendors = [...new Set(gaps.flatMap(p => coverageById[p.id]!.missingVendors))].sort()
+
   if (!open) return null
 
   function renderBlock(block: PolicyDef) {
     const isSelected = selected.has(block.id)
     const isExpanded = expandedId === block.id
+    const coverage = coverageById[block.id]
 
     return (
       <div
@@ -120,6 +141,28 @@ export function ConfigPolicyModal({ open, onClose }: ConfigPolicyModalProps) {
               {block.label}
             </div>
             <div className="text-xs text-gray-500 mt-0.5 truncate">{block.description}</div>
+            {/* Coverage against THIS design (AG7). Ticking a policy that
+                reaches none of your fabric should not look the same as one
+                that reaches all of it. */}
+            {coverage && coverage.eligible > 0 && (
+              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                <span className={[
+                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums',
+                  coverage.covered === 0
+                    ? 'bg-red-500/15 text-red-300'
+                    : coverage.covered < coverage.eligible
+                      ? 'bg-amber-500/15 text-amber-300'
+                      : 'bg-emerald-500/15 text-emerald-300',
+                ].join(' ')}>
+                  {coverage.covered}/{coverage.eligible} devices
+                </span>
+                {coverage.missingVendors.length > 0 && (
+                  <span className="text-[10px] text-gray-500">
+                    no template for {coverage.missingVendors.join(', ')}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <button
@@ -164,6 +207,12 @@ export function ConfigPolicyModal({ open, onClose }: ConfigPolicyModalProps) {
         <div className="flex items-center justify-between px-6 py-2 border-b border-white/5 shrink-0">
           <span className="text-xs text-gray-500">
             {selected.size} of {POLICY_CATALOG.length} policies selected
+            {gapCount > 0 && (
+              <span className="ml-2 text-amber-400/90">
+                · {gapCount} selected {gapCount === 1 ? 'policy has' : 'policies have'} no template for
+                {' '}{gapVendors.join(', ')}
+              </span>
+            )}
           </span>
           <div className="flex gap-2">
             <button onClick={handleSelectAll} className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer transition-colors">
