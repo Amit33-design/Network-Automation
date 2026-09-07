@@ -277,3 +277,82 @@ describe('exportComplianceReport', () => {
     })
   })
 })
+
+
+// ── AJ1: the SSH control is per-device, and vendor-aware ─────────────────────
+describe('SSH controls are per-device (AJ1)', () => {
+  const SSH_CONTROLS = ['PCI-2.3', 'FDRP-AC-17']
+
+  function scan(vendor: string, useCase: 'dc' | 'campus' = 'dc') {
+    const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+    const configs = generateAllConfigs(devices, useCase)
+    return runComplianceScan({
+      ...BASE_STATE,
+      useCase, devices, configs, vendorPrefs: [vendor],
+      compliance: ['PCI', 'FedRAMP'] as never,
+    } as never)
+  }
+
+  it('passes for every vendor now that the configs actually comply', () => {
+    // Before AJ1 these FAILED for Arista, NVIDIA, Dell EMC and Extreme while
+    // Cisco/Juniper/Nokia passed — the M3/M4/AG5 "one vendor set over"
+    // signature, distorting the score by vendor (53 vs 60).
+    for (const v of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks']) {
+      const r = scan(v)
+      for (const id of SSH_CONTROLS) {
+        const c = r.controls.find(x => x.id === id)
+        expect(c, `${v} ${id} missing`).toBeTruthy()
+        expect(c!.status, `${v} ${id}: ${c!.detail}`).toBe('pass')
+      }
+    }
+  })
+
+  it('does NOT report a pass when only some devices are hardened', () => {
+    // The control used `hasInConfigs` (any ONE device), so a Cisco DC design
+    // with SSH on 4 of 14 devices reported a clean PASS on "SSH v2 only".
+    // A report that says compliant while 10 of 14 devices are not is worse
+    // than no report.
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T' })
+    const configs = generateAllConfigs(devices, 'dc')
+    const hosts = Object.keys(configs)
+    expect(hosts.length, 'guard: no configs generated').toBeGreaterThan(3)
+    // Strip SSH from all but one device.
+    const holed: Record<string, string> = {}
+    hosts.forEach((h, i) => {
+      holed[h] = i === 0 ? configs[h] : configs[h].replace(/ssh/gi, 'xxx')
+    })
+    const r = runComplianceScan({
+      ...BASE_STATE, useCase: 'dc', devices, configs: holed,
+      compliance: ['PCI', 'FedRAMP'] as never,
+    } as never)
+    for (const id of SSH_CONTROLS) {
+      const c = r.controls.find(x => x.id === id)!
+      expect(c.status, `${id} must not pass on partial coverage`).not.toBe('pass')
+      // and it must be actionable — name the count and an offender
+      expect(c.detail).toMatch(/1\/\d+ devices/)
+      expect(c.detail).toMatch(/missing on /)
+    }
+  })
+
+  it('fails outright when no device is hardened', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T' })
+    const configs = generateAllConfigs(devices, 'dc')
+    const stripped = Object.fromEntries(
+      Object.entries(configs).map(([h, c]) => [h, c.replace(/ssh/gi, 'xxx')]),
+    )
+    const r = runComplianceScan({
+      ...BASE_STATE, useCase: 'dc', devices, configs: stripped,
+      compliance: ['PCI', 'FedRAMP'] as never,
+    } as never)
+    for (const id of SSH_CONTROLS) {
+      expect(r.controls.find(x => x.id === id)!.status).toBe('fail')
+    }
+  })
+
+  it('the score no longer depends on which vendor was chosen', () => {
+    const scores = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Extreme Networks']
+      .map(v => scan(v).score)
+    // Before AJ1: Cisco/Juniper/Nokia 60, Arista/NVIDIA/Extreme 53.
+    expect(new Set(scores).size, `scores: ${scores.join(',')}`).toBe(1)
+  })
+})

@@ -17,6 +17,67 @@ import { applyPolicies } from '@/lib/policies'
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
 /** Single management block used exactly once per config. */
+/**
+ * Management-plane SSH hardening — AJ1.
+ *
+ * Measured on generated DC designs before this existed: only 4 of 14 Cisco
+ * devices had ANY ssh statement, and Arista / NVIDIA / Dell EMC had 0 of 14.
+ * The NX-OS spine emitted `ssh version 2` while the leaf emitted nothing, and
+ * the same spine/leaf split existed on Arista — the "fix landed on one role /
+ * one vendor" signature this codebase keeps paying for. Campus was fine, so
+ * the gap was specifically the fabric.
+ *
+ * One helper per CLI family rather than five inline copies: a duplicated
+ * management plane is exactly what drifted in the first place.
+ *
+ * Telnet is stated EXPLICITLY rather than left to the platform default. On
+ * NX-OS and OS10 the daemon is off unless a feature is enabled, but an
+ * auditor reads the config, not the default — and `no feature telnet` is
+ * also what stops someone re-enabling it in a later change.
+ */
+export type SshFamily = 'nxos' | 'eos' | 'nvue' | 'dellos10'
+
+export function sshHardeningBlock(family: SshFamily, srcIface = ''): string {
+  switch (family) {
+    case 'nxos':
+      return `! ── SSH / REMOTE ACCESS (AJ1) ───────────────────────────────────────────────
+no feature telnet
+feature ssh
+ssh version 2
+ssh key rsa 2048 force
+ip ssh source-interface ${srcIface || 'mgmt0'}
+line vty
+  exec-timeout 10
+  session-limit 4
+!`
+    case 'eos':
+      return `! ── SSH / REMOTE ACCESS (AJ1) ───────────────────────────────────────────────
+no management telnet
+management ssh
+  idle-timeout 10
+  authentication mode password
+  no shutdown
+  vrf MGMT
+    no shutdown
+!`
+    case 'nvue':
+      return `# ── SSH / REMOTE ACCESS (AJ1) ───────────────────────────────────────────────
+nv set system ssh-server state enabled
+nv set system ssh-server permit-root-login no
+nv set system ssh-server password-authentication yes
+nv set system ssh-server vrf mgmt
+#`
+    case 'dellos10':
+      return `! ── SSH / REMOTE ACCESS (AJ1) ───────────────────────────────────────────────
+no ip telnet server enable
+ip ssh server enable
+ip ssh server version 2
+ip ssh server vrf management
+ip ssh server login-grace-time 60
+!`
+  }
+}
+
 function mgmtBlock(hostname: string, mgmtVlan = 10): string {
   return `
 ! ── MANAGEMENT ──────────────────────────────────────────────────────────────────
@@ -226,9 +287,7 @@ ntp source-interface mgmt0
 logging server <CHANGE-ME-syslog-ip> 6 use-vrf management
 logging source-interface mgmt0
 !
-ssh version 2
-ip ssh source-interface mgmt0
-!
+${sshHardeningBlock('nxos')}
 ! ── MANAGEMENT VRF ───────────────────────────────────────────────────────────
 vrf context management
   ip route 0.0.0.0/0 <CHANGE-ME-oob-gateway>
@@ -946,6 +1005,7 @@ ntp source-interface mgmt0
 !
 logging server <CHANGE-ME-syslog-ip> 6 use-vrf management
 !
+${sshHardeningBlock('nxos')}
 ! ── MANAGEMENT VRF ───────────────────────────────────────────────────────────
 vrf context management
   ip route 0.0.0.0/0 <CHANGE-ME-oob-gateway>
@@ -1528,10 +1588,7 @@ ntp source vrf MGMT Management1
 logging vrf MGMT host <CHANGE-ME-syslog-ip>
 logging vrf MGMT source-interface Management1
 !
-management ssh
-  idle-timeout 10
-  authentication mode password
-!
+${sshHardeningBlock('eos')}
 ! ── MANAGEMENT INTERFACE (OOB, dedicated VRF) ───────────────────────────────
 vrf instance MGMT
 !
@@ -1714,6 +1771,7 @@ ntp source vrf MGMT Management1
 logging vrf MGMT host <CHANGE-ME-syslog-ip>
 logging vrf MGMT source-interface Management1
 !
+${sshHardeningBlock('eos')}
 ! ── MANAGEMENT INTERFACE (OOB, dedicated VRF) ───────────────────────────────
 vrf instance MGMT
 !
@@ -3688,6 +3746,7 @@ snmp-server host <CHANGE-ME-nms-ip> traps version 3 priv netmon
 ! ── Syslog ──────────────────────────────────────────────────────────────────
 logging server <CHANGE-ME-syslog-ip>
 !
+${sshHardeningBlock('dellos10')}
 ! ── LLDP ────────────────────────────────────────────────────────────────────
 lldp enable
 !
@@ -3947,6 +4006,7 @@ nv set service syslog mgmt server <CHANGE-ME-syslog-ip> port 514
 nv set service snmp-server enable on
 nv set service snmp-server username netmon auth-sha <CHANGE-ME-snmp-auth-pass> encrypt-aes <CHANGE-ME-snmp-priv-pass>
 
+${sshHardeningBlock('nvue')}
 # ── LOOPBACK / FABRIC PORTS (jumbo MTU for RoCE/VXLAN payloads) ──────────────
 nv set interface lo ip address ${lo0ip}/32
 nv set interface swp1-${ports} link mtu 9216
