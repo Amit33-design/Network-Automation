@@ -181,6 +181,63 @@ def vendor_supports_layer(vendor: str, layer: str) -> bool:
     return layer not in VENDOR_UNSUPPORTED_LAYERS.get(vendor, ())
 
 
+def config_support_matrix() -> dict[str, Any]:
+    """
+    A discoverable statement of what this API can and cannot generate (AE3).
+
+    AB7/AD4 made the refusal honest at CALL time — a caller posting a Nokia
+    design gets an unmistakable ``CONFIG NOT GENERATED`` body rather than Cisco
+    CLI wearing a Nokia label. But it was still only discoverable by trying:
+    nothing let a consumer check BEFORE building a design. This is that
+    document, served by ``GET /api/config-support``.
+
+    The product decision (2026-09-07) is to surface the limitation rather than
+    write six more Jinja template families duplicating dialect knowledge the
+    browser engine already owns — duplicated engines have drifted every time
+    this codebase has duplicated them (AB1, AB4, AB7b, AD3, AD4).
+    """
+    return {
+        "supported_vendors": sorted(
+            v for v in ALL_CATALOGUE_VENDORS if v not in VENDOR_UNSUPPORTED_LAYERS
+        ),
+        # VENDOR_UNSUPPORTED_LAYERS lists, per vendor, the layers that vendor
+        # ACTUALLY BUILDS and we have no template for (AD4) — so for all six
+        # entries that is every layer they supply. Reporting them as
+        # "partially supported" would overstate what this API can do.
+        "unsupported_vendors": {
+            vendor: {
+                "layers_supplied": sorted(layers),
+                "note": (
+                    f"No {vendor} template family. Devices of this vendor are "
+                    "refused with an explicit CONFIG NOT GENERATED body rather "
+                    "than served another vendor's CLI."
+                ),
+            }
+            for vendor, layers in sorted(VENDOR_UNSUPPORTED_LAYERS.items())
+        },
+        "template_families": sorted(
+            d.name for d in TEMPLATE_DIR.iterdir() if d.is_dir()
+        ) if TEMPLATE_DIR.exists() else [],
+        "full_coverage_engine": {
+            "location": "frontend/src/lib/configgen.ts",
+            "vendors": sorted(ALL_CATALOGUE_VENDORS),
+            "note": (
+                "The browser-side engine generates every catalogue vendor. "
+                "Generate in the UI for a vendor this API refuses."
+            ),
+        },
+    }
+
+
+#: Every vendor the product catalogue can put in a BOM. Mirrors the frontend
+#: VENDOR_PRODUCT_MAP keys — a vendor absent here would never be reported as
+#: unsupported, which is the failure mode this list exists to prevent.
+ALL_CATALOGUE_VENDORS: tuple[str, ...] = (
+    "Cisco", "Arista", "Juniper", "NVIDIA", "Nokia", "Dell EMC",
+    "Extreme Networks", "HPE Aruba", "Fortinet", "Palo Alto",
+)
+
+
 def _unsupported_vendor_config(hostname: str, layer: str, vendor: str) -> str:
     """An unmistakable non-config, so a caller cannot mistake it for deployable."""
     return (
@@ -559,10 +616,55 @@ def _derive_layers(state: dict[str, Any]) -> dict[str, int]:
         return d
 
 
+def _vendor_from_token(v: str) -> str:
+    """Map a free-form vendor / SKU token onto a catalogue vendor name."""
+    v = (v or "").lower()
+    if "arista" in v:
+        return "Arista"
+    if "juniper" in v or "junos" in v or "qfx" in v or "srx" in v or "-mx" in v:
+        return "Juniper"
+    if "nvidia" in v or "sonic" in v or "cumulus" in v or "spectrum" in v:
+        return "NVIDIA"
+    if "nokia" in v or "srlinux" in v or "sr linux" in v or "srl" in v:
+        return "Nokia"
+    if "dell" in v:
+        return "Dell EMC"
+    if "extreme" in v:
+        return "Extreme Networks"
+    if "fortinet" in v or "fortigate" in v or "fortiswitch" in v:
+        return "Fortinet"
+    if "aruba" in v or "hpe" in v:
+        return "HPE Aruba"
+    if "palo" in v or "pan-os" in v or "panos" in v:
+        return "Palo Alto"
+    if "cisco" in v or "nxos" in v or "nexus" in v or "catalyst" in v or "iosxe" in v:
+        return "Cisco"
+    return ""
+
+
 def _detect_primary_vendor(state: dict[str, Any]) -> str:
-    """Return the primary vendor string from the design state."""
-    vendors = state.get("vendors", state.get("selectedVendors", []))
+    """
+    Return the primary vendor string from the design state.
+
+    AE3: this only ever read ``vendors``/``selectedVendors``, and DesignState
+    (the HTTP request model) carried NEITHER field — so through the API the
+    detection always returned "" and the AB7/AD4 refusal could never fire: a
+    Nokia design posted to /api/generate-configs got Cisco NX-OS CLI, exactly
+    as before that guard was written. ``vendors`` is now on DesignState, and
+    the selected SKU ids (``nokia-srl-7220d3``, ``dell-z9332f``, …) are a
+    second, caller-free source so the guard holds even when a client does not
+    declare a vendor at all.
+    """
+    # `vendorPrefs` is the frontend store's spelling; accept all three rather
+    # than let one more naming mismatch silently disable the guard.
+    vendors = (state.get("vendors") or state.get("selectedVendors")
+               or state.get("vendorPrefs") or [])
     if not vendors:
+        # Fall back on the selected hardware — a design IS its SKUs.
+        for sku in (state.get("selectedProducts") or {}).values():
+            found = _vendor_from_token(str(sku))
+            if found:
+                return found
         return ""
     v = vendors[0].lower() if isinstance(vendors[0], str) else ""
     if "arista" in v:

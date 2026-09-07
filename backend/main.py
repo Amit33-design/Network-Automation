@@ -350,6 +350,11 @@ class DesignState(BaseModel):
     orgSize: str = "medium"
     redundancy: str = "ha"
     fwModel: str | None = None
+    # AE3 — without this the AB7/AD4 vendor guard could never fire through the
+    # API: _detect_primary_vendor reads `vendors`, and the request model had
+    # no such field, so every design looked vendor-less and took the Cisco
+    # layer default. Optional: an omitted vendor legitimately uses the default.
+    vendors: list[str] = []
     selectedProducts: dict[str, str] = {}
     protocols: list[str] = []
     security: list[str] = []
@@ -372,6 +377,11 @@ class DeployRequest(BaseModel):
 class ConfigResponse(BaseModel):
     configs:      dict[str, str]
     generated_at: float
+    # AE3 — hostnames the API refused rather than generating (their `configs`
+    # entry is an explicit CONFIG NOT GENERATED body). Present so a consumer
+    # can branch on it instead of pattern-matching config text.
+    unsupported:  list[str] = []
+    unsupported_note: str | None = None
 
 
 class CheckResult(BaseModel):
@@ -541,10 +551,33 @@ async def api_generate_configs(
             design_id=state.orgName,
             device_count=len(configs),
         )
-        return ConfigResponse(configs=configs, generated_at=time.time())
+        refused = sorted(h for h, cfg in configs.items() if "CONFIG NOT GENERATED" in cfg)
+        return ConfigResponse(
+            configs=configs,
+            generated_at=time.time(),
+            unsupported=refused,
+            unsupported_note=(
+                f"{len(refused)} device(s) have no template family on this API. "
+                "See GET /api/config-support for the full matrix; the browser "
+                "engine covers every catalogue vendor."
+            ) if refused else None,
+        )
     except Exception as exc:
         log.exception("Config generation failed")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/config-support")
+async def api_config_support():
+    """
+    What this API can and cannot generate configs for (AE3).
+
+    AB7/AD4 made the refusal honest at call time; this makes it discoverable
+    BEFORE a design is built, so a consumer does not have to POST a design to
+    learn that its vendor is unsupported.
+    """
+    from config_gen import config_support_matrix
+    return config_support_matrix()
 
 
 # ---------------------------------------------------------------------------
