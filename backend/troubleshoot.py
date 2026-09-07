@@ -19,6 +19,11 @@ from __future__ import annotations
 from typing import Any
 
 SUPPORTED_PLATFORMS = ("nxos", "iosxe", "eos", "junos")
+
+try:
+    from platform_coverage import coverage_report
+except ImportError:  # pragma: no cover - package-relative import
+    from .platform_coverage import coverage_report  # type: ignore
 DEFAULT_PLATFORM = "nxos"
 
 
@@ -2128,4 +2133,8 @@ def build_troubleshooting(
         "diagnostic_steps": _render_steps(playbook["steps"], plat),
         "likely_causes": _render_causes(playbook["causes"]),
         "remediation": list(playbook["remediation"]),
+        # AG10 — a request for a NOS with no command variants is served with
+        # Cisco-family syntax. Say so on the response rather than letting the
+        # caller assume the commands match their hardware.
+        "platform_coverage": coverage_report(platform),
     }

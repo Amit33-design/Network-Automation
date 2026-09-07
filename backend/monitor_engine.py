@@ -15,6 +15,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+try:
+    from platform_coverage import best_platform_for_vendor, ENGINE_PLATFORMS
+except ImportError:  # pragma: no cover - package-relative import
+    from .platform_coverage import best_platform_for_vendor, ENGINE_PLATFORMS  # type: ignore
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data model
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1785,7 +1791,14 @@ def diagnose(
         # Pick best platform commands
         platform = _best_platform(state)
         diag_cmds = iss.get("diagnostic_commands") or {}
-        cmds = diag_cmds.get(platform) or (list(diag_cmds.values())[0] if diag_cmds else [])
+        # AG10 — label the commands with the platform they ARE, not the one
+        # that was asked for. monitor_engine carries 87 nxos / 81 eos / 58
+        # iosxe / 36 sonic sets but only ONE junos set, so a Juniper design
+        # hit the fallback on almost every issue and presented NX-OS commands
+        # under a "junos" key.
+        actual_plat = platform if diag_cmds.get(platform) else (
+            next((k for k, v in diag_cmds.items() if v), platform))
+        cmds = diag_cmds.get(actual_plat) or []
         verify = iss.get("verification_commands", {})
         results.append(DiagnosticMatch(
             issue_id=issue_id,
@@ -1794,7 +1807,7 @@ def diagnose(
             severity=iss["severity"],
             score=round(score_val, 3),
             root_causes=iss["root_causes"],
-            commands={platform: cmds},
+            commands={actual_plat: cmds},
             remediation=iss["remediation_steps"],
             verification=verify,
             tags=iss.get("tags", []),
@@ -1803,20 +1816,18 @@ def diagnose(
 
 
 def _best_platform(state: dict[str, Any]) -> str:
-    vendor = state.get("_detected_vendor", "")
-    uc     = state.get("uc", "dc")
-    if vendor == "Arista":
-        return "eos"
-    if vendor == "Juniper":
-        return "junos"
-    if uc == "gpu":
-        products = state.get("selectedProducts", {})
-        if "sonic" in str(products).lower():
-            return "sonic"
-        return "sonic"
-    if uc == "campus":
-        return "iosxe"
-    return "nxos"
+    """
+    Pick a diagnostics platform from the detected vendor.
+
+    AG10: this used to auto-select ``nxos`` for every vendor that was not
+    Arista or Juniper (and ``sonic``, for which no variants exist, on any GPU
+    design), so the wrong default was chosen *for* the user. It resolves
+    through the shared coverage map now, and only ever returns a platform the
+    command sets actually carry.
+    """
+    return best_platform_for_vendor(state.get("_detected_vendor", ""),
+                                    state.get("uc", "dc"),
+                                    ENGINE_PLATFORMS)[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
