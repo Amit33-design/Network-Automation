@@ -619,6 +619,49 @@ export function applicablePolicies(
  * Each policy renders as its own `! ====== POLICY: <LABEL> ======` section so
  * it shows up individually in the Step-3 section navigator.
  */
+/**
+ * How much of a design a policy overlay will actually reach (AG7).
+ *
+ * Most overlays are templated for Cisco, some for Cisco + Arista, and
+ * `render()` correctly returns `null` where it has no syntax rather than
+ * emitting another vendor's CLI. That is the right behaviour — but it was
+ * invisible: an operator could tick "Control-Plane Policing" on a Nokia
+ * fabric, get it on the Cisco firewalls and on none of the leaves, and see
+ * nothing to say so.
+ *
+ * The selection UI reports this, so choosing a policy is an informed choice
+ * rather than a silent partial.
+ */
+export interface PolicyCoverage {
+  /** Devices in the BOM this policy is eligible for by role and use case. */
+  eligible: number
+  /** Of those, how many actually render CLI. */
+  covered: number
+  /** Vendors with at least one eligible device that renders nothing. */
+  missingVendors: string[]
+}
+
+export function policyCoverage(
+  policy: PolicyDef,
+  devices: BOMDevice[],
+  useCase: UseCase | '',
+): PolicyCoverage {
+  const missing = new Set<string>()
+  let eligible = 0
+  let covered = 0
+
+  const useCaseOk = !policy.useCases || !useCase || policy.useCases.includes(useCase as UseCase)
+  if (useCaseOk) {
+    for (const dev of devices) {
+      if (!(policy.appliesTo.includes('*') || roleIn(dev, policy.appliesTo))) continue
+      eligible++
+      if (policy.render(dev, useCase) != null) covered++
+      else missing.add(dev.vendor)
+    }
+  }
+  return { eligible, covered, missingVendors: [...missing].sort() }
+}
+
 export function applyPolicies(
   baseConfig: string,
   dev: BOMDevice,

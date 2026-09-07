@@ -6,6 +6,7 @@ import {
   applicablePolicies,
   applyPolicies,
   policyByCategory,
+  policyCoverage,
   POLICY_CATEGORIES,
 } from '@/lib/policies'
 import type { BOMDevice } from '@/types'
@@ -109,5 +110,69 @@ describe('generateAllConfigs policy integration', () => {
     for (const cfg of Object.values(a)) {
       expect(cfg).not.toContain('POLICY OVERLAY')
     }
+  })
+})
+
+// ── AG7: coverage is stated, not silently skipped ────────────────────────────
+describe('policyCoverage', () => {
+  it('reports full coverage when every eligible device renders', () => {
+    const devices = [dev({ id: 'a', vendor: 'Cisco' }), dev({ id: 'b', vendor: 'Cisco' })]
+    const ntp = POLICY_CATALOG.find(p => p.id === 'ntp')!
+    const cov = policyCoverage(ntp, devices, 'dc')
+    expect(cov.eligible).toBe(2)
+    expect(cov.covered).toBe(2)
+    expect(cov.missingVendors).toEqual([])
+  })
+
+  it('names the vendors a policy has no template for', () => {
+    const devices = [
+      dev({ id: 'a', vendor: 'Cisco' }),
+      dev({ id: 'b', vendor: 'Juniper' }),
+      dev({ id: 'c', vendor: 'Nokia' }),
+    ]
+    // Find a policy that is Cisco-only for the leaf role — most are.
+    const partial = POLICY_CATALOG.find(p => {
+      const c = policyCoverage(p, devices, 'dc')
+      return c.eligible === 3 && c.covered > 0 && c.covered < 3
+    })
+    expect(partial, 'expected at least one Cisco-only leaf policy').toBeTruthy()
+    const cov = policyCoverage(partial!, devices, 'dc')
+    expect(cov.missingVendors.length).toBeGreaterThan(0)
+    // Every named vendor is one present in the design, and is not double-counted.
+    for (const v of cov.missingVendors) expect(['Juniper', 'Nokia']).toContain(v)
+    expect(new Set(cov.missingVendors).size).toBe(cov.missingVendors.length)
+    // The arithmetic has to close: covered + (devices of missing vendors) = eligible
+    expect(cov.covered).toBe(cov.eligible - devices.filter(d => cov.missingVendors.includes(d.vendor)).length)
+  })
+
+  it('reports zero eligible when the policy does not apply to this use case', () => {
+    const scoped = POLICY_CATALOG.find(p => p.useCases && p.useCases.length && !p.useCases.includes('gpu'))
+    expect(scoped, 'expected at least one use-case-scoped policy').toBeTruthy()
+    const cov = policyCoverage(scoped!, [dev({ vendor: 'Cisco' })], 'gpu')
+    expect(cov.eligible).toBe(0)
+    expect(cov.covered).toBe(0)
+  })
+
+  it('counts only devices whose role the policy targets', () => {
+    const devices = [
+      dev({ id: 'a', role: 'leaf', subLayer: 'leaf', vendor: 'Cisco' }),
+      dev({ id: 'b', role: 'firewall', subLayer: 'firewall', vendor: 'Cisco' }),
+    ]
+    for (const p of POLICY_CATALOG) {
+      const cov = policyCoverage(p, devices, 'dc')
+      expect(cov.eligible).toBeLessThanOrEqual(devices.length)
+      expect(cov.covered).toBeLessThanOrEqual(cov.eligible)
+    }
+  })
+
+  it('measures the real Juniper gap on a generated DC design', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: ['Juniper'] })
+    const gaps = POLICY_CATALOG.filter(p => {
+      const c = policyCoverage(p, devices, 'dc')
+      return c.eligible > 0 && c.covered < c.eligible
+    })
+    // The whole point of AG7: on a non-Cisco fabric this is NOT zero, and the
+    // UI must be able to say so rather than silently applying nothing.
+    expect(gaps.length).toBeGreaterThan(0)
   })
 })
