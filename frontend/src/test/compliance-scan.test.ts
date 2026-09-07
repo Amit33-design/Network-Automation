@@ -13,13 +13,21 @@ const BASE_STATE: AppState = {
   scale: 'medium',
   redundancy: 'dual',
   linkDistances: { 'spine-leaf': 100, 'dist-access': 50, 'core-dist': 200, 'wan-edge': 5000 },
+  // AJ2 — this fixture is named "a well-configured design" and is used by the
+  // pass-path tests, but it declared a perimeter firewall and a VXLAN overlay
+  // in its FORM fields while containing neither in `devices` or `configs`.
+  // Once the controls started reading the design, that inconsistency showed up
+  // as a warn. The fixture was the unrealistic part, so it now contains what
+  // it claims.
   devices: [
     { id: 's1', hostname: 'TST-SP-01', role: 'spine', subLayer: 'spine', model: 'N9K', vendor: 'Cisco', count: 2, unitPrice: 35000, totalPrice: 70000, speed: '100G', ports: 64, uplinks: 0, features: [] },
+    { id: 'f1', hostname: 'TST-FW-01', role: 'firewall', subLayer: 'firewall', model: 'FTD 4145', vendor: 'Cisco', count: 2, unitPrice: 90000, totalPrice: 180000, speed: '40G', ports: 8, uplinks: 0, features: [] },
   ],
   cabling: [],
   optics: [],
   configs: {
-    'TST-SP-01': `hostname TST-SP-01\nip ssh version 2\nlogging server 10.0.0.1\nntp server 10.0.0.2\nusername admin password <CHANGE-ME-ADMIN>`,
+    'TST-SP-01': `hostname TST-SP-01\nip ssh version 2\nlogging server 10.0.0.1\nntp server 10.0.0.2\nvrf context TENANT-A\ninterface nve1\nusername admin password <CHANGE-ME-ADMIN>`,
+    'TST-FW-01': `hostname TST-FW-01\nip ssh version 2\nlogging server 10.0.0.1\nntp server 10.0.0.2\nusername admin password <CHANGE-ME-ADMIN>`,
   },
   ztpConfig: {},
   policies: [],
@@ -85,7 +93,14 @@ describe('runComplianceScan', () => {
   })
 
   it('detects missing firewall', () => {
-    const state = { ...BASE_STATE, firewallModel: '' as any }
+    // AJ2 — "missing" now means missing from the DESIGN. A form field left
+    // unset while the BOM contains firewalls is not a finding; a BOM with no
+    // firewall is, whatever the form says.
+    const state = {
+      ...BASE_STATE,
+      firewallModel: '' as never,
+      devices: BASE_STATE.devices.filter(d => d.subLayer !== 'firewall'),
+    }
     const result = runComplianceScan(state)
     const fwControl = result.controls.find(c => c.id === 'PCI-1.1')
     expect(fwControl?.status).toBe('fail')
@@ -354,5 +369,110 @@ describe('SSH controls are per-device (AJ1)', () => {
       .map(v => scan(v).score)
     // Before AJ1: Cisco/Juniper/Nokia 60, Arista/NVIDIA/Extreme 53.
     expect(new Set(scores).size, `scores: ${scores.join(',')}`).toBe(1)
+  })
+})
+
+
+// ── AJ2: controls score the design that was BUILT, not the requirements form ──
+describe('controls read the built design (AJ2)', () => {
+  function scan(useCase: 'dc' | 'campus' | 'gpu', over: Record<string, unknown> = {}) {
+    const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'T' })
+    const configs = generateAllConfigs(devices, useCase)
+    return runComplianceScan({
+      ...BASE_STATE, useCase, devices, configs,
+      compliance: ['PCI', 'HIPAA', 'SOC2', 'FedRAMP', 'ISO27001'] as never,
+      // Deliberately EMPTY form fields — the point is that the design still
+      // scores correctly without them.
+      firewallModel: '', overlayProtocols: [], protoFeatures: [], nacOptions: [],
+      ...over,
+    } as never)
+  }
+
+  const FW_CONTROLS = ['PCI-1.1', 'SOC2-CC6.6', 'FDRP-SC-7']
+  const SEG_CONTROLS = ['PCI-1.3', 'HIPAA-164.312e', 'ISO-A.13.1']
+
+  it('sees firewalls that are in the BOM even with no form field set', () => {
+    // Before AJ2 these read state.firewallModel and reported "No firewall
+    // model selected" on a design whose BOM contains two firewalls — cabled,
+    // configured, with a border-leaf handoff (Z3).
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T' })
+    expect(devices.filter(d => d.subLayer === 'firewall').length,
+      'guard: the DC fixture must contain firewalls').toBeGreaterThan(0)
+    const r = scan('dc')
+    for (const id of FW_CONTROLS) {
+      const c = r.controls.find(x => x.id === id)!
+      expect(c.status, `${id}: ${c.detail}`).toBe('pass')
+      expect(c.detail).toMatch(/firewall\(s\) in the BOM/)
+    }
+  })
+
+  it('still fails honestly when the design really has no firewall', () => {
+    // A GPU fabric has none, and that IS a FedRAMP boundary finding.
+    const devices = buildDeviceList({ useCase: 'gpu', scale: 'medium', siteCode: 'T' })
+    expect(devices.filter(d => d.subLayer === 'firewall')).toEqual([])
+    const r = scan('gpu')
+    expect(r.controls.find(x => x.id === 'FDRP-SC-7')!.status).toBe('fail')
+  })
+
+  it('warns — not passes — when a firewall is asked for but absent from the BOM', () => {
+    const r = scan('gpu', { firewallModel: 'PA-5450' })
+    const c = r.controls.find(x => x.id === 'PCI-1.1')!
+    expect(c.status).toBe('warn')
+    expect(c.detail).toMatch(/not present in the BOM/)
+  })
+
+  it('sees VRF/VXLAN segmentation in the generated configs', () => {
+    const r = scan('dc')
+    for (const id of SEG_CONTROLS) {
+      const c = r.controls.find(x => x.id === id)!
+      expect(c.status, `${id}: ${c.detail}`).toBe('pass')
+      expect(c.detail).toMatch(/VRF \/ VXLAN/)
+    }
+  })
+
+  it('accepts VLAN isolation on campus, and says it is L2-only', () => {
+    // PCI 1.3 names "VRF/VLAN isolation" — a campus with data + mgmt VLANs
+    // satisfies it, but the reader must be able to tell it apart from
+    // VRF-grade separation when scoping a CDE.
+    const r = scan('campus')
+    const c = r.controls.find(x => x.id === 'PCI-1.3')!
+    expect(c.status).toBe('pass')
+    expect(c.detail).toMatch(/L2 isolation only/)
+  })
+
+  it('does not treat a lone default VLAN as segmentation', () => {
+    const devices = buildDeviceList({ useCase: 'campus', scale: 'medium', siteCode: 'T' })
+    const configs = Object.fromEntries(
+      Object.keys(generateAllConfigs(devices, 'campus')).map(h => [h, 'hostname X\nvlan 1\n']),
+    )
+    const r = runComplianceScan({
+      ...BASE_STATE, useCase: 'campus', devices, configs,
+      compliance: ['PCI'] as never,
+      firewallModel: '', overlayProtocols: [], protoFeatures: [], nacOptions: [],
+    } as never)
+    expect(r.controls.find(x => x.id === 'PCI-1.3')!.status).not.toBe('pass')
+  })
+
+  it('does not demand 802.1X on a fabric that has no access ports', () => {
+    // HIPAA 164.312(d) is "person or entity authentication". A spine-leaf
+    // fabric has no user ports; the control there is device AAA, which every
+    // generated config has. A hard FAIL on a DC fabric was simply wrong.
+    const r = scan('dc')
+    const c = r.controls.find(x => x.id === 'HIPAA-164.312d')!
+    expect(c.status, c.detail).toBe('pass')
+    expect(c.detail).toMatch(/No access ports|802\.1X/)
+  })
+
+  it('does demand 802.1X where there IS an access layer', () => {
+    const devices = buildDeviceList({ useCase: 'campus', scale: 'medium', siteCode: 'T' })
+    const configs = Object.fromEntries(
+      Object.entries(generateAllConfigs(devices, 'campus'))
+        .map(([h, c]) => [h, c.replace(/dot1x|authentication port-control/gi, 'xxx')]),
+    )
+    const r = runComplianceScan({
+      ...BASE_STATE, useCase: 'campus', devices, configs, compliance: ['HIPAA'] as never,
+      firewallModel: '', overlayProtocols: [], protoFeatures: [], nacOptions: [],
+    } as never)
+    expect(r.controls.find(x => x.id === 'HIPAA-164.312d')!.status).toBe('fail')
   })
 })

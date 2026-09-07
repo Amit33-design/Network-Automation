@@ -85,12 +85,10 @@ function everyDeviceHas(
 }
 
 const PCI_CONTROLS: ControlChecker[] = [
-  (state, _configs) => ({
+  (state, _configs, devices) => ({
     id: 'PCI-1.1', framework: 'PCI', category: 'Firewall',
     requirement: 'Firewall deployed between all network segments',
-    ...state.firewallModel && state.firewallModel !== 'none'
-      ? { status: 'pass', detail: `Firewall model: ${state.firewallModel}` }
-      : { status: 'fail', detail: 'No firewall model selected in design requirements' },
+    ...firewallControl(state, devices, 'fail'),
   }),
   (_state, configs) => ({
     id: 'PCI-2.1', framework: 'PCI', category: 'Credentials',
@@ -144,13 +142,10 @@ const PCI_CONTROLS: ControlChecker[] = [
       ? { status: 'pass', detail: `NAC: ${state.nacOptions.join(', ')}` }
       : { status: 'warn', detail: 'No NAC options selected — consider 802.1X for CDE segments' },
   }),
-  (state) => ({
+  (state, configs) => ({
     id: 'PCI-1.3', framework: 'PCI', category: 'Segmentation',
     requirement: 'Network segmentation (VRF/VLAN isolation)',
-    ...state.overlayProtocols.some(o => o.includes('VXLAN'))
-      || state.protoFeatures.includes('VRF/Tenant')
-      ? { status: 'pass', detail: 'VXLAN/EVPN or VRF segmentation enabled' }
-      : { status: 'warn', detail: 'No overlay/VRF segmentation — consider VXLAN/EVPN for CDE isolation' },
+    ...segmentationControl(state, configs, 'warn'),
   }),
 ]
 
@@ -170,12 +165,20 @@ const HIPAA_CONTROLS: ControlChecker[] = [
     status: 'pass' as const,
     detail: 'Config drift detection available in Day-2 Ops',
   }),
-  (state) => ({
+  (_state, configs, devices) => ({
     id: 'HIPAA-164.312d', framework: 'HIPAA', category: 'Authentication',
     requirement: 'Network access authentication',
-    ...state.nacOptions.length > 0 || state.protoFeatures.includes('802.1X')
-      ? { status: 'pass', detail: '802.1X / NAC authentication configured' }
-      : { status: 'fail', detail: 'No network access authentication configured' },
+    // 164.312(d) is "person or entity authentication". On an access layer that
+    // means 802.1X; a spine-leaf fabric has no user ports to authenticate, and
+    // the control there is device AAA (TACACS+/RADIUS) — which every generated
+    // config has. Reporting a hard FAIL on a DC fabric was simply wrong.
+    ...hasInConfigs(configs, RE_DOT1X)
+      ? { status: 'pass' as const, detail: '802.1X port authentication configured on the access layer' }
+      : hasAccessPorts(devices)
+        ? { status: 'fail' as const, detail: 'Access layer present but no 802.1X port authentication configured' }
+        : hasInConfigs(configs, /aaa|radius|tacacs/i)
+          ? { status: 'pass' as const, detail: 'No access ports in this design — device AAA (TACACS+/RADIUS) is the applicable control' }
+          : { status: 'fail' as const, detail: 'No network access authentication configured' },
   }),
   (state) => ({
     id: 'HIPAA-164.308a5', framework: 'HIPAA', category: 'Audit',
@@ -190,13 +193,10 @@ const HIPAA_CONTROLS: ControlChecker[] = [
     status: 'warn' as const,
     detail: 'Verify physical access controls at site — outside design scope',
   }),
-  (state) => ({
+  (state, configs) => ({
     id: 'HIPAA-164.312e', framework: 'HIPAA', category: 'Network',
     requirement: 'Network segmentation for PHI workloads',
-    ...state.overlayProtocols.some(o => o.includes('VXLAN'))
-      || state.protoFeatures.includes('VRF/Tenant')
-      ? { status: 'pass', detail: 'VXLAN/EVPN or VRF segmentation for PHI isolation' }
-      : { status: 'fail', detail: 'No network segmentation for PHI workloads' },
+    ...segmentationControl(state, configs, 'fail'),
   }),
 ]
 
@@ -210,12 +210,10 @@ const SOC2_CONTROLS: ControlChecker[] = [
         ? { status: 'na', detail: 'No configs generated yet' }
         : { status: 'warn', detail: 'Verify access controls on devices' },
   }),
-  (state) => ({
+  (state, _configs, devices) => ({
     id: 'SOC2-CC6.6', framework: 'SOC2', category: 'Boundary Protection',
     requirement: 'Boundary protection (firewall/ACL)',
-    ...state.firewallModel && state.firewallModel !== 'none'
-      ? { status: 'pass', detail: `Firewall model: ${state.firewallModel}` }
-      : { status: 'warn', detail: 'No firewall — verify boundary controls' },
+    ...firewallControl(state, devices, 'warn'),
   }),
   (_state) => ({
     id: 'SOC2-CC7.2', framework: 'SOC2', category: 'Monitoring',
@@ -276,12 +274,10 @@ const FEDRAMP_CONTROLS: ControlChecker[] = [
         ? { status: 'na', detail: 'No configs generated yet' }
         : { status: 'fail', detail: 'Audit logging not found in configs' },
   }),
-  (state) => ({
+  (state, _configs, devices) => ({
     id: 'FDRP-SC-7', framework: 'FedRAMP', category: 'Boundary',
     requirement: 'Boundary protection at all authorization boundaries',
-    ...state.firewallModel && state.firewallModel !== 'none'
-      ? { status: 'pass', detail: `Firewall deployed: ${state.firewallModel}` }
-      : { status: 'fail', detail: 'No firewall — FedRAMP requires boundary protection' },
+    ...firewallControl(state, devices, 'fail'),
   }),
 ]
 
@@ -299,19 +295,19 @@ const ISO27001_CONTROLS: ControlChecker[] = [
     status: 'pass' as const,
     detail: 'Monitoring stack with alerting available',
   }),
-  (state) => ({
+  (state, configs) => ({
     id: 'ISO-A.13.1', framework: 'ISO27001', category: 'Network Security',
     requirement: 'Network segmentation and controls',
-    ...state.overlayProtocols.length > 0 || state.protoFeatures.includes('VRF/Tenant')
-      ? { status: 'pass', detail: 'Network segmentation via overlay/VRF' }
-      : { status: 'warn', detail: 'No overlay or VRF segmentation detected' },
+    ...segmentationControl(state, configs, 'warn'),
   }),
-  (state) => ({
+  (state, configs) => ({
     id: 'ISO-A.14.1', framework: 'ISO27001', category: 'Cryptography',
     requirement: 'Cryptographic controls for data protection',
-    ...state.vpnType === 'ipsec' || state.protoFeatures.includes('MACsec')
-      ? { status: 'pass', detail: 'IPsec/MACsec encryption configured' }
-      : { status: 'warn', detail: 'No encryption overlay — verify data protection requirements' },
+    ...hasInConfigs(configs, RE_ENCRYPTION)
+      ? { status: 'pass' as const, detail: 'IPsec/MACsec encryption present in the generated configs' }
+      : state.vpnType === 'ipsec' || state.protoFeatures.includes('MACsec')
+        ? { status: 'warn' as const, detail: 'Encryption requested but not found in the generated configs' }
+        : { status: 'warn' as const, detail: 'No encryption overlay — verify data protection requirements' },
   }),
   (state) => ({
     id: 'ISO-A.17.1', framework: 'ISO27001', category: 'Continuity',
@@ -363,6 +359,98 @@ const NIST_CSF_CONTROLS: ControlChecker[] = [
     detail: 'Platform-native rollback strategies configured in Deploy Pipeline',
   }),
 ]
+
+// ── AJ2: score the design that was BUILT, not the requirements form ──────────
+//
+// Several controls read Step-2 form fields (`firewallModel`, `overlayProtocols`,
+// `nacOptions`) and ignored `devices` and `configs` entirely. Measured on a
+// generated DC design: PCI-1.1 / SOC2-CC6.6 / FDRP-SC-7 reported "No firewall
+// model selected" on a design whose BOM contains two firewalls — cabled,
+// configured, with a border-leaf handoff — and PCI-1.3 / HIPAA-164.312e
+// reported "no segmentation" on a VXLAN/EVPN fabric carrying a TENANT-A VRF.
+// A compliance report that contradicts the artifacts it was handed is the
+// BOM-vs-config disagreement theme, one layer up.
+//
+// These read the design first and fall back to the form only as corroboration.
+
+const RE_SEGMENTATION = new RegExp([
+  'vrf\\s+context',          // NX-OS
+  'vrf\\s+instance',         // Arista EOS
+  'vrf\\s+definition',       // IOS-XE
+  'routing-instances',       // Junos
+  'network-instance',        // Nokia SR Linux
+  'nv\\s+set\\s+vrf',         // NVIDIA NVUE
+  'ip\\s+vrf',               // Dell OS10 / legacy IOS
+  'virtual-router',          // Extreme EXOS
+  'interface\\s+nve',        // VXLAN (NX-OS)
+  'interface\\s+Vxlan',      // VXLAN (EOS)
+  'vxlan',                   // generic VXLAN / VNI mapping
+].join('|'), 'i')
+
+const RE_DOT1X = /dot1x\s+system-auth-control|authentication\s+port-control|dot1x\s+pae/i
+const RE_ENCRYPTION = /macsec|crypto\s+ipsec|security\s+ipsec|set\s+security\s+ipsec|tunnel\s+protection/i
+
+/** Firewalls actually present in the BOM, whatever the form says. */
+function firewallDevices(devices: BOMDevice[]): BOMDevice[] {
+  return devices.filter(d => d.subLayer === 'firewall' || d.role === 'firewall')
+}
+
+/** Access-layer ports exist, so 802.1X is applicable at all. */
+function hasAccessPorts(devices: BOMDevice[]): boolean {
+  return devices.some(d => d.subLayer === 'access' || d.subLayer === 'distribution')
+}
+
+function firewallControl(
+  state: AppState, devices: BOMDevice[], failStatus: ComplianceStatus,
+): { status: ComplianceStatus; detail: string } {
+  const fws = firewallDevices(devices)
+  if (fws.length > 0) {
+    const models = [...new Set(fws.map(d => d.model))].join(', ')
+    const count = fws.reduce((n, d) => n + Math.max(1, d.count), 0)
+    return { status: 'pass', detail: `${count} firewall(s) in the BOM: ${models}` }
+  }
+  if (state.firewallModel && state.firewallModel !== 'none') {
+    return { status: 'warn', detail: `Firewall "${state.firewallModel}" selected but not present in the BOM` }
+  }
+  return { status: failStatus, detail: 'No firewall in the design' }
+}
+
+/**
+ * Distinct non-default VLAN ids across the fleet. Isolation needs at least two
+ * segments, so a lone `vlan 1` is not segmentation — and every switch config
+ * mentions the word, which would otherwise make the check trivially true.
+ */
+function dataVlanIds(configs: Record<string, string>): Set<string> {
+  const ids = new Set<string>()
+  for (const cfg of Object.values(configs)) {
+    for (const m of cfg.matchAll(/^\s*vlan\s+(\d{1,4})\b/gim)) {
+      if (m[1] !== '1') ids.add(m[1])
+    }
+  }
+  return ids
+}
+
+function segmentationControl(
+  state: AppState, configs: Record<string, string>, failStatus: ComplianceStatus,
+): { status: ComplianceStatus; detail: string } {
+  if (hasInConfigs(configs, RE_SEGMENTATION)) {
+    return { status: 'pass', detail: 'VRF / VXLAN segmentation present in the generated configs' }
+  }
+  // VLAN isolation is the campus form of the same control — PCI 1.3 names it
+  // explicitly ("VRF/VLAN isolation"). Said separately from VRF-grade
+  // separation, because that distinction matters when scoping a CDE.
+  const vlans = dataVlanIds(configs)
+  if (vlans.size >= 2) {
+    return {
+      status: 'pass',
+      detail: `VLAN segmentation across ${vlans.size} VLANs (no VRF/overlay — L2 isolation only)`,
+    }
+  }
+  if (state.overlayProtocols.some(o => o.includes('VXLAN')) || state.protoFeatures.includes('VRF/Tenant')) {
+    return { status: 'warn', detail: 'Segmentation requested but not found in the generated configs' }
+  }
+  return { status: failStatus, detail: 'No VRF or overlay segmentation in the design' }
+}
 
 const FRAMEWORK_CONTROLS: Record<Compliance, ControlChecker[]> = {
   PCI: PCI_CONTROLS,
