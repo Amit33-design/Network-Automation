@@ -1159,6 +1159,14 @@ class LikelyCauseModel(BaseModel):
     indicators: list[str]
 
 
+class PlatformCoverageModel(BaseModel):
+    requested:           str
+    resolved:            str
+    covered:             bool
+    supported_platforms: list[str]
+    note:                str | None = None
+
+
 class TroubleshootResponse(BaseModel):
     symptom:          str
     category:         str
@@ -1166,6 +1174,8 @@ class TroubleshootResponse(BaseModel):
     diagnostic_steps: list[DiagnosticStepModel]
     likely_causes:    list[LikelyCauseModel]
     remediation:      list[str]
+    # AG10 — states whether the playbooks actually cover the requested NOS.
+    platform_coverage: PlatformCoverageModel | None = None
 
 
 @app.post("/api/troubleshoot", response_model=TroubleshootResponse)

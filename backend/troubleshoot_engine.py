@@ -21,6 +21,12 @@ from typing import Any
 
 from monitor_engine import diagnose as _diagnose, ISSUES
 
+try:
+    from platform_coverage import best_platform_for_vendor, coverage_report, ENGINE_PLATFORMS, VENDOR_NOS
+except ImportError:  # pragma: no cover - package-relative import
+    from .platform_coverage import best_platform_for_vendor, coverage_report, ENGINE_PLATFORMS, VENDOR_NOS  # type: ignore
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data model
 # ─────────────────────────────────────────────────────────────────────────────
@@ -66,6 +72,10 @@ class Runbook:
     steps:       list[RunbookStep]
     total_steps: int
     estimated_minutes: int
+    # AG10 — False when `platform` is a substitution because the detected
+    # vendor's NOS has no runbook command variants.
+    platform_covered: bool = True
+    platform_note:    str | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -804,7 +814,7 @@ def build_runbook(state: dict[str, Any], rca: RootCauseAnalysis) -> Runbook:
             estimated_minutes=20,
         )
 
-    platform = _best_platform(state)
+    platform, covered = _best_platform_covered(state)
     raw_steps = _RUNBOOKS.get(top.root_cause_id, _GENERIC_RUNBOOK)
     steps = [_step_from_dict(i+1, s, platform) for i, s in enumerate(raw_steps)]
 
@@ -818,32 +828,67 @@ def build_runbook(state: dict[str, Any], rca: RootCauseAnalysis) -> Runbook:
         steps=steps,
         total_steps=len(steps),
         estimated_minutes=est_mins,
+        platform_covered=covered,
+        platform_note=None if covered else coverage_report(
+            VENDOR_NOS.get(state.get("_detected_vendor", ""), "")
+        ).get("note"),
     )
 
 
+def resolve_commands(cmds_dict: dict, platform: str) -> tuple[str, list[str]]:
+    """
+    Pick a step's commands, returning ``(actual_platform, commands)``.
+
+    AG10: the caller used to label the result with the platform it ASKED for
+    (``commands={platform: cmds}``) even when the fallback had handed back a
+    different platform's list — so a Juniper runbook presented NX-OS commands
+    under a ``junos`` key, with no way for the reader to tell. The key now says
+    what the commands actually are.
+    """
+    if cmds_dict.get(platform):
+        return platform, cmds_dict[platform]
+    if cmds_dict.get("all"):
+        return "all", cmds_dict["all"]
+    for key, val in cmds_dict.items():
+        if val:
+            return key, val
+    return platform, []
+
+
 def _step_from_dict(num: int, d: dict, platform: str) -> RunbookStep:
-    cmds_dict = d["commands"]
-    # Pick platform commands, fallback to "all" or first available
-    cmds = cmds_dict.get(platform) or cmds_dict.get("all") or list(cmds_dict.values())[0]
+    actual, cmds = resolve_commands(d["commands"], platform)
     return RunbookStep(
         phase=d["phase"],
         step_num=num,
         title=d["title"],
         description=d["description"],
-        commands={platform: cmds},
+        commands={actual: cmds},
         expected=d["expected"],
         escalate_if=d["escalate_if"],
     )
 
 
 def _best_platform(state: dict[str, Any]) -> str:
+    """
+    Pick a runbook platform from the detected vendor.
+
+    AG10: this used to auto-select ``nxos`` for every vendor that was not
+    Arista or Juniper, so a Nokia / Extreme / Cumulus / Dell fleet was handed
+    Cisco commands with nothing saying so. It still has to return something,
+    but the substitution is now reported — see ``_platform_coverage``.
+    """
+    return _best_platform_covered(state)[0]
+
+
+def _best_platform_covered(state: dict[str, Any]) -> tuple[str, bool]:
+    """``(platform, covered)`` — False means the platform is a substitution."""
     vendor = state.get("_detected_vendor", "")
     uc     = state.get("uc", "dc")
-    if vendor == "Arista":  return "eos"
-    if vendor == "Juniper": return "junos"
-    if uc == "gpu":         return "sonic"
-    if uc == "campus":      return "iosxe"
-    return "nxos"
+    # The engine additionally carries SONiC command sets, so it resolves
+    # against ENGINE_PLATFORMS rather than the narrower playbook set. It no
+    # longer infers "GPU design => SONiC": a use case is not a NOS, and the
+    # browser emits Cumulus NVUE for NVIDIA hardware (AB7b).
+    return best_platform_for_vendor(vendor, uc, ENGINE_PLATFORMS)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

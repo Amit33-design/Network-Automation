@@ -33,6 +33,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { validateBOM } from '@/lib/bom'
+import { troubleshootCoverage, TROUBLESHOOT_PLATFORM_LABEL, TROUBLESHOOT_PLATFORMS } from '@/lib/troubleshoot-coverage'
 import { buildAnsibleInventory, buildAnsiblePlaybook } from '@/lib/ansible-export'
 import { buildRunbook, runbookFilename } from '@/lib/runbook'
 import { CHANGE_CATALOG, getChangeOp, buildChangeSet, changeSetToScript, changeSetRollbackScript, validateChangeParams, analyzeChangeSet, FAMILY_LABEL, type ChangeWarning } from '@/lib/config-update'
@@ -2735,7 +2736,16 @@ export function Step6Deploy() {
 
   // ── Troubleshooting Tooling Engine state (G-A19) ──────────────────────────
   const [tsSymptom, setTsSymptom] = useState('bgp_down')
-  const [tsPlatform, setTsPlatform] = useState('nxos')
+  // AG10 — the playbooks carry command variants for four NOSes only. Derive
+  // what THIS design runs so the tab can say which devices it cannot serve,
+  // and default the selector to a platform the fleet actually has rather than
+  // a hardcoded 'nxos'.
+  const tsCoverage = useMemo(() => troubleshootCoverage(storeDevices), [storeDevices])
+  const [tsPlatform, setTsPlatform] = useState<string>(tsCoverage.suggested)
+  const tsPlatformPinned = useRef(false)
+  useEffect(() => {
+    if (!tsPlatformPinned.current) setTsPlatform(tsCoverage.suggested)
+  }, [tsCoverage.suggested])
   const [tsDevicesNote, setTsDevicesNote] = useState('')
   const [tsResult, setTsResult] = useState<TroubleshootResult | null>(null)
   const { mutate: runTs, isPending: tsRunning } = useTroubleshoot()
@@ -5414,14 +5424,16 @@ export function Step6Deploy() {
                 <label className="text-xs text-gray-400 block mb-1">Platform</label>
                 <select
                   value={tsPlatform}
-                  onChange={e => setTsPlatform(e.target.value)}
+                  onChange={e => { tsPlatformPinned.current = true; setTsPlatform(e.target.value) }}
                   className="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200
                              focus:outline-none focus:border-blue-500"
                 >
-                  <option value="nxos">NX-OS</option>
-                  <option value="iosxe">IOS-XE</option>
-                  <option value="eos">Arista EOS</option>
-                  <option value="junos">Juniper JunOS</option>
+                  {TROUBLESHOOT_PLATFORMS.map(p => (
+                    <option key={p} value={p}>
+                      {TROUBLESHOOT_PLATFORM_LABEL[p]}
+                      {tsCoverage.covered.includes(p) ? ' — in this design' : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="flex-1 min-w-[180px]">
@@ -5445,6 +5457,32 @@ export function Step6Deploy() {
                 )}
               </Button>
             </div>
+
+            {/* AG10 — platform coverage against THIS design. The playbooks carry
+                command variants for four NOSes; every other NOS falls through to
+                the Cisco-family base, which is a "command not found" during an
+                investigation. Say so before the operator copies a command. */}
+            {tsCoverage.uncovered.length > 0 && (
+              <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <IconWarnTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-gray-300 leading-relaxed">
+                    <span className="font-semibold text-amber-300">
+                      Diagnostics cover {tsCoverage.coveredCount} of {tsCoverage.coveredCount + tsCoverage.uncoveredCount} devices in this design.
+                    </span>
+                    {' '}Playbooks carry command variants for NX-OS, IOS-XE, Arista EOS and Juniper
+                    JunOS only. {tsCoverage.uncoveredCount} device{tsCoverage.uncoveredCount === 1 ? '' : 's'}
+                    {' '}run {tsCoverage.uncoveredLabels.join(', ')} — the commands below are
+                    Cisco-family and will not run there. Use the vendor&apos;s own CLI for those; the
+                    diagnostic <em>sequence</em> (what to check, in what order) still applies.
+                    <div className="mt-1 text-[11px] text-gray-500">
+                      Not covered: {tsCoverage.uncoveredDevices.slice(0, 8).join(', ')}
+                      {tsCoverage.uncoveredDevices.length > 8 && ` +${tsCoverage.uncoveredDevices.length - 8} more`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </Card>
 
           {tsResult && (
