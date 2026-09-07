@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { generateConfig, generateAllConfigs, isFtdModel } from '@/lib/configgen'
+import { buildDeviceList } from '@/lib/bom'
 import type { BOMDevice } from '@/types'
 
 function makeDevice(overrides: Partial<BOMDevice> = {}): BOMDevice {
@@ -2344,5 +2345,67 @@ describe('Final Z5b remainders (J3-3 / J3-8 / N3-4)', () => {
       makeDevice({ id: 'l1', hostname: 'H-LEAF-A01', vendor: 'NVIDIA', subLayer: 'leaf', role: 'leaf', ports: 64, uplinks: 8 }),
     ] as BOMDevice[], 'campus')
     expect(dc['l1'] ?? '').not.toMatch(/mlnx_qos/)
+  })
+})
+
+
+// ── AJ1: management-plane SSH hardening on every fabric device ───────────────
+describe('SSH management-plane hardening (AJ1)', () => {
+  const RE_SSH = /transport\s+input\s+ssh|ssh\s+version\s+2|protocol-version\s+v2|ssh-server|enable\s+ssh2|management\s+ssh|ip\s+ssh\s+server|configure\s+ssh-access-list/i
+
+  it('every device in every vendor x use-case design has SSH hardening', () => {
+    // Measured before this landed: Cisco DC had it on 4 of 14 devices, and
+    // Arista / NVIDIA / Dell EMC on 0 of 14 — the NX-OS spine emitted
+    // `ssh version 2` while the leaf emitted nothing, and Arista had the same
+    // spine/leaf split. Campus was fine, so the gap was specifically the fabric.
+    const vendors = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks']
+    for (const vendor of vendors) {
+      for (const uc of ['dc', 'campus', 'gpu'] as const) {
+        const devices = buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+        const configs = generateAllConfigs(devices, uc)
+        const missing = devices.filter(d => !RE_SSH.test(configs[d.id] ?? ''))
+        expect(missing.map(d => `${d.hostname}(${d.vendor})`), `${vendor}/${uc}`).toEqual([])
+      }
+    }
+  })
+
+  it('states Telnet explicitly rather than relying on a platform default', () => {
+    // An auditor reads the config, not the default — and the explicit line is
+    // also what stops a later change quietly re-enabling it.
+    const cases: Array<[string, RegExp]> = [
+      ['Cisco', /no feature telnet/],
+      ['Arista', /no management telnet/],
+      ['Dell EMC', /no ip telnet server enable/],
+      ['Extreme Networks', /disable telnet/],
+    ]
+    for (const [vendor, re] of cases) {
+      const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const configs = generateAllConfigs(devices, 'dc')
+      const fabric = devices.filter(d => d.subLayer === 'spine' || d.subLayer === 'leaf')
+      expect(fabric.length, `guard: ${vendor} produced no fabric devices`).toBeGreaterThan(0)
+      for (const d of fabric) expect(configs[d.id], `${vendor} ${d.hostname}`).toMatch(re)
+    }
+  })
+
+  it('emits one shared block per CLI family rather than five inline copies', () => {
+    // The gap existed because the management plane was written out per
+    // generator and the copies drifted. Spine and leaf must now agree.
+    for (const vendor of ['Cisco', 'Arista', 'NVIDIA', 'Dell EMC']) {
+      const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const configs = generateAllConfigs(devices, 'dc')
+      const spine = devices.find(d => d.subLayer === 'spine')!
+      const leaf = devices.find(d => d.subLayer === 'leaf')!
+      const grab = (cfg: string) => (cfg.match(/SSH \/ REMOTE ACCESS[\s\S]*?\n[!#]\n/) ?? [''])[0]
+      expect(grab(configs[spine.id]), vendor).toBe(grab(configs[leaf.id]))
+      expect(grab(configs[spine.id]).length, `${vendor}: no shared block found`).toBeGreaterThan(0)
+    }
+  })
+
+  it('keeps every credential a placeholder', () => {
+    const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T' })
+    const configs = generateAllConfigs(devices, 'dc')
+    for (const cfg of Object.values(configs)) {
+      expect(cfg).not.toMatch(/password\s+(?!<CHANGE-ME)[A-Za-z0-9!@#$%]{6,}/)
+    }
   })
 })

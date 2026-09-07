@@ -1312,6 +1312,27 @@ config-gen tests must keep passing; add new tests alongside).
 |---|------|--------|-------|
 | AI1 | **The SNMP exporter inherited the gNMI filter, so it omitted exactly the devices it exists to cover** — `genSNMPExporterConfig` and `genSNMPPrometheusJob` both called `buildTelemetryTargets`, which drops anything without a gNMI server *and* every firewall. Measured before the fix: **every** design lost both firewalls from **both** configs (a Cisco DC monitored 12 of 14); an **Extreme Networks DC design monitored 0 of 14**, and a **Fortinet campus design 0 of 18** — with nothing in the UI saying so, so the fleet looked monitored. Split into `buildTelemetryTargets` (gNMI: excludes firewalls, whose NOSes expose management APIs rather than an OpenConfig server, and anything `speaksGnmi` rejects) and new `buildSnmpTargets` (every network element — SNMP is universal; only compute/host tiers are out of scope, and they are named). New `telemetryCoverage(devices)` → `{gnmi, snmpOnly, excluded, unmonitored}` drives a coverage line in the Monitoring tab's Observability Downloads card: how many stream, how many are SNMP-polled only and which NOSes those are, and a red chip if anything lands in **no** collector. 5 tests including a 5-vendor × 3-use-case sweep asserting `unmonitored` is empty everywhere; reverting the SNMP target list trips 1 | [x] | `lib/telemetry-gen.ts` `buildSnmpTargets`/`telemetryCoverage`/`SNMP_PORT`/`HOST_SUBLAYERS`, `Step6Deploy.tsx`; `telemetry-gen.test.ts` 29→34; 1501 tests, tsc + build green |
 
+### AJ. Management-plane SSH hardening (sourced 2026-09-07)
+
+> Found by measuring the compliance scanner per vendor rather than trusting its
+> score. Arista/NVIDIA/Dell/Extreme DC designs failed PCI-2.3 and FDRP-AC-17
+> ("SSH v2 only — no Telnet") where Cisco/Juniper/Nokia passed — the M4/AG5
+> "one vendor set over" signature. Reading the generated configs showed the
+> **score was the least of it**.
+>
+> Per-device, on a DC design: **Cisco 4 of 14** devices have any SSH hardening;
+> **Arista, NVIDIA and Dell EMC 0 of 14**. The NX-OS *spine* emits
+> `ssh version 2` and the *leaf* emits nothing; Arista's spine has
+> `management ssh` and its leaf nothing; Cumulus and OS10 have none at either
+> role. Campus is fine (16–18 of 18), so this is specifically the fabric.
+>
+> And the scanner hid it: the control uses `hasInConfigs` (**any one** device),
+> so a Cisco DC with 4 of 14 hardened reported **PASS** on "SSH v2 only".
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| AJ1 | **The fabric had no SSH hardening, and the scanner said it did** — two coupled defects, so fixed together. (a) **Real config gap**: the NX-OS *spine* emitted `ssh version 2` and the *leaf* emitted **nothing**; Arista's spine had `management ssh` and its leaf nothing; NVIDIA Cumulus and Dell OS10 had none at either role. Per-device on a DC design: **Cisco 4 of 14**, **Arista / NVIDIA / Dell EMC 0 of 14** (campus was fine, so the gap was specifically the fabric — the "fix landed on one role, one vendor" signature). New shared `sshHardeningBlock(family)` — one block per CLI family rather than five inline copies, since a duplicated management plane is what drifted in the first place — wired into all five generators, with Telnet stated **explicitly** (`no feature telnet` / `no management telnet` / `no ip telnet server enable`) rather than left to the platform default: an auditor reads the config, not the default, and the explicit line is what stops a later change re-enabling it. Now 14/14 on every vendor × use case. (b) **The scanner hid it**: PCI-2.3 and FDRP-AC-17 used `hasInConfigs` (**any one** device), so a Cisco DC with 4 of 14 hardened reported a clean **PASS** on "SSH v2 only — no Telnet". New `everyDeviceHas()` — `pass` only at full coverage, `warn` with the count and the first offenders named, `fail` at zero. And `RE_SSH_V2` was Cisco/Juniper/Nokia-only (M3/M4/AG5 signature again), missing Arista `management ssh`, Extreme `enable ssh2`, Cumulus NVUE, Dell `ip ssh server` and the FTD `configure ssh-access-list` (Firepower has no `ip ssh version 2` — the access-list *is* the control). The compliance score was vendor-dependent (Cisco/Juniper/Nokia 60, Arista/NVIDIA/Extreme 53, Dell 50); it is now identical across vendors, and honestly so. 8 tests incl. a 7-vendor × 3-use-case sweep and a partial-coverage case; reverting either half trips 5 and 1 | [x] | `lib/configgen.ts` `sshHardeningBlock`/`SshFamily` + nxos/arista spine+leaf, cumulus, dellos10; `lib/compliance-scan.ts` `everyDeviceHas`/`RE_SSH_V2`; `configgen.test.ts` 250→254, `compliance-scan.test.ts` 29→33; 1509 tests, tsc + build green |
+
 ### AH. Visual design pass (user request, 2026-09-04)
 
 > "Improve layout and design like a top enterprise level application with

@@ -34,7 +34,13 @@ type ControlChecker = (state: AppState, configs: Record<string, string>, devices
 //                 Juniper `protocol-version v2`, Nokia `ssh-server`
 //   Syslog:       Cisco `logging host`, Juniper `syslog`, Nokia `logging {` / `remote-server`
 //   NTP:          Cisco/Juniper `ntp server`, Nokia `ntp {`
-const RE_SSH_V2 = /transport\s+input\s+ssh|ssh\s+version\s+2|protocol-version\s+v2|ssh-server/i
+// AJ1 — widened again, and for the same reason M3/M4/AG5 kept recurring: the
+// detector knew Cisco/Juniper/Nokia spellings only, so Arista `management ssh`,
+// Extreme `enable ssh2`, Cumulus NVUE `ssh-server state enabled`, Dell OS10
+// `ip ssh server` and the FTD `configure ssh-access-list` (Firepower has no
+// `ip ssh version 2` — SSH is on and the access-list is the control) were all
+// read as "no SSH", producing false PCI-2.3 / FDRP-AC-17 failures.
+const RE_SSH_V2 = /transport\s+input\s+ssh|ssh\s+version\s+2|protocol-version\s+v2|ssh-server|enable\s+ssh2|management\s+ssh|ip\s+ssh\s+server|configure\s+ssh-access-list/i
 const RE_SYSLOG = /logging\s+(?:server|host|remote)|syslog|remote-server|logging\s*\{/i
 const RE_NTP = /ntp\s+server|ntp\s+source|ntp\s*\{/i
 
@@ -45,6 +51,37 @@ function hasInConfigs(configs: Record<string, string>, pattern: RegExp): boolean
 function allConfigsHave(configs: Record<string, string>, pattern: RegExp): boolean {
   const vals = Object.values(configs)
   return vals.length > 0 && vals.every(c => pattern.test(c))
+}
+
+/**
+ * Per-device coverage of a control — AJ1.
+ *
+ * `hasInConfigs` asks whether ANY ONE device matches, which is the wrong
+ * question for a control phrased "on all devices". Measured before this
+ * existed: a Cisco DC design with SSH hardening on 4 of 14 devices reported a
+ * clean PASS on PCI-2.3 "SSH v2 only — no Telnet". A compliance report that
+ * says compliant while 10 of 14 devices are not is worse than no report.
+ *
+ * Returns a control fragment: `pass` only at full coverage, `warn` when some
+ * devices are covered (with the count and the first few offenders named, so
+ * the gap is actionable), `fail` at zero, `na` with no configs.
+ */
+function everyDeviceHas(
+  configs: Record<string, string>,
+  pattern: RegExp,
+  labels: { pass: string; partial: string; fail: string },
+): { status: ComplianceStatus; detail: string } {
+  const entries = Object.entries(configs)
+  if (entries.length === 0) return { status: 'na', detail: 'No configs generated yet' }
+  const missing = entries.filter(([, cfg]) => !pattern.test(cfg)).map(([host]) => host)
+  const covered = entries.length - missing.length
+  if (missing.length === 0) return { status: 'pass', detail: labels.pass }
+  const named = missing.slice(0, 3).join(', ')
+  const more = missing.length > 3 ? ` +${missing.length - 3} more` : ''
+  const where = ` — ${covered}/${entries.length} devices; missing on ${named}${more}`
+  return covered === 0
+    ? { status: 'fail', detail: labels.fail + where }
+    : { status: 'warn', detail: labels.partial + where }
 }
 
 const PCI_CONTROLS: ControlChecker[] = [
@@ -67,11 +104,11 @@ const PCI_CONTROLS: ControlChecker[] = [
   (_state, configs) => ({
     id: 'PCI-2.3', framework: 'PCI', category: 'Encryption',
     requirement: 'SSH v2 only — no Telnet',
-    ...hasInConfigs(configs, RE_SSH_V2)
-      ? { status: 'pass', detail: 'SSH v2 enforced in device configs' }
-      : Object.values(configs).length === 0
-        ? { status: 'na', detail: 'No configs generated yet' }
-        : { status: 'fail', detail: 'SSH v2 enforcement not found in configs' },
+    ...everyDeviceHas(configs, RE_SSH_V2, {
+      pass:    'SSH v2 enforced on every device',
+      partial: 'SSH v2 not enforced on every device',
+      fail:    'SSH v2 enforcement not found in configs',
+    }),
   }),
   (_state, configs) => ({
     id: 'PCI-6.1', framework: 'PCI', category: 'Logging',
@@ -212,11 +249,11 @@ const FEDRAMP_CONTROLS: ControlChecker[] = [
   (_state, configs) => ({
     id: 'FDRP-AC-17', framework: 'FedRAMP', category: 'Remote Access',
     requirement: 'Remote access via encrypted channel only',
-    ...hasInConfigs(configs, RE_SSH_V2)
-      ? { status: 'pass', detail: 'SSH v2 only for remote management' }
-      : Object.values(configs).length === 0
-        ? { status: 'na', detail: 'No configs generated yet' }
-        : { status: 'fail', detail: 'Ensure SSH v2 only for all remote access' },
+    ...everyDeviceHas(configs, RE_SSH_V2, {
+      pass:    'SSH v2 only for remote management on every device',
+      partial: 'Encrypted remote access not enforced on every device',
+      fail:    'Ensure SSH v2 only for all remote access',
+    }),
   }),
   (_state) => ({
     id: 'FDRP-CM-6', framework: 'FedRAMP', category: 'Configuration',
