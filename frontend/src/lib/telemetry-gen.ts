@@ -99,31 +99,107 @@ export interface TelemetryTarget {
   role:     string
 }
 
-/** Expand BOM devices (capped at 4 instances each) into per-device gNMI targets. */
-export function buildTelemetryTargets(devices: BOMDevice[]): TelemetryTarget[] {
+/** Compute/host tiers — not network elements, so out of scope for both collectors. */
+const HOST_SUBLAYERS = new Set(['gpu-compute'])
+
+/** SNMP is universal: every network element has an agent, firewalls included. */
+export const SNMP_PORT = 161
+
+function expand(
+  devices: BOMDevice[],
+  pick: (dev: BOMDevice) => { os: string; port: number } | null,
+): TelemetryTarget[] {
   const targets: TelemetryTarget[] = []
   let octet = 11
   for (const dev of devices) {
-    if (dev.subLayer === 'firewall' || dev.subLayer === 'gpu-compute') continue
-    const os = deviceOS(dev)
-    // Excluded rather than mislabelled: a target the collector cannot speak
-    // to is worse than an absent one, because it looks monitored (AG6).
-    if (!speaksGnmi(os)) continue
-    const port = GNMI_PORT[os]
+    if (HOST_SUBLAYERS.has(dev.subLayer)) continue
+    const hit = pick(dev)
+    if (!hit) continue
     const count = Math.min(dev.count, 4)
     for (let i = 1; i <= count; i++) {
       targets.push({
         name:     `${dev.hostname}-${String(i).padStart(2, '0')}`,
         hostname: dev.hostname,
         mgmtIp:   `10.0.0.${octet}`,
-        port,
-        os,
+        port:     hit.port,
+        os:       hit.os,
         role:     dev.subLayer,
       })
       octet++
     }
   }
   return targets
+}
+
+/**
+ * Per-device gNMI targets (BOM rows expanded, capped at 4 instances each).
+ *
+ * Firewalls are excluded: the catalogue's firewall NOSes (PAN-OS, FortiOS,
+ * Cisco FTD) expose management APIs rather than an OpenConfig gNMI server, so
+ * a gnmic target for one would never connect. They are picked up by SNMP —
+ * see `buildSnmpTargets`.
+ */
+export function buildTelemetryTargets(devices: BOMDevice[]): TelemetryTarget[] {
+  return expand(devices, dev => {
+    if (dev.subLayer === 'firewall') return null
+    const os = deviceOS(dev)
+    // Excluded rather than mislabelled: a target the collector cannot speak
+    // to is worse than an absent one, because it looks monitored (AG6).
+    if (!speaksGnmi(os)) return null
+    return { os, port: GNMI_PORT[os] }
+  })
+}
+
+/**
+ * Per-device SNMP targets — AI1.
+ *
+ * This used to reuse `buildTelemetryTargets`, so the SNMP exporter config
+ * inherited the gNMI filter AND the firewall exclusion: the universal
+ * fallback, which exists precisely for boxes that cannot stream, omitted
+ * exactly the devices it should cover. Measured before the fix, EVERY design
+ * lost both firewalls from both configs; an Extreme Networks DC design
+ * monitored 0 of 14 devices, and a Fortinet campus design 0 of 18 — with
+ * nothing in the UI saying so, so the fleet looked monitored.
+ */
+export function buildSnmpTargets(devices: BOMDevice[]): TelemetryTarget[] {
+  return expand(devices, dev => ({ os: deviceOS(dev), port: SNMP_PORT }))
+}
+
+export interface TelemetryCoverage {
+  /** Devices streaming to the gnmic collector. */
+  gnmi: TelemetryTarget[]
+  /** Devices reachable only by SNMP polling (no gNMI server). */
+  snmpOnly: TelemetryTarget[]
+  /** Hostnames deliberately out of scope (compute/host tiers). */
+  excluded: string[]
+  /** Hostnames in NEITHER collector — must always be empty; a bug if not. */
+  unmonitored: string[]
+}
+
+/**
+ * How each device in a design is actually monitored, so the UI can say it.
+ * `unmonitored` is the invariant that matters: a device in no collector looks
+ * monitored to an operator reading a dashboard.
+ */
+export function telemetryCoverage(devices: BOMDevice[]): TelemetryCoverage {
+  const gnmi = buildTelemetryTargets(devices)
+  const snmp = buildSnmpTargets(devices)
+  const gnmiHosts = new Set(gnmi.map(t => t.hostname))
+  const snmpHosts = new Set(snmp.map(t => t.hostname))
+  const excluded: string[] = []
+  const unmonitored: string[] = []
+  for (const dev of devices) {
+    if (HOST_SUBLAYERS.has(dev.subLayer)) { excluded.push(dev.hostname); continue }
+    if (!gnmiHosts.has(dev.hostname) && !snmpHosts.has(dev.hostname)) {
+      unmonitored.push(dev.hostname)
+    }
+  }
+  return {
+    gnmi,
+    snmpOnly: snmp.filter(t => !gnmiHosts.has(t.hostname)),
+    excluded,
+    unmonitored,
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -594,7 +670,7 @@ const SNMP_MODULES: Array<{ name: string; walk: string[]; lookups?: string[]; co
 ]
 
 export function genSNMPExporterConfig(devices: BOMDevice[]): string {
-  const targets = buildTelemetryTargets(devices)
+  const targets = buildSnmpTargets(devices)
   const deviceList = targets.map(t => `#   ${t.hostname} (${t.os}) — ${t.mgmtIp}:161`)
   const lines: string[] = [
     '# ═══════════════════════════════════════════════════════════════',
@@ -649,7 +725,7 @@ export function genSNMPExporterConfig(devices: BOMDevice[]): string {
 }
 
 export function genSNMPPrometheusJob(devices: BOMDevice[]): string {
-  const targets = buildTelemetryTargets(devices)
+  const targets = buildSnmpTargets(devices)
   const targetIps = targets.map(t => `        - ${t.mgmtIp}  # ${t.hostname}`)
 
   const lines: string[] = [
