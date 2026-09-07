@@ -319,6 +319,7 @@ The app includes a **SIM / LIVE** toggle in the top-right corner:
 GET  /api/alerts              ← Alert polling (30s interval)
 POST /api/rca/analyze         ← Root cause analysis
 POST /api/generate-configs    ← Config generation
+GET  /api/config-support      ← Which vendors/layers the API can generate for
 POST /api/pre-checks          ← Pre-deployment checks
 POST /api/post-checks         ← Post-deployment checks
 POST /api/deploy              ← Trigger deployment
