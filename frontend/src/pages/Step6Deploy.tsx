@@ -33,6 +33,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { validateBOM } from '@/lib/bom'
+import { netconfCoverage, netconfProfile, netconfAlternative, netconfOps, buildNetconfRpc, type NetconfDatastore, type NetconfOp } from '@/lib/netconf'
 import { troubleshootCoverage, TROUBLESHOOT_PLATFORM_LABEL, TROUBLESHOOT_PLATFORMS } from '@/lib/troubleshoot-coverage'
 import { buildAnsibleInventory, buildAnsiblePlaybook } from '@/lib/ansible-export'
 import { buildRunbook, runbookFilename } from '@/lib/runbook'
@@ -2095,66 +2096,6 @@ export function simulateTroubleshoot(symptom: string, platform: string): Trouble
 
 // ── NETCONF XML helpers ───────────────────────────────────────────────────────
 
-function buildNetconfXMLForOp(op: string, datastore: string, vendor: string): string {
-  const isJunos = /juniper|junos/i.test(vendor)
-  switch (op) {
-    case 'get-config': return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="1">
-  <get-config>
-    <source><${datastore}/></source>
-    <filter type="subtree">
-      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces"/>
-    </filter>
-  </get-config>
-</rpc>`
-    case 'edit-config':
-      if (isJunos) return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="2">
-  <edit-config>
-    <target><${datastore}/></target>
-    <config>
-      <configuration xmlns="http://xml.juniper.net/xnm/1.1/xnm">
-        <interfaces>
-          <interface>
-            <name>ge-0/0/0</name>
-            <description>NetDesign AI managed</description>
-          </interface>
-        </interfaces>
-      </configuration>
-    </config>
-  </edit-config>
-</rpc>`
-      return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="2">
-  <edit-config>
-    <target><${datastore}/></target>
-    <config>
-      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
-        <interface>
-          <name>GigabitEthernet1</name>
-          <description>NetDesign AI — managed</description>
-          <enabled>true</enabled>
-          <ipv4 xmlns="urn:ietf:params:xml:ns:yang:ietf-ip">
-            <address><ip>10.0.0.1</ip><prefix-length>24</prefix-length></address>
-          </ipv4>
-        </interface>
-      </interfaces>
-    </config>
-  </edit-config>
-</rpc>`
-    case 'get': return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="3">
-  <get>
-    <filter type="subtree">
-      <interfaces-state xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces"/>
-    </filter>
-  </get>
-</rpc>`
-    case 'lock': return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="4">
-  <lock><target><${datastore}/></target></lock>
-</rpc>`
-    case 'unlock': return `<rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="5">
-  <unlock><target><${datastore}/></target></unlock>
-</rpc>`
-    default: return ''
-  }
-}
 
 function buildNetconfMockResponse(op: string): string {
   if (op === 'get-config') return `<?xml version="1.0" encoding="UTF-8"?>
@@ -2770,15 +2711,28 @@ export function Step6Deploy() {
 
   // ── NETCONF interactive state ──────────────────────────────────────────────
   const [netconfDevice, setNetconfDevice] = useState('')
-  const [netconfOp, setNetconfOp] = useState('get-config')
-  const [netconfDatastore, setNetconfDatastore] = useState('running')
+  const [netconfOp, setNetconfOp] = useState<NetconfOp>('get-config')
+  const [netconfDatastore, setNetconfDatastore] = useState<NetconfDatastore>('running')
+  // AK1 — capability comes from the device, not the dropdown.
+  const ncCoverage = useMemo(() => netconfCoverage(storeDevices), [storeDevices])
   const [netconfResponse, setNetconfResponse] = useState('')
   const [netconfRunning, setNetconfRunning] = useState(false)
 
   const netconfDeviceObj = storeDevices.find(d => d.id === netconfDevice)
+  const ncProfile = netconfDeviceObj ? netconfProfile(netconfDeviceObj) : null
+  const ncAlt = netconfDeviceObj ? netconfAlternative(netconfDeviceObj) : null
+  // Keep the operation and datastore legal for whatever device is selected —
+  // NX-OS has no candidate datastore, and only a committing platform has
+  // anything to commit.
+  const ncAllowedOps = ncProfile ? netconfOps(ncProfile) : []
+  const ncOp: NetconfOp = ncProfile && !ncAllowedOps.includes(netconfOp) ? 'get-config' : netconfOp
+  const ncDatastore: NetconfDatastore =
+    ncProfile && !ncProfile.datastores.includes(netconfDatastore)
+      ? ncProfile.datastores[0]
+      : netconfDatastore
   const netconfXML = useMemo(
-    () => buildNetconfXMLForOp(netconfOp, netconfDatastore, netconfDeviceObj?.vendor ?? ''),
-    [netconfOp, netconfDatastore, netconfDeviceObj],
+    () => (ncProfile ? buildNetconfRpc(ncOp, ncDatastore, ncProfile) : ''),
+    [ncOp, ncDatastore, ncProfile],
   )
 
   async function handleNetconfExecute() {
@@ -4626,45 +4580,97 @@ export function Step6Deploy() {
             <CardHeader><CardTitle>NETCONF Interactive Demo</CardTitle></CardHeader>
             <p className="text-xs text-gray-500 mb-4">
               RFC 6241 — NETCONF over SSH (port 830). Build and execute NETCONF RPCs against your devices.
-              Supported on Juniper JunOS, Cisco IOS-XE 16.6+, Cisco NX-OS (feature netconf), Arista EOS.
+              The RPC is built for the selected device&apos;s own YANG models and datastores.
             </p>
+
+            {/* AK1 — the panel used to list every device in the BOM regardless of
+                whether it runs a NETCONF server at all, then hand the operator a
+                Cisco-flavoured RPC that could never run. Say which devices are
+                out of scope and what they speak instead. */}
+            {ncCoverage.unsupported.length > 0 && (
+              <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <IconWarnTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-gray-300 leading-relaxed">
+                    <span className="font-semibold text-amber-300">
+                      NETCONF reaches {ncCoverage.supported.length} of {storeDevices.length} devices in this design.
+                    </span>{' '}
+                    {ncCoverage.unsupported.length} run a platform with no NETCONF server:
+                    <ul className="mt-1 ml-1 space-y-0.5 text-[11px] text-gray-400">
+                      {ncCoverage.alternatives.map(a => <li key={a}>• {a}</li>)}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Device</label>
                 <select value={netconfDevice} onChange={e => setNetconfDevice(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
                   <option value="">&mdash; select device &mdash;</option>
-                  {storeDevices.map(d => (
-                    <option key={d.id} value={d.id}>{d.hostname} ({d.vendor})</option>
-                  ))}
+                  {ncCoverage.supported.length > 0 && (
+                    <optgroup label="NETCONF-capable">
+                      {ncCoverage.supported.map(d => (
+                        <option key={d.id} value={d.id}>{d.hostname} ({d.vendor})</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {ncCoverage.unsupported.length > 0 && (
+                    <optgroup label="No NETCONF server">
+                      {ncCoverage.unsupported.map(d => (
+                        <option key={d.id} value={d.id} disabled>
+                          {d.hostname} ({d.vendor}) — {netconfAlternative(d)?.instead ?? 'not supported'}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Operation</label>
-                <select value={netconfOp} onChange={e => setNetconfOp(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
-                  <option value="get-config">get-config</option>
-                  <option value="edit-config">edit-config</option>
-                  <option value="get">get</option>
-                  <option value="lock">lock</option>
-                  <option value="unlock">unlock</option>
+                <select value={ncOp} onChange={e => setNetconfOp(e.target.value as NetconfOp)}
+                  disabled={!ncProfile}
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50">
+                  {(ncProfile ? ncAllowedOps : ['get-config']).map(o => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
                 </select>
               </div>
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Datastore</label>
-                <select value={netconfDatastore} onChange={e => setNetconfDatastore(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
-                  <option value="running">running</option>
-                  <option value="candidate">candidate</option>
-                  <option value="startup">startup</option>
+                <select value={ncDatastore} onChange={e => setNetconfDatastore(e.target.value as NetconfDatastore)}
+                  disabled={!ncProfile}
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50">
+                  {(ncProfile?.datastores ?? ['running']).map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
                 </select>
               </div>
             </div>
+            {/* What the operator must already have enabled, plus the platform's
+                own caveat — NX-OS having no candidate datastore is the kind of
+                thing that turns into a failed RPC at the worst moment. */}
+            {ncProfile && (
+              <div className="mb-4 text-[11px] text-gray-500 leading-relaxed">
+                <span className="text-gray-400 font-semibold">{ncProfile.label}</span>
+                {' '}· requires <code className="text-gray-400">{ncProfile.enableHint}</code>
+                {' '}· datastores: {ncProfile.datastores.join(', ')}
+                {ncProfile.needsCommit && ' · candidate edits need an explicit commit'}
+                {ncProfile.note && <div className="mt-0.5 text-amber-400/80">{ncProfile.note}</div>}
+              </div>
+            )}
+            {ncAlt && (
+              <div className="mb-4 text-[11px] text-amber-400/90">
+                {ncAlt.label} has no NETCONF server — use {ncAlt.instead}.
+              </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div>
                 <div className="text-xs text-gray-500 mb-1 font-semibold uppercase tracking-wider">RPC Request</div>
                 <pre className="bg-[#080E1A] border border-white/10 rounded-lg p-4 text-xs text-green-300 font-mono overflow-x-auto leading-relaxed min-h-[180px]">
-                  {netconfXML || buildNetconfXMLForOp('get-config', 'running', '')}
+                  {netconfXML || '! Select a NETCONF-capable device to build an RPC.'}
                 </pre>
               </div>
               <div>
