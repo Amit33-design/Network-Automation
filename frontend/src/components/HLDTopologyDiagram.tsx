@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import type { BOMDevice, DeviceMetrics } from '@/types'
 import { formatUptime } from '@/lib/utils'
 import { DCI_RT_ASN } from '@/lib/configgen'
-import { evaluateDevice } from '@/lib/monitoring'
+import { evaluateDevice, BGP_LAYERS } from '@/lib/monitoring'
 import { deviceIcon, IconGlobe } from '@/components/icons'
 import { CloseButton } from '@/components/ui/CloseButton'
 
@@ -230,7 +230,8 @@ const HEALTH_BASELINE_CPU: Record<string, number> = {
 }
 
 // Layers that run a routing control-plane (eligible for BGP session metrics).
-const HEALTH_BGP_LAYERS = new Set(['spine', 'core', 'leaf', 'distribution', 'wan-edge'])
+// AK2 — now sourced from lib/monitoring, which also owns the heuristic it overrides.
+const HEALTH_BGP_LAYERS = BGP_LAYERS
 
 function _seed(s: string): number {
   return s.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)

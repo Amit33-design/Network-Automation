@@ -33,6 +33,7 @@ import { createWatcher, exportCronTab, exportSystemdTimer, exportScanScript, sim
 import { validateConfigs, validationReportText, type ValidationResult } from '@/lib/config-validator'
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { validateBOM } from '@/lib/bom'
+import { simulateChecks, CHECK_TEMPLATES } from '@/lib/checks-sim'
 import { netconfCoverage, netconfProfile, netconfAlternative, netconfOps, buildNetconfRpc, type NetconfDatastore, type NetconfOp } from '@/lib/netconf'
 import { troubleshootCoverage, TROUBLESHOOT_PLATFORM_LABEL, TROUBLESHOOT_PLATFORMS } from '@/lib/troubleshoot-coverage'
 import { buildAnsibleInventory, buildAnsiblePlaybook } from '@/lib/ansible-export'
@@ -992,59 +993,6 @@ function simulateZTPResult(
     else { online++;  results[dev.name] = 'ONLINE' }
   }
   return { results, events, summary: { total_events: events.length, online, failed } }
-}
-
-// ── Checks simulation ─────────────────────────────────────────────────────────
-
-const CHECK_TEMPLATES = [
-  // connectivity
-  { cat: 'Connectivity', name: 'ICMP Reachability',   ok: (h: string) => `Ping ${h} 0% loss, RTT 0.8ms`   },
-  { cat: 'Connectivity', name: 'SSH Access',           ok: (h: string) => `SSH ${h}:22 ok in 0.3s`          },
-  { cat: 'Connectivity', name: 'LLDP Neighbors',       ok: (h: string) => `${h}: 4 LLDP neighbors`          },
-  // protocols
-  { cat: 'Protocols',    name: 'BGP Session State',    ok: (h: string) => `${h}: 2 BGP peers Established`   },
-  { cat: 'Protocols',    name: 'OSPF Adjacency',       ok: (h: string) => `${h}: FULL state on 3 interfaces` },
-  { cat: 'Protocols',    name: 'Interface Status',     ok: (h: string) => `${h}: 46/48 interfaces Up`        },
-  // config
-  { cat: 'Config',       name: 'Hostname Match',       ok: (h: string) => `Running hostname matches: ${h}`  },
-  { cat: 'Config',       name: 'Running vs Startup',   ok: (_h: string) => `Startup config in sync`         },
-  { cat: 'Config',       name: 'ACL Present',          ok: (_h: string) => `Management ACL MGMT-ACCESS found`},
-  // hardware
-  { cat: 'Hardware',     name: 'CPU Utilization',      ok: (_h: string) => `CPU: 18% (threshold 75%)`       },
-  { cat: 'Hardware',     name: 'Memory Utilization',   ok: (_h: string) => `Memory: 34% (threshold 85%)`    },
-  { cat: 'Hardware',     name: 'Interface Errors',     ok: (_h: string) => `0 errors on all interfaces`      },
-  { cat: 'Hardware',     name: 'Power & Fan Status',   ok: (_h: string) => `All PSUs OK, all fans OK`        },
-]
-
-function simulateChecksResult(
-  devList: Array<{name: string; role: string}>,
-  phase: 'pre' | 'post',
-  failDevice: string,
-  failCheck: string,
-): ChecksResult {
-  const results: CheckResult[] = []
-  for (const dev of devList) {
-    for (const tpl of CHECK_TEMPLATES) {
-      const isFail = dev.name === failDevice && tpl.name === failCheck
-      const roll = Math.random()
-      const status: CheckResult['status'] = isFail ? 'FAIL'
-        : roll < 0.05 ? 'FAIL'
-        : roll < 0.15 ? 'WARN'
-        : 'PASS'
-      results.push({
-        device: dev.name,
-        name: tpl.name,
-        status,
-        message: status === 'PASS' ? tpl.ok(dev.name)
-          : status === 'WARN' ? `${tpl.ok(dev.name)} — minor deviation`
-          : `FAILED: ${tpl.name} check failed on ${dev.name}`,
-        remediation: status === 'FAIL'
-          ? `Review ${tpl.name} on ${dev.name}; check ${phase === 'pre' ? 'connectivity and baseline' : 'post-deploy state'}`
-          : null,
-      })
-    }
-  }
-  return { phase, results }
 }
 
 // ── Config drift simulation (G-A4 demo mode) ──────────────────────────────────
@@ -2442,14 +2390,14 @@ export function Step6Deploy() {
 
   function handleRunChecks(p: 'pre' | 'post') {
     if (!isLive) {
-      applyChecksResult(simulateChecksResult(simDevices, p, failCheckDevice, failCheck), p)
+      applyChecksResult(simulateChecks(simDevices, p, failCheckDevice, failCheck, storeUseCase), p)
       return
     }
     const req = failCheckDevice && failCheck ? { fail_devices: { [failCheckDevice]: [failCheck] } } : {}
     const mutate = p === 'pre' ? runPre : runPost
     mutate(req, {
       onSuccess(data) { applyChecksResult(data, p) },
-      onError() { applyChecksResult(simulateChecksResult(simDevices, p, failCheckDevice, failCheck), p) },
+      onError() { applyChecksResult(simulateChecks(simDevices, p, failCheckDevice, failCheck, storeUseCase), p) },
     })
   }
 
