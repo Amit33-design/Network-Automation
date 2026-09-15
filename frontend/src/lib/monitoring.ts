@@ -75,6 +75,17 @@ export interface FleetHealth {
 
 const ROUTING_HINTS = ['spine', 'leaf', 'core', 'wan', 'edge', 'border', 'pe', 'hub', 'rtr', 'router']
 
+/**
+ * Layers that run BGP in every design this product generates. Hoisted here
+ * (AK2) because it was a private const inside `HLDTopologyDiagram` while
+ * `monitoring.ts` owned the heuristic it overrides, and the checks simulator
+ * needed the same answer — a third private copy is the drift AG5/AG6/AG10/AK1
+ * kept consolidating away.
+ */
+export const BGP_LAYERS: ReadonlySet<string> = new Set([
+  'spine', 'super-spine', 'core', 'leaf', 'distribution', 'wan-edge',
+])
+
 function isRoutingDevice(name: string, role: string): boolean {
   const s = `${name} ${role}`.toLowerCase()
   return ROUTING_HINTS.some(h => s.includes(h))
