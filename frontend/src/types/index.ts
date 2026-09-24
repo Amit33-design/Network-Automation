@@ -375,6 +375,13 @@ export interface RemediationDevice {
   hostname: string
   platform: string
   commands: string[]
+  /**
+   * AL1 — false when this NOS's negation cannot be derived from a diff line
+   * (EXOS, FortiOS). Optional so a live backend response without it parses.
+   */
+  supported?: boolean
+  /** Why it is unsupported, naming the real mechanism. */
+  note?: string
   command_count: number
 }
 

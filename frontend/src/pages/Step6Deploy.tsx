@@ -34,6 +34,7 @@ import { validateConfigs, validationReportText, type ValidationResult } from '@/
 import { buildZTPPlan, generateDhcpConfig, ztpPlanToCsv, type ZTPPlan } from '@/lib/ztp'
 import { validateBOM } from '@/lib/bom'
 import { simulateChecks, CHECK_TEMPLATES } from '@/lib/checks-sim'
+import { remediationFor } from '@/lib/drift-remediation'
 import { netconfCoverage, netconfProfile, netconfAlternative, netconfOps, buildNetconfRpc, type NetconfDatastore, type NetconfOp } from '@/lib/netconf'
 import { troubleshootCoverage, TROUBLESHOOT_PLATFORM_LABEL, TROUBLESHOOT_PLATFORMS } from '@/lib/troubleshoot-coverage'
 import { buildAnsibleInventory, buildAnsiblePlaybook } from '@/lib/ansible-export'
@@ -1036,37 +1037,13 @@ export function simulateConfigDrift(
 // Mirrors backend/config_drift.py generate_remediation(): restore intended
 // lines that drifted away, then negate/remove lines that appeared on-device.
 
-function isJunosPlatform(platform: string): boolean {
-  return /jun/i.test(platform)
-}
-
-function negateCiscoLine(line: string): string {
-  const stripped = line.replace(/^\s+/, '')
-  const indent = line.slice(0, line.length - stripped.length)
-  if (stripped.startsWith('no ')) return `${indent}${stripped.slice(3)}`
-  return `${indent}no ${stripped}`
-}
-
-function remediateJunos(line: string, remove: boolean): string {
-  const s = line.trim()
-  if (remove) {
-    if (s.startsWith('set ')) return `delete ${s.slice(4)}`
-    if (s.startsWith('delete ')) return s
-    return `delete ${s}`
-  }
-  if (s.startsWith('set ')) return s
-  if (s.startsWith('delete ')) return `set ${s.slice(7)}`
-  return `set ${s}`
-}
-
 export function simulateRemediation(devices: RemediationDeviceInput[]): ConfigRemediationResponse {
   return {
     devices: devices.map(({ hostname, platform, added, removed }) => {
-      const junos = isJunosPlatform(platform)
-      const commands: string[] = []
-      for (const line of removed) commands.push(junos ? remediateJunos(line, false) : line)
-      for (const line of added) commands.push(junos ? remediateJunos(line, true) : negateCiscoLine(line))
-      return { hostname, platform, commands, command_count: commands.length }
+      // AL1 — dialect from the shared cliFamily map (AG8) rather than a
+      // binary Junos-or-Cisco split that handed 8 of 10 vendors `no <line>`.
+      const { commands, supported, note } = remediationFor(platform, added, removed)
+      return { hostname, platform, commands, command_count: commands.length, supported, note }
     }),
   }
 }
@@ -5005,9 +4982,18 @@ export function Step6Deploy() {
                                   {configIdToHostname[d.hostname] ?? d.hostname}
                                   <span className="text-gray-500 font-normal"> · {d.platform} · {d.command_count} cmd</span>
                                 </div>
-                                <pre className="text-xs font-mono whitespace-pre-wrap overflow-x-auto rounded bg-black/30 p-3 text-amber-300">
-                                  {d.commands.join('\n')}
-                                </pre>
+                                {/* AL1 — a NOS whose negation cannot be derived from a diff
+                                    line gets the reason, not an empty block or invented CLI. */}
+                                {d.supported === false ? (
+                                  <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200/90 leading-relaxed">
+                                    <span className="font-semibold">No automatic remediation for {d.platform}.</span>{' '}
+                                    {d.note}
+                                  </div>
+                                ) : (
+                                  <pre className="text-xs font-mono whitespace-pre-wrap overflow-x-auto rounded bg-black/30 p-3 text-amber-300">
+                                    {d.commands.join('\n')}
+                                  </pre>
+                                )}
                               </div>
                             ))}
                           </div>
