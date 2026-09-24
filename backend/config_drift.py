@@ -16,6 +16,7 @@ from __future__ import annotations
 import difflib
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/tmp/netdesign_backups"))
@@ -164,8 +165,65 @@ def check_config_drift(
 # ---------------------------------------------------------------------------
 
 
-def _is_junos(platform: str) -> bool:
-    return "jun" in platform.lower()
+try:
+    from change_update import cli_family
+except ImportError:  # pragma: no cover - package-relative import
+    from .change_update import cli_family  # type: ignore
+
+#: Families whose "undo this line" form is mechanically derivable from the line.
+#:
+#: EXOS and FortiOS are deliberately absent (AL1). EXOS negation is per-command
+#: (``unconfigure`` / ``disable`` / ``delete`` depending on what the line
+#: configured) and FortiOS needs the enclosing ``config`` path to emit
+#: ``unset``, so neither can be produced from an arbitrary diff line. Emitting a
+#: plausible ``unconfigure <line>`` would be exactly the guess AG5 stopped
+#: making — worse than saying so, because it looks runnable.
+DERIVABLE_FAMILIES: frozenset[str] = frozenset({"ios", "junos", "nokia", "panos", "nvue"})
+
+UNSUPPORTED_NOTE: dict[str, str] = {
+    "exos": (
+        "EXOS negation is per-command (unconfigure / disable / delete depending on what "
+        "the line set), so it cannot be derived from a diff line. Review each line against "
+        "the EXOS command reference."
+    ),
+    "fortios": (
+        "FortiOS needs the enclosing `config` path to emit `unset`, which a diff line does "
+        "not carry. Review each line inside its `config … end` block."
+    ),
+}
+
+
+def remediation_family(token: str) -> str:
+    """Resolve a dialect from EITHER a catalogue vendor name or a platform/NOS
+    string — both are live inputs.
+
+    The UI passes ``d.vendor`` ("Nokia"), while this module's field is literally
+    named ``platform`` and receives NOS tokens ("juniper-junos", "ios-xe").
+    ``cli_family`` exact-matches vendor names, so resolving a NOS token through
+    it alone silently returned ``ios`` — which is how the first draft of AL1
+    broke Juniper, caught by an existing test.
+
+    Must stay identical to frontend ``lib/drift-remediation.ts::remediationFamily``;
+    ``test_drift_remediation_parity.py`` asserts it.
+    """
+    via_vendor = cli_family(token)
+    if via_vendor != "ios":
+        return via_vendor              # matched a catalogue vendor
+    t = token.lower()
+    if re.search(r"jun", t):
+        return "junos"
+    if re.search(r"srl|srlinux|nokia", t):
+        return "nokia"
+    if re.search(r"cumulus|nvue|nvidia", t):
+        return "nvue"
+    if re.search(r"exos|extreme", t):
+        return "exos"
+    if re.search(r"forti", t):
+        return "fortios"
+    if re.search(r"pan-?os|palo", t):
+        return "panos"
+    # ios-xe, iosxr, nxos, eos, dellos10, arubaoscx and anything unknown.
+    return "ios"
 
 
 def _negate_cisco(line: str) -> str:
@@ -177,24 +235,40 @@ def _negate_cisco(line: str) -> str:
     return f"{indent}no {stripped}"
 
 
-def _restore_junos(line: str) -> str:
-    """Re-apply an intended Junos line as a `set` statement."""
+def _restore_line(family: str, line: str) -> str:
+    """Re-apply an intended line that drift removed from the running config."""
     s = line.strip()
-    if s.startswith("set "):
-        return s
-    if s.startswith("delete "):
-        return "set " + s[len("delete "):]
-    return f"set {s}"
+    if family in ("junos", "panos", "nokia"):
+        if s.startswith("set "):
+            return s
+        if s.startswith("delete "):
+            return "set " + s[len("delete "):]
+        return f"set {s}"
+    if family == "nvue":
+        if s.startswith("nv set "):
+            return s
+        if s.startswith("nv unset "):
+            return "nv set " + s[len("nv unset "):]
+        return f"nv set {s}"
+    return line   # ios: the intended line is simply re-applied
 
 
-def _negate_junos(line: str) -> str:
-    """Remove an extra Junos line via a `delete` statement."""
+def _negate_line(family: str, line: str) -> str:
+    """Undo a line that drift added to the running config."""
     s = line.strip()
-    if s.startswith("set "):
-        return "delete " + s[len("set "):]
-    if s.startswith("delete "):
-        return s
-    return f"delete {s}"
+    if family in ("junos", "panos", "nokia"):
+        if s.startswith("set "):
+            return "delete " + s[len("set "):]
+        if s.startswith("delete "):
+            return s
+        return f"delete {s}"
+    if family == "nvue":
+        if s.startswith("nv set "):
+            return "nv unset " + s[len("nv set "):]
+        if s.startswith("nv unset "):
+            return s
+        return f"nv unset {s}"
+    return _negate_cisco(line)
 
 
 def generate_remediation(
@@ -214,22 +288,39 @@ def generate_remediation(
           "command_count": int,
         }
     """
-    junos = _is_junos(platform)
+    # AL1 — dialect from the shared cli_family map (AG9) rather than a binary
+    # Junos-or-Cisco split that handed 8 of 10 vendors `no <line>`.
+    family = remediation_family(platform)
+
+    if family not in DERIVABLE_FAMILIES:
+        return {
+            "hostname": hostname,
+            "platform": platform,
+            "commands": [],
+            "command_count": 0,
+            "supported": False,
+            "note": UNSUPPORTED_NOTE.get(
+                family, f"No remediation dialect for {platform}; review the diff manually."
+            ),
+        }
+
     commands: list[str] = []
 
     # 1. Restore intended lines that are missing from the running config.
     for line in removed:
-        commands.append(_restore_junos(line) if junos else line)
+        commands.append(_restore_line(family, line))
 
     # 2. Remove extra lines that are on the device but not intended.
     for line in added:
-        commands.append(_negate_junos(line) if junos else _negate_cisco(line))
+        commands.append(_negate_line(family, line))
 
     return {
         "hostname": hostname,
         "platform": platform,
         "commands": commands,
         "command_count": len(commands),
+        "supported": True,
+        "note": "",
     }
 
 

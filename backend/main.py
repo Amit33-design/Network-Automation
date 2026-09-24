@@ -1015,6 +1015,10 @@ class RemediationDevice(BaseModel):
     platform: str
     commands: list[str]
     command_count: int
+    # AL1 — False when this NOS's negation cannot be derived from a diff line
+    # (EXOS, FortiOS), with `note` naming the real mechanism.
+    supported: bool = True
+    note: str = ""
 
 
 class ConfigRemediationResponse(BaseModel):
