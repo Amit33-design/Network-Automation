@@ -200,4 +200,43 @@ describe('normalized config facts (AM1)', () => {
   it('AM4: IOS-XR flat `ntp server` counts', () => {
     expect(extractFacts('ntp server 10.0.0.2', 'iosxr').ntp.state).toBe('present')
   })
+
+  it('AM3: every fabric vendor exposes its routing facts in its own dialect', () => {
+    // One matrix, seven vendors: the checks no longer know any syntax, so a
+    // vendor whose dialect a rule misses shows up here, not as a silent pass.
+    const FABRIC = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks']
+    const gaps: string[] = []
+    for (const vendor of FABRIC) {
+      const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const cfgs = generateAllConfigs(devs, 'dc')
+      for (const d of devs.filter(x => x.subLayer === 'spine' || x.subLayer === 'leaf')) {
+        const f = extractFacts(cfgs[d.id], factPlatform(d))
+        const want: Array<keyof typeof f> = ['bgp', 'loopback', 'bfd', 'jumboMtu']
+        // NVIDIA is a pure eBGP L3 fabric (Y6, RFC 7938) — no overlay by design.
+        if (vendor !== 'NVIDIA') want.push('evpn')
+        if (vendor !== 'NVIDIA' && d.subLayer === 'leaf') want.push('vxlan')
+        for (const k of want) if (f[k].state !== 'present') gaps.push(`${vendor} ${d.subLayer} ${d.hostname}: no ${k}`)
+      }
+    }
+    expect([...new Set(gaps)]).toEqual([])
+  })
+
+  it('AM3: a spine is not a VTEP', () => {
+    // An eBGP spine carries EVPN routes but terminates no tunnels (Z1).
+    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'Extreme Networks']) {
+      const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const cfgs = generateAllConfigs(devs, 'dc')
+      for (const d of devs.filter(x => x.subLayer === 'spine')) {
+        expect(extractFacts(cfgs[d.id], factPlatform(d)).vxlan.state, `${vendor} ${d.hostname}`).toBe('absent')
+      }
+    }
+  })
+
+  it('AM3: the word "vxlan" is not a tunnel endpoint', () => {
+    // The old V-08/V-14 detector counted any occurrence of the word.
+    expect(extractFacts('interface Ethernet1/1\n description vxlan uplink to spine', 'nxos').vxlan.state).toBe('absent')
+    expect(extractFacts('set routing-instances T protocols evpn ip-prefix-routes encapsulation vxlan', 'junos').vxlan.state).toBe('absent')
+    expect(extractFacts('set vlans V10 vxlan vni 10010', 'junos').vxlan.state).toBe('present')
+  })
 })
+
