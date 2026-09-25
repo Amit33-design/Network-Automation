@@ -48,7 +48,7 @@
  */
 import type { BOMDevice } from '@/types'
 import { ztpPlatform, type ZTPPlatform } from '@/lib/ztp'
-import { isFtdModel } from '@/lib/configgen'
+import { isFtdModel, isViptelaOs } from '@/lib/configgen'
 import { stripComments } from '@/lib/config-validator'
 
 /** The facts this slice models. Management-plane first: that is where the
@@ -76,7 +76,16 @@ export interface Fact {
 
 export type DeviceFacts = Record<FactName, Fact>
 
-export type FactPlatform = ZTPPlatform | 'ftd'
+/**
+ * `ztpPlatform` covers switch/router NOSes. Three dialects here are not one:
+ *   ftd      — Firepower CLI is not IOS-XE
+ *   viptela  — a vEdge runs Viptela OS, not the IOS-XE of a cEdge
+ *   oran-nf / oran-ru — O-RAN network functions and radios are configured by
+ *              a management manifest, not a vendor switch CLI; resolving them
+ *              through the server/appliance vendor gave Dell OS10 or IOS-XE
+ *              rules and false-FAILED every fact.
+ */
+export type FactPlatform = ZTPPlatform | 'ftd' | 'viptela' | 'oran-nf' | 'oran-ru'
 
 /** A dialect pattern, or a declaration that this platform's device config
  *  cannot express the fact — with the reason. */
@@ -113,8 +122,8 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
   },
   iosxr: {
     sshV2: /^\s*ssh server v2\b/m,
-    // IOS-XR nests servers under a bare `ntp` line.
-    ntp: /^\s*ntp\s*\n\s+server\b/m,
+    // IOS-XR accepts `ntp server X` and renders it nested under a bare `ntp`.
+    ntp: /^\s*ntp(?:\s*\n\s+|[ \t]+)server\b/m,
     syslog: /^\s*logging\s+(?:\d{1,3}(?:\.\d{1,3}){3}|<CHANGE-ME)/m,
     aaa: CENTRAL_AAA,
   },
@@ -174,6 +183,26 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
     syslog: /^\s*set (?:shared )?server-profile syslog\b/m,
     aaa: CENTRAL_AAA,
   },
+  viptela: {
+    sshV2: { unsupported: 'Viptela OS implements SSH v2 only and has no protocol-version statement — there is no v1 to disable.' },
+    ntp: /^\s*ntp\s*\n\s+server\s+\S/m,
+    syslog: /^\s*logging\s*\n(?:[ \t]+\S.*\n)*?[ \t]+server\s+\S/m,
+    aaa: /^\s*tacacs\s*\n\s+server\s+\S|^\s*radius\s*\n\s+server\s+\S/m,
+  },
+  'oran-nf': {
+    // OpenSSH-based NF management plane; OpenSSH dropped SSHv1 in 7.6.
+    sshV2: /^\s*ssh(?:-server)? enabled\b/m,
+    ntp: /^\s*ntp-server\s+\S/m,
+    syslog: /^\s*syslog-server\s+\S/m,
+    aaa: /^\s*(?:tacacs|radius)-server\s+\S/m,
+  },
+  'oran-ru': {
+    sshV2: /^\s*transport netconf-over-ssh\b/m,
+    ntp: { unsupported: 'An O-RU takes time from PTP (G.8275.1) on the fronthaul, not NTP — see the fronthaul/grandmaster timing config.' },
+    // The O1 VES collector is the radio's remote event/fault log.
+    syslog: /^\s*ves-collector\s+\S/m,
+    aaa: { unsupported: 'O-RU M-plane accounts are provisioned over NETCONF by the O-DU/SMO (O-RAN WG4 o-ran-usermgmt / NACM); an O-RU has no TACACS+/RADIUS client.' },
+  },
   ftd: {
     // The only SSH / NTP statements a Firepower CLI accepts (X6).
     sshV2: /^\s*configure ssh-access-list\b/m,
@@ -185,8 +214,16 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
 
 /** The dialect a device's config is written in. */
 export function factPlatform(dev: Pick<BOMDevice, 'vendor' | 'model'> & Partial<BOMDevice>): FactPlatform {
-  return isFtdModel(dev.model ?? '') ? 'ftd' : ztpPlatform(dev as BOMDevice)
+  if (dev.subLayer === 'oran-ru') return 'oran-ru'
+  if (dev.subLayer && ORAN_NF_SUBLAYERS.has(dev.subLayer)) return 'oran-nf'
+  if (isFtdModel(dev.model ?? '')) return 'ftd'
+  if (isViptelaOs(dev as BOMDevice)) return 'viptela'
+  return ztpPlatform(dev as BOMDevice)
 }
+
+/** O-RAN elements configured by a management manifest rather than a NOS CLI.
+ *  The fronthaul switch and midhaul router are real NOS boxes and are not here. */
+const ORAN_NF_SUBLAYERS = new Set(['oran-cu', 'oran-du', 'oran-core', 'oran-timing'])
 
 /**
  * The whole config line a match starts on — the evidence a report can show.

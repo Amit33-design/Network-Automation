@@ -127,28 +127,32 @@ describe('normalized config facts (AM1)', () => {
   })
 
   it('matches the verified ground truth on real generated configs', () => {
-    // Read by eye from the generators' actual output (AM1 measurement). The
-    // `absent` cells are REAL config gaps, recorded as follow-ups — this test
-    // pins them so they stay visible rather than being papered over.
+    // Read by eye from the generators' actual output. AM1 pinned the real
+    // gaps it found as `A` cells; AM4 fixed the generators and flipped them.
+    // No platform may regress to `A` — the sweep below also asserts that.
     const truth: Partial<Record<FactPlatform, string>> = {
-      nxos: 'P P P P', eos: 'P P P P', exos: 'P P P P',
-      cumulus: 'P P P A',   // local admin only
-      srl: 'P P P A',       // local admin only
-      dellos10: 'P P P A',  // no AAA at all
-      arubaoscx: 'P P P A', // local admin only
-      fortios: 'P P P A',   // no AAA at all
-      panos: 'A P P P',     // no SSH hardening statement
+      nxos: 'P P P P', eos: 'P P P P', exos: 'P P P P', 'ios-xe': 'P P P P',
+      junos: 'P P P P', iosxr: 'P P P P',
+      // AM4 closed every centralized-AAA gap AM1 exposed (these were 'P P P A')
+      cumulus: 'P P P P', srl: 'P P P P', dellos10: 'P P P P',
+      arubaoscx: 'P P P P', fortios: 'P P P P',
+      panos: 'P P P P',     // AM4: telnet/http disabled (was 'A P P P')
+      viptela: 'U P P P',   // SSH is v2-only by design, no statement exists
+      'oran-nf': 'P P P P',
+      'oran-ru': 'P U P U', // PTP timing; accounts via O-DU/SMO NETCONF
       ftd: 'P P U U',       // syslog/AAA live in FMC
     }
     const code = { present: 'P', absent: 'A', unknown: 'U' } as const
     const seen = new Map<FactPlatform, Set<string>>()
     for (const vendor of VENDORS) {
-      for (const uc of ['dc', 'campus'] as const) {
+      for (const uc of ['dc', 'campus', 'wan', 'multisite', 'multicloud', 'oran'] as const) {
         const devs = buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
         const cfgs = generateAllConfigs(devs, uc)
         for (const d of devs) {
+          // Cloud gateways and hosts have no device CLI (AA1) — nothing to read.
+          if (!cfgs[d.id]) continue
           const p = factPlatform(d)
-          const f = extractFacts(cfgs[d.id] ?? '', p)
+          const f = extractFacts(cfgs[d.id], p)
           const row = FACT_NAMES.map(n => code[f[n].state]).join(' ')
           seen.set(p, (seen.get(p) ?? new Set()).add(row))
         }
@@ -158,5 +162,41 @@ describe('normalized config facts (AM1)', () => {
       expect(seen.get(p), `${p} never appeared`).toBeTruthy()
       expect([...seen.get(p)!], p).toContain(expected)
     }
+    // AM4: no generated device, on any platform, is missing a management fact.
+    const gaps = [...seen].flatMap(([p, rows]) => [...rows].filter(r => r.includes('A')).map(r => `${p}: ${r}`))
+    expect(gaps).toEqual([])
+  })
+
+  it('AM4: Junos TACACS+ uses the real statement, not the invalid `set access`', () => {
+    // `set access tacacs-server` is not a Junos statement; the switches had
+    // `authentication-order [ tacplus password ]` with no tacplus server
+    // behind it, so every login silently fell through to the local password.
+    for (const uc of ['dc', 'campus', 'wan'] as const) {
+      const devs = buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs: ['Juniper'] })
+      const cfgs = generateAllConfigs(devs, uc)
+      for (const d of devs.filter(x => factPlatform(x) === 'junos')) {
+        const c = cfgs[d.id] ?? ''
+        expect(c, d.hostname).not.toMatch(/^set access tacacs-server/m)
+        if (/authentication-order \[ tacplus/.test(c)) expect(c, d.hostname).toMatch(/^set system tacplus-server \S+ secret/m)
+      }
+    }
+  })
+
+  it('AM4: a vEdge names a TACACS+ server rather than an auth-order with none', () => {
+    // It used to say `auth-order local radius` with no radius server — which
+    // the old `/radius/` match counted as central AAA.
+    expect(extractFacts('system\n  aaa\n    auth-order local radius\n  !\n!', 'viptela').aaa.state).toBe('absent')
+    expect(extractFacts('system\n  tacacs\n    server 10.0.0.3\n      vpn 512', 'viptela').aaa.state).toBe('present')
+  })
+
+  it('AM4: O-RAN elements resolve to their own dialect, not the server vendor', () => {
+    expect(factPlatform(dev({ vendor: 'Dell EMC', model: 'O-CU Server (Dell R750)', subLayer: 'oran-cu' }))).toBe('oran-nf')
+    expect(factPlatform(dev({ vendor: 'Fujitsu', model: 'O-RU', subLayer: 'oran-ru' }))).toBe('oran-ru')
+    // The fronthaul switch IS a NOS box and keeps its NOS dialect.
+    expect(factPlatform(dev({ vendor: 'Cisco', model: 'Nexus 93180YC-FX3', subLayer: 'oran-fronthaul' }))).toBe('nxos')
+  })
+
+  it('AM4: IOS-XR flat `ntp server` counts', () => {
+    expect(extractFacts('ntp server 10.0.0.2', 'iosxr').ntp.state).toBe('present')
   })
 })

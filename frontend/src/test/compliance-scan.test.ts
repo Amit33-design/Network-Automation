@@ -368,28 +368,20 @@ describe('SSH controls are per-device (AJ1)', () => {
     }
   })
 
-  it('no control varies by vendor except where the configs genuinely differ', () => {
-    // AJ1 asserted identical scores across vendors. That held only because
-    // PCI-8.1 matched the bare word `aaa` and false-PASSED Nokia and Cumulus,
-    // whose only `aaa` block defines a LOCAL admin user (no TACACS+/RADIUS
-    // anywhere). AM1 reads the facts properly, so the one remaining difference
-    // is a real config gap — and this now asserts exactly that, which is a
-    // stronger check than "all scores equal":
-    //   1. every control OTHER than PCI-8.1 is vendor-independent, and
-    //   2. PCI-8.1 matches the verified per-vendor ground truth.
-    const vendors = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Extreme Networks']
+  it('no control varies by vendor — every fabric vendor now has central AAA', () => {
+    // AJ1 asserted identical scores across vendors, but that held only because
+    // PCI-8.1 matched the bare word `aaa` and false-PASSED Nokia and Cumulus.
+    // AM1 made the check honest and exposed real gaps (Juniper SRX/MX, Nokia,
+    // NVIDIA, Dell, Aruba, FortiOS had no TACACS+/RADIUS). AM4 fixed the
+    // generators, so vendor-independence is now TRUE rather than an artifact
+    // of a lenient regex — and PCI-8.1 must PASS for every vendor.
+    const vendors = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Extreme Networks', 'Dell EMC']
     const byVendor = Object.fromEntries(vendors.map(v =>
       [v, Object.fromEntries(scan(v).controls.map(c => [c.id, c.status]))]))
     const ids = Object.keys(byVendor.Cisco)
     const varying = ids.filter(id => new Set(vendors.map(v => byVendor[v][id])).size > 1)
-    expect(varying, 'only the AAA control may differ by vendor').toEqual(['PCI-8.1'])
-    // Ground truth, verified by reading the generated configs:
-    expect(byVendor.Cisco['PCI-8.1']).toBe('pass')
-    expect(byVendor.Arista['PCI-8.1']).toBe('pass')
-    expect(byVendor['Extreme Networks']['PCI-8.1']).toBe('pass')   // RADIUS
-    expect(byVendor.Juniper['PCI-8.1']).toBe('warn')  // switches yes; SRX + MX204 no
-    expect(byVendor.Nokia['PCI-8.1']).toBe('fail')    // local admin only
-    expect(byVendor.NVIDIA['PCI-8.1']).toBe('fail')   // local admin only
+    expect(varying).toEqual([])
+    for (const v of vendors) expect(byVendor[v]['PCI-8.1'], v).toBe('pass')
   })
 })
 
