@@ -506,14 +506,18 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
     if (!product) continue
 
     for (let i = 0; i < qty; i++) {
-      const actualUplinks = (product.subLayer === 'leaf' && computedLeafUplinks !== undefined)
+      // The SLOT decides the tier, not the SKU's catalogue role (AM5): the
+      // CX 6400 is catalogued as `distribution` but fills the DC `leaf` slot,
+      // and taking product.subLayer made every Aruba DC leaf a distribution
+      // switch — invisible to fabric links, VTEPs and the border-leaf handoff.
+      const actualUplinks = (role === 'leaf' && computedLeafUplinks !== undefined)
         ? computedLeafUplinks
         : product.uplinks
       devices.push({
         id: `${product.id}-${++globalIdx}`,
         hostname: '',
         role,
-        subLayer: product.subLayer,
+        subLayer: role,
         model: product.model,
         vendor: product.vendor,
         count: 1,

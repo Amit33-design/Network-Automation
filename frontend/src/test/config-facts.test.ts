@@ -204,7 +204,7 @@ describe('normalized config facts (AM1)', () => {
   it('AM3: every fabric vendor exposes its routing facts in its own dialect', () => {
     // One matrix, seven vendors: the checks no longer know any syntax, so a
     // vendor whose dialect a rule misses shows up here, not as a silent pass.
-    const FABRIC = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks']
+    const FABRIC = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks', 'HPE Aruba']
     const gaps: string[] = []
     for (const vendor of FABRIC) {
       const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
@@ -223,7 +223,7 @@ describe('normalized config facts (AM1)', () => {
 
   it('AM3: a spine is not a VTEP', () => {
     // An eBGP spine carries EVPN routes but terminates no tunnels (Z1).
-    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'Extreme Networks']) {
+    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'Extreme Networks', 'HPE Aruba']) {
       const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
       const cfgs = generateAllConfigs(devs, 'dc')
       for (const d of devs.filter(x => x.subLayer === 'spine')) {

@@ -2416,7 +2416,7 @@ describe('fabric underlay (AM6)', () => {
   // those loopbacks first: an IGP, BGP unnumbered on the links, or an IPv4
   // session to the far end of each fabric /31. Dell OS10 and Extreme EXOS had
   // none of the three, so their overlay sessions could never come up.
-  const FABRIC = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks']
+  const FABRIC = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks', 'HPE Aruba']
   const IGP = /^\s*(?:router isis|router ospf|set protocols (?:isis|ospf)|isis\s*\{|ospf\s*\{)/m
   const UNNUMBERED = /^\s*nv set vrf \S+ router bgp neighbor swp\d+ type unnumbered/m
   const P2P_NEIGHBOR = /(?:^\s*neighbor|add neighbor)\s+(10\.99\.\d+\.\d+)\b/gm
@@ -2487,6 +2487,71 @@ describe('only leaves are VTEPs, and a VTEP has a tunnel source (AM3)', () => {
     }
     for (const d of devs.filter(x => x.subLayer === 'spine')) {
       expect(cfgs[d.id]).not.toMatch(/^create virtual-network/m)
+    }
+  })
+})
+
+// ── AM5: HPE Aruba fabric + campus ──────────────────────────────────────────
+describe('HPE Aruba AOS-CX (AM5)', () => {
+  const build = (uc: 'dc' | 'campus') => {
+    const devs = buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs: ['HPE Aruba'] })
+    return { devs, cfgs: generateAllConfigs(devs, uc) }
+  }
+
+  it('a DC design has real leaves, not distribution switches in the leaf slot', () => {
+    const { devs } = build('dc')
+    expect(devs.filter(d => d.subLayer === 'leaf').length).toBeGreaterThan(0)
+    expect(devs.filter(d => d.subLayer === 'distribution')).toEqual([])
+  })
+
+  it('fabric identity is real and unique — no placeholder ASN or loopback', () => {
+    const { devs, cfgs } = build('dc')
+    const fabric = devs.filter(d => d.subLayer === 'spine' || d.subLayer === 'leaf')
+    const loops = new Set<string>()
+    for (const d of fabric) {
+      const c = cfgs[d.id]
+      expect(c).not.toMatch(/<CHANGE-ME-asn>|<CHANGE-ME-loopback-ip>|<CHANGE-ME-peer-ip>/)
+      expect(c).toMatch(/^router bgp 650\d\d$/m)
+      loops.add(c.match(/^interface loopback 0\n\s+ip address (\S+)/m)![1])
+    }
+    expect(loops.size).toBe(fabric.length)
+  })
+
+  it('the spine preserves the EVPN next-hop; only leaves are VTEPs', () => {
+    const { devs, cfgs } = build('dc')
+    for (const d of devs.filter(x => x.subLayer === 'spine')) {
+      expect(cfgs[d.id]).toMatch(/neighbor \S+ next-hop-unchanged/)
+      expect(cfgs[d.id]).not.toMatch(/^interface vxlan/m)
+    }
+    for (const d of devs.filter(x => x.subLayer === 'leaf')) {
+      expect(cfgs[d.id]).toMatch(/^interface vxlan 1\n\s+source ip 10\.255\.2\.\d+/m)
+    }
+  })
+
+  it('management services are all pinned to vrf mgmt', () => {
+    const { devs, cfgs } = build('dc')
+    const c = cfgs[devs[0].id]
+    expect(c).toMatch(/^snmp-server vrf mgmt$/m)
+    expect(c).toMatch(/^logging \S+ vrf mgmt /m)
+    expect(c).toMatch(/^ntp vrf mgmt$/m)
+    expect(c).not.toMatch(/no interface mgmt shutdown|vrf default/)
+  })
+
+  it('campus distribution runs OSPF + VRRP, not a fabric BGP block', () => {
+    const { devs, cfgs } = build('campus')
+    const dist = devs.filter(d => d.subLayer === 'distribution')
+    expect(dist.length).toBeGreaterThan(0)
+    for (const d of dist) {
+      expect(cfgs[d.id]).toMatch(/^router ospf 1$/m)
+      expect(cfgs[d.id]).toMatch(/vrrp 20 address-family ipv4/)
+      expect(cfgs[d.id]).not.toMatch(/^router bgp|interface vxlan/m)
+    }
+  })
+
+  it('campus access switches have uplinks to the distribution pair', () => {
+    const { devs, cfgs } = build('campus')
+    for (const d of devs.filter(x => x.subLayer === 'access')) {
+      expect(cfgs[d.id].match(/description UPLINK-\d/g) ?? []).toHaveLength(2)
     }
   })
 })

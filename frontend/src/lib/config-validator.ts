@@ -341,10 +341,17 @@ function checkBGPPeerSymmetry(configs: Record<string, string>): ValidationCheck 
 }
 
 function checkNoHardcodedSecrets(configs: Record<string, string>): ValidationCheck {
+  // AOS-CX (and others) put an ENCODING keyword before the value —
+  // `password ciphertext <CHANGE-ME-…>`, `key plaintext <CHANGE-ME-…>` — and
+  // the value lookahead used to read that keyword as the secret itself, so a
+  // correctly placeholdered Aruba config failed V-05 on every device (AM5).
+  // The keyword is skipped, and may never itself be taken as the value.
+  const ENC = '(?:ciphertext|plaintext|cleartext|encrypted|hashed)'
+  const value = (min: number) => `(?:${ENC}\\s+)?"?(?!<CHANGE-ME)(?!${ENC}\\b)[A-Za-z0-9!@#$%^&*()+]{${min},}`
   const secretPatterns = [
-    /password\s+"?(?!<CHANGE-ME)[A-Za-z0-9!@#$%^&*()+]{4,}/i,
-    /secret\s+"?(?!<CHANGE-ME)[A-Za-z0-9!@#$%^&*()+]{8,}/i,
-    /key\s+"?(?!<CHANGE-ME)[A-Za-z0-9!@#$%^&*()+]{8,}/i,
+    new RegExp(`password\\s+${value(4)}`, 'i'),
+    new RegExp(`secret\\s+${value(8)}`, 'i'),
+    new RegExp(`key\\s+${value(8)}`, 'i'),
   ]
 
   const violations: string[] = []
