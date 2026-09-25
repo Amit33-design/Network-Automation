@@ -11,6 +11,7 @@
  * The invariant below is the thing that keeps the two together: every address
  * a generated config contains must fall inside a prefix the export declares.
  */
+import { stripComments } from '@/lib/config-text'
 import { describe, it, expect } from 'vitest'
 import type { UseCase } from '@/types'
 import { buildDeviceList } from '@/lib/bom'
@@ -38,8 +39,6 @@ function addressesIn(cfg: string): string[] {
   return [...found]
 }
 
-const stripComments = (cfg: string) =>
-  cfg.split('\n').filter(l => !/^\s*[!#]/.test(l)).join('\n')
 
 const design = (useCase: UseCase, endpoints = 512) => {
   const state = {

@@ -6,6 +6,8 @@
  */
 
 import type { BOMDevice, UseCase } from '@/types'
+import { isCommentLine, stripComments } from '@/lib/config-text'
+import { deviceForConfig, extractFacts, extractFactsAnyDialect, factPlatform, type DeviceFacts } from '@/lib/config-facts'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -52,10 +54,6 @@ function extractRouterIds(configs: Record<string, string>): Map<string, string[]
 // (Cisco/Arista/Dell), `#` (Nokia/Cumulus/Junos/Fortinet headers), `//`.
 // Commented-out example lines (e.g. `! neighbor 10.255.2.1 inherit ...`) must
 // NOT be parsed as live config, or they produce phantom BGP peers.
-function isCommentLine(line: string): boolean {
-  const t = line.trimStart()
-  return t.startsWith('!') || t.startsWith('#') || t.startsWith('//')
-}
 
 /**
  * Z6 — the whole-config regex checks scanned COMMENT lines as if they were
@@ -66,9 +64,8 @@ function isCommentLine(line: string): boolean {
  * against the comment-stripped config, so documentation can never be
  * mistaken for configuration.
  */
-export function stripComments(cfg: string): string {
-  return cfg.split('\n').filter(l => !isCommentLine(l)).join('\n')
-}
+// Defined once in config-text.ts; re-exported for existing importers.
+export { stripComments }
 
 function stripCommentsAll(configs: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
@@ -132,12 +129,6 @@ function extractLoopbacks(configs: Record<string, string>): Map<string, string[]
 const RE_BGP = /router bgp\b|protocols bgp|\bbgp\s*\{|autonomous-system\s+\d+|configure bgp\b/i
 const RE_ISIS = /router isis|isis enable|protocols isis|\bisis\s*\{/i
 const RE_OSPF = /router ospf\s|ospf area|protocols ospf/i
-const RE_HOSTNAME = /\bhostname\s+\S+|host-name\s+\S+|sysName\s+\S+/i
-// AA1: Viptela / Cisco SD-WAN expresses these as nested BLOCKS — `ntp` then
-// an indented `server`, `snmp` then `user`/`group` — so the flat Cisco-IOS
-// keywords missed them entirely and a fully-managed SD-WAN edge was reported
-// as having no management plane. Same vendor-awareness class as M3/M4/Z8.
-const RE_MGMT = /MANAGEMENT|ntp server|ntp\s*\{|ntp\s*\n\s+server\b|logging host|logging\s*\{|logging\s*\n[\s\S]{0,200}?\bserver\b|remote-server|syslog-server|snmp-server|snmp\s*\n\s+(?:contact|view|group|user)\b|gnmi-server/i
 const RE_ROUTING_DEVICE = /router bgp|router ospf|router isis|protocols (?:bgp|ospf|isis)|\bbgp\s*\{|\bisis\s*\{|\bospf\s*\{/i
 
 /** Cloud-native tiers: provisioned via Terraform/API, no device CLI exists. */
@@ -381,14 +372,27 @@ function checkNoHardcodedSecrets(configs: Record<string, string>): ValidationChe
   }
 }
 
+/**
+ * AM2 — V-06/V-07 read the normalized facts (config-facts.ts) instead of
+ * their own cross-vendor regexes. The old V-07 detector began with the bare
+ * word `MANAGEMENT`, which matched a comment banner or any `vrf management`
+ * line, so it passed almost every config; and it accepted ANY one of NTP,
+ * syslog or SNMP. It now requires NTP and remote syslog, per device, in that
+ * device's own dialect. A config that cannot be matched to a BOM device is
+ * read with `extractFactsAnyDialect` rather than a guessed dialect.
+ */
+function factsFor(host: string, cfg: string, devices: BOMDevice[]): DeviceFacts {
+  const dev = deviceForConfig(host, devices)
+  return dev ? extractFacts(cfg, factPlatform(dev)) : extractFactsAnyDialect(cfg)
+}
+
 function checkHostnameConsistency(
   configs: Record<string, string>,
   devices: BOMDevice[],
 ): ValidationCheck {
   const missing: string[] = []
   for (const [host, cfg] of Object.entries(configs)) {
-    const hasHostname = RE_HOSTNAME.test(cfg)
-    if (!hasHostname) missing.push(host)
+    if (factsFor(host, cfg, devices).hostname.state === 'absent') missing.push(host)
   }
 
   if (missing.length > 0) {
@@ -413,11 +417,18 @@ function checkHostnameConsistency(
   }
 }
 
-function checkManagementBlock(configs: Record<string, string>): ValidationCheck {
+function checkManagementBlock(configs: Record<string, string>, devices: BOMDevice[]): ValidationCheck {
   const missingMgmt: string[] = []
+  const gaps: string[] = []
   for (const [host, cfg] of Object.entries(configs)) {
-    const hasMgmt = RE_MGMT.test(cfg)
-    if (!hasMgmt) missingMgmt.push(host)
+    const f = factsFor(host, cfg, devices)
+    // `unknown` (e.g. FTD syslog lives in FMC, O-RU time comes from PTP) is
+    // not a gap the design can close, so only `absent` counts.
+    const lacking = (['ntp', 'syslog'] as const).filter(n => f[n].state === 'absent')
+    if (lacking.length) {
+      missingMgmt.push(host)
+      gaps.push(`${host} (no ${lacking.map(n => n === 'ntp' ? 'NTP' : 'remote syslog').join(' / ')})`)
+    }
   }
 
   if (missingMgmt.length > 0) {
@@ -426,7 +437,7 @@ function checkManagementBlock(configs: Record<string, string>): ValidationCheck 
       name: 'Management plane config',
       category: 'Security',
       severity: 'warn',
-      detail: `${missingMgmt.length} device(s) missing NTP/syslog/SNMP management block: ${missingMgmt.slice(0, 3).join(', ')}`,
+      detail: `${missingMgmt.length} device(s) missing management-plane services: ${gaps.slice(0, 3).join(', ')}`,
       devices: missingMgmt,
     }
   }
@@ -436,7 +447,7 @@ function checkManagementBlock(configs: Record<string, string>): ValidationCheck 
     name: 'Management plane config',
     category: 'Security',
     severity: 'pass',
-    detail: `All ${Object.keys(configs).length} config(s) include management plane (NTP, syslog, SNMP)`,
+    detail: `All ${Object.keys(configs).length} config(s) configure NTP and remote syslog`,
   }
 }
 
@@ -785,7 +796,7 @@ export function validateConfigs(input: ValidateInput): ValidationResult {
     checkBGPPeerSymmetry(live),
     checkEVPNConsistency(live, useCase),
     checkHostnameConsistency(live, devices),
-    checkManagementBlock(live),
+    checkManagementBlock(live, devices),
     checkNoHardcodedSecrets(live),
     checkUndefinedACLReferences(live),
     checkGPUQoS(live, useCase),

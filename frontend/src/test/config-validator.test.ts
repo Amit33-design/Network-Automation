@@ -694,3 +694,46 @@ describe('AD3 — cloud designs are not VXLAN fabrics', () => {
     expect(check(r, 'V-03').severity).toBe('fail')
   })
 })
+
+// ── AM2: management checks read the normalized facts ────────────────────────
+describe('V-06/V-07 read config facts (AM2)', () => {
+  const v = (cfg: string, id: string) =>
+    validateConfigs({ configs: { 'LEAF-01': cfg }, devices: [], useCase: 'dc' }).checks.find(c => c.id === id)!
+
+  it('V-07 no longer passes on the word MANAGEMENT alone', () => {
+    // The old detector opened with a bare /MANAGEMENT/ — a comment banner or
+    // any `vrf management` satisfied it, so nearly every config passed.
+    const cfg = 'hostname LEAF-01\n! ── MANAGEMENT ──\nvrf context management\n ip route 0.0.0.0/0 10.0.0.1'
+    expect(v(cfg, 'V-07').severity).toBe('warn')
+  })
+
+  it('V-07 requires NTP AND remote syslog, and names which is missing', () => {
+    // It used to accept ANY one of NTP, syslog or SNMP.
+    const r = v('hostname LEAF-01\nntp server 10.0.0.2\nsnmp-server community x', 'V-07')
+    expect(r.severity).toBe('warn')
+    expect(r.detail).toContain('remote syslog')
+    expect(r.detail).not.toContain('NTP /')
+    expect(v('hostname LEAF-01\nntp server 10.0.0.2\nlogging server 10.0.0.3', 'V-07').severity).toBe('pass')
+  })
+
+  it('V-06 reads the dialect of the resolved device', () => {
+    // A Junos `set system host-name` is a hostname; a bare `hostname` line in
+    // a Junos config is not a Junos statement.
+    const junos = { ...device('J-01'), vendor: 'Juniper', model: 'QFX5120', subLayer: 'leaf' }
+    const run = (cfg: string) => validateConfigs({ configs: { 'J-01': cfg }, devices: [junos], useCase: 'dc' })
+      .checks.find(c => c.id === 'V-06')!.severity
+    expect(run('set system host-name J-01')).toBe('pass')
+    expect(run('hostname J-01')).toBe('warn')
+  })
+
+  it('Nokia SR Linux names itself with `system name host-name`', () => {
+    // It emitted `system { hostname X }`, which SR Linux rejects; the old
+    // cross-vendor /hostname/ regex accepted it.
+    const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: ['Nokia'] })
+    const cfgs = generateAllConfigs(devs, 'dc')
+    const srl = devs.find(d => d.vendor === 'Nokia')!
+    expect(cfgs[srl.id]).toMatch(/name \{\s*\n\s*host-name \S+/)
+    expect(cfgs[srl.id]).not.toMatch(/^\s*hostname\s/m)
+  })
+})
+

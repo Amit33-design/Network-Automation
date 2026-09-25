@@ -49,15 +49,16 @@
 import type { BOMDevice } from '@/types'
 import { ztpPlatform, type ZTPPlatform } from '@/lib/ztp'
 import { isFtdModel, isViptelaOs } from '@/lib/configgen'
-import { stripComments } from '@/lib/config-validator'
+import { stripComments } from '@/lib/config-text'
 
 /** The facts this slice models. Management-plane first: that is where the
  *  measured defects lived. */
-export type FactName = 'sshV2' | 'ntp' | 'syslog' | 'aaa'
+export type FactName = 'hostname' | 'sshV2' | 'ntp' | 'syslog' | 'aaa'
 
-export const FACT_NAMES: readonly FactName[] = ['sshV2', 'ntp', 'syslog', 'aaa'] as const
+export const FACT_NAMES: readonly FactName[] = ['hostname', 'sshV2', 'ntp', 'syslog', 'aaa'] as const
 
 export const FACT_LABEL: Record<FactName, string> = {
+  hostname: 'Hostname set',
   sshV2: 'SSH v2 enforced',
   ntp: 'NTP server configured',
   syslog: 'Remote syslog configured',
@@ -109,18 +110,21 @@ const CENTRAL_AAA = /\b(?:tacacs\+?|tacplus|radius)\b/i
  */
 export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
   nxos: {
+    hostname: /^\s*hostname\s+\S/m,
     sshV2: /^\s*ssh version 2\b/m,
     ntp: /^\s*ntp server\b/m,
     syslog: /^\s*logging server\b/m,
     aaa: CENTRAL_AAA,
   },
   'ios-xe': {
+    hostname: /^\s*hostname\s+\S/m,
     sshV2: /^\s*ip ssh version 2\b/m,
     ntp: /^\s*ntp server\b/m,
     syslog: /^\s*logging (?:host|server)\b/m,
     aaa: CENTRAL_AAA,
   },
   iosxr: {
+    hostname: /^\s*hostname\s+\S/m,
     sshV2: /^\s*ssh server v2\b/m,
     // IOS-XR accepts `ntp server X` and renders it nested under a bare `ntp`.
     ntp: /^\s*ntp(?:\s*\n\s+|[ \t]+)server\b/m,
@@ -128,12 +132,14 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
     aaa: CENTRAL_AAA,
   },
   eos: {
+    hostname: /^\s*hostname\s+\S/m,
     sshV2: /^\s*management ssh\b|^\s*ip ssh version 2\b/m,
     ntp: /^\s*ntp server\b/m,
     syslog: /^\s*logging (?:vrf \S+ )?host\b/m,
     aaa: CENTRAL_AAA,
   },
   junos: {
+    hostname: /^\s*set system host-name\s+\S/m,
     // Not `system-services [ … ssh … ]` — that is a zone host-inbound rule.
     sshV2: /^\s*set system services ssh protocol-version v2\b/m,
     ntp: /^\s*set system ntp server\b/m,
@@ -141,30 +147,35 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
     aaa: CENTRAL_AAA,
   },
   srl: {
+    hostname: /^\s*host-name\s+\S/m,
     sshV2: /^\s*ssh-server\s*\{/m,
     ntp: /^\s*ntp\s*\{/m,
     syslog: /^\s*remote-server\s+\S/m,
     aaa: CENTRAL_AAA,
   },
   cumulus: {
+    hostname: /^\s*nv set system hostname\s+\S/m,
     sshV2: /^\s*nv set system ssh-server state enabled\b/m,
     ntp: /^\s*nv set service ntp \S+ server\b/m,
     syslog: /^\s*nv set service syslog \S+ server\b/m,
     aaa: CENTRAL_AAA,
   },
   dellos10: {
+    hostname: /^\s*hostname\s+\S/m,
     sshV2: /^\s*ip ssh server version 2\b/m,
     ntp: /^\s*ntp server\b/m,
     syslog: /^\s*logging server\b/m,
     aaa: CENTRAL_AAA,
   },
   exos: {
+    hostname: /^\s*configure snmp sysName\s+\S/m,
     sshV2: /^\s*enable ssh2\b/m,
     ntp: /^\s*configure ntp server add\b/m,
     syslog: /^\s*configure syslog add\b/m,
     aaa: CENTRAL_AAA,
   },
   fortios: {
+    hostname: /^\s*set hostname\s+\S/m,
     // Disabling SSHv1 is FortiOS's v2-only statement. Not `ssl-ssh-profile`.
     sshV2: /^\s*set admin-ssh-v1 disable\b/m,
     ntp: /^\s*config system ntp\b/m,
@@ -172,24 +183,28 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
     aaa: CENTRAL_AAA,
   },
   arubaoscx: {
+    hostname: /^\s*hostname\s+\S/m,
     sshV2: /^\s*ssh server vrf\b/m,
     ntp: /^\s*ntp server\b/m,
     syslog: /^\s*logging\s+(?:\d{1,3}(?:\.\d{1,3}){3}|<CHANGE-ME)/m,
     aaa: CENTRAL_AAA,
   },
   panos: {
+    hostname: /^\s*set deviceconfig system hostname\s+\S/m,
     sshV2: /^\s*set deviceconfig system (?:service disable-telnet yes|ssh\b)/m,
     ntp: /^\s*set deviceconfig system ntp-servers\b/m,
     syslog: /^\s*set (?:shared )?server-profile syslog\b/m,
     aaa: CENTRAL_AAA,
   },
   viptela: {
+    hostname: /^\s*host-name\s+\S/m,
     sshV2: { unsupported: 'Viptela OS implements SSH v2 only and has no protocol-version statement — there is no v1 to disable.' },
     ntp: /^\s*ntp\s*\n\s+server\s+\S/m,
     syslog: /^\s*logging\s*\n(?:[ \t]+\S.*\n)*?[ \t]+server\s+\S/m,
     aaa: /^\s*tacacs\s*\n\s+server\s+\S|^\s*radius\s*\n\s+server\s+\S/m,
   },
   'oran-nf': {
+    hostname: /^\s*hostname\s+\S/m,
     // OpenSSH-based NF management plane; OpenSSH dropped SSHv1 in 7.6.
     sshV2: /^\s*ssh(?:-server)? enabled\b/m,
     ntp: /^\s*ntp-server\s+\S/m,
@@ -197,6 +212,7 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
     aaa: /^\s*(?:tacacs|radius)-server\s+\S/m,
   },
   'oran-ru': {
+    hostname: /^\s*hostname\s+\S/m,
     sshV2: /^\s*transport netconf-over-ssh\b/m,
     ntp: { unsupported: 'An O-RU takes time from PTP (G.8275.1) on the fronthaul, not NTP — see the fronthaul/grandmaster timing config.' },
     // The O1 VES collector is the radio's remote event/fault log.
@@ -204,6 +220,7 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
     aaa: { unsupported: 'O-RU M-plane accounts are provisioned over NETCONF by the O-DU/SMO (O-RAN WG4 o-ran-usermgmt / NACM); an O-RU has no TACACS+/RADIUS client.' },
   },
   ftd: {
+    hostname: /^\s*configure network hostname\s+\S/m,
     // The only SSH / NTP statements a Firepower CLI accepts (X6).
     sshV2: /^\s*configure ssh-access-list\b/m,
     ntp: /^\s*configure ntp servers\b/m,
@@ -253,6 +270,28 @@ export function extractFacts(config: string, platform: FactPlatform): DeviceFact
     }
     const m = rule.exec(live)
     out[name] = m ? { state: 'present', evidence: evidenceOf(live, m) } : { state: 'absent' }
+  }
+  return out
+}
+
+/**
+ * Facts for a config whose device — and so whose dialect — is not known.
+ * A fact is present if ANY platform's rule matches. This is deliberately the
+ * lenient direction: it can only say "a recognisable statement exists", never
+ * attribute a dialect, and consumers that can resolve the device should use
+ * `extractFacts` instead.
+ */
+export function extractFactsAnyDialect(config: string): DeviceFacts {
+  const live = stripComments(config)
+  const out = {} as DeviceFacts
+  for (const name of FACT_NAMES) {
+    out[name] = { state: 'absent' }
+    for (const rules of Object.values(RULES)) {
+      const rule = rules[name]
+      if (!(rule instanceof RegExp)) continue
+      const m = rule.exec(live)
+      if (m) { out[name] = { state: 'present', evidence: evidenceOf(live, m) }; break }
+    }
   }
   return out
 }
