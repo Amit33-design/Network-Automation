@@ -778,13 +778,10 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   `interface virtual-network 1 / vxlan-vni 10001`. If GPU: full DCB/PFC/ECN
   block (`qos-map dscp-tc RDMA-DSCP-MAP`, `dcb-map RDMA-LOSSLESS`),
   interface ranges sized from `dev.ports`.
-- **`arubaOsCxConfig(dev, idx)`** — ArubaOS-CX. Spine/distribution →
-  BGP+EVPN+VXLAN; access → VLANs (Mgmt/Data/Voice) + PoE +
-  `bpduguard`/`admin-edge` on `1/1/1-1/1/${dev.ports}`.
-- **`nvidiaSpectrumConfig(dev, idx, isGpu)`** — Cumulus Linux:
-  `/etc/network/interfaces` + FRR `frr.conf` BGP-unnumbered EVPN (spine:
-  `neighbor swp1-swp${ports} interface peer-group FABRIC`; leaf: last 2
-  `swp` ports to spines). GPU PFC/ECN comments.
+- **`arubaMgmtBlock(hostname)`** — shared ArubaOS-CX management plane; every service (TACACS, NTP, SNMP, syslog, DNS, SSH) pinned to `vrf mgmt` (AM5).
+- **`arubaFabricConfig(dev, idx, allDevices)`** — ArubaOS-CX spine/leaf (AM5): tier-scoped identity (spine ASN 65000 / `10.255.1.x`, leaf pair-ASN / `10.255.2.x`), `closFabricLinks` /31s on `1/1/N` with `mtu 9198`, eBGP IPv4 underlay per /31 (AM6) + eBGP EVPN overlay between loopbacks (`next-hop-unchanged` on the spine), BFD, leaf-only `interface vxlan 1` + `evpn` RTs `65000:10010`, server ports from `leafHostPortMax`, border-leaf `vrf TENANT-A` firewall handoff.
+- **`arubaCampusConfig(dev, idx, allDevices)`** — ArubaOS-CX campus (AM5): distribution = OSPF area 0 + VRRP on Vlan20/30 (`10.10.<vlan>.1` VIP) + access-facing trunks; access = data/voice access ports + split uplinks (UPLINK-1/2) to the distribution pair.
+- **`nvidiaSpectrumConfig(dev, idx, isGpu, allDevices)`** — Cumulus Linux 5.x NVUE (`nv set`, Y6): auto identity, per-port BGP-unnumbered neighbors from `closFabricLinks`, `nv set qos roce` lossless on GPU fabrics, mgmt VRF, border-leaf handoff in the default VRF (Z3b).
 - **`extremeExosConfig(dev, idx)`** — EXOS. Spine → BGP+EVPN (VNI 10001);
   access → VLANs+PoE+STP edge-safeguard.
 - **`nokiaSrLinuxConfig(dev, idx, isMultisite=false)`** — Nokia SR Linux
@@ -1057,6 +1054,7 @@ Dialect-free management-plane facts extracted once per device, so checks query f
 - `RULES: Record<FactPlatform, Record<MgmtFactName, …>>` + `ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, …>>` (AM3) — compiler-enforced completeness; `unsupported` → `unknown` with a reason (FTD syslog/AAA in FMC, vEdge SSH v2-only, O-RU PTP time / NACM accounts).
 - `factPlatform(dev)`, `extractFacts(config, platform)` (strips comments first), `extractFactsAnyDialect(config)` (lenient fallback for configs with no resolvable device), `deviceForConfig`, `fleetFact(configs, devices, name)`.
 - Also consumed by `config-validator.ts`: V-06/V-07 (AM2) and V-01/V-03/V-08/V-12/V-13/V-14 (AM3) through one per-validation `FactMap`; the validator no longer holds any cross-vendor routing regex. V-09 (GPU QoS) still scans text.
+- `closFabricLinks` also returns each link's far-end `peerIp`/`peerIdx`, used for the per-/31 eBGP underlay on Dell, EXOS and Aruba (AM6/AM5).
 - `test/source-interface.test.ts` (AM3): every interface an IOS-shaped config sources a service from must be defined in that config.
 - Comment handling lives in `lib/config-text.ts` (`isCommentLine`, `stripComments`), shared by facts, the validator (which re-exports `stripComments`) and `ipam-truth.test.ts`.
 - Consumed by `compliance-scan.ts` `everyDeviceFact()` (PCI-2.3/6.1/8.1/10.1, FDRP-AC-17/AU-2, HIPAA-164.312d).

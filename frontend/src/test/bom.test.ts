@@ -1154,3 +1154,18 @@ describe('fibre medium coherence (AF1)', () => {
     )
   })
 })
+
+describe('the slot decides the tier (AM5)', () => {
+  it('every device\'s subLayer is the role it was placed into', () => {
+    // The CX 6400 is catalogued as `distribution`; placed into the DC leaf slot
+    // it used to stay `distribution`, so the Aruba DC fabric had no leaves.
+    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks', 'Fortinet', 'Palo Alto', 'HPE Aruba']) {
+      for (const uc of ['dc', 'gpu', 'campus', 'wan', 'multisite', 'multicloud', 'oran'] as const) {
+        for (const d of buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })) {
+          expect(d.subLayer, `${vendor}/${uc} ${d.model}`).toBe(d.role)
+        }
+      }
+    }
+  })
+})
+

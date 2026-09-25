@@ -760,3 +760,16 @@ describe('routing and fabric checks read config facts (AM3)', () => {
   })
 })
 
+describe('V-05 encoding keywords (AM5)', () => {
+  const v05 = (cfg: string) => validateConfigs({ configs: { 'A-01': `hostname A-01\n${cfg}` }, devices: [], useCase: 'dc' })
+    .checks.find(c => c.id === 'V-05')!.severity
+  it('an encoding keyword before a placeholder is not a hardcoded secret', () => {
+    expect(v05('user admin group administrators password ciphertext <CHANGE-ME-admin-password>')).toBe('pass')
+    expect(v05('tacacs-server host 10.0.0.3 key plaintext <CHANGE-ME-tacacs-key> vrf mgmt')).toBe('pass')
+  })
+  it('a real value after an encoding keyword is still caught', () => {
+    expect(v05('tacacs-server host 10.0.0.3 key plaintext MySecretKey99')).toBe('fail')
+    expect(v05('user admin password ciphertext Hunter2Secret')).toBe('fail')
+  })
+})
+

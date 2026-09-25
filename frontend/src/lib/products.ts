@@ -622,6 +622,7 @@ export const PRODUCTS: Product[] = [
     subLayer: 'distribution',
     ports: 48,
     uplinks: 8,
+    uplinkStart: 49,
     uplinkSpeed: '100G',
     speed: '25G',
     asic: 'Broadcom Trident3',

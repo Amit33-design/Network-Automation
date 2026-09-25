@@ -239,7 +239,7 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
     // Every fabric vendor's leaf must configure the handoff it is cabled for.
     // Z3/Z8/Z3b closed all six; the set is the guard against a new vendor
     // (or a regression) silently reopening the gap.
-    const HANDOFF_VENDORS = new Set(['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'Extreme Networks', 'NVIDIA'])
+    const HANDOFF_VENDORS = new Set(['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'Extreme Networks', 'NVIDIA', 'HPE Aruba'])
     const leaves = p.devices.filter(d => d.subLayer === 'leaf')
     if (leaves.length && HANDOFF_VENDORS.has(leaves[0].vendor)) {
       expect(handoffDevices.length, `${ctx}: no device configures the cabled firewall handoff`).toBeGreaterThan(0)
@@ -564,6 +564,9 @@ const OVERSUBS = [1, 3]
 const ENDPOINTS = [128, 512, 1024, 2048]
 const VENDOR_SETS: string[][] = [
   [], ['Arista'], ['NVIDIA'], ['Juniper'], ['Nokia'], ['Dell EMC'], ['Extreme Networks'],
+  // AM5: Aruba was never here, which is how its DC fabric stayed in the
+  // pre-Z8 placeholder state long after the other seven were fixed.
+  ['HPE Aruba'],
 ]
 
 describe('E2E journey — universal invariants across full matrix', () => {
