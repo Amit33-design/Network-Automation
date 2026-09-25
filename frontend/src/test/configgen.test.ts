@@ -2409,3 +2409,35 @@ describe('SSH management-plane hardening (AJ1)', () => {
     }
   })
 })
+
+// ── AM3: VTEP role correctness (Dell OS10 / Extreme EXOS) ───────────────────
+describe('only leaves are VTEPs, and a VTEP has a tunnel source (AM3)', () => {
+  const fabric = (vendor: string) => {
+    const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+    return { devs, cfgs: generateAllConfigs(devs, 'dc') }
+  }
+
+  it('Dell OS10: leaf has an nve source and a virtual-network VNI; spine has neither', () => {
+    // Both roles emitted `interface virtual-network 1 / vxlan-vni 10001` —
+    // the IRB interface, not the VNI context — and no `nve` block at all.
+    const { devs, cfgs } = fabric('Dell EMC')
+    for (const d of devs.filter(x => x.subLayer === 'leaf')) {
+      expect(cfgs[d.id]).toMatch(/^nve\n\s+source-interface loopback 0/m)
+      expect(cfgs[d.id]).toMatch(/^virtual-network 1\n\s+vxlan-vni 10001/m)
+      expect(cfgs[d.id]).not.toMatch(/^interface virtual-network 1\n\s+vxlan-vni/m)
+    }
+    for (const d of devs.filter(x => x.subLayer === 'spine')) {
+      expect(cfgs[d.id]).not.toMatch(/vxlan-vni|advertise-all-vni|^nve$/m)
+    }
+  })
+
+  it('Extreme EXOS: leaf sets a local endpoint; spine creates no VNI', () => {
+    const { devs, cfgs } = fabric('Extreme Networks')
+    for (const d of devs.filter(x => x.subLayer === 'leaf')) {
+      expect(cfgs[d.id]).toMatch(/^configure virtual-network local-endpoint ipaddress 10\.255\.2\.\d+ vr VR-Default/m)
+    }
+    for (const d of devs.filter(x => x.subLayer === 'spine')) {
+      expect(cfgs[d.id]).not.toMatch(/^create virtual-network/m)
+    }
+  })
+})

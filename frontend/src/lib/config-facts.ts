@@ -53,9 +53,24 @@ import { stripComments } from '@/lib/config-text'
 
 /** The facts this slice models. Management-plane first: that is where the
  *  measured defects lived. */
-export type FactName = 'hostname' | 'sshV2' | 'ntp' | 'syslog' | 'aaa'
+export type MgmtFactName = 'hostname' | 'sshV2' | 'ntp' | 'syslog' | 'aaa'
 
-export const FACT_NAMES: readonly FactName[] = ['hostname', 'sshV2', 'ntp', 'syslog', 'aaa'] as const
+/**
+ * Routing and fabric facts (AM3). Kept as a separate group so the management
+ * checks and their ground-truth tables do not change shape when these grow.
+ */
+export type RoutingFactName =
+  'bgp' | 'isis' | 'ospf' | 'loopback' | 'vxlan' | 'evpn' | 'bfd' | 'jumboMtu'
+
+export type FactName = MgmtFactName | RoutingFactName
+
+/** The management-plane facts. */
+export const FACT_NAMES: readonly MgmtFactName[] = ['hostname', 'sshV2', 'ntp', 'syslog', 'aaa'] as const
+
+export const ROUTING_FACT_NAMES: readonly RoutingFactName[] =
+  ['bgp', 'isis', 'ospf', 'loopback', 'vxlan', 'evpn', 'bfd', 'jumboMtu'] as const
+
+export const ALL_FACT_NAMES: readonly FactName[] = [...FACT_NAMES, ...ROUTING_FACT_NAMES]
 
 export const FACT_LABEL: Record<FactName, string> = {
   hostname: 'Hostname set',
@@ -63,6 +78,14 @@ export const FACT_LABEL: Record<FactName, string> = {
   ntp: 'NTP server configured',
   syslog: 'Remote syslog configured',
   aaa: 'Centralized AAA (TACACS+ / RADIUS)',
+  bgp: 'BGP configured',
+  isis: 'IS-IS configured',
+  ospf: 'OSPF configured',
+  loopback: 'Loopback interface',
+  vxlan: 'VXLAN tunnel endpoint (VTEP)',
+  evpn: 'EVPN control plane',
+  bfd: 'BFD enabled',
+  jumboMtu: 'Jumbo MTU (≥ 9000)',
 }
 
 export type FactState = 'present' | 'absent' | 'unknown'
@@ -108,7 +131,7 @@ const CENTRAL_AAA = /\b(?:tacacs\+?|tacplus|radius)\b/i
  * rule), `log-adjacency-changes` (an IS-IS knob) and `ssl-ssh-profile` (a TLS
  * inspection profile) as if they were SSH / syslog.
  */
-export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
+export const RULES: Record<FactPlatform, Record<MgmtFactName, Rule>> = {
   nxos: {
     hostname: /^\s*hostname\s+\S/m,
     sshV2: /^\s*ssh version 2\b/m,
@@ -229,6 +252,176 @@ export const RULES: Record<FactPlatform, Record<FactName, Rule>> = {
   },
 }
 
+/** A construct the platform does not have — the fact is simply absent. */
+const NEVER = /(?!)/
+
+const FMC_ROUTING = 'Cisco FTD routing and interfaces are configured in FMC, not the device CLI — verify it in FMC.'
+const NOT_A_ROUTER = /(?!)/
+
+// Shared by the IOS-shaped CLIs (NX-OS, IOS-XE, IOS-XR, EOS, OS10, AOS-CX).
+const IOS_BGP = /^\s*router bgp\b/m
+const IOS_ISIS = /^\s*router isis\b/m
+const IOS_OSPF = /^\s*router ospf\b/m
+const IOS_JUMBO = /^\s*mtu\s+9\d{3}\b/m
+
+/**
+ * Routing and fabric facts, every platform × every fact (AM3). Same contract
+ * as RULES: a missing cell is a type error. Each replaces one of the
+ * validator's cross-vendor regexes, which is where M3, M6, M7 and Z6 lived.
+ * Notable dialect points the old detectors got wrong or never saw:
+ *   - EXOS routing (`enable bgp`, `configure ospf`) matched no routing
+ *     detector at all, so V-12 never asked whether an EXOS router had a
+ *     loopback.
+ *   - VXLAN was any occurrence of the word, so a Junos `encapsulation vxlan`
+ *     inside an EVPN type-5 block and an NX-OS `vxlan` in a description both
+ *     counted as a tunnel endpoint.
+ */
+export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> = {
+  nxos: {
+    bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
+    loopback: /^\s*interface loopback\d/mi,
+    vxlan: /^\s*interface nve\d/m,
+    evpn: /^\s*nv overlay evpn\b|^\s*address-family l2vpn evpn\b/m,
+    // A peer template that USES bfd, not just `feature bfd` (which enables
+    // the process and protects nothing on its own).
+    bfd: /^\s*bfd(?:\s+multihop)?\s*$/m,
+    jumboMtu: IOS_JUMBO,
+  },
+  'ios-xe': {
+    bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
+    loopback: /^\s*interface Loopback\d/mi,
+    vxlan: /^\s*interface nve\d/m,
+    evpn: /^\s*l2vpn evpn\b|^\s*address-family l2vpn evpn\b/m,
+    bfd: /^\s*bfd (?:interval|template)\b|^\s*neighbor \S+ fall-over bfd\b/m,
+    jumboMtu: /^\s*(?:system )?mtu\s+9\d{3}\b/m,
+  },
+  iosxr: {
+    bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
+    loopback: /^\s*interface Loopback\d/mi,
+    vxlan: /^\s*interface nve\d/m,
+    evpn: /^\s*evpn\s*$|^\s*address-family l2vpn evpn\b/m,
+    bfd: /^\s*bfd fast-detect\b/m,
+    jumboMtu: IOS_JUMBO,
+  },
+  eos: {
+    bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
+    loopback: /^\s*interface Loopback\d/mi,
+    vxlan: /^\s*interface Vxlan\d/m,
+    evpn: /^\s*address-family evpn\b/m,
+    bfd: /^\s*neighbor \S+ bfd\b/m,
+    jumboMtu: IOS_JUMBO,
+  },
+  junos: {
+    bgp: /^\s*set protocols bgp\b/m,
+    isis: /^\s*set protocols isis\b/m,
+    ospf: /^\s*set protocols ospf\b/m,
+    loopback: /^\s*set interfaces lo0 unit\b/m,
+    // A VNI mapped to a VLAN, or a VTEP source — not the word `vxlan` in an
+    // EVPN type-5 block.
+    vxlan: /^\s*set vlans \S+ vxlan vni\b|^\s*set switch-options vtep-source-interface\b/m,
+    evpn: /^\s*set protocols (?:bgp group \S+ family evpn|evpn)\b|^\s*set routing-instances \S+ protocols evpn\b/m,
+    bfd: /\bbfd-liveness-detection\b/m,
+    jumboMtu: /^\s*set interfaces \S+ mtu 9\d{3}\b/m,
+  },
+  srl: {
+    bgp: /^\s*bgp\s*\{/m,
+    isis: /^\s*isis\s*\{/m,
+    ospf: /^\s*ospf\s*\{/m,
+    loopback: /^\s*interface system0\b/m,
+    vxlan: /^\s*vxlan-interface\s+\S+\s*\{/m,
+    evpn: /^\s*afi-safi evpn\s*\{|^\s*bgp-evpn\s*\{/m,
+    bfd: /^\s*enable-bfd true\b/m,
+    jumboMtu: /^\s*mtu\s+9\d{3}\b/m,
+  },
+  cumulus: {
+    bgp: /^\s*nv set router bgp (?:enable on|autonomous-system)\b/m,
+    isis: /^\s*nv set (?:vrf \S+ )?router isis\b/m,
+    ospf: /^\s*nv set (?:vrf \S+ )?router ospf\b/m,
+    loopback: /^\s*nv set interface lo ip address\b/m,
+    vxlan: /^\s*nv set nve vxlan enable on\b/m,
+    evpn: /^\s*nv set evpn enable on\b/m,
+    bfd: /^\s*nv set .*\bbfd enable on\b/m,
+    jumboMtu: /^\s*nv set interface \S+ link mtu 9\d{3}\b/m,
+  },
+  dellos10: {
+    bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
+    loopback: /^\s*interface loopback\s*\d/mi,
+    // `interface virtual-network N` is the IRB SVI, not the tunnel.
+    vxlan: /^\s*vxlan-vni\s+\d/m,
+    evpn: /^\s*address-family l2vpn evpn\b/m,
+    bfd: /^\s*bfd\b/m,
+    jumboMtu: IOS_JUMBO,
+  },
+  exos: {
+    bgp: /^\s*enable bgp\s*$|^\s*configure bgp AS-number\b/m,
+    isis: /^\s*(?:enable|configure) isis\b/m,
+    ospf: /^\s*(?:enable|configure) ospf\b/m,
+    loopback: /^\s*enable loopback-mode vlan\b/m,
+    vxlan: /^\s*create virtual-network\s+\S+\s+vxlan vni\b/m,
+    evpn: /\bcapability evpn\b|\baddress-family l2vpn-evpn\b/m,
+    bfd: /^\s*configure bgp neighbor \S+ bfd on\b/m,
+    jumboMtu: /^\s*configure jumbo-frame-size 9\d{3}\b/m,
+  },
+  fortios: {
+    bgp: /^\s*config router bgp\b/m,
+    isis: /^\s*config router isis\b/m,
+    ospf: /^\s*config router ospf\b/m,
+    loopback: /^\s*set type loopback\b/m,
+    vxlan: /^\s*config system vxlan\b/m,
+    evpn: /^\s*config system evpn\b/m,
+    bfd: /^\s*set bfd enable\b/m,
+    jumboMtu: /^\s*set mtu 9\d{3}\b/m,
+  },
+  arubaoscx: {
+    bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
+    loopback: /^\s*interface loopback\s*\d/mi,
+    vxlan: /^\s*interface vxlan\s*\d/m,
+    evpn: /^\s*address-family l2vpn evpn\b/m,
+    bfd: /^\s*(?:neighbor \S+ )?(?:fall-over )?bfd\b/m,
+    jumboMtu: IOS_JUMBO,
+  },
+  panos: {
+    bgp: /^\s*set network virtual-router \S+ protocol bgp enable yes\b/m,
+    isis: NEVER, // PAN-OS has no IS-IS
+    ospf: /^\s*set network virtual-router \S+ protocol ospf enable yes\b/m,
+    loopback: /^\s*set network interface loopback\b/m,
+    vxlan: NEVER,
+    evpn: NEVER,
+    bfd: /^\s*set network virtual-router \S+ protocol \S+ .*\bbfd\b/m,
+    jumboMtu: /^\s*set network interface ethernet \S+ layer3 mtu 9\d{3}\b/m,
+  },
+  viptela: {
+    bgp: /^\s*router\s*\n\s+bgp\s+\d/m,
+    isis: NEVER,
+    ospf: /^\s*router\s*\n\s+ospf\b/m,
+    loopback: /^\s*interface loopback\d/m,
+    vxlan: NEVER,
+    evpn: NEVER,
+    bfd: NEVER,
+    jumboMtu: IOS_JUMBO,
+  },
+  'oran-nf': {
+    bgp: NOT_A_ROUTER, isis: NOT_A_ROUTER, ospf: NOT_A_ROUTER, loopback: NOT_A_ROUTER,
+    vxlan: NOT_A_ROUTER, evpn: NOT_A_ROUTER, bfd: NOT_A_ROUTER,
+    jumboMtu: /^\s*mtu\s+9\d{3}\b/m,
+  },
+  'oran-ru': {
+    bgp: NOT_A_ROUTER, isis: NOT_A_ROUTER, ospf: NOT_A_ROUTER, loopback: NOT_A_ROUTER,
+    vxlan: NOT_A_ROUTER, evpn: NOT_A_ROUTER, bfd: NOT_A_ROUTER, jumboMtu: NOT_A_ROUTER,
+  },
+  ftd: {
+    bgp: { unsupported: FMC_ROUTING }, isis: NEVER, ospf: { unsupported: FMC_ROUTING },
+    loopback: { unsupported: FMC_ROUTING }, vxlan: NEVER, evpn: NEVER,
+    bfd: { unsupported: FMC_ROUTING }, jumboMtu: { unsupported: FMC_ROUTING },
+  },
+}
+
+function ruleFor(platform: FactPlatform, name: FactName): Rule {
+  return (ROUTING_FACT_NAMES as readonly string[]).includes(name)
+    ? ROUTING_RULES[platform][name as RoutingFactName]
+    : RULES[platform][name as MgmtFactName]
+}
+
 /** The dialect a device's config is written in. */
 export function factPlatform(dev: Pick<BOMDevice, 'vendor' | 'model'> & Partial<BOMDevice>): FactPlatform {
   if (dev.subLayer === 'oran-ru') return 'oran-ru'
@@ -260,10 +453,9 @@ function evidenceOf(text: string, match: RegExpExecArray): string {
 /** Extract every fact from one device's configuration. */
 export function extractFacts(config: string, platform: FactPlatform): DeviceFacts {
   const live = stripComments(config)
-  const rules = RULES[platform]
   const out = {} as DeviceFacts
-  for (const name of FACT_NAMES) {
-    const rule = rules[name]
+  for (const name of ALL_FACT_NAMES) {
+    const rule = ruleFor(platform, name)
     if (!(rule instanceof RegExp)) {
       out[name] = { state: 'unknown', note: rule.unsupported }
       continue
@@ -284,10 +476,10 @@ export function extractFacts(config: string, platform: FactPlatform): DeviceFact
 export function extractFactsAnyDialect(config: string): DeviceFacts {
   const live = stripComments(config)
   const out = {} as DeviceFacts
-  for (const name of FACT_NAMES) {
+  for (const name of ALL_FACT_NAMES) {
     out[name] = { state: 'absent' }
-    for (const rules of Object.values(RULES)) {
-      const rule = rules[name]
+    for (const platform of Object.keys(RULES) as FactPlatform[]) {
+      const rule = ruleFor(platform, name)
       if (!(rule instanceof RegExp)) continue
       const m = rule.exec(live)
       if (m) { out[name] = { state: 'present', evidence: evidenceOf(live, m) }; break }

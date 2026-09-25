@@ -7,7 +7,7 @@
 
 import type { BOMDevice, UseCase } from '@/types'
 import { isCommentLine, stripComments } from '@/lib/config-text'
-import { deviceForConfig, extractFacts, extractFactsAnyDialect, factPlatform, type DeviceFacts } from '@/lib/config-facts'
+import { deviceForConfig, extractFacts, extractFactsAnyDialect, factPlatform, type DeviceFacts, type FactName } from '@/lib/config-facts'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -123,25 +123,31 @@ function extractLoopbacks(configs: Record<string, string>): Map<string, string[]
 // `set` style, and Nokia SR Linux YANG `{ }` blocks all express the same
 // concepts with different keywords. These regexes recognize all three so the
 // validator doesn't false-fail multi-vendor designs.
-// `router bgp` with ANY operand (a literal ASN or a `<CHANGE-ME-asn>`
-// placeholder, as Cumulus/Dell emit), Junos `protocols bgp`, Nokia `bgp {` /
-// `autonomous-system`, and Extreme `configure bgp`.
-const RE_BGP = /router bgp\b|protocols bgp|\bbgp\s*\{|autonomous-system\s+\d+|configure bgp\b/i
-const RE_ISIS = /router isis|isis enable|protocols isis|\bisis\s*\{/i
-const RE_OSPF = /router ospf\s|ospf area|protocols ospf/i
-const RE_ROUTING_DEVICE = /router bgp|router ospf|router isis|protocols (?:bgp|ospf|isis)|\bbgp\s*\{|\bisis\s*\{|\bospf\s*\{/i
 
 /** Cloud-native tiers: provisioned via Terraform/API, no device CLI exists. */
 const CLOUD_SUBLAYERS = new Set(['cloud-gw', 'cloud-transit'])
 
 // ── Validation checks ─────────────────────────────────────────────────────────
 
+/**
+ * Facts for every config, computed once (AM3). The routing and fabric checks
+ * used to carry their own cross-vendor regexes (`RE_BGP`, `RE_ISIS`, …) — the
+ * site of M3, M6, M7 and Z6. They now query the per-dialect facts in
+ * `config-facts.ts`, so no check here knows any vendor's syntax.
+ */
+type FactMap = Record<string, DeviceFacts>
+
+function hostsWith(facts: FactMap, name: FactName): string[] {
+  return Object.entries(facts).filter(([, f]) => f[name].state === 'present').map(([h]) => h)
+}
+
+
 function checkSingleUnderlay(
-  configs: Record<string, string>,
+  facts: FactMap,
   useCase: UseCase | '',
 ): ValidationCheck {
-  const hasISIS = hostnamesWithPattern(configs, RE_ISIS)
-  const hasOSPF = hostnamesWithPattern(configs, RE_OSPF)
+  const hasISIS = hostsWith(facts, 'isis')
+  const hasOSPF = hostsWith(facts, 'ospf')
   const bothDevices = hasISIS.filter(h => hasOSPF.includes(h))
 
   if (bothDevices.length > 0) {
@@ -242,10 +248,10 @@ const EVPN_FABRIC_USE_CASES: (UseCase | '')[] = ['dc', 'gpu', 'multisite']
 const CLOUD_OVERLAY_USE_CASES: (UseCase | '')[] = ['multicloud', 'aviatrix']
 
 function checkBGPPresence(
-  configs: Record<string, string>,
+  facts: FactMap,
   useCase: UseCase | '',
 ): ValidationCheck {
-  const hasBGP = hostnamesWithPattern(configs, RE_BGP)
+  const hasBGP = hostsWith(facts, 'bgp')
 
   if (CLOUD_OVERLAY_USE_CASES.includes(useCase) && hasBGP.length === 0) {
     return {
@@ -388,12 +394,10 @@ function factsFor(host: string, cfg: string, devices: BOMDevice[]): DeviceFacts 
 
 function checkHostnameConsistency(
   configs: Record<string, string>,
+  facts: FactMap,
   devices: BOMDevice[],
 ): ValidationCheck {
-  const missing: string[] = []
-  for (const [host, cfg] of Object.entries(configs)) {
-    if (factsFor(host, cfg, devices).hostname.state === 'absent') missing.push(host)
-  }
+  const missing = Object.entries(facts).filter(([, f]) => f.hostname.state === 'absent').map(([h]) => h)
 
   if (missing.length > 0) {
     return {
@@ -417,11 +421,10 @@ function checkHostnameConsistency(
   }
 }
 
-function checkManagementBlock(configs: Record<string, string>, devices: BOMDevice[]): ValidationCheck {
+function checkManagementBlock(configs: Record<string, string>, facts: FactMap): ValidationCheck {
   const missingMgmt: string[] = []
   const gaps: string[] = []
-  for (const [host, cfg] of Object.entries(configs)) {
-    const f = factsFor(host, cfg, devices)
+  for (const [host, f] of Object.entries(facts)) {
     // `unknown` (e.g. FTD syslog lives in FMC, O-RU time comes from PTP) is
     // not a gap the design can close, so only `absent` counts.
     const lacking = (['ntp', 'syslog'] as const).filter(n => f[n].state === 'absent')
@@ -452,7 +455,7 @@ function checkManagementBlock(configs: Record<string, string>, devices: BOMDevic
 }
 
 function checkEVPNConsistency(
-  configs: Record<string, string>,
+  facts: FactMap,
   useCase: UseCase | '',
 ): ValidationCheck {
   if (!EVPN_FABRIC_USE_CASES.includes(useCase)) {
@@ -467,8 +470,8 @@ function checkEVPNConsistency(
     }
   }
 
-  const hasNVE = hostnamesWithPattern(configs, /interface nve|vxlan/i)
-  const hasEVPN = hostnamesWithPattern(configs, /evpn|l2vpn evpn/i)
+  const hasNVE = hostsWith(facts, 'vxlan')
+  const hasEVPN = hostsWith(facts, 'evpn')
 
   if (hasNVE.length === 0 && hasEVPN.length === 0) {
     return {
@@ -617,19 +620,18 @@ function checkNonEmptyConfigs(configs: Record<string, string>): ValidationCheck 
 }
 
 // Loopback *interface* presence across vendor syntaxes — Cisco/Arista
-// `interface Loopback0`, Junos `interfaces lo0`, Nokia `interface system0`,
-// Cumulus `iface lo` / `auto lo`. Detects the interface even when the address
-// is a `<CHANGE-ME>` placeholder (which `extractLoopbacks` — numeric-IP only —
-// would miss), so a routing device with a templated loopback isn't false-warned.
-const RE_LOOPBACK_IFACE = /interface [Ll]oopback\d*|interfaces? lo0\b|interface system0|iface lo\b|auto lo\b/
 
-function checkLoopbackPresence(configs: Record<string, string>): ValidationCheck {
+function checkLoopbackPresence(configs: Record<string, string>, facts: FactMap): ValidationCheck {
   const loopbacks = extractLoopbacks(configs)
-  const routingDevices = Object.entries(configs).filter(
-    ([, cfg]) => RE_ROUTING_DEVICE.test(cfg),
+  // A routing device is one running BGP, IS-IS or OSPF in its OWN dialect.
+  // The old cross-vendor detector did not recognise EXOS (`enable bgp`), so
+  // EXOS spines and leaves were never asked whether they had a loopback.
+  const routingDevices = Object.entries(facts).filter(
+    ([, f]) => f.bgp.state === 'present' || f.isis.state === 'present' || f.ospf.state === 'present',
   )
+  const hasLoopback = (host: string, f: DeviceFacts) => loopbacks.has(host) || f.loopback.state === 'present'
   const missingLo = routingDevices
-    .filter(([host, cfg]) => !loopbacks.has(host) && !RE_LOOPBACK_IFACE.test(cfg))
+    .filter(([host, f]) => !hasLoopback(host, f))
     .map(([host]) => host)
 
   if (missingLo.length > 0) {
@@ -643,9 +645,7 @@ function checkLoopbackPresence(configs: Record<string, string>): ValidationCheck
     }
   }
 
-  const withLoopback = routingDevices.filter(
-    ([host, cfg]) => loopbacks.has(host) || RE_LOOPBACK_IFACE.test(cfg),
-  ).length
+  const withLoopback = routingDevices.filter(([host, f]) => hasLoopback(host, f)).length
   return {
     id: 'V-12',
     name: 'Loopback interfaces',
@@ -656,7 +656,7 @@ function checkLoopbackPresence(configs: Record<string, string>): ValidationCheck
 }
 
 function checkBFDEnabled(
-  configs: Record<string, string>,
+  facts: FactMap,
   useCase: UseCase | '',
 ): ValidationCheck {
   if (!EVPN_FABRIC_USE_CASES.includes(useCase)) {
@@ -669,7 +669,7 @@ function checkBFDEnabled(
     }
   }
 
-  const hasBFD = hostnamesWithPattern(configs, /\bbfd\b/i)
+  const hasBFD = hostsWith(facts, 'bfd')
   if (hasBFD.length === 0) {
     return {
       id: 'V-13',
@@ -695,7 +695,7 @@ function checkBFDEnabled(
 // Junos (`mtu 9216`), Nokia (`mtu 9232`), Cumulus (`mtu 9216`), EXOS
 // (`jumbo-frame-size 9216`). Only flags devices that actually run VXLAN/NVE.
 function checkJumboMtu(
-  configs: Record<string, string>,
+  facts: FactMap,
   useCase: UseCase | '',
 ): ValidationCheck {
   if (!EVPN_FABRIC_USE_CASES.includes(useCase)) {
@@ -708,17 +708,13 @@ function checkJumboMtu(
     }
   }
 
-  // A device "runs VXLAN" if it has an NVE/VXLAN/vxlan-interface construct.
-  const vxlanRe = /interface nve|vxlan|virtual-network|vni\s+\d+/i
-  // Jumbo = an MTU value of 9000-9999 in any vendor syntax.
-  const jumboRe = /(?:mtu|jumbo-frame-size)\s+9\d{3}\b/i
-
+  // A VTEP in its own dialect, and a jumbo MTU in its own dialect.
   const missing: string[] = []
   let vxlanDevices = 0
-  for (const [host, cfg] of Object.entries(configs)) {
-    if (!vxlanRe.test(cfg)) continue
+  for (const [host, f] of Object.entries(facts)) {
+    if (f.vxlan.state !== 'present') continue
     vxlanDevices++
-    if (!jumboRe.test(cfg)) missing.push(host)
+    if (f.jumboMtu.state !== 'present') missing.push(host)
   }
 
   if (vxlanDevices === 0) {
@@ -787,22 +783,25 @@ export function validateConfigs(input: ValidateInput): ValidationResult {
   // documentation line can never be read as configuration. V-11 keeps the raw
   // text — it asks whether generation produced anything at all.
   const live = stripCommentsAll(configs)
+  const facts: FactMap = Object.fromEntries(
+    Object.entries(configs).map(([host, cfg]) => [host, factsFor(host, cfg, devices)]),
+  )
 
   const checks: ValidationCheck[] = [
     checkNonEmptyConfigs(configs),
-    checkSingleUnderlay(live, useCase),
+    checkSingleUnderlay(facts, useCase),
     checkDuplicateRouterIds(live),
-    checkBGPPresence(live, useCase),
+    checkBGPPresence(facts, useCase),
     checkBGPPeerSymmetry(live),
-    checkEVPNConsistency(live, useCase),
-    checkHostnameConsistency(live, devices),
-    checkManagementBlock(live, devices),
+    checkEVPNConsistency(facts, useCase),
+    checkHostnameConsistency(live, facts, devices),
+    checkManagementBlock(live, facts),
     checkNoHardcodedSecrets(live),
     checkUndefinedACLReferences(live),
     checkGPUQoS(live, useCase),
-    checkLoopbackPresence(live),
-    checkBFDEnabled(live, useCase),
-    checkJumboMtu(live, useCase),
+    checkLoopbackPresence(live, facts),
+    checkBFDEnabled(facts, useCase),
+    checkJumboMtu(facts, useCase),
   ]
 
   const summary = { pass: 0, fail: 0, warn: 0, info: 0 }

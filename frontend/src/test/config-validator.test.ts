@@ -737,3 +737,26 @@ describe('V-06/V-07 read config facts (AM2)', () => {
   })
 })
 
+// ── AM3: routing/fabric checks read config facts ────────────────────────────
+describe('routing and fabric checks read config facts (AM3)', () => {
+  it('V-12 now checks EXOS routers for a loopback', () => {
+    // The cross-vendor routing detector did not know `enable bgp`, so an EXOS
+    // router was never classed as a routing device and never checked.
+    const exos = { ...device('X-01'), vendor: 'Extreme Networks', model: 'ExtremeSwitching 8520', subLayer: 'leaf' }
+    const run = (cfg: string) => validateConfigs({ configs: { 'X-01': cfg }, devices: [exos], useCase: 'dc' })
+      .checks.find(c => c.id === 'V-12')!
+    const bgpOnly = 'configure snmp sysName X-01\nconfigure bgp AS-number 65001\nenable bgp'
+    expect(run(bgpOnly).severity).toBe('warn')
+    expect(run(bgpOnly + '\ncreate vlan Loopback0\nenable loopback-mode vlan Loopback0').severity).toBe('pass')
+  })
+
+  it('V-14 does not demand jumbo MTU of a device that merely mentions vxlan', () => {
+    const nx = device('N-01')
+    const r = validateConfigs({
+      configs: { 'N-01': 'hostname N-01\ninterface Ethernet1/1\n description vxlan uplink\nrouter bgp 65001' },
+      devices: [nx], useCase: 'dc',
+    }).checks.find(c => c.id === 'V-14')!
+    expect(r.severity).toBe('info')   // no VTEP to check
+  })
+})
+

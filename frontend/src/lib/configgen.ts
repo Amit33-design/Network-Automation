@@ -78,13 +78,22 @@ ip ssh server login-grace-time 60
   }
 }
 
-function mgmtBlock(hostname: string, mgmtVlan = 10): string {
+/**
+ * The IOS-XE management plane. `src` is the interface every management
+ * service sources from, and the caller must pass one its config really
+ * defines (AM3). This block used to take a VLAN number and ALSO carry a second
+ * NTP/syslog/SNMP section sourced from Loopback0 (added in AA1 without
+ * noticing the originals further down), so every device configured NTP and
+ * syslog twice from two different interfaces — and the routers that used it
+ * (ISR firewall, WAN edge) defined neither interface.
+ */
+function mgmtBlock(hostname: string, src: string): string {
   return `
 ! ── MANAGEMENT ──────────────────────────────────────────────────────────────────
 hostname ${hostname}
 !
 ip domain-name <CHANGE-ME-domain.example.com>
-ip name-server 8.8.8.8
+ip name-server <CHANGE-ME-dns-ip>
 service timestamps log datetime msec localtime show-timezone
 service timestamps debug datetime msec
 service password-encryption
@@ -96,25 +105,6 @@ no ip source-route
 no ip bootp server
 login block-for 60 attempts 5 within 30
 login delay 2
-!
-! ── MANAGEMENT SERVICES (AA1) ───────────────────────────────────────────────
-! mgmtBlock previously had NO ntp/syslog/snmp at all — V-07 only passed
-! because RE_MGMT matched the word MANAGEMENT in the comment banner above.
-! Once Z6 stopped counting comments as configuration, every device built on
-! this block was correctly reported as having no management plane.
-ntp server <CHANGE-ME-ntp-primary> prefer
-ntp server <CHANGE-ME-ntp-secondary>
-ntp source Loopback0
-!
-logging host <CHANGE-ME-syslog-ip>
-logging source-interface Loopback0
-logging trap informational
-!
-snmp-server group NETDESIGN-RO v3 priv
-snmp-server user netmon NETDESIGN-RO v3 auth sha <CHANGE-ME-snmp-auth-pass> priv aes 128 <CHANGE-ME-snmp-priv-pass>
-snmp-server host <CHANGE-ME-nms-ip> version 3 priv netmon
-snmp-server location <CHANGE-ME-site-location>
-snmp-server contact <CHANGE-ME-noc-email>
 !
 banner motd ^
 *******************************************************************************
@@ -147,7 +137,7 @@ tacacs server TACACS-SECONDARY
 aaa group server tacacs+ TACACS-GROUP
  server name TACACS-PRIMARY
  server name TACACS-SECONDARY
- ip tacacs source-interface Vlan${mgmtVlan}
+ ip tacacs source-interface ${src}
 !
 aaa authentication login default group TACACS-GROUP local
 aaa authentication enable default group TACACS-GROUP enable
@@ -169,23 +159,25 @@ snmp-server host <CHANGE-ME-nms-ip> traps version 3 priv netmon
 snmp-server enable traps bgp
 snmp-server enable traps envmon
 snmp-server enable traps interface
+snmp-server location <CHANGE-ME-site-location>
+snmp-server contact <CHANGE-ME-noc-email>
 !
 ntp authenticate
 ntp authentication-key 1 md5 <CHANGE-ME-ntp-key>
 ntp trusted-key 1
-ntp source Vlan${mgmtVlan}
+ntp source ${src}
 ntp server <CHANGE-ME-ntp-primary> prefer key 1
 ntp server <CHANGE-ME-ntp-secondary> key 1
 clock timezone UTC 0 0
 !
 logging host <CHANGE-ME-syslog-ip>
 logging trap informational
-logging source-interface Vlan${mgmtVlan}
+logging source-interface ${src}
 !
 ip ssh version 2
 ip ssh time-out 60
 ip ssh authentication-retries 3
-ip ssh source-interface Vlan${mgmtVlan}
+ip ssh source-interface ${src}
 !
 line vty 0 15
  access-class MGMT-ACL in
@@ -1524,42 +1516,17 @@ hardware profile forwarding-mode fabricpath
 
 // ── Arista EOS ────────────────────────────────────────────────────────────────
 
-function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
-  idx = roleIndex(dev, allDevices, idx)
-  const asn      = 65000
-  const routerId = roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
-  // System-ID must be exactly 12 hex digits (3×4). padStart avoids the overflow
-  // past `000${n}` for idx≥9 that produced an invalid 13/14-digit NET.
-  const isisNet  = `0101.0255.${String(idx + 1).padStart(4, '0')}`
-  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
-  const routerIdV6 = `fd00:255:1::${idx + 1}`
-  const qos      = isGpu ? aristaGpuQoS() : ''
-  const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
-  // Z3: firewall handoff moved to the border leaves (a spine has no tenant VRF).
-  const fwHandoffBlock = ''
-  // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1)). Leaf ASNs
-  // are PAIR-based (65000 + pairId — an MLAG pair shares one ASN, Y4/A-M2).
-  const spineLeafPeers = allDevices
-    .filter(d => d.subLayer === 'leaf')
-    .flatMap((d, i) => [
-      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} peer group LEAF-PEER`,
-      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} remote-as ${65000 + Math.floor(i / 2) + 1}`,
-      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} description ${d.hostname || `LEAF-${i + 1}`}`,
-    ])
-    .join('\n')
-  const spineLeafPeerBlock = spineLeafPeers || '  ! No leaves in fabric — add: neighbor <leaf-lo0> peer group LEAF-PEER / remote-as <leaf-asn>'
-
-  return `! ═══════════════════════════════════════════════════════════════
-! Device : ${dev.hostname}
-! Role   : DC Spine
-! OS     : Arista EOS
-! Model  : ${dev.model}
-! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
-! ═══════════════════════════════════════════════════════════════
-
-hostname ${dev.hostname}
-!
-! ── MANAGEMENT ──────────────────────────────────────────────────────────────
+/**
+ * The EOS management plane — one definition for every Arista generator.
+ * The spine and leaf each carried their own copy, and the campus generator
+ * used the IOS-XE `mgmtBlock` instead: `aaa new-model`, a `tacacs server NAME`
+ * block, `ip http secure-server` and `login block-for` are all IOS-XE, and EOS
+ * rejects them. It also sourced NTP/syslog/TACACS from a `Vlan10` the campus
+ * switch never defined, and emitted `hostname` twice. Every service here is
+ * pinned to `vrf MGMT` with `Management1` (Z5b/A3-3).
+ */
+function eosMgmtBlock(): string {
+  return `! ── MANAGEMENT ──────────────────────────────────────────────────────────────
 ip domain-name <CHANGE-ME-domain.example.com>
 ip name-server <CHANGE-ME-dns-ip>
 !
@@ -1597,7 +1564,45 @@ interface Management1
   vrf MGMT
   ip address <CHANGE-ME-mgmt-ip>/24
 !
-ip route vrf MGMT 0.0.0.0/0 <CHANGE-ME-oob-gateway>
+ip route vrf MGMT 0.0.0.0/0 <CHANGE-ME-oob-gateway>`
+}
+
+function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
+  idx = roleIndex(dev, allDevices, idx)
+  const asn      = 65000
+  const routerId = roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
+  // System-ID must be exactly 12 hex digits (3×4). padStart avoids the overflow
+  // past `000${n}` for idx≥9 that produced an invalid 13/14-digit NET.
+  const isisNet  = `0101.0255.${String(idx + 1).padStart(4, '0')}`
+  const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
+  const routerIdV6 = `fd00:255:1::${idx + 1}`
+  const qos      = isGpu ? aristaGpuQoS() : ''
+  const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
+  // Z3: firewall handoff moved to the border leaves (a spine has no tenant VRF).
+  const fwHandoffBlock = ''
+  // Real eBGP leaf peers from the fabric (leaf lo0 10.255.2.(i+1)). Leaf ASNs
+  // are PAIR-based (65000 + pairId — an MLAG pair shares one ASN, Y4/A-M2).
+  const spineLeafPeers = allDevices
+    .filter(d => d.subLayer === 'leaf')
+    .flatMap((d, i) => [
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} peer group LEAF-PEER`,
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} remote-as ${65000 + Math.floor(i / 2) + 1}`,
+      `  neighbor ${roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)} description ${d.hostname || `LEAF-${i + 1}`}`,
+    ])
+    .join('\n')
+  const spineLeafPeerBlock = spineLeafPeers || '  ! No leaves in fabric — add: neighbor <leaf-lo0> peer group LEAF-PEER / remote-as <leaf-asn>'
+
+  return `! ═══════════════════════════════════════════════════════════════
+! Device : ${dev.hostname}
+! Role   : DC Spine
+! OS     : Arista EOS
+! Model  : ${dev.model}
+! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
+! ═══════════════════════════════════════════════════════════════
+
+hostname ${dev.hostname}
+!
+${eosMgmtBlock()}
 !
 ! ── ROUTING: IS-IS underlay (single protocol — no OSPF) ─────────────────────
 ! EOS defaults to L2-only — without ip routing the box will not forward (Y1).
@@ -1747,40 +1752,7 @@ hostname ${dev.hostname}
 !
 service routing protocols model multi-agent
 !
-username admin privilege 15 role network-admin secret sha512 <CHANGE-ME-admin-password>
-!
-aaa authentication login default group tacacs+ local
-aaa authorization exec default group tacacs+ local
-aaa accounting exec default start-stop group tacacs+
-! Z5b/A3-4: the leaf mgmt plane was a strict SUBSET of the spine's — no
-! syslog and no SNMP at all, so half the fleet was invisible to the NOC.
-! Z5b/A3-3: every service is pinned to the same VRF as Management1.
-tacacs-server host <CHANGE-ME-tacacs-primary-ip> vrf MGMT key <CHANGE-ME-tacacs-key>
-tacacs-server host <CHANGE-ME-tacacs-secondary-ip> vrf MGMT key <CHANGE-ME-tacacs-key>
-ip tacacs vrf MGMT source-interface Management1
-!
-snmp-server engineID local f5717f000001
-snmp-server vrf MGMT
-snmp-server group NETDESIGN-RO v3 priv
-snmp-server user NETDESIGN-USER NETDESIGN-RO v3 auth sha <CHANGE-ME-snmp-auth-pass> priv aes <CHANGE-ME-snmp-priv-pass>
-!
-ntp server vrf MGMT <CHANGE-ME-ntp-primary> prefer iburst
-ntp server vrf MGMT <CHANGE-ME-ntp-secondary> iburst
-ntp source vrf MGMT Management1
-!
-logging vrf MGMT host <CHANGE-ME-syslog-ip>
-logging vrf MGMT source-interface Management1
-!
-${sshHardeningBlock('eos')}
-! ── MANAGEMENT INTERFACE (OOB, dedicated VRF) ───────────────────────────────
-vrf instance MGMT
-!
-interface Management1
-  description OOB-MANAGEMENT
-  vrf MGMT
-  ip address <CHANGE-ME-mgmt-ip>/24
-!
-ip route vrf MGMT 0.0.0.0/0 <CHANGE-ME-oob-gateway>
+${eosMgmtBlock()}
 !
 ! EOS defaults to L2-only — without ip routing the box will not forward (Y1).
 ip routing
@@ -2399,7 +2371,12 @@ function ciscoFirewallConfig(dev: BOMDevice, _idx: number): string {
 ! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
 ! ═══════════════════════════════════════════════════════════════
 
-${mgmtBlock(dev.hostname, 10)}
+${mgmtBlock(dev.hostname, 'Loopback0')}
+!
+! Management and router-id source (AM3): every mgmt service sources from here.
+interface Loopback0
+ description ROUTER-ID / MGMT-SOURCE
+ ip address <CHANGE-ME-loopback-ip> 255.255.255.255
 !
 ! ── SECURITY ZONES ───────────────────────────────────────────────────────────
 zone security OUTSIDE
@@ -2662,7 +2639,13 @@ function iosxeWanConfig(dev: BOMDevice, _idx: number): string {
 ! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
 ! ═══════════════════════════════════════════════════════════════
 
-${mgmtBlock(dev.hostname, 10)}
+${mgmtBlock(dev.hostname, 'Loopback0')}
+!
+! Management and router-id source (AM3): every mgmt service sources from here.
+interface Loopback0
+ description ROUTER-ID / MGMT-SOURCE
+ ip address <CHANGE-ME-loopback-ip> 255.255.255.255
+ ip ospf 1 area 0
 !
 ! ── UNDERLAY: OSPF only (no IS-IS on WAN edge) ──────────────────────────────
 router ospf 1
@@ -3082,7 +3065,7 @@ interface Vlan20
 ! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
 ! ═══════════════════════════════════════════════════════════════
 
-${mgmtBlock(dev.hostname, 99)}
+${mgmtBlock(dev.hostname, 'Vlan99')}
 !
 ! ── VLANs ─────────────────────────────────────────────────────────────────────
 ${vlanBlock}
@@ -3196,7 +3179,7 @@ ${hasVoice ? 'ip igmp snooping vlan 20\n' : ''}!
 ! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
 ! ═══════════════════════════════════════════════════════════════
 
-${mgmtBlock(dev.hostname, 99)}
+${mgmtBlock(dev.hostname, 'Vlan99')}
 !
 ! ── VLANs ─────────────────────────────────────────────────────────────────────
 ${vlanBlock}
@@ -3354,7 +3337,7 @@ config router static
 end
 
 config system dns
-    set primary 8.8.8.8
+    set primary <CHANGE-ME-dns-ip>
     set secondary 8.8.4.4
 end
 
@@ -3770,7 +3753,7 @@ function dellOs10SwitchConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
 
 hostname ${dev.hostname}
 !
-ip name-server 8.8.8.8
+ip name-server <CHANGE-ME-dns-ip>
 !
 username admin password <CHANGE-ME-admin-password> role sysadmin
 tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key> vrf management
@@ -3816,8 +3799,8 @@ router bgp ${asn}
     maximum-paths 64
     network ${lo0ip}/32
   !
-  address-family l2vpn evpn
-    advertise-all-vni
+  address-family l2vpn evpn${isSpine ? '' : `
+    advertise-all-vni`}
   !
 ${isSpine
   ? `  ! ── Spine: one eBGP session per leaf, derived from the BOM ──────────────
@@ -3829,11 +3812,20 @@ ${isSpine ? `! The spine is NOT a VTEP — it must re-advertise EVPN routes with
 ! originating leaf's next-hop, or the overlay black-holes at the spine.
 route-map NH-UNCHANGED permit 10
 !` : ''}
-! ── VXLAN ───────────────────────────────────────────────────────────────────
-interface virtual-network 1
+${isSpine ? '' : `! ── VXLAN (leaf only — the spine is not a VTEP) ────────────────────────────
+! AM3: this used to be \`interface virtual-network 1 / vxlan-vni 10001\` on BOTH
+! roles. \`interface virtual-network\` is the IRB interface; the VNI belongs
+! under \`virtual-network N\`, and without an \`nve\` source no tunnel is built.
+nve
+  source-interface loopback 0
+!
+virtual-network 1
   vxlan-vni 10001
 !
-${dellHostMax > 0 ? `! ── SERVER / HOST PORTS (the VNI had no member ports before Z8) ──────────────
+interface vlan10
+  virtual-network 1
+!
+`}${dellHostMax > 0 ? `! ── SERVER / HOST PORTS (the VNI had no member ports before Z8) ──────────────
 interface range ethernet 1/1/1-1/1/${dellHostMax}
   switchport access vlan 10
   mtu 9216
@@ -4247,10 +4239,13 @@ ${exosFwLinks.map(x => `configure iproute add default ${nextIp(x.ip)} vr TENANT-
 # ── Jumbo MTU (VXLAN 50B overhead → underlay must be jumbo) ───────────────────
 enable jumbo-frame ports all
 configure jumbo-frame-size 9216
-#
-# VXLAN / EVPN
+${isSpine ? `#
+# The spine is not a VTEP (AM3: it used to create the VNI too).` : `#
+# VXLAN / EVPN — the local endpoint is the tunnel source; without it (AM3)
+# the leaf had a VNI and nowhere to originate a tunnel from.
+configure virtual-network local-endpoint ipaddress ${lo0ip} vr VR-Default
 create virtual-network "VNI-10001" vxlan vni 10001
-configure virtual-network "VNI-10001" add vlan Data`}
+configure virtual-network "VNI-10001" add vlan Data`}`}
 `
 }
 
@@ -4926,7 +4921,7 @@ interface Ethernet48
 
 hostname ${dev.hostname}
 !
-${mgmtBlock(dev.hostname, 10)}
+${eosMgmtBlock()}
 !
 ${vlanBlock}
 !
@@ -4953,7 +4948,12 @@ function genericConfig(dev: BOMDevice): string {
 ! Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
 ! ═══════════════════════════════════════════════════════════════
 
-${mgmtBlock(dev.hostname, 10)}
+${mgmtBlock(dev.hostname, 'Loopback0')}
+!
+! Management and router-id source (AM3): every mgmt service sources from here.
+interface Loopback0
+ description ROUTER-ID / MGMT-SOURCE
+ ip address <CHANGE-ME-loopback-ip> 255.255.255.255
 !
 ! ── TODO: Add ${dev.vendor} ${dev.subLayer}-specific configuration ────────────
 ! This template provides management plane hardening.
@@ -5979,20 +5979,24 @@ hostname ${dev.hostname}
 !
 feature lldp
 feature ptp
+! Required before NX-OS accepts the management SVI below.
+feature interface-vlan
 !
 username admin password <CHANGE-ME-admin-password> role network-admin
 !
-${sshHardeningBlock('nxos')}
+${sshHardeningBlock('nxos', `Vlan${ORAN_MGMT_VLAN}`)}
 !
 feature tacacs+
 tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
 aaa group server tacacs+ TACACS-GROUP
   server <CHANGE-ME-tacacs-primary-ip>
-  use-vrf management
+  use-vrf default
+  source-interface Vlan${ORAN_MGMT_VLAN}
 aaa authentication login default group TACACS-GROUP local
 !
 ntp server <CHANGE-ME-ntp-primary> prefer
 ntp server <CHANGE-ME-ntp-secondary>
+ntp source-interface Vlan${ORAN_MGMT_VLAN}
 !
 ! ── PTP — IEEE 1588 Transparent Clock (G.8275.1 telecom profile) ────────────
 ! Fronthaul switches MUST be transparent-clocks to preserve timing accuracy
@@ -6069,6 +6073,7 @@ interface Vlan${ORAN_MGMT_VLAN}
 ip route 0.0.0.0/0 <CHANGE-ME-mgmt-gw>
 !
 logging server <CHANGE-ME-syslog-ip>
+logging source-interface Vlan${ORAN_MGMT_VLAN}
 !
 line vty
   access-class MGMT-ACL in

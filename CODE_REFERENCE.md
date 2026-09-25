@@ -1052,11 +1052,12 @@ review exactly what a redeploy will change before committing. Pure + determinist
 
 Dialect-free management-plane facts extracted once per device, so checks query facts instead of carrying per-vendor regexes.
 
-- `FactName` (`hostname`/`sshV2`/`ntp`/`syslog`/`aaa`), `FACT_NAMES`, `FACT_LABEL`; `Fact {state: 'present'|'absent'|'unknown', evidence?, note?}`.
+- `MgmtFactName` (`hostname`/`sshV2`/`ntp`/`syslog`/`aaa`, listed in `FACT_NAMES`) and `RoutingFactName` (`bgp`/`isis`/`ospf`/`loopback`/`vxlan`/`evpn`/`bfd`/`jumboMtu`, in `ROUTING_FACT_NAMES`); `FactName` is their union, `ALL_FACT_NAMES` both lists, `FACT_NAMES`, `FACT_LABEL`; `Fact {state: 'present'|'absent'|'unknown', evidence?, note?}`.
 - `FactPlatform` = `ZTPPlatform` + `ftd`, `viptela` (vEdge), `oran-nf` (CU/DU/UPF/PTP-GM manifests), `oran-ru`.
-- `RULES: Record<FactPlatform, Record<FactName, RegExp | {unsupported}>>` — compiler-enforced completeness; `unsupported` → `unknown` with a reason (FTD syslog/AAA in FMC, vEdge SSH v2-only, O-RU PTP time / NACM accounts).
+- `RULES: Record<FactPlatform, Record<MgmtFactName, …>>` + `ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, …>>` (AM3) — compiler-enforced completeness; `unsupported` → `unknown` with a reason (FTD syslog/AAA in FMC, vEdge SSH v2-only, O-RU PTP time / NACM accounts).
 - `factPlatform(dev)`, `extractFacts(config, platform)` (strips comments first), `extractFactsAnyDialect(config)` (lenient fallback for configs with no resolvable device), `deviceForConfig`, `fleetFact(configs, devices, name)`.
-- Also consumed by `config-validator.ts` V-06 (hostname) and V-07 (NTP + remote syslog) — AM2.
+- Also consumed by `config-validator.ts`: V-06/V-07 (AM2) and V-01/V-03/V-08/V-12/V-13/V-14 (AM3) through one per-validation `FactMap`; the validator no longer holds any cross-vendor routing regex. V-09 (GPU QoS) still scans text.
+- `test/source-interface.test.ts` (AM3): every interface an IOS-shaped config sources a service from must be defined in that config.
 - Comment handling lives in `lib/config-text.ts` (`isCommentLine`, `stripComments`), shared by facts, the validator (which re-exports `stripComments`) and `ipam-truth.test.ts`.
 - Consumed by `compliance-scan.ts` `everyDeviceFact()` (PCI-2.3/6.1/8.1/10.1, FDRP-AC-17/AU-2, HIPAA-164.312d).
 - Tests: `test/config-facts.test.ts` — ground-truth table over every vendor × dc/campus/wan/multisite/multicloud/oran, and a sweep asserting no generated device lacks a management fact.
