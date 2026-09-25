@@ -1052,10 +1052,12 @@ review exactly what a redeploy will change before committing. Pure + determinist
 
 Dialect-free management-plane facts extracted once per device, so checks query facts instead of carrying per-vendor regexes.
 
-- `FactName` (`sshV2`/`ntp`/`syslog`/`aaa`), `FACT_NAMES`, `FACT_LABEL`; `Fact {state: 'present'|'absent'|'unknown', evidence?, note?}`.
+- `FactName` (`hostname`/`sshV2`/`ntp`/`syslog`/`aaa`), `FACT_NAMES`, `FACT_LABEL`; `Fact {state: 'present'|'absent'|'unknown', evidence?, note?}`.
 - `FactPlatform` = `ZTPPlatform` + `ftd`, `viptela` (vEdge), `oran-nf` (CU/DU/UPF/PTP-GM manifests), `oran-ru`.
 - `RULES: Record<FactPlatform, Record<FactName, RegExp | {unsupported}>>` — compiler-enforced completeness; `unsupported` → `unknown` with a reason (FTD syslog/AAA in FMC, vEdge SSH v2-only, O-RU PTP time / NACM accounts).
-- `factPlatform(dev)`, `extractFacts(config, platform)` (strips comments first), `deviceForConfig`, `fleetFact(configs, devices, name)`.
+- `factPlatform(dev)`, `extractFacts(config, platform)` (strips comments first), `extractFactsAnyDialect(config)` (lenient fallback for configs with no resolvable device), `deviceForConfig`, `fleetFact(configs, devices, name)`.
+- Also consumed by `config-validator.ts` V-06 (hostname) and V-07 (NTP + remote syslog) — AM2.
+- Comment handling lives in `lib/config-text.ts` (`isCommentLine`, `stripComments`), shared by facts, the validator (which re-exports `stripComments`) and `ipam-truth.test.ts`.
 - Consumed by `compliance-scan.ts` `everyDeviceFact()` (PCI-2.3/6.1/8.1/10.1, FDRP-AC-17/AU-2, HIPAA-164.312d).
 - Tests: `test/config-facts.test.ts` — ground-truth table over every vendor × dc/campus/wan/multisite/multicloud/oran, and a sweep asserting no generated device lacks a management fact.
 

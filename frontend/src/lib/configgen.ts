@@ -4450,7 +4450,9 @@ ${nokiaHostMax > 0 ? `        interface ethernet-1/{1..${nokiaHostMax}}.0 { }` :
 # ═══════════════════════════════════════════════════════════════
 
     system {
-        hostname ${dev.hostname}
+        name {
+            host-name ${dev.hostname}
+        }
         dns {
             server-list [ <CHANGE-ME-dns-ip> ]
         }

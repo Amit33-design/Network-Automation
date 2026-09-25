@@ -131,16 +131,17 @@ describe('normalized config facts (AM1)', () => {
     // gaps it found as `A` cells; AM4 fixed the generators and flipped them.
     // No platform may regress to `A` — the sweep below also asserts that.
     const truth: Partial<Record<FactPlatform, string>> = {
-      nxos: 'P P P P', eos: 'P P P P', exos: 'P P P P', 'ios-xe': 'P P P P',
-      junos: 'P P P P', iosxr: 'P P P P',
-      // AM4 closed every centralized-AAA gap AM1 exposed (these were 'P P P A')
-      cumulus: 'P P P P', srl: 'P P P P', dellos10: 'P P P P',
-      arubaoscx: 'P P P P', fortios: 'P P P P',
-      panos: 'P P P P',     // AM4: telnet/http disabled (was 'A P P P')
-      viptela: 'U P P P',   // SSH is v2-only by design, no statement exists
-      'oran-nf': 'P P P P',
-      'oran-ru': 'P U P U', // PTP timing; accounts via O-DU/SMO NETCONF
-      ftd: 'P P U U',       // syslog/AAA live in FMC
+      nxos: 'P P P P P', eos: 'P P P P P', exos: 'P P P P P', 'ios-xe': 'P P P P P',
+      junos: 'P P P P P', iosxr: 'P P P P P',
+      // Columns: hostname sshV2 ntp syslog aaa. AM4 closed every AAA gap AM1
+    // exposed; AM2 fixed Nokia SRL's invalid `hostname` (now `name host-name`).
+      cumulus: 'P P P P P', srl: 'P P P P P', dellos10: 'P P P P P',
+      arubaoscx: 'P P P P P', fortios: 'P P P P P',
+      panos: 'P P P P P',     // AM4: telnet/http disabled (was 'A P P P')
+      viptela: 'P U P P P',   // SSH is v2-only by design, no statement exists
+      'oran-nf': 'P P P P P',
+      'oran-ru': 'P P U P U', // PTP timing; accounts via O-DU/SMO NETCONF
+      ftd: 'P P P U U',       // syslog/AAA live in FMC
     }
     const code = { present: 'P', absent: 'A', unknown: 'U' } as const
     const seen = new Map<FactPlatform, Set<string>>()
