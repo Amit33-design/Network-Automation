@@ -2046,9 +2046,8 @@ set system services netconf ssh
 !
 # ── AAA (single block — no duplication) ────────────────────────────────────
 set system authentication-order [ tacplus password ]
-set access tacacs-server <CHANGE-ME-tacacs-primary-ip> secret "<CHANGE-ME-tacacs-key>"
-set access tacacs-server <CHANGE-ME-tacacs-primary-ip> single-connection
-set access profile TACACS-PROFILE authentication-order tacplus
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> secret "<CHANGE-ME-tacacs-key>"
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> single-connection
 !
 set system syslog host <CHANGE-ME-syslog-ip> any info
 set system ntp server <CHANGE-ME-ntp-primary> prefer
@@ -2196,10 +2195,9 @@ set system services netconf ssh
 !
 # ── AAA (single block — no duplication) ────────────────────────────────────
 set system authentication-order [ tacplus password ]
-set access tacacs-server <CHANGE-ME-tacacs-primary-ip> secret "<CHANGE-ME-tacacs-key>"
-set access tacacs-server <CHANGE-ME-tacacs-primary-ip> single-connection
-set access tacacs-server <CHANGE-ME-tacacs-secondary-ip> secret "<CHANGE-ME-tacacs-key>"
-set access profile TACACS-PROFILE authentication-order tacplus
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> secret "<CHANGE-ME-tacacs-key>"
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> single-connection
+set system tacplus-server <CHANGE-ME-tacacs-secondary-ip> secret "<CHANGE-ME-tacacs-key>"
 !
 set system syslog host <CHANGE-ME-syslog-ip> any info
 set system ntp server <CHANGE-ME-ntp-primary> prefer
@@ -2551,6 +2549,13 @@ set server-profile tacacs TACACS-PROFILE use-radius-for-users no
 set authentication-profile TACACS-AUTH method tacacs server-profile TACACS-PROFILE
 set authentication-profile TACACS-AUTH allow-list all
 set authentication-sequence TACACS-THEN-LOCAL authentication-profiles [ TACACS-AUTH ]
+set deviceconfig system authentication-profile TACACS-THEN-LOCAL
+!
+# Management services: SSH/HTTPS only — Telnet and cleartext HTTP off.
+set deviceconfig system service disable-telnet yes
+set deviceconfig system service disable-http yes
+set deviceconfig system service disable-ssh no
+set deviceconfig system service disable-https no
 !
 # ── SNMP / SYSLOG / NTP ───────────────────────────────────────────────────────
 set deviceconfig system ntp-servers primary-ntp-server ntp-server-address <CHANGE-ME-ntp-primary>
@@ -3294,6 +3299,29 @@ config system admin
     next
 end
 
+config user tacacs+
+    edit "TACACS-PRIMARY"
+        set server "<CHANGE-ME-tacacs-primary-ip>"
+        set key <CHANGE-ME-tacacs-key>
+        set authen-type auto
+    next
+end
+
+config user group
+    edit "TACACS-ADMINS"
+        set member "TACACS-PRIMARY"
+    next
+end
+
+config system admin
+    edit "tacacs-admins"
+        set remote-auth enable
+        set wildcard enable
+        set remote-group "TACACS-ADMINS"
+        set accprofile "super_admin"
+    next
+end
+
 config system interface
     edit "mgmt"
         set mode static
@@ -3577,6 +3605,29 @@ config system admin
     next
 end
 
+config user tacacs+
+    edit "TACACS-PRIMARY"
+        set server "<CHANGE-ME-tacacs-primary-ip>"
+        set key <CHANGE-ME-tacacs-key>
+        set authen-type auto
+    next
+end
+
+config user group
+    edit "TACACS-ADMINS"
+        set member "TACACS-PRIMARY"
+    next
+end
+
+config system admin
+    edit "tacacs-admins"
+        set remote-auth enable
+        set wildcard enable
+        set remote-group "TACACS-ADMINS"
+        set accprofile "super_admin"
+    next
+end
+
 # ── Management ──────────────────────────────────────────────────────────────
 config system dns
     set primary <CHANGE-ME-dns-ip>
@@ -3722,6 +3773,9 @@ hostname ${dev.hostname}
 ip name-server 8.8.8.8
 !
 username admin password <CHANGE-ME-admin-password> role sysadmin
+tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key> vrf management
+aaa authentication login default group tacacs+ local
+aaa authentication login console local
 !
 interface mgmt 1/1/1
   no shutdown
@@ -3877,7 +3931,10 @@ lldp enable
 !
 ! ── SSH ─────────────────────────────────────────────────────────────────────
 ssh server vrf mgmt
-aaa authentication login default local
+tacacs-server host <CHANGE-ME-tacacs-primary-ip> key plaintext <CHANGE-ME-tacacs-key> vrf mgmt
+aaa group server tacacs TACACS-GRP
+    server <CHANGE-ME-tacacs-primary-ip> vrf mgmt
+aaa authentication login default group TACACS-GRP local
 !
 ! ── SNMP v3 ─────────────────────────────────────────────────────────────────
 snmp-server vrf default
@@ -3994,6 +4051,12 @@ nv set vrf default router bgp neighbor swp${p} bfd enable on`).join('\n')
 nv set system hostname ${dev.hostname}
 nv set system aaa user admin password <CHANGE-ME-admin-password>
 nv set system aaa user admin role system-admin
+nv set system aaa tacacs server 1 host <CHANGE-ME-tacacs-primary-ip>
+nv set system aaa tacacs server 1 secret <CHANGE-ME-tacacs-key>
+nv set system aaa tacacs vrf mgmt
+nv set system aaa tacacs enable on
+nv set system aaa authentication-order 5 tacacs
+nv set system aaa authentication-order 10 local
 nv set interface eth0 ip vrf mgmt
 # Z5b/N3-5: static OOB addressing, matching every other vendor. DHCP on the
 # management port makes the device's address unpredictable, which breaks the
@@ -4402,9 +4465,19 @@ ${nokiaHostMax > 0 ? `        interface ethernet-1/{1..${nokiaHostMax}}.0 { }` :
         }
         aaa {
             authentication {
+                authentication-method [ TACACS local ]
                 user admin {
                     password "<CHANGE-ME-admin-password>"
                     role admin
+                }
+            }
+            server-group TACACS {
+                type tacacs
+                server <CHANGE-ME-tacacs-primary-ip> {
+                    network-instance mgmt
+                    tacacs {
+                        secret-key "<CHANGE-ME-tacacs-key>"
+                    }
                 }
             }
         }
@@ -4568,8 +4641,7 @@ set system services ssh protocol-version v2
 set system services netconf ssh
 !
 set system authentication-order [ tacplus password ]
-set access tacacs-server <CHANGE-ME-tacacs-primary-ip> secret "<CHANGE-ME-tacacs-key>"
-set access profile TACACS-PROFILE authentication-order tacplus
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> secret "<CHANGE-ME-tacacs-key>"
 !
 set system syslog host <CHANGE-ME-syslog-ip> any info
 set system ntp server <CHANGE-ME-ntp-primary> prefer
@@ -4642,6 +4714,9 @@ function juniperSrxConfig(dev: BOMDevice, _idx: number): string {
 set system host-name ${dev.hostname}
 set system domain-name <CHANGE-ME-domain.example.com>
 set system login user admin class super-user authentication encrypted-password "<CHANGE-ME-admin-password>"
+set system authentication-order [ tacplus password ]
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> secret "<CHANGE-ME-tacacs-key>"
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> single-connection
 set system services ssh root-login deny
 set system services ssh protocol-version v2
 set system services web-management https system-generated-certificate
@@ -4723,6 +4798,9 @@ function juniperWanConfig(dev: BOMDevice, idx: number): string {
 set system host-name ${dev.hostname}
 set system domain-name <CHANGE-ME-domain.example.com>
 set system login user admin class super-user authentication encrypted-password "<CHANGE-ME-admin-password>"
+set system authentication-order [ tacplus password ]
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> secret "<CHANGE-ME-tacacs-key>"
+set system tacplus-server <CHANGE-ME-tacacs-primary-ip> single-connection
 set system services ssh root-login deny
 set system services ssh protocol-version v2
 set system services netconf ssh
@@ -5066,8 +5144,18 @@ sdwan
 !
 ! ── AAA ─────────────────────────────────────────────────────────────────────
 aaa new-model
-aaa authentication login default local
-aaa authorization exec default local
+tacacs server TACACS-PRIMARY
+ address ipv4 <CHANGE-ME-tacacs-primary-ip>
+ key <CHANGE-ME-tacacs-key>
+!
+aaa group server tacacs+ TACACS-GROUP
+ server name TACACS-PRIMARY
+ ip vrf forwarding Mgmt-intf
+ ip tacacs source-interface GigabitEthernet0
+!
+aaa authentication login default group TACACS-GROUP local
+aaa authorization exec default group TACACS-GROUP local
+aaa accounting exec default start-stop group TACACS-GROUP
 username admin privilege 15 secret <CHANGE-ME-admin-password>
 !
 ip ssh version 2
@@ -5226,13 +5314,20 @@ system
     !
   !
   aaa
-    auth-order local radius
+    auth-order tacacs local
     usergroup basic
       task system read write
       task interface read write
     !
     user admin
       password <CHANGE-ME-admin-password>
+    !
+  !
+  tacacs
+    server <CHANGE-ME-tacacs-primary-ip>
+      vpn        512
+      secret-key <CHANGE-ME-tacacs-key>
+      priority   0
     !
   !
 !
@@ -5660,6 +5755,7 @@ management:
   ssh-server enabled
   ntp-server <CHANGE-ME-ntp-primary>
   syslog-server <CHANGE-ME-syslog-ip>
+  tacacs-server <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
   netconf enabled port 830
   o1-interface:
     ves-collector <CHANGE-ME-ves-collector-ip>:8443
@@ -5769,6 +5865,7 @@ management:
   ssh-server enabled
   ntp-server <CHANGE-ME-ntp-primary>
   syslog-server <CHANGE-ME-syslog-ip>
+  tacacs-server <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
   o1-interface:
     ves-collector <CHANGE-ME-ves-collector-ip>:8443
 `
@@ -5857,6 +5954,9 @@ management:
   gateway <CHANGE-ME-mgmt-gw>
   o1-interface:
     ves-collector <CHANGE-ME-ves-collector-ip>:8443
+  # O-RAN WG4 M-plane: NETCONF over SSHv2; accounts via o-ran-usermgmt (NACM)
+  m-plane:
+    transport netconf-over-ssh port 830
   # ZTP: DHCP option 43 for initial O-RU bootstrap
   ztp:
     dhcp-vendor-class O-RAN-FHM
@@ -5878,7 +5978,16 @@ hostname ${dev.hostname}
 feature lldp
 feature ptp
 !
-username admin privilege 15 role network-admin password 5 <CHANGE-ME-admin-password>
+username admin password <CHANGE-ME-admin-password> role network-admin
+!
+${sshHardeningBlock('nxos')}
+!
+feature tacacs+
+tacacs-server host <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
+aaa group server tacacs+ TACACS-GROUP
+  server <CHANGE-ME-tacacs-primary-ip>
+  use-vrf management
+aaa authentication login default group TACACS-GROUP local
 !
 ntp server <CHANGE-ME-ntp-primary> prefer
 ntp server <CHANGE-ME-ntp-secondary>
@@ -6077,6 +6186,15 @@ ssh server v2
 logging <CHANGE-ME-syslog-ip>
 ntp server <CHANGE-ME-ntp-primary>
 !
+tacacs-server host <CHANGE-ME-tacacs-primary-ip> port 49
+ key <CHANGE-ME-tacacs-key>
+!
+aaa group server tacacs+ TACACS-GROUP
+ server <CHANGE-ME-tacacs-primary-ip>
+!
+aaa authentication login default group TACACS-GROUP local
+aaa authorization exec default group TACACS-GROUP local
+!
 telemetry model-driven
   sensor-group XHAUL-HEALTH
     sensor-path Cisco-IOS-XR-ptp-oper:ptp/local-clock
@@ -6164,6 +6282,7 @@ management:
   ssh-server enabled
   ntp-server <CHANGE-ME-ntp-primary>
   syslog-server <CHANGE-ME-syslog-ip>
+  tacacs-server <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
   prometheus-exporter:
     port 9090
     metrics: [sessions, throughput, latency, packet_drops, gtp_tunnels]
@@ -6247,6 +6366,7 @@ management:
   ssh enabled
   ntp-server <CHANGE-ME-ntp-primary>
   syslog-server <CHANGE-ME-syslog-ip>
+  tacacs-server <CHANGE-ME-tacacs-primary-ip> key <CHANGE-ME-tacacs-key>
   snmp:
     version v3
     user netmon auth sha <CHANGE-ME-snmp-auth-pass> priv aes <CHANGE-ME-snmp-priv-pass>
