@@ -66,7 +66,7 @@ function isCommentLine(line: string): boolean {
  * against the comment-stripped config, so documentation can never be
  * mistaken for configuration.
  */
-function stripComments(cfg: string): string {
+export function stripComments(cfg: string): string {
   return cfg.split('\n').filter(l => !isCommentLine(l)).join('\n')
 }
 

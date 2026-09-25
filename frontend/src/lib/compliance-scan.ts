@@ -1,4 +1,5 @@
 import type { AppState, Compliance, BOMDevice } from '@/types'
+import { fleetFact, type FactName } from '@/lib/config-facts'
 
 export type ComplianceStatus = 'pass' | 'fail' | 'warn' | 'na'
 
@@ -27,22 +28,12 @@ export interface ComplianceScanResult {
 
 type ControlChecker = (state: AppState, configs: Record<string, string>, devices: BOMDevice[]) => ComplianceControl
 
-// Vendor-agnostic config detectors — recognize Cisco/Arista/IOS-XR CLI,
-// Juniper Junos `set` syntax, and Nokia SR Linux YANG `{ }` blocks so the
-// scanner doesn't false-fail non-Cisco designs (mirrors config-validator M3).
-//   SSH v2 only:  Cisco `ip ssh version 2` / `transport input ssh`,
-//                 Juniper `protocol-version v2`, Nokia `ssh-server`
-//   Syslog:       Cisco `logging host`, Juniper `syslog`, Nokia `logging {` / `remote-server`
-//   NTP:          Cisco/Juniper `ntp server`, Nokia `ntp {`
-// AJ1 — widened again, and for the same reason M3/M4/AG5 kept recurring: the
-// detector knew Cisco/Juniper/Nokia spellings only, so Arista `management ssh`,
-// Extreme `enable ssh2`, Cumulus NVUE `ssh-server state enabled`, Dell OS10
-// `ip ssh server` and the FTD `configure ssh-access-list` (Firepower has no
-// `ip ssh version 2` — SSH is on and the access-list is the control) were all
-// read as "no SSH", producing false PCI-2.3 / FDRP-AC-17 failures.
-const RE_SSH_V2 = /transport\s+input\s+ssh|ssh\s+version\s+2|protocol-version\s+v2|ssh-server|enable\s+ssh2|management\s+ssh|ip\s+ssh\s+server|configure\s+ssh-access-list/i
-const RE_SYSLOG = /logging\s+(?:server|host|remote)|syslog|remote-server|logging\s*\{/i
-const RE_NTP = /ntp\s+server|ntp\s+source|ntp\s*\{/i
+// AM1 — the management-plane facts (SSH v2, NTP, syslog, centralized AAA) are
+// no longer detected here. Each used to be one regex listing every vendor's
+// spelling; that pattern was widened vendor-by-vendor in M3, M4 and AJ1 and was
+// still wrong in both directions when measured. They are now extracted per
+// device, in that device's own dialect, by lib/config-facts — see
+// `everyDeviceFact` below.
 
 function hasInConfigs(configs: Record<string, string>, pattern: RegExp): boolean {
   return Object.values(configs).some(c => pattern.test(c))
@@ -51,37 +42,6 @@ function hasInConfigs(configs: Record<string, string>, pattern: RegExp): boolean
 function allConfigsHave(configs: Record<string, string>, pattern: RegExp): boolean {
   const vals = Object.values(configs)
   return vals.length > 0 && vals.every(c => pattern.test(c))
-}
-
-/**
- * Per-device coverage of a control — AJ1.
- *
- * `hasInConfigs` asks whether ANY ONE device matches, which is the wrong
- * question for a control phrased "on all devices". Measured before this
- * existed: a Cisco DC design with SSH hardening on 4 of 14 devices reported a
- * clean PASS on PCI-2.3 "SSH v2 only — no Telnet". A compliance report that
- * says compliant while 10 of 14 devices are not is worse than no report.
- *
- * Returns a control fragment: `pass` only at full coverage, `warn` when some
- * devices are covered (with the count and the first few offenders named, so
- * the gap is actionable), `fail` at zero, `na` with no configs.
- */
-function everyDeviceHas(
-  configs: Record<string, string>,
-  pattern: RegExp,
-  labels: { pass: string; partial: string; fail: string },
-): { status: ComplianceStatus; detail: string } {
-  const entries = Object.entries(configs)
-  if (entries.length === 0) return { status: 'na', detail: 'No configs generated yet' }
-  const missing = entries.filter(([, cfg]) => !pattern.test(cfg)).map(([host]) => host)
-  const covered = entries.length - missing.length
-  if (missing.length === 0) return { status: 'pass', detail: labels.pass }
-  const named = missing.slice(0, 3).join(', ')
-  const more = missing.length > 3 ? ` +${missing.length - 3} more` : ''
-  const where = ` — ${covered}/${entries.length} devices; missing on ${named}${more}`
-  return covered === 0
-    ? { status: 'fail', detail: labels.fail + where }
-    : { status: 'warn', detail: labels.partial + where }
 }
 
 const PCI_CONTROLS: ControlChecker[] = [
@@ -99,41 +59,44 @@ const PCI_CONTROLS: ControlChecker[] = [
         ? { status: 'na', detail: 'No configs generated yet' }
         : { status: 'warn', detail: 'Verify no default credentials remain' },
   }),
-  (_state, configs) => ({
+  (_state, configs, devices) => ({
     id: 'PCI-2.3', framework: 'PCI', category: 'Encryption',
     requirement: 'SSH v2 only — no Telnet',
-    ...everyDeviceHas(configs, RE_SSH_V2, {
+    ...everyDeviceFact(configs, devices, 'sshV2', {
       pass:    'SSH v2 enforced on every device',
       partial: 'SSH v2 not enforced on every device',
       fail:    'SSH v2 enforcement not found in configs',
     }),
   }),
-  (_state, configs) => ({
+  (_state, configs, devices) => ({
     id: 'PCI-6.1', framework: 'PCI', category: 'Logging',
     requirement: 'Syslog forwarding to central collector',
-    ...hasInConfigs(configs, RE_SYSLOG)
-      ? { status: 'pass', detail: 'Syslog logging configured' }
-      : Object.values(configs).length === 0
-        ? { status: 'na', detail: 'No configs generated yet' }
-        : { status: 'fail', detail: 'No syslog forwarding found in configs' },
+    ...everyDeviceFact(configs, devices, 'syslog', {
+      pass:    'Syslog forwarding configured on every device',
+      partial: 'Syslog forwarding not configured on every device',
+      fail:    'No syslog forwarding found in configs',
+    }),
   }),
-  (_state, configs) => ({
+  (_state, configs, devices) => ({
     id: 'PCI-8.1', framework: 'PCI', category: 'Authentication',
     requirement: 'AAA / RADIUS / TACACS+ authentication',
-    ...hasInConfigs(configs, /aaa|radius|tacacs/i)
-      ? { status: 'pass', detail: 'AAA authentication configured' }
-      : Object.values(configs).length === 0
-        ? { status: 'na', detail: 'No configs generated yet' }
-        : { status: 'warn', detail: 'AAA configuration not detected — verify external auth' },
+    // Centralized only: a local admin account is not TACACS+/RADIUS. The old
+    // `/aaa|radius|tacacs/` matched the word `aaa` in a local-user block and
+    // passed Nokia, Cumulus and Aruba fabrics with no central auth at all.
+    ...everyDeviceFact(configs, devices, 'aaa', {
+      pass:    'Centralized AAA (TACACS+/RADIUS) on every device',
+      partial: 'Centralized AAA not configured on every device',
+      fail:    'No centralized AAA (TACACS+/RADIUS) found — local accounts only',
+    }),
   }),
-  (_state, configs) => ({
+  (_state, configs, devices) => ({
     id: 'PCI-10.1', framework: 'PCI', category: 'Monitoring',
     requirement: 'NTP synchronized for audit trails',
-    ...hasInConfigs(configs, RE_NTP)
-      ? { status: 'pass', detail: 'NTP configured in device configs' }
-      : Object.values(configs).length === 0
-        ? { status: 'na', detail: 'No configs generated yet' }
-        : { status: 'fail', detail: 'NTP not found in configs' },
+    ...everyDeviceFact(configs, devices, 'ntp', {
+      pass:    'NTP configured on every device',
+      partial: 'NTP not configured on every device',
+      fail:    'NTP not found in configs',
+    }),
   }),
   (state) => ({
     id: 'PCI-11.4', framework: 'PCI', category: 'Access Control',
@@ -176,9 +139,12 @@ const HIPAA_CONTROLS: ControlChecker[] = [
       ? { status: 'pass' as const, detail: '802.1X port authentication configured on the access layer' }
       : hasAccessPorts(devices)
         ? { status: 'fail' as const, detail: 'Access layer present but no 802.1X port authentication configured' }
-        : hasInConfigs(configs, /aaa|radius|tacacs/i)
-          ? { status: 'pass' as const, detail: 'No access ports in this design — device AAA (TACACS+/RADIUS) is the applicable control' }
-          : { status: 'fail' as const, detail: 'No network access authentication configured' },
+        // AM1: device AAA means CENTRALIZED auth, evaluated per device.
+        : everyDeviceFact(configs, devices, 'aaa', {
+            pass:    'No access ports in this design — centralized device AAA (TACACS+/RADIUS) is the applicable control, and every device has it',
+            partial: 'No access ports in this design — centralized device AAA is the applicable control, but not every device has it',
+            fail:    'No network access authentication configured — local accounts only',
+          }),
   }),
   (state) => ({
     id: 'HIPAA-164.308a5', framework: 'HIPAA', category: 'Audit',
@@ -244,10 +210,10 @@ const FEDRAMP_CONTROLS: ControlChecker[] = [
       ? { status: 'pass', detail: 'FIPS-mode or strong encryption referenced' }
       : { status: 'warn', detail: 'Verify FIPS 140-2 mode is enabled on all devices' },
   }),
-  (_state, configs) => ({
+  (_state, configs, devices) => ({
     id: 'FDRP-AC-17', framework: 'FedRAMP', category: 'Remote Access',
     requirement: 'Remote access via encrypted channel only',
-    ...everyDeviceHas(configs, RE_SSH_V2, {
+    ...everyDeviceFact(configs, devices, 'sshV2', {
       pass:    'SSH v2 only for remote management on every device',
       partial: 'Encrypted remote access not enforced on every device',
       fail:    'Ensure SSH v2 only for all remote access',
@@ -265,14 +231,14 @@ const FEDRAMP_CONTROLS: ControlChecker[] = [
     status: 'pass' as const,
     detail: 'gNMI telemetry, SNMP exporter, Prometheus alerts, anomaly detection available',
   }),
-  (_state, configs) => ({
+  (_state, configs, devices) => ({
     id: 'FDRP-AU-2', framework: 'FedRAMP', category: 'Audit',
     requirement: 'Audit event logging',
-    ...hasInConfigs(configs, RE_SYSLOG)
-      ? { status: 'pass', detail: 'Syslog/logging configured for audit trail' }
-      : Object.values(configs).length === 0
-        ? { status: 'na', detail: 'No configs generated yet' }
-        : { status: 'fail', detail: 'Audit logging not found in configs' },
+    ...everyDeviceFact(configs, devices, 'syslog', {
+      pass:    'Audit logging (syslog) configured on every device',
+      partial: 'Audit logging not configured on every device',
+      fail:    'Audit logging not found in configs',
+    }),
   }),
   (state, _configs, devices) => ({
     id: 'FDRP-SC-7', framework: 'FedRAMP', category: 'Boundary',
@@ -450,6 +416,58 @@ function segmentationControl(
     return { status: 'warn', detail: 'Segmentation requested but not found in the generated configs' }
   }
   return { status: failStatus, detail: 'No VRF or overlay segmentation in the design' }
+}
+
+/**
+ * Per-device coverage of a normalized FACT — AM1.
+ *
+ * Supersedes the regex form for the management-plane controls. The fact is
+ * extracted per device in that device's own dialect (lib/config-facts), so this
+ * check no longer knows any vendor — which is what made the regex form wrong in
+ * both directions (false FAIL on Cumulus/Palo Alto NTP and Aruba/FortiOS SSH;
+ * false PASS on an FTD syslog COMMENT and on local-only "aaa" blocks).
+ *
+ * Three states feed the result. A device whose config cannot express the fact
+ * (FTD logging/AAA live in FMC) or whose platform cannot be resolved is
+ * reported as NOT VERIFIABLE — named in the detail, never silently counted as
+ * present and never turned into a failure the user cannot act on.
+ */
+function everyDeviceFact(
+  configs: Record<string, string>,
+  devices: BOMDevice[],
+  fact: FactName,
+  labels: { pass: string; partial: string; fail: string },
+): { status: ComplianceStatus; detail: string } {
+  if (Object.keys(configs).length === 0) return { status: 'na', detail: 'No configs generated yet' }
+  const f = fleetFact(configs, devices, fact)
+  const name = (key: string) => devices.find(d => d.id === key)?.hostname ?? key
+
+  const unverifiable = [
+    ...f.unknown.map(u => u.key),
+    ...f.unresolved,
+  ]
+  const verifiable = f.present.length + f.absent.length
+  const tail = unverifiable.length === 0 ? '' : (() => {
+    const reason = f.unknown[0]?.note ?? 'platform could not be determined'
+    const shown = unverifiable.slice(0, 3).map(name).join(', ')
+    const more = unverifiable.length > 3 ? ` +${unverifiable.length - 3} more` : ''
+    return ` — ${unverifiable.length} not verifiable from device config (${shown}${more}): ${reason}`
+  })()
+
+  if (verifiable === 0) {
+    return { status: 'warn', detail: `Cannot verify from device config${tail}` }
+  }
+  if (f.absent.length === 0) {
+    // Show the working: one line that actually satisfied the fact.
+    const ex = Object.values(f.evidence)[0]
+    return { status: 'pass', detail: `${labels.pass}${ex ? ` (e.g. \`${ex}\`)` : ''}${tail}` }
+  }
+  const offenders = f.absent.slice(0, 3).map(name).join(', ')
+  const more = f.absent.length > 3 ? ` +${f.absent.length - 3} more` : ''
+  const where = ` — ${f.present.length}/${verifiable} devices; missing on ${offenders}${more}`
+  return f.present.length === 0
+    ? { status: 'fail', detail: labels.fail + where + tail }
+    : { status: 'warn', detail: labels.partial + where + tail }
 }
 
 const FRAMEWORK_CONTROLS: Record<Compliance, ControlChecker[]> = {
