@@ -2410,6 +2410,55 @@ describe('SSH management-plane hardening (AJ1)', () => {
   })
 })
 
+// ── AM6: every fabric has an underlay that can carry its loopbacks ──────────
+describe('fabric underlay (AM6)', () => {
+  // The overlay sessions are loopback-to-loopback. Something must advertise
+  // those loopbacks first: an IGP, BGP unnumbered on the links, or an IPv4
+  // session to the far end of each fabric /31. Dell OS10 and Extreme EXOS had
+  // none of the three, so their overlay sessions could never come up.
+  const FABRIC = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks']
+  const IGP = /^\s*(?:router isis|router ospf|set protocols (?:isis|ospf)|isis\s*\{|ospf\s*\{)/m
+  const UNNUMBERED = /^\s*nv set vrf \S+ router bgp neighbor swp\d+ type unnumbered/m
+  const P2P_NEIGHBOR = /(?:^\s*neighbor|add neighbor)\s+(10\.99\.\d+\.\d+)\b/gm
+  const P2P_ADDRESS = /(?:ip address|ipaddress)\s+(10\.99\.\d+\.\d+)/g
+
+  it('every spine and leaf of every fabric vendor has an underlay', () => {
+    const missing: string[] = []
+    for (const vendor of FABRIC) {
+      const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const cfgs = generateAllConfigs(devs, 'dc')
+      for (const d of devs.filter(x => x.subLayer === 'spine' || x.subLayer === 'leaf')) {
+        const c = cfgs[d.id]
+        if (!IGP.test(c) && !UNNUMBERED.test(c) && ![...c.matchAll(P2P_NEIGHBOR)].length) {
+          missing.push(`${vendor} ${d.hostname}`)
+        }
+      }
+    }
+    expect(missing).toEqual([])
+  })
+
+  it('every underlay /31 neighbor is an address another device really configures', () => {
+    for (const vendor of ['Dell EMC', 'Extreme Networks']) {
+      const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const cfgs = generateAllConfigs(devs, 'dc')
+      const addrOwner = new Map<string, string>()
+      for (const d of devs) for (const m of (cfgs[d.id] ?? '').matchAll(P2P_ADDRESS)) addrOwner.set(m[1], d.id)
+      let sessions = 0
+      for (const d of devs.filter(x => x.subLayer === 'spine' || x.subLayer === 'leaf')) {
+        for (const m of cfgs[d.id].matchAll(P2P_NEIGHBOR)) {
+          sessions++
+          const owner = addrOwner.get(m[1])
+          expect(owner, `${vendor} ${d.hostname} peers ${m[1]}, which no device configures`).toBeDefined()
+          expect(owner, `${vendor} ${d.hostname} peers its own address ${m[1]}`).not.toBe(d.id)
+        }
+      }
+      // Both ends: one session per link on each side.
+      const links = devs.filter(x => x.subLayer === 'leaf').reduce((n, l) => n + (l.uplinks ?? 0), 0)
+      expect(sessions, vendor).toBe(links * 2)
+    }
+  })
+})
+
 // ── AM3: VTEP role correctness (Dell OS10 / Extreme EXOS) ───────────────────
 describe('only leaves are VTEPs, and a VTEP has a tunnel source (AM3)', () => {
   const fabric = (vendor: string) => {

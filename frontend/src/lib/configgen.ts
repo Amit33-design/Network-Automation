@@ -426,6 +426,10 @@ interface FabricLink {
   localIp: string
   /** local-side P2P IPv6 /127 address (Enterprise upgrade A6), e.g. "fd00:99:3::11/127" */
   localIpv6: string
+  /** the FAR end of the same /31, no mask — the underlay BGP peer (AM6) */
+  peerIp: string
+  /** the peer's index within its own tier (leaf index on a spine, spine index on a leaf) */
+  peerIdx: number
 }
 
 function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): FabricLink[] {
@@ -466,6 +470,8 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
         linkNum,
         localIp: `${ipAdd('10.99.1.0', p2pIndex(leafIdx, spineIdx, linkNum) * 2 + 1)}/31`,
         localIpv6: `fd00:99:${leafNum}::${octet + 1}/127`,
+        peerIp: ipAdd('10.99.1.0', p2pIndex(leafIdx, spineIdx, linkNum) * 2),
+        peerIdx: spineIdx,
       })
     }
   } else {
@@ -485,6 +491,8 @@ function closFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOM
           linkNum,
           localIp: `${ipAdd('10.99.1.0', p2pIndex(leafIdx, spineIdx, linkNum) * 2)}/31`,
           localIpv6: `fd00:99:${leafNum}::${octet}/127`,
+          peerIp: ipAdd('10.99.1.0', p2pIndex(leafIdx, spineIdx, linkNum) * 2 + 1),
+          peerIdx: leafIdx,
         })
       }
     }
@@ -3741,6 +3749,21 @@ function dellOs10SwitchConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
     address-family l2vpn evpn
       activate
   !`).join('\n')
+  // AM6 — the UNDERLAY. The comment below always said "eBGP over the /31s",
+  // but only the loopback-to-loopback overlay sessions were emitted: with no
+  // IGP and no session on the /31s nothing ever advertised a loopback, so the
+  // overlay sessions had no route to their peer and no Dell fabric session
+  // could come up. One IPv4 session per fabric link, to the far end of its /31.
+  const dellUnderlayPeers = dellLinks.map(l => `  neighbor ${l.peerIp}
+    description UNDERLAY: ${l.peerHostname}
+    remote-as ${isSpine ? 65000 + Math.floor(l.peerIdx / 2) + 1 : 65000}
+    advertisement-interval 0
+    timers 3 9
+    bfd
+    no shutdown
+    address-family ipv4 unicast
+      activate
+  !`).join('\n')
   const dellHostMax = isSpine ? 0 : leafHostPortMax(dev, allDevices)
   const dellFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
   return `! ═══════════════════════════════════════════════════════════════
@@ -3802,6 +3825,8 @@ router bgp ${asn}
   address-family l2vpn evpn${isSpine ? '' : `
     advertise-all-vni`}
   !
+  ! ── Underlay: one IPv4 session per fabric /31 (carries the loopbacks) ────
+${dellUnderlayPeers || '  ! No fabric links in this design'}
 ${isSpine
   ? `  ! ── Spine: one eBGP session per leaf, derived from the BOM ──────────────
 ${dellLeafPeers || '  ! No leaves in fabric'}`
@@ -4142,6 +4167,7 @@ enable ipforwarding vlan ${vlanName}`
     .map((_d, i) => {
       const ip = roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)
       return `configure bgp add neighbor ${ip} remote-AS-number ${65000 + Math.floor(i / 2) + 1}
+configure bgp neighbor ${ip} source-interface vlan Loopback0
 configure bgp neighbor ${ip} no-next-hop-self
 enable bgp neighbor ${ip} capability evpn`
     }).join('\n')
@@ -4156,6 +4182,9 @@ enable bgp neighbor ${ip} capability evpn`
 configure bgp neighbor ${ip} source-interface vlan Loopback0
 enable bgp neighbor ${ip} capability evpn`
     }).join('\n')
+  const exosUnderlayPeers = exosLinks.map(l =>
+    `configure bgp add neighbor ${l.peerIp} remote-AS-number ${isSpine ? 65000 + Math.floor(l.peerIdx / 2) + 1 : 65000}`,
+  ).join('\n')
   const exosFwLinks = (isSpine || isAccess) ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
@@ -4216,6 +4245,11 @@ ${exosFabricIfaces || '# No fabric peers in this design'}
 configure bgp AS-number ${asn}
 configure bgp routerid ${lo0ip}
 enable bgp
+# Underlay (AM6): one IPv4 session per fabric /31 carries the loopbacks. It was
+# missing — only loopback-to-loopback sessions existed, with no IGP and nothing
+# advertising a loopback, so no EXOS fabric session could ever come up.
+configure bgp add network ${lo0ip}/32
+${exosUnderlayPeers || '# No fabric links in this design'}
 ${isSpine
   ? `# Spine: one eBGP session per leaf, derived from the BOM. no-next-hop-self is
 # mandatory — the spine is not a VTEP, so rewriting the EVPN next-hop to itself

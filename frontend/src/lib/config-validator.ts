@@ -299,11 +299,9 @@ function checkBGPPeerSymmetry(configs: Record<string, string>): ValidationCheck 
     for (const ip of ips) allIPs.add(ip)
   }
   for (const cfg of Object.values(configs)) {
-    const ifaceIPs = cfg.match(/ip address\s+(\d+\.\d+\.\d+\.\d+)/g) ?? []
-    for (const m of ifaceIPs) {
-      const ip = m.replace(/ip address\s+/, '')
-      allIPs.add(ip)
-    }
+    // `ip address X` (IOS/NX-OS/EOS/OS10) and EXOS `ipaddress X MASK` (AM6 —
+    // without the second form every EXOS underlay peer read as a phantom).
+    for (const m of cfg.matchAll(/\bip ?address\s+(\d+\.\d+\.\d+\.\d+)/g)) allIPs.add(m[1])
   }
 
   const unreachable: { host: string; peer: string }[] = []
