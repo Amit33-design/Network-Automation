@@ -975,7 +975,7 @@ VNI" tabs.
 - `genIPRows(useCase, devices): IPRow[]` — per-device loopback/interface
   allocations (firewall/spine/leaf/dist/access), with "… +N more" summary
   rows when a layer exceeds the display cap.
-- `genVLANs(useCase): VLANRow[]` / `genVNIs(): VNIRow[]`.
+- `genVLANs(useCase): VLANRow[]` / `genVNIs(): VNIRow[]`. DC returns the `TENANT_OVERLAY` VLAN; campus returns `CAMPUS_VLANS` (data 10 / voice 20 / mgmt 99 at 10.255.99.0/24, VIP .254) — the same constant every campus generator (Cisco/Arista/Juniper/Fortinet/Aruba) configures (AN7). Firewall rows carry the firewall's own end of the handoff /31.
 - `toNetBoxPrefixCsv(blocks, vlans)` — `ipam.prefix` CSV (`prefix,status,
   role,vlan_vid,description`); aggregate blocks → `container`, VLAN subnets
   → `active`; de-duped by CIDR.
