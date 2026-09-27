@@ -2475,7 +2475,7 @@ describe('only leaves are VTEPs, and a VTEP has a tunnel source (AM3)', () => {
     const { devs, cfgs } = fabric('Dell EMC')
     for (const d of devs.filter(x => x.subLayer === 'leaf')) {
       expect(cfgs[d.id]).toMatch(/^nve\n\s+source-interface loopback 0/m)
-      expect(cfgs[d.id]).toMatch(/^virtual-network 1\n\s+vxlan-vni 10001/m)
+      expect(cfgs[d.id]).toMatch(/^virtual-network 1\n\s+vxlan-vni 10010/m)
       expect(cfgs[d.id]).not.toMatch(/^interface virtual-network 1\n\s+vxlan-vni/m)
     }
     for (const d of devs.filter(x => x.subLayer === 'spine')) {

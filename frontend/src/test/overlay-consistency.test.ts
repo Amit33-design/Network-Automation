@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { buildDeviceList } from '@/lib/bom'
 import { generateAllConfigs } from '@/lib/configgen'
 import { stripComments } from '@/lib/config-text'
+import { TENANT_OVERLAY } from '@/lib/configgen'
+import { genVNIs } from '@/lib/ipam'
 /** Overlay parameters every leaf of a fabric must agree on, per dialect. */
 const X: Record<string, (c: string) => Record<string, string>> = {
   Cisco: c => ({
@@ -76,7 +78,21 @@ describe('EVPN overlay is consistent across leaves, with explicit route-targets 
     const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: ['Nokia'] })
     const cfgs = generateAllConfigs(devs, 'dc')
     const leaves = devs.filter(d => d.subLayer === 'leaf')
-    cfgs[leaves[0].id] = cfgs[leaves[0].id].replace(/target:65000:10001/g, 'target:65001:10001')
+    cfgs[leaves[0].id] = cfgs[leaves[0].id].replace(/target:65000:10010/g, 'target:65001:10010')
     expect(disagreements('Nokia', cfgs, leaves)).toContain('rts')
   })
+
+  it('AN6: every fabric vendor runs the same tenant overlay as the IPAM plan', () => {
+    for (const vendor of [...EXPLICIT_RT, 'Extreme Networks']) {
+      const devs = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const cfgs = generateAllConfigs(devs, 'dc')
+      for (const l of devs.filter(d => d.subLayer === 'leaf')) {
+        const live = stripComments(cfgs[l.id])
+        expect(live, `${vendor} ${l.hostname}`).toMatch(new RegExp(`\\b${TENANT_OVERLAY.l2vni}\\b`))
+        expect(live, `${vendor} ${l.hostname}: old VNI`).not.toMatch(/\b10001\b/)
+      }
+    }
+    expect(genVNIs().map(v => v.vni)).toEqual([TENANT_OVERLAY.l2vni, TENANT_OVERLAY.l3vni])
+  })
 })
+
