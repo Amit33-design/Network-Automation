@@ -100,6 +100,30 @@ def _boot_filename(platform: str, hostname: str, tftp: bool = False) -> str:
     return _MAP.get(platform, f"ztp/bootstrap/{hostname}")
 
 
+def _class_boot_filename(platform: str, tftp: bool = False) -> str | None:
+    """
+    The boot file a whole vendor CLASS can share, or None (AN3).
+
+    A class-wide `filename` can only name a SHARED artifact — a provisioning
+    script that then fetches the device's own config. `_boot_filename` falls
+    back to a per-hostname path, so calling it with the literal hostname
+    "device" handed every FortiGate / Aruba / EXOS / PAN-OS (and SR Linux in
+    HTTP mode) a `configs/device.cfg` or `ztp/bootstrap/device` that nothing
+    serves. Those platforms claim their config from a vendor cloud service or
+    need a per-device file, which the host stanzas below already provide.
+    """
+    platform = platform.lower().strip()
+    if tftp:
+        return _TFTP_MAP.get(platform)
+    shared = {
+        "nxos": "ztp/script/nxos", "nxos9k": "ztp/script/nxos",
+        "eos": "ztp/script/eos",
+        "ios-xe": "ztp/script/ios-xe", "iosxe": "ztp/script/ios-xe", "ios_xe": "ztp/script/ios-xe",
+        "junos": "ztp/script/junos", "sonic": "ztp/script/sonic",
+    }
+    return shared.get(platform)
+
+
 # ---------------------------------------------------------------------------
 # DHCP config generation
 # ---------------------------------------------------------------------------
@@ -178,7 +202,7 @@ def generate_dhcp_config(
             continue
         seen_classes.add(vclass)
         safe = "".join(c if c.isalnum() else "-" for c in vclass)
-        boot = _boot_filename(platform, "device", tftp=tftp)
+        boot = _class_boot_filename(platform, tftp=tftp)
         lines.append(f"# {platform} → option-60 class")
         lines.append(f"class \"{safe}\" {{")
         lines.append(
@@ -190,8 +214,12 @@ def generate_dhcp_config(
             lines.append(
                 f"  option vendor-encapsulated-options \"5A;K4;B2;I{ztp_server_ip};J80\";"
             )
-        lines.append(f"  filename \"{boot}\";")
-        lines.append(f"  next-server {ztp_server_ip};")
+        if boot:
+            lines.append(f"  filename \"{boot}\";")
+            lines.append(f"  next-server {ztp_server_ip};")
+        else:
+            lines.append("  # No shared boot file: served per device by the host stanzas below,")
+            lines.append("  # or claimed from the vendor's cloud service.")
         lines.append("}")
         lines.append("")
 

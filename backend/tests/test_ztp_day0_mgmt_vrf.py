@@ -39,3 +39,20 @@ def test_cumulus_day0_is_nvue_and_joins_the_mgmt_vrf():
     assert not re.search(r"^net add", cfg, re.M)   # NCLU was removed in Cumulus 5.x
     assert "nv set interface eth0 ip vrf mgmt" in cfg
     assert "nv set vrf mgmt router static 0.0.0.0/0 via 10.0.0.1" in cfg
+
+
+# ── AN3: a DHCP class never names a per-device file ─────────────────────────
+from ztp.dhcp_gen import generate_dhcp_config  # noqa: E402
+
+
+def test_dhcp_classes_never_point_at_a_placeholder_device_file():
+    devs = [{"hostname": f"H-{p}", "platform": p, "mac": "aa:bb:cc:dd:ee:0" + str(i), "mgmt_ip": f"10.0.0.{10 + i}"}
+            for i, p in enumerate(["nxos", "fortios", "arubaoscx", "exos", "panos", "srl"])]
+    for tftp in (False, True):
+        cfg = generate_dhcp_config(devs, ztp_server_ip="10.0.0.100", gateway="10.0.0.1", dns="10.0.0.53", tftp=tftp)
+        # The class blocks used to hand out a file for a host literally named "device".
+        assert "configs/device.cfg" not in cfg
+        assert "ztp/bootstrap/device" not in cfg
+        # Every device still gets its own reservation.
+        for d in devs:
+            assert f"host H-{d['platform']}" in cfg

@@ -319,3 +319,35 @@ describe('Day-0 and Day-N agree on the management VRF', () => {
   })
 })
 
+
+// ── AN3: a DHCP class only names a file it can share ────────────────────────
+describe('DHCP boot files', () => {
+  const ids = (vendor: string, uc: Parameters<typeof buildDeviceList>[0]['useCase']) => {
+    const devs = buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+    return buildZTPPlan(devs, generateAllConfigs(devs, uc)).entries.map(e => e.identity)
+  }
+
+  it('never points a vendor class at a file for a host literally named "device"', () => {
+    for (const [vendor, uc] of [['Fortinet', 'campus'], ['HPE Aruba', 'campus'], ['Extreme Networks', 'dc'], ['Palo Alto', 'dc'], ['Nokia', 'dc']] as const) {
+      expect(generateDhcpConfig(ids(vendor, uc)), vendor).not.toMatch(/configs\/device\./)
+    }
+  })
+
+  it('cloud-claimed platforms get address + DNS only, with no boot file', () => {
+    const conf = generateDhcpConfig(ids('Fortinet', 'campus'))
+    const cls = conf.match(/class "FortiGate[^"]*" \{[\s\S]*?\n\}/)?.[0] ?? conf.match(/class "Forti[^"]*" \{[\s\S]*?\n\}/)?.[0]
+    expect(cls).toBeTruthy()
+    expect(cls).not.toMatch(/filename/)
+  })
+
+  it('SR Linux gets one host reservation per device, each with its own file', () => {
+    const srl = ids('Nokia', 'dc').filter(i => i.platform === 'srl')
+    const conf = generateDhcpConfig(srl)
+    expect(srl.length).toBeGreaterThan(1)
+    for (const i of srl) {
+      expect(conf).toContain(`host ${i.hostname} {`)
+      expect(conf).toContain(`filename "${i.bootFile}";`)
+    }
+    expect(new Set(srl.map(i => i.bootFile)).size).toBe(srl.length)
+  })
+})
