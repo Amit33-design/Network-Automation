@@ -271,3 +271,51 @@ describe('provisioning path (how a device is really onboarded)', () => {
     expect([...new Set(bad)]).toEqual([])
   })
 })
+
+// ── AN2: Day-0 boots into the management VRF the Day-N push expects ─────────
+describe('Day-0 and Day-N agree on the management VRF', () => {
+  // Day-N travels over the session Day-0 creates. Moving the management
+  // interface to another VRF cuts that session: EOS clears the address on a
+  // VRF change, and Cumulus/Junos re-home the default route.
+  const vrf: Partial<Record<ZTPPlatform, (cfg: string) => string | null>> = {
+    eos: c => /^interface Management1\n/m.test(c) ? (c.match(/^interface Management1\n(?:[ \t]+.*\n)*?[ \t]+vrf (\S+)/m)?.[1] ?? 'default') : null,
+    junos: c => /^set interfaces (?:fxp0|em0|me0) /m.test(c) ? (/^set system management-instance$/m.test(c) ? 'mgmt_junos' : 'default') : null,
+    cumulus: c => /interface eth0 ip address/.test(c) ? (c.match(/nv set interface eth0 ip vrf (\S+)/)?.[1] ?? 'default') : null,
+    nxos: c => /^interface mgmt0\n/m.test(c) ? (c.match(/^interface mgmt0\n(?:\s+.*\n)*?\s+vrf member (\S+)/m)?.[1] ?? 'default') : null,
+  }
+
+  it('for every platform whose Day-N restates its management interface', () => {
+    const bad: string[] = []
+    let compared = 0
+    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'NVIDIA']) {
+      for (const uc of ['dc', 'gpu', 'campus', 'wan'] as const) {
+        const devs = buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+        const cfgs = generateAllConfigs(devs, uc)
+        for (const e of buildZTPPlan(devs, cfgs).entries) {
+          const f = vrf[e.identity.platform]
+          const dayN = cfgs[e.identity.id]
+          if (!f || e.path !== 'ztp' || !dayN) continue
+          const d0 = f(e.day0), dn = f(dayN)
+          if (!d0 || !dn) continue
+          compared++
+          if (d0 !== dn) bad.push(`${uc}/${vendor} ${e.identity.hostname} (${e.identity.platform}): Day-0 ${d0}, Day-N ${dn}`)
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(20)   // guard: the extractors really matched
+    expect([...new Set(bad)]).toEqual([])
+  })
+
+  it('EOS Day-0 puts the management route in the VRF of the management interface', () => {
+    const d0 = generateDay0Config(identifyDevice({ id: 'a', hostname: 'A-01', role: 'leaf', subLayer: 'leaf', model: '7050CX3', vendor: 'Arista', count: 1, unitPrice: 0, totalPrice: 0, speed: '100G', ports: 32, features: [] } as BOMDevice))
+    expect(d0).toMatch(/^vrf instance MGMT$/m)
+    expect(d0).toMatch(/^ip route vrf MGMT 0\.0\.0\.0\/0 /m)
+  })
+
+  it('Cumulus Day-0 is NVUE, not the removed NCLU', () => {
+    const d0 = generateDay0Config(identifyDevice({ id: 'n', hostname: 'N-01', role: 'leaf', subLayer: 'leaf', model: 'SN4600C', vendor: 'NVIDIA', count: 1, unitPrice: 0, totalPrice: 0, speed: '100G', ports: 64, features: [] } as BOMDevice))
+    expect(d0).not.toMatch(/^net add/m)
+    expect(d0).toMatch(/^nv set interface eth0 ip vrf mgmt$/m)
+  })
+})
+

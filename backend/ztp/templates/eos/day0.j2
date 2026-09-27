@@ -12,15 +12,19 @@ hostname {{ hostname }}
 username admin privilege 15 role network-admin secret {{ admin_password }}
 username netdesign privilege 15 role network-admin secret {{ netdesign_password }}
 
-!-- Management interface
+!-- Management in vrf MGMT from the first boot: the VRF the Day-N config
+!-- uses. EOS clears an interface's address when its VRF changes, so booting
+!-- in the default VRF meant the Day-N push cut its own session.
+vrf instance MGMT
 interface Management1
    description MGMT-ZTP
+   vrf MGMT
    ip address {{ mgmt_ip }}/24
    no shutdown
 {% if mgmt_gw %}
 
 !-- Default route for management
-ip route 0.0.0.0/0 {{ mgmt_gw }}
+ip route vrf MGMT 0.0.0.0/0 {{ mgmt_gw }}
 {% endif %}
 
 !-- Loopback
@@ -33,13 +37,14 @@ interface Loopback0
 management ssh
    idle-timeout 10
    authentication mode password
-   no shutdown
+   vrf MGMT
+      no shutdown
 
 !-- NTP
-ntp server {{ ntp_server }} prefer
+ntp server vrf MGMT {{ ntp_server }} prefer
 
 !-- Syslog
-logging host {{ syslog_server }} 514
+logging vrf MGMT host {{ syslog_server }} 514
 
 !-- LLDP
 lldp run

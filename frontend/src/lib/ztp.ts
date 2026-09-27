@@ -327,14 +327,20 @@ commit
       return `${header(id, '!')}
 hostname ${id.hostname}
 username admin privilege 15 role network-admin secret <CHANGE-ME-admin-password>
-management ssh
- no shutdown
+! Management lives in vrf MGMT from the first boot — the VRF the Day-N
+! config uses. EOS clears an interface's address when its VRF changes, so
+! booting in the default VRF meant the Day-N push cut its own session.
+vrf instance MGMT
 interface Management1
+ vrf MGMT
  ip address ${o.mgmtIp}/24
  no shutdown
 ip route vrf MGMT 0.0.0.0/0 ${o.mgmtGw}
-ntp server ${o.ntp}
-logging host ${o.syslog}
+management ssh
+ vrf MGMT
+  no shutdown
+ntp server vrf MGMT ${o.ntp}
+logging vrf MGMT host ${o.syslog}
 ! eZTP callback: ${o.callbackUrl}
 `
     case 'junos':
@@ -344,7 +350,10 @@ set system root-authentication encrypted-password "<CHANGE-ME-admin-password>"
 set system login user admin class super-user authentication encrypted-password "<CHANGE-ME-admin-password>"
 set system services ssh protocol-version v2
 set interfaces fxp0 unit 0 family inet address ${o.mgmtIp}/24
-set routing-options static route 0.0.0.0/0 next-hop ${o.mgmtGw}
+# The OOB default lives in the management instance, as in Day-N (Z5b/J3-4):
+# a default in inet.0 would steer unresolved data-plane traffic out fxp0.
+set system management-instance
+set routing-instances mgmt_junos routing-options static route 0.0.0.0/0 next-hop ${o.mgmtGw}
 set system ntp server ${o.ntp}
 set system syslog host ${o.syslog} any info
 # ZTP callback: ${o.callbackUrl}
@@ -364,15 +373,17 @@ set / system logging remote-server ${o.syslog}
 `
     case 'cumulus':
       return `${header(id, '#')}
-# NVIDIA Cumulus Linux — Day-0 (NCLU)
+# NVIDIA Cumulus Linux 5.x — Day-0 (NVUE). NCLU (\`net add\`) was removed in
+# 5.x, and eth0 joins the mgmt VRF now rather than when Day-N moves it there.
 # Admin password set by the ZTP script: usermod → <CHANGE-ME-admin-password>
-net add hostname ${id.hostname}
-net add interface eth0 ip address ${o.mgmtIp}/24
-net add interface eth0 ip gateway ${o.mgmtGw}
-net add time ntp server ${o.ntp} iburst
-net add syslog host ${o.syslog}
-net add ssh-server
-net commit
+nv set system hostname ${id.hostname}
+nv set interface eth0 ip vrf mgmt
+nv set interface eth0 ip address ${o.mgmtIp}/24
+nv set vrf mgmt router static 0.0.0.0/0 via ${o.mgmtGw}
+nv set service ntp mgmt server ${o.ntp} iburst on
+nv set service syslog mgmt server ${o.syslog} port 514
+nv set system ssh-server vrf mgmt
+nv config apply -y
 # ZTP callback: ${o.callbackUrl}
 `
     case 'dellos10':

@@ -47,6 +47,7 @@ system {
     ntp {
         server {{ ntp_server }};
     }
+    management-instance;
 }
 
 interfaces {
@@ -73,9 +74,15 @@ interfaces {
 }
 
 {% if mgmt_gw %}
-routing-options {
-    static {
-        route 0.0.0.0/0 next-hop {{ mgmt_gw }};
+/* The OOB default lives in the management instance, as in Day-N: a default
+   in inet.0 would steer unresolved data-plane traffic out the mgmt port. */
+routing-instances {
+    mgmt_junos {
+        routing-options {
+            static {
+                route 0.0.0.0/0 next-hop {{ mgmt_gw }};
+            }
+        }
     }
 }
 {% endif %}
