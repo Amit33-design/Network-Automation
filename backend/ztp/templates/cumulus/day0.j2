@@ -4,10 +4,13 @@
 # Admin password set by the ZTP script (usermod → {{ admin_password }}).
 # Replace <CHANGE-ME-*> before production.
 # ============================================================
-net add hostname {{ hostname }}
-net add interface eth0 ip address {{ mgmt_ip }}/24
-net add interface eth0 ip gateway {{ mgmt_gw }}
-net add time ntp server {{ ntp_server }} iburst
-net add syslog host {{ syslog_server }}
-net add ssh-server
-net commit
+# Cumulus 5.x speaks NVUE; NCLU (net add) was removed. eth0 joins the mgmt
+# VRF now rather than when the Day-N config moves it there.
+nv set system hostname {{ hostname }}
+nv set interface eth0 ip vrf mgmt
+nv set interface eth0 ip address {{ mgmt_ip }}/24
+nv set vrf mgmt router static 0.0.0.0/0 via {{ mgmt_gw }}
+nv set service ntp mgmt server {{ ntp_server }} iburst on
+nv set service syslog mgmt server {{ syslog_server }} port 514
+nv set system ssh-server vrf mgmt
+nv config apply -y
