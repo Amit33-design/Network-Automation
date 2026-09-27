@@ -204,13 +204,33 @@ export function ztpBootFile(platform: ZTPPlatform, hostname: string): string {
     case 'srl':      return `configs/${safe}.json`
     case 'cumulus':  return 'scripts/cumulus_ztp.sh'
     case 'dellos10': return 'scripts/os10_ztd.py'
-    // Cloud-claimed platforms boot off their cloud service, not a TFTP file.
+    // Cloud-claimed platforms boot off their cloud service, not a file the
+    // DHCP server names — see `bootKind`.
     case 'fortios':
     case 'arubaoscx':
     case 'exos':
-    case 'panos':    return `configs/${safe}.cfg`
-    default:         return `configs/${safe}.cfg`
+    case 'panos':    return ''
   }
+}
+
+/**
+ * How a platform finds its first config (AN3). The DHCP generator used to give
+ * every vendor class `filename ztpBootFile(platform, 'device')` — for the five
+ * platforms without a shared script that is `configs/device.cfg`, a file
+ * nothing writes. A class-wide filename can only serve a SHARED artifact:
+ *   script     — one provisioning script per platform; it fetches the device's
+ *                own config (by serial / hostname) itself
+ *   per-device — the boot file IS the device's config, so it needs a DHCP host
+ *                reservation per device (SR Linux)
+ *   cloud      — the device claims itself from its vendor cloud service; DHCP
+ *                only gives it an address and DNS
+ */
+export type BootKind = 'script' | 'per-device' | 'cloud'
+
+export function bootKind(platform: ZTPPlatform): BootKind {
+  if (platform === 'srl') return 'per-device'
+  if (platform === 'fortios' || platform === 'arubaoscx' || platform === 'exos' || platform === 'panos') return 'cloud'
+  return 'script'
 }
 
 /** Identify a device fully for ZTP: vendor, hardware, role, mechanism. */
@@ -527,6 +547,7 @@ export function generateDhcpConfig(ids: ZTPIdentity[], opts: DhcpOpts = {}): str
 
   for (const [vclass, sample] of byClass) {
     const safe = vclass.replace(/[^A-Za-z0-9]/g, '-')
+    const kind = bootKind(sample.platform)
     lines.push(`# ${sample.vendor} (${sample.platform}, ${sample.method})`)
     lines.push(`class "${safe}" {`)
     lines.push(`  match if substring(option vendor-class-identifier, 0, ${vclass.length}) = "${vclass}";`)
@@ -539,11 +560,30 @@ export function generateDhcpConfig(ids: ZTPIdentity[], opts: DhcpOpts = {}): str
         lines.push(`  option vendor-encapsulated-options "01:04:${o.ztpServerIp}";`)
       }
     }
-    lines.push(`  filename "${ztpBootFile(sample.platform, 'device')}";`)
-    lines.push(`  next-server ${o.ztpServerIp};`)
+    if (kind === 'script') {
+      lines.push(`  filename "${ztpBootFile(sample.platform, 'device')}";`)
+      lines.push(`  next-server ${o.ztpServerIp};`)
+    } else if (kind === 'cloud') {
+      lines.push(`  # Claims its config from the ${sample.method} cloud service — address + DNS only, no boot file.`)
+    } else {
+      lines.push(`  # Boot file is per device — served by the host reservations below.`)
+    }
     lines.push('}')
     lines.push('')
   }
+
+  // Per-device boot files need one reservation per device: a class-wide
+  // filename would hand every device of the class the same config.
+  const perDevice = ids.filter(id => id.dhcpVendorClass && bootKind(id.platform) === 'per-device')
+  for (const id of perDevice) {
+    const host = id.hostname.replace(/[^A-Za-z0-9-]/g, '-')
+    lines.push(`host ${host} {`)
+    lines.push(`  hardware ethernet <CHANGE-ME-mac-${host}>;`)
+    lines.push(`  filename "${id.bootFile}";`)
+    lines.push(`  next-server ${o.ztpServerIp};`)
+    lines.push('}')
+  }
+  if (perDevice.length) lines.push('')
 
   lines.push(`subnet ${o.subnet} netmask ${o.subnetMask} {`)
   lines.push(`  option routers ${o.gateway};`)

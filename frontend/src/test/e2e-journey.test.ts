@@ -20,7 +20,7 @@ import { buildBOM, buildCabling, buildOptics, validateBOM, computeTCO } from '@/
 import { computeRackLayout } from '@/components/RackElevation'
 import { generateAllConfigs } from '@/lib/configgen'
 import { validateConfigs } from '@/lib/config-validator'
-import { buildZTPPlan, generateDhcpConfig } from '@/lib/ztp'
+import { buildZTPPlan, generateDhcpConfig, bootKind } from '@/lib/ztp'
 import { buildNetBoxDcimExport, netboxRackPosition } from '@/lib/netbox-dcim'
 import { computeCapacityPlan } from '@/lib/capacity-planning'
 import type { BOMDevice, UseCase } from '@/types'
@@ -326,7 +326,8 @@ function assertZTPPlanInvariants(j: Journey, p: ReturnType<typeof runPipeline>) 
     } else {
       // 1. Fully identified: DHCP class and boot file.
       expect(id.dhcpVendorClass, `${ctx}: ${id.hostname} has no DHCP vendor-class`).toBeTruthy()
-      expect(id.bootFile, `${ctx}: ${id.hostname} has no boot file`).toBeTruthy()
+      // Cloud-claimed platforms have no boot file by design (AN3).
+      if (bootKind(id.platform) !== 'cloud') expect(id.bootFile, `${ctx}: ${id.hostname} has no boot file`).toBeTruthy()
       // 2. Day-0 is a real management-plane bootstrap.
       expect(e.day0.length, `${ctx}: ${id.hostname} Day-0 empty`).toBeGreaterThan(50)
       expect(e.day0, `${ctx}: ${id.hostname} Day-0 missing hostname`).toContain(id.hostname)
