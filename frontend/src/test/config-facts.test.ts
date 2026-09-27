@@ -238,5 +238,30 @@ describe('normalized config facts (AM1)', () => {
     expect(extractFacts('set routing-instances T protocols evpn ip-prefix-routes encapsulation vxlan', 'junos').vxlan.state).toBe('absent')
     expect(extractFacts('set vlans V10 vxlan vni 10010', 'junos').vxlan.state).toBe('present')
   })
+
+  it('AM7: every GPU fabric vendor is lossless in its own dialect', () => {
+    // PFC no-drop AND ECN on the RoCE class, on every spine and leaf. Cisco,
+    // Arista and Dell used to mark ECN only on lossy queues.
+    const gaps: string[] = []
+    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Dell EMC']) {
+      const devs = buildDeviceList({ useCase: 'gpu', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const cfgs = generateAllConfigs(devs, 'gpu')
+      for (const d of devs.filter(x => x.subLayer === 'spine' || x.subLayer === 'leaf')) {
+        const f = extractFacts(cfgs[d.id], factPlatform(d))
+        if (f.pfc.state !== 'present') gaps.push(`${vendor} ${d.hostname}: no PFC`)
+        if (f.ecnLossless.state !== 'present') gaps.push(`${vendor} ${d.hostname}: no ECN on the RoCE class`)
+        // A watchdog is present, or honestly unverified — never silently absent.
+        if (f.pfcWatchdog.state === 'absent') gaps.push(`${vendor} ${d.hostname}: no PFC watchdog`)
+      }
+    }
+    expect([...new Set(gaps)]).toEqual([])
+  })
+
+  it('AM7: ECN on a lossy queue is not ECN on the lossless class', () => {
+    const lossyOnly = 'policy-map type queuing Q\n  class type queuing c-out-8q-q-default\n    random-detect minimum-threshold 1 kbytes maximum-threshold 2 kbytes drop-probability 7 weight 0 ecn'
+    expect(extractFacts(lossyOnly, 'nxos').ecnLossless.state).toBe('absent')
+    expect(extractFacts('qos profile P\n   tx-queue 0\n      random-detect ecn', 'eos').ecnLossless.state).toBe('absent')
+    expect(extractFacts('qos profile P\n   tx-queue 3\n      bandwidth percent 60\n      random-detect ecn minimum-threshold 1 kbytes', 'eos').ecnLossless.state).toBe('present')
+  })
 })
 

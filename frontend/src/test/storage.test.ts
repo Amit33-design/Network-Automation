@@ -163,7 +163,7 @@ describe('G-A11 — Storage Networking (NVMe-oF / FCoE / iSCSI)', () => {
     const cfg = generateConfig(dev, 0, 'gpu', ['storage', 'hpc'] as AppType[])
 
     it('includes both GPU QoS and storage blocks', () => {
-      expect(cfg).toContain('CM-RDMA')
+      expect(cfg).toContain('CM-ROCE')
       expect(cfg).toContain('STORAGE-FCOE')
       expect(cfg).toContain('STORAGE-NVMEOF')
     })

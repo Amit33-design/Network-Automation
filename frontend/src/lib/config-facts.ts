@@ -61,6 +61,7 @@ export type MgmtFactName = 'hostname' | 'sshV2' | 'ntp' | 'syslog' | 'aaa'
  */
 export type RoutingFactName =
   'bgp' | 'isis' | 'ospf' | 'loopback' | 'vxlan' | 'evpn' | 'bfd' | 'jumboMtu'
+  | 'pfc' | 'ecnLossless' | 'pfcWatchdog'
 
 export type FactName = MgmtFactName | RoutingFactName
 
@@ -68,7 +69,7 @@ export type FactName = MgmtFactName | RoutingFactName
 export const FACT_NAMES: readonly MgmtFactName[] = ['hostname', 'sshV2', 'ntp', 'syslog', 'aaa'] as const
 
 export const ROUTING_FACT_NAMES: readonly RoutingFactName[] =
-  ['bgp', 'isis', 'ospf', 'loopback', 'vxlan', 'evpn', 'bfd', 'jumboMtu'] as const
+  ['bgp', 'isis', 'ospf', 'loopback', 'vxlan', 'evpn', 'bfd', 'jumboMtu', 'pfc', 'ecnLossless', 'pfcWatchdog'] as const
 
 export const ALL_FACT_NAMES: readonly FactName[] = [...FACT_NAMES, ...ROUTING_FACT_NAMES]
 
@@ -86,6 +87,9 @@ export const FACT_LABEL: Record<FactName, string> = {
   evpn: 'EVPN control plane',
   bfd: 'BFD enabled',
   jumboMtu: 'Jumbo MTU (≥ 9000)',
+  pfc: 'PFC no-drop on the RoCE class',
+  ecnLossless: 'ECN marking on the lossless (RoCE) class',
+  pfcWatchdog: 'PFC watchdog',
 }
 
 export type FactState = 'present' | 'absent' | 'unknown'
@@ -276,6 +280,8 @@ const IOS_JUMBO = /^\s*mtu\s+9\d{3}\b/m
  *     inside an EVPN type-5 block and an NX-OS `vxlan` in a description both
  *     counted as a tunnel endpoint.
  */
+const WATCHDOG_UNVERIFIED = { unsupported: 'No PFC-watchdog statement is generated for this platform and its syntax is not verified here — confirm pause-storm protection before deploying a GPU fabric.' }
+
 export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> = {
   nxos: {
     bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
@@ -286,6 +292,9 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     // the process and protects nothing on its own).
     bfd: /^\s*bfd(?:\s+multihop)?\s*$/m,
     jumboMtu: IOS_JUMBO,
+    pfc: /^\s*pause pfc-cos\s+3\b/m,
+    ecnLossless: /class type queuing c-out-8q-q3\n(?:[ \t]+.*\n)*?[ \t]+random-detect .*\becn\b/m,
+    pfcWatchdog: /^\s*priority-flow-control watch-dog-interval on\b/m,
   },
   'ios-xe': {
     bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
@@ -294,6 +303,7 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*l2vpn evpn\b|^\s*address-family l2vpn evpn\b/m,
     bfd: /^\s*bfd (?:interval|template)\b|^\s*neighbor \S+ fall-over bfd\b/m,
     jumboMtu: /^\s*(?:system )?mtu\s+9\d{3}\b/m,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   iosxr: {
     bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
@@ -302,6 +312,7 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*evpn\s*$|^\s*address-family l2vpn evpn\b/m,
     bfd: /^\s*bfd fast-detect\b/m,
     jumboMtu: IOS_JUMBO,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   eos: {
     bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
@@ -310,6 +321,9 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*address-family evpn\b/m,
     bfd: /^\s*neighbor \S+ bfd\b/m,
     jumboMtu: IOS_JUMBO,
+    pfc: /^\s*priority-flow-control priority 3 no-drop\b/m,
+    ecnLossless: /^\s*tx-queue 3\n(?:[ \t]+.*\n)*?[ \t]+random-detect ecn\b/m,
+    pfcWatchdog: /^\s*priority-flow-control pause watchdog\b/m,
   },
   junos: {
     bgp: /^\s*set protocols bgp\b/m,
@@ -322,6 +336,9 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*set protocols (?:bgp group \S+ family evpn|evpn)\b|^\s*set routing-instances \S+ protocols evpn\b/m,
     bfd: /\bbfd-liveness-detection\b/m,
     jumboMtu: /^\s*set interfaces \S+ mtu 9\d{3}\b/m,
+    pfc: /^\s*set class-of-service forwarding-classes class \S+ queue-num 3 no-loss\b/m,
+    ecnLossless: /^\s*set class-of-service schedulers \S+ explicit-congestion-notification\b/m,
+    pfcWatchdog: WATCHDOG_UNVERIFIED,
   },
   srl: {
     bgp: /^\s*bgp\s*\{/m,
@@ -332,6 +349,7 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*afi-safi evpn\s*\{|^\s*bgp-evpn\s*\{/m,
     bfd: /^\s*enable-bfd true\b/m,
     jumboMtu: /^\s*mtu\s+9\d{3}\b/m,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   cumulus: {
     bgp: /^\s*nv set router bgp (?:enable on|autonomous-system)\b/m,
@@ -342,6 +360,10 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*nv set evpn enable on\b/m,
     bfd: /^\s*nv set .*\bbfd enable on\b/m,
     jumboMtu: /^\s*nv set interface \S+ link mtu 9\d{3}\b/m,
+    // One NVUE profile carries PFC, ECN on the RoCE class and buffer carving.
+    pfc: /^\s*nv set qos roce mode lossless\b/m,
+    ecnLossless: /^\s*nv set qos roce mode lossless\b/m,
+    pfcWatchdog: WATCHDOG_UNVERIFIED,
   },
   dellos10: {
     bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
@@ -351,6 +373,9 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*address-family l2vpn evpn\b/m,
     bfd: /^\s*bfd\b/m,
     jumboMtu: IOS_JUMBO,
+    pfc: /^\s*priority 3 no-drop\b/m,
+    ecnLossless: /^\s*traffic-class 3 green\s+min-threshold\b/m,
+    pfcWatchdog: /^\s*pfc-watchdog on\b/m,
   },
   exos: {
     bgp: /^\s*enable bgp\s*$|^\s*configure bgp AS-number\b/m,
@@ -361,6 +386,7 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /\bcapability evpn\b|\baddress-family l2vpn-evpn\b/m,
     bfd: /^\s*configure bgp neighbor \S+ bfd on\b/m,
     jumboMtu: /^\s*configure jumbo-frame-size 9\d{3}\b/m,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   fortios: {
     bgp: /^\s*config router bgp\b/m,
@@ -371,6 +397,7 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*config system evpn\b/m,
     bfd: /^\s*set bfd enable\b/m,
     jumboMtu: /^\s*set mtu 9\d{3}\b/m,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   arubaoscx: {
     bgp: IOS_BGP, isis: IOS_ISIS, ospf: IOS_OSPF,
@@ -379,6 +406,7 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: /^\s*address-family l2vpn evpn\b/m,
     bfd: /^\s*(?:neighbor \S+ )?(?:fall-over )?bfd\b/m,
     jumboMtu: IOS_JUMBO,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   panos: {
     bgp: /^\s*set network virtual-router \S+ protocol bgp enable yes\b/m,
@@ -389,6 +417,7 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: NEVER,
     bfd: /^\s*set network virtual-router \S+ protocol \S+ .*\bbfd\b/m,
     jumboMtu: /^\s*set network interface ethernet \S+ layer3 mtu 9\d{3}\b/m,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   viptela: {
     bgp: /^\s*router\s*\n\s+bgp\s+\d/m,
@@ -399,20 +428,24 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     evpn: NEVER,
     bfd: NEVER,
     jumboMtu: IOS_JUMBO,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   'oran-nf': {
     bgp: NOT_A_ROUTER, isis: NOT_A_ROUTER, ospf: NOT_A_ROUTER, loopback: NOT_A_ROUTER,
     vxlan: NOT_A_ROUTER, evpn: NOT_A_ROUTER, bfd: NOT_A_ROUTER,
     jumboMtu: /^\s*mtu\s+9\d{3}\b/m,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   'oran-ru': {
     bgp: NOT_A_ROUTER, isis: NOT_A_ROUTER, ospf: NOT_A_ROUTER, loopback: NOT_A_ROUTER,
     vxlan: NOT_A_ROUTER, evpn: NOT_A_ROUTER, bfd: NOT_A_ROUTER, jumboMtu: NOT_A_ROUTER,
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
   ftd: {
     bgp: { unsupported: FMC_ROUTING }, isis: NEVER, ospf: { unsupported: FMC_ROUTING },
     loopback: { unsupported: FMC_ROUTING }, vxlan: NEVER, evpn: NEVER,
     bfd: { unsupported: FMC_ROUTING }, jumboMtu: { unsupported: FMC_ROUTING },
+    pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,
   },
 }
 

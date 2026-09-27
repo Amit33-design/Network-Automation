@@ -181,48 +181,51 @@ describe('Single underlay protocol — not OSPF + IS-IS simultaneously (Issue 4)
 })
 
 // ── Issue 5: GPU QoS correctness ──────────────────────────────────────────────
-describe('GPU fabric QoS: ECN + DCQCN + PFC + buffer carving (Issue 5)', () => {
-  it('GPU spine has PFC no-drop for RoCEv2 priority', () => {
-    const dev = makeDevice({ vendor: 'Cisco', subLayer: 'spine' })
-    const cfg = generateConfig(dev, 0, 'gpu')
-    expect(cfg).toContain('pause no-drop')
+describe('GPU fabric QoS: ECN + DCQCN + PFC + buffer carving (Issue 5, AM7)', () => {
+  // AM7 rewrote these. They asserted `pause no-drop`, `congestion-control ecn`
+  // under network-qos, `hardware qos pfc-watchdog` and Arista `pfc enable` —
+  // syntax the platforms reject — and one was literally named "ECN on lossy
+  // queues", which is the defect: DCQCN needs ECN on the RoCE queue itself.
+  const cisco = () => generateConfig(makeDevice({ vendor: 'Cisco', subLayer: 'spine' }), 0, 'gpu')
+
+  it('GPU spine has PFC no-drop on priority 3 (system network-qos class)', () => {
+    expect(cisco()).toMatch(/class type network-qos c-8q-nq3\n\s+pause pfc-cos 3/)
   })
 
-  it('GPU spine has ECN congestion-control on lossy queues', () => {
-    const dev = makeDevice({ vendor: 'Cisco', subLayer: 'spine' })
-    const cfg = generateConfig(dev, 0, 'gpu')
-    expect(cfg).toContain('congestion-control ecn')
+  it('GPU spine marks ECN on the RoCE queue itself, not only on lossy queues', () => {
+    expect(cisco()).toMatch(/class type queuing c-out-8q-q3\n(?:\s+.*\n)*?\s+random-detect .*\becn\b/)
+    expect(cisco()).not.toMatch(/congestion-control ecn/)
   })
 
-  it('GPU spine has WRED / random-detect for TCP queues', () => {
-    const dev = makeDevice({ vendor: 'Cisco', subLayer: 'spine' })
-    const cfg = generateConfig(dev, 0, 'gpu')
-    expect(cfg).toContain('random-detect')
+  it('GPU spine enables PFC on its ports, not just in a comment', () => {
+    expect(cisco()).toMatch(/^interface Ethernet1\/1-\d+\n\s+priority-flow-control mode on/m)
   })
 
   it('GPU spine RDMA class gets 60% BW guaranteed', () => {
-    const dev = makeDevice({ vendor: 'Cisco', subLayer: 'spine' })
-    const cfg = generateConfig(dev, 0, 'gpu')
-    expect(cfg).toMatch(/RDMA.*\n.*bandwidth percent 60|bandwidth percent 60\s*\npause/s)
+    expect(cisco()).toMatch(/c-out-8q-q3\n\s+bandwidth remaining percent 60/)
   })
 
-  it('GPU spine has DCQCN watchdog / PFC configuration', () => {
-    const dev = makeDevice({ vendor: 'Cisco', subLayer: 'spine' })
-    const cfg = generateConfig(dev, 0, 'gpu')
-    expect(cfg).toContain('pfc-watchdog')
+  it('GPU spine has a PFC watchdog', () => {
+    expect(cisco()).toMatch(/^priority-flow-control watch-dog-interval on$/m)
+  })
+
+  it('GPU spine no longer enables FabricPath on a VXLAN/IS-IS fabric', () => {
+    expect(cisco()).not.toMatch(/fabricpath/i)
   })
 
   it('Non-GPU DC spine does NOT have PFC no-drop', () => {
-    const dev = makeDevice({ vendor: 'Cisco', subLayer: 'spine' })
-    const cfg = generateConfig(dev, 0, 'dc')
-    expect(cfg).not.toContain('pause no-drop')
+    const cfg = generateConfig(makeDevice({ vendor: 'Cisco', subLayer: 'spine' }), 0, 'dc')
+    expect(cfg).not.toMatch(/pause pfc-cos/)
   })
 
-  it('Arista GPU spine has PFC configuration', () => {
-    const dev = makeDevice({ vendor: 'Arista', subLayer: 'spine' })
-    const cfg = generateConfig(dev, 0, 'gpu')
-    expect(cfg).toContain('pfc enable')
-    expect(cfg).toContain('pfc priority 3 no-drop')
+  it('Arista GPU spine uses real EOS PFC + ECN on the RoCE queue', () => {
+    const cfg = generateConfig(makeDevice({ vendor: 'Arista', subLayer: 'spine' }), 0, 'gpu')
+    expect(cfg).toMatch(/^qos profile GPU-LOSSLESS$/m)
+    expect(cfg).toMatch(/priority-flow-control priority 3 no-drop/)
+    expect(cfg).toMatch(/tx-queue 3\n(?:\s+.*\n)*?\s+random-detect ecn/)
+    expect(cfg).toMatch(/service-profile GPU-LOSSLESS/)
+    // Invented syntax from the old block.
+    expect(cfg).not.toMatch(/^\s*(?:pfc enable|pfc mode on|pfc pause disable|interface profile)/m)
   })
 })
 
@@ -830,7 +833,7 @@ describe('generateAllConfigs', () => {
       makeDevice({ id: 'gpu-1', vendor: 'Cisco', subLayer: 'spine' }),
     ]
     const configs = generateAllConfigs(devices, 'gpu')
-    expect(configs['gpu-1']).toContain('pause no-drop')
+    expect(configs['gpu-1']).toContain('pause pfc-cos 3')
   })
 })
 
