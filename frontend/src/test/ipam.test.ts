@@ -22,7 +22,7 @@ const dcDevices: BOMDevice[] = [
 ]
 
 describe('lib/ipam — data generators', () => {
-  it('genIPBlocks returns the real infrastructure blocks plus the DC overlay', () => {
+  it('genIPBlocks returns the real infrastructure blocks and the real tenant block', () => {
     // Was asserting 'MANAGEMENT OOB' (10.0.0.0/24) and 'DC UNDERLAY'
     // (10.1.0.0/20). Neither existed in any generated config: management is
     // the campus SVI inside 10.255.0.0/16, and the fabric P2P is 10.99.0.0/16
@@ -32,7 +32,10 @@ describe('lib/ipam — data generators', () => {
     const labels = blocks.map(b => b.label).join(' | ')
     expect(labels).toContain('P2P FABRIC LINKS')
     expect(labels).toContain('LOOPBACKS + MGMT SVI')
-    expect(labels).toContain('DC OVERLAY')
+    // AN6: tenant subnets live in the TENANT / SERVER block the configs use,
+    // not a separate 10.200/14 'DC OVERLAY' block no generator allocates from.
+    expect(labels).toContain('TENANT / SERVER')
+    expect(labels).not.toContain('DC OVERLAY')
     expect(labels).not.toContain('DC UNDERLAY')
     // The P2P block is the one the generators actually allocate from.
     expect(blocks.find(b => b.label === 'P2P FABRIC LINKS')!.subnet).toBe('10.99.0.0/16')
@@ -53,8 +56,9 @@ describe('lib/ipam — data generators', () => {
   })
 
   it('genVLANs includes DC tenant VLANs only for fabric use cases', () => {
-    expect(genVLANs('dc').some(v => v.name === 'DC-TENANT-A')).toBe(true)
-    expect(genVLANs('campus').some(v => v.name === 'DC-TENANT-A')).toBe(false)
+    // AN6: the tenant VLAN the leaves really carry (was fictional DC-TENANT-A/B).
+    expect(genVLANs('dc').some(v => v.name === 'SERVERS' && v.id === 10)).toBe(true)
+    expect(genVLANs('campus').some(v => v.name === 'SERVERS')).toBe(false)
   })
 
   it('genVNIs returns L2 and L3 VNI rows', () => {
@@ -82,7 +86,10 @@ describe('lib/ipam — NetBox CSV export', () => {
   it('prefix CSV marks aggregate blocks as container and VLAN subnets as active', () => {
     const csv = toNetBoxPrefixCsv(blocks, vlans)
     expect(csv).toContain(',container,infrastructure,')
-    expect(csv).toContain(',active,')
+    // A campus VLAN has a decided subnet, so it is exported as an active prefix.
+    expect(toNetBoxPrefixCsv(blocks, genVLANs('campus'))).toContain(',active,')
+    // A DC tenant subnet is <CHANGE-ME> in every config, so nothing is invented.
+    expect(csv).not.toMatch(/10\.200\./)
   })
 
   it('prefix CSV de-duplicates by CIDR', () => {

@@ -868,6 +868,22 @@ function aristaIsisIpv6AddressFamily(ipv6Enabled: boolean): string {
 // routes keep `auto` RTs (scoped to each site's ASN); VNIs that must be
 // extended over the DCI additionally import/export `${DCI_RT_ASN}:<vni>`,
 // which is identical on every site — so cross-site leaking is opt-in per VNI.
+/**
+ * The DC tenant overlay every fabric vendor configures (AN6). One definition,
+ * shared with the IPAM export, so the plan sent to NetBox is the overlay the
+ * switches actually run. Nokia, Dell and Extreme used VNI 10001 while the
+ * other four used 10010, and the IPAM plan declared VNIs no generator used.
+ */
+export const TENANT_OVERLAY = {
+  vlan: 10,
+  vlanName: 'SERVERS',
+  vrf: 'TENANT-A',
+  l2vni: 10010,
+  l3vni: 50000,
+  rtL2: '65000:10010',
+  rtL3: '65000:50000',
+} as const
+
 export const DCI_RT_ASN = 65100
 
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
@@ -3801,16 +3817,16 @@ nve
   source-interface loopback 0
 !
 virtual-network 1
-  vxlan-vni 10001
+  vxlan-vni ${TENANT_OVERLAY.l2vni}
 !
 ! AN5: explicit route-target. Auto-EVI derives it from the local AS, and each
 ! leaf pair has its own AS, so leaves in different pairs never imported each
 ! other's routes.
 evpn
-  evi 10001
-    vni 10001
+  evi ${TENANT_OVERLAY.l2vni}
+    vni ${TENANT_OVERLAY.l2vni}
     rd auto
-    route-target 65000:10001 both
+    route-target ${TENANT_OVERLAY.rtL2} both
 !
 interface vlan10
   virtual-network 1
@@ -4336,6 +4352,7 @@ enable bgp neighbor ${ip} capability evpn`
 configure bgp neighbor ${ip} source-interface vlan Loopback0
 enable bgp neighbor ${ip} capability evpn`
     }).join('\n')
+  const exosHostMax = (isSpine || isAccess) ? 0 : leafHostPortMax(dev, allDevices)
   const exosUnderlayPeers = exosLinks.map(l =>
     `configure bgp add neighbor ${l.peerIp} remote-AS-number ${isSpine ? 65000 + Math.floor(l.peerIdx / 2) + 1 : 65000}`,
   ).join('\n')
@@ -4432,8 +4449,12 @@ ${isSpine ? `#
 # VXLAN / EVPN — the local endpoint is the tunnel source; without it (AM3)
 # the leaf had a VNI and nowhere to originate a tunnel from.
 configure virtual-network local-endpoint ipaddress ${lo0ip} vr VR-Default
-create virtual-network "VNI-10001" vxlan vni 10001
-configure virtual-network "VNI-10001" add vlan Data`}`}
+# AN6: the tenant VLAN and its server ports. This leaf used to attach a VLAN
+# named Data that only access switches create, so the VNI had no member VLAN
+# and no host could attach to it.
+create vlan ${TENANT_OVERLAY.vlanName} tag ${TENANT_OVERLAY.vlan}
+${exosHostMax > 0 ? `configure vlan ${TENANT_OVERLAY.vlanName} add ports 1-${exosHostMax} untagged\n` : ''}create virtual-network "VNI-${TENANT_OVERLAY.l2vni}" vxlan vni ${TENANT_OVERLAY.l2vni}
+configure virtual-network "VNI-${TENANT_OVERLAY.l2vni}" add vlan ${TENANT_OVERLAY.vlanName}`}`}
 `
 }
 
@@ -4483,7 +4504,7 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
   // local AS, and Z8 gave every leaf pair its own AS — so leaves in different
   // pairs never imported each other's MACs. Multisite uses the stretched
   // ${DCI_RT_ASN} namespace so every site imports the same target.
-  const macVrfRt = `target:${isMultisite ? DCI_RT_ASN : 65000}:${isMultisite ? 10010 : 10001}`
+  const macVrfRt = `target:${isMultisite ? DCI_RT_ASN : 65000}:${TENANT_OVERLAY.l2vni}`
   const dciRt = `route-target {
                         export-rt ${macVrfRt}
                         import-rt ${macVrfRt}
@@ -4622,7 +4643,7 @@ ${nokiaHostMax > 0 ? `        interface ethernet-1/{1..${nokiaHostMax}}.0 { }` :
         vxlan-interface vxlan1.1 {
             type bridged
             ingress {
-                vni 10001
+                vni ${TENANT_OVERLAY.l2vni}
             }
         }
     }`

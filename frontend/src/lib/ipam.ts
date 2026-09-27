@@ -1,5 +1,5 @@
 import type { BOMDevice } from '@/types'
-import { ADDRESS_PLAN, RoleSlot, roleIp, fwHandoffIp } from '@/lib/configgen'
+import { TENANT_OVERLAY, ADDRESS_PLAN, RoleSlot, roleIp, fwHandoffIp } from '@/lib/configgen'
 
 // ── IPAM data model ──────────────────────────────────────────────────────────
 // Canonical IP / VLAN / VNI planning, derived from the BOM + intent. This is
@@ -51,9 +51,10 @@ export function genIPBlocks(useCase: string, totalEndpoints: number, numSites: n
     { label: 'IoT / GUEST',    subnet: '10.60.0.0/23', detail: 'VLAN 61/21 · Isolated · internet-only ACL', range: '10.60.0.1 – 10.60.1.254 (510 hosts)' },
   )
 
-  if (isDC) {
-    blocks.push({ label: 'DC OVERLAY — VXLAN tenant subnets', subnet: '10.200.0.0/14', detail: `VXLAN VNI space · PROD/STOR/DEV tenants · ${nLeaves} VTEPs`, range: '10.200.0.0 – 10.203.255.255 (262K hosts)' })
-  }
+  // AN6: no separate "DC overlay" block. It declared 10.200.0.0/14 for VXLAN
+  // tenant subnets while every DC config puts the tenant anycast gateway in the
+  // TENANT / SERVER block (10.10.0.0/16) already exported from ADDRESS_PLAN —
+  // two contradictory answers to where tenant subnets live.
   if (isGPU) {
     blocks.push({ label: 'GPU COMPUTE fabric', subnet: '192.168.100.0/22', detail: 'RoCEv2 RDMA fabric · lossless · PFC priority 3', range: '192.168.100.1 – 192.168.103.254' })
     blocks.push({ label: 'STORAGE — NVMe-oF / GPUDirect', subnet: '192.168.200.0/23', detail: 'NVMe-oF storage fabric · GPUDirect RDMA', range: '192.168.200.1 – 192.168.201.254' })
@@ -130,21 +131,28 @@ export function genVLANs(useCase: string): VLANRow[] {
     { id: 60,  name: 'DMZ',           subnet: '10.60.0.0/24',  gw: '10.60.0.1',  dhcp: 'Static only',     purpose: 'Internet-facing / public SVC',   layer: 'fw'    },
     { id: 99,  name: 'NATIVE-TRUNK',  subnet: '—',             gw: '—',          dhcp: '—',               purpose: 'Native VLAN on trunk links',     layer: 'mgmt'  },
   ]
+  // AN6: a fabric's only switched VLAN is the tenant VLAN the leaves carry
+  // into the VNI. The campus list above is not what a DC runs — it put MGMT on
+  // VLAN 10, which every DC leaf uses as the tenant VLAN — and the old DC rows
+  // (100 / 101 / 200) were configured nowhere.
   if (isDC) {
-    base.push({ id: 100, name: 'DC-TENANT-A', subnet: '10.200.0.0/22', gw: '10.200.0.1', dhcp: 'Dynamic', purpose: 'DC tenant A (VNI 100000)', layer: 'leaf' })
-    base.push({ id: 101, name: 'DC-TENANT-B', subnet: '10.200.4.0/22', gw: '10.200.4.1', dhcp: 'Dynamic', purpose: 'DC tenant B (VNI 100001)', layer: 'leaf' })
-    base.push({ id: 200, name: 'DC-STORAGE',  subnet: '10.201.0.0/22', gw: '10.201.0.1', dhcp: 'Static',  purpose: 'Storage network (iSCSI/NFS)', layer: 'dist' })
+    const t = TENANT_OVERLAY
+    return [{ id: t.vlan, name: t.vlanName, subnet: '10.10.0.0/16 (tenant block)', gw: 'Anycast gateway', dhcp: 'Static', purpose: `Tenant servers — L2VNI ${t.l2vni}, ${t.vrf}`, layer: 'leaf' }]
   }
   return base
 }
 
+/**
+ * The overlay the fabric really runs, from the config engine's own constant
+ * (AN6). This used to declare VNIs 100000/100001/100050/999000/999001, which no
+ * generator configured — NetBox would have recorded a network that does not
+ * exist.
+ */
 export function genVNIs(): VNIRow[] {
+  const t = TENANT_OVERLAY
   return [
-    { vni: 100000, vlan: '100', type: 'L2',       vrf: 'TENANT-A', irb: '10.200.0.1/22',   rt: '65000:100'  },
-    { vni: 100001, vlan: '101', type: 'L2',       vrf: 'TENANT-B', irb: '10.200.4.1/22',   rt: '65000:101'  },
-    { vni: 100050, vlan: '50',  type: 'L2',       vrf: 'DEFAULT',  irb: '10.50.0.1/22',    rt: '65000:50'   },
-    { vni: 999000, vlan: '—',   type: 'L3 IP-VRF',vrf: 'TENANT-A', irb: 'Anycast 10.200.0.1', rt: '65000:9000' },
-    { vni: 999001, vlan: '—',   type: 'L3 IP-VRF',vrf: 'TENANT-B', irb: 'Anycast 10.200.4.1', rt: '65000:9001' },
+    { vni: t.l2vni, vlan: String(t.vlan), type: 'L2', vrf: t.vrf, irb: 'Anycast gateway (<CHANGE-ME-tenant-anycast-gw>)', rt: t.rtL2 },
+    { vni: t.l3vni, vlan: '—', type: 'L3 IP-VRF', vrf: t.vrf, irb: 'Symmetric IRB (L3VNI)', rt: t.rtL3 },
   ]
 }
 
