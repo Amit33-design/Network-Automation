@@ -54,6 +54,17 @@ const design = (useCase: UseCase, endpoints = 512) => {
   }
 }
 
+/**
+ * Whether a config carries an address as a live allocation. Comments do not
+ * count (Z6) — with one exception: a Firepower's data interfaces are managed
+ * by FMC, so the generator states them in the FMC manifest as `ip=<addr>/<len>`
+ * entries. That structured form counts; a next-hop mentioned in prose does not.
+ */
+function carries(cfg: string, layer: string, ip: string): boolean {
+  if (stripComments(cfg).includes(ip)) return true
+  return layer === 'Firewall' && cfg.includes(`ip=${ip}/`)
+}
+
 describe('IPAM export vs generated configs (AF3)', () => {
   const CASES: UseCase[] = ['dc', 'gpu', 'campus', 'wan', 'multisite', 'oran']
 
@@ -103,7 +114,9 @@ describe('IPAM export vs generated configs (AF3)', () => {
         const cfg = byHost.get(row.device)
         // Summary rows ("… +N more") and ranges are not single allocations.
         if (!cfg || row.ip.includes('–')) continue
-        if (!cfg.includes(row.ip)) {
+        // Comment lines are documentation, not allocation (Z6) — a next-hop
+        // named in a manifest comment used to satisfy this check (AN7).
+        if (!carries(cfg, row.layer, row.ip)) {
           wrong.push(`${useCase}/${row.device} ${row.iface}: plan says ${row.ip}, config does not contain it`)
         }
       }

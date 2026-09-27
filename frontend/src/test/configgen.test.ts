@@ -1614,7 +1614,7 @@ describe('Firewall/fabric handoff (group Y7)', () => {
       makeDevice({ id: 'f1', hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
     ]
     const campus = generateAllConfigs(campusDevices, 'campus')
-    expect(campus['f1']).toContain('10.10.10.0/24 (VLAN 10 DATA), 10.255.99.0/24 (campus MGMT)')
+    expect(campus['f1']).toContain('<CHANGE-ME-site-data-subnet> (VLAN 10 DATA), 10.255.99.0/24 (campus MGMT)')
     // campus distribution also emits its FW handoff port
     expect(campus['d1']).toMatch(/description FW-HANDOFF: IAD-FW-A01[\s\S]*?ip address 10\.98\.1\.0 255\.255\.255\.254/)
     // and the two manifests are no longer byte-identical
@@ -2546,7 +2546,7 @@ describe('HPE Aruba AOS-CX (AM5)', () => {
     expect(dist.length).toBeGreaterThan(0)
     for (const d of dist) {
       expect(cfgs[d.id]).toMatch(/^router ospf 1$/m)
-      expect(cfgs[d.id]).toMatch(/vrrp 20 address-family ipv4/)
+      expect(cfgs[d.id]).toMatch(/vrrp 10 address-family ipv4/)
       expect(cfgs[d.id]).not.toMatch(/^router bgp|interface vxlan/m)
     }
   })

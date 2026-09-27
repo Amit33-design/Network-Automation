@@ -706,7 +706,7 @@ function intToIp(n: number): string {
 }
 
 /** `base` advanced by `offset` addresses — never produces an octet > 255. */
-function ipAdd(base: string, offset: number): string {
+export function ipAdd(base: string, offset: number): string {
   return intToIp(ipToInt(base) + Math.max(0, Math.trunc(offset)))
 }
 
@@ -885,6 +885,32 @@ export const TENANT_OVERLAY = {
 } as const
 
 export const DCI_RT_ASN = 65100
+
+/**
+ * The campus VLAN plan (AN7), one constant for every campus generator and for
+ * the IPAM export. Each vendor used to invent its own — Cisco 10/20/99, Arista
+ * and Juniper 100/200/300/400/999, Aruba 10 MANAGEMENT / 20 DATA, Fortinet
+ * 10/20/30/999 — while `genVLANs('campus')` declared yet another list, so the
+ * source of truth sent to NetBox matched at most one vendor. Cisco's plan is
+ * the reference: data 10, voice 20 (only with the voice app type), and the
+ * management / native VLAN 99 whose /24 and HSRP/VRRP VIP are in ADDRESS_PLAN.
+ */
+export const CAMPUS_VLANS = {
+  data:  { id: 10, name: 'DATA' },
+  voice: { id: 20, name: 'VOICE' },
+  mgmt:  { id: 99, name: 'MGMT-NATIVE', subnet: '10.255.99.0/24', vip: '10.255.99.254' },
+} as const
+
+/**
+ * A campus switch's management SVI address. Both tiers share one /24, so
+ * access starts after the distribution block (AF3) — indexing each tier from
+ * zero gave DIST-A01 and ACC-A01 the same address.
+ */
+function campusMgmtIp(dev: BOMDevice, allDevices: BOMDevice[], idx: number): string {
+  const i = roleIndex(dev, allDevices, idx)
+  const nDist = allDevices.filter(d => d.subLayer === 'distribution').length
+  return roleIp('10.255.99.1', RoleSlot.CampusMgmt, dev.subLayer === 'distribution' ? i : nDist + i)
+}
 
 // ── NX-OS Leaf ────────────────────────────────────────────────────────────────
 
@@ -2280,10 +2306,10 @@ function ciscoFtdFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase |
     : `!   Ethernet1/2  zone=INSIDE   ip=<CHANGE-ME-inside-ip>/<CHANGE-ME-inside-prefix>  desc=TRUSTED-LAN`
   const insideNets = isFabric
     ? '10.10.0.0/16 (tenant subnets), 10.255.0.0/16 (fabric loopbacks)'
-    : '10.10.10.0/24 (VLAN 10 DATA), 10.255.99.0/24 (campus MGMT)'
+    : `<CHANGE-ME-site-data-subnet> (VLAN ${CAMPUS_VLANS.data.id} ${CAMPUS_VLANS.data.name}), ${CAMPUS_VLANS.mgmt.subnet} (campus MGMT)`
   const dmzPort = 2 + Math.max(peers.length, 1)
   const routingLines = peers.length
-    ? peers.map((p, pi) => `!   ${isFabric ? '10.10.0.0/16' : '10.10.10.0/24'} via ${fwHandoffIp(pi, fwIdx, fws.length)} (${p.hostname}) — ECMP across the ${peers.length} handoff link(s)`).join('\n')
+    ? peers.map((p, pi) => `!   ${isFabric ? '10.10.0.0/16' : '<CHANGE-ME-site-data-subnet>'} via ${fwHandoffIp(pi, fwIdx, fws.length)} (${p.hostname}) — ECMP across the ${peers.length} handoff link(s)`).join('\n')
     : '!   <CHANGE-ME-inside-net> via <CHANGE-ME-inside-gateway>'
 
   return `! ═══════════════════════════════════════════════════════════════
@@ -3410,26 +3436,29 @@ end
 
 // ── Fortinet FortiSwitch Campus (distribution / access) ──────────────────────
 
-function fortinetCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[] = []): string {
+function fortinetCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[] = [], allDevices: BOMDevice[] = []): string {
+  const mgmtIp = campusMgmtIp(dev, allDevices, idx)
+  idx = roleIndex(dev, allDevices, idx)
+  const { data, voice, mgmt } = CAMPUS_VLANS
   const isDist = dev.subLayer === 'distribution'
   const role = isDist ? 'Campus Distribution (FortiSwitch)' : 'Campus Access (FortiSwitch)'
   const hasVoice = appTypes.includes('voice')
-  const sviBase = `10.${10 + idx}`
-  const vrrpPrio = idx % 2 === 0 ? 200 : 100
+  // AN7: SVIs used to be 10.<10+idx>.x — every switch in its own /16, so the
+  // two distribution switches shared no subnet and VRRP could never form, and
+  // access switches pointed their default at an address nothing owned.
+  const vrrpPrio = haPairInfo(dev, idx, allDevices).isPrimary ? 200 : 100
+  const allowed = [data.id, ...(hasVoice ? [voice.id] : []), mgmt.id].join(',')
 
   // VLAN database — Data + Mgmt always; Voice when the voice app type is set.
   const vlanDb = `config switch vlan
-    edit 10
-        set description "Data"
+    edit ${data.id}
+        set description "${data.name}"
     next${hasVoice ? `
-    edit 20
-        set description "Voice"
+    edit ${voice.id}
+        set description "${voice.name}"
     next` : ''}
-    edit 30
-        set description "IoT"
-    next
-    edit 999
-        set description "Mgmt"
+    edit ${mgmt.id}
+        set description "${mgmt.name}"
     next
 end`
 
@@ -3438,40 +3467,54 @@ end`
   const l3Block = isDist
     ? `# ── L3 SVIs + VRRP (first-hop redundancy) ───────────────────────────────────
 config system interface
-    edit "vlan10"
+    edit "vlan${data.id}"
         set vdom "root"
-        set ip ${sviBase}.10.2 255.255.255.0
+        set ip <CHANGE-ME-vlan${data.id}-ip> <CHANGE-ME-vlan${data.id}-mask>
         set allowaccess ping
-        set vlanid 10
+        set vlanid ${data.id}
         set interface "internal"
         config vrrp
-            edit 10
-                set vrip ${sviBase}.10.1
+            edit ${data.id}
+                set vrip <CHANGE-ME-vlan${data.id}-vip>
                 set priority ${vrrpPrio}
                 set adv-interval 1
                 set preempt enable
             next
         end
     next${hasVoice ? `
-    edit "vlan20"
+    edit "vlan${voice.id}"
         set vdom "root"
-        set ip ${sviBase}.20.2 255.255.255.0
+        set ip <CHANGE-ME-vlan${voice.id}-ip> <CHANGE-ME-vlan${voice.id}-mask>
         set allowaccess ping
-        set vlanid 20
+        set vlanid ${voice.id}
         set interface "internal"
         config vrrp
-            edit 20
-                set vrip ${sviBase}.20.1
+            edit ${voice.id}
+                set vrip <CHANGE-ME-vlan${voice.id}-vip>
                 set priority ${vrrpPrio}
                 set preempt enable
             next
         end
     next` : ''}
+    edit "vlan${mgmt.id}"
+        set vdom "root"
+        set ip ${mgmtIp} 255.255.255.0
+        set allowaccess ping https ssh
+        set vlanid ${mgmt.id}
+        set interface "internal"
+        config vrrp
+            edit ${mgmt.id}
+                set vrip ${mgmt.vip}
+                set priority ${vrrpPrio}
+                set preempt enable
+            next
+        end
+    next
 end
 
 # ── OSPF underlay to campus core ────────────────────────────────────────────
 config router ospf
-    set router-id ${roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)}
+    set router-id ${roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)}
     config area
         edit 0.0.0.0
         next
@@ -3487,25 +3530,28 @@ config router ospf
     end
     config network
         edit 1
-            set prefix ${sviBase}.10.0 255.255.255.0
+            set prefix 10.255.99.0 255.255.255.0
+        next
+        edit 2
+            set prefix <CHANGE-ME-vlan${data.id}-network> <CHANGE-ME-vlan${data.id}-mask>
         next
     end
 end`
     : `# ── Access layer — L2 only, default GW via distribution VRRP VIP ─────────────
 config system interface
-    edit "vlan999"
+    edit "vlan${mgmt.id}"
         set vdom "root"
-        set ip ${sviBase}.99.${idx + 10} 255.255.255.0
+        set ip ${mgmtIp} 255.255.255.0
         set allowaccess ping https ssh
-        set vlanid 999
+        set vlanid ${mgmt.id}
         set interface "internal"
     next
 end
 
 config router static
     edit 1
-        set gateway ${sviBase}.99.1
-        set device "vlan999"
+        set gateway ${mgmt.vip}
+        set device "vlan${mgmt.id}"
     next
 end`
 
@@ -3514,8 +3560,8 @@ end`
     ? `# ── Downlink trunks to access switches (FortiLink) ──────────────────────────
 config switch interface
     edit "port1"
-        set native-vlan 999
-        set allowed-vlans 10,30${hasVoice ? ',20' : ''},999
+        set native-vlan ${mgmt.id}
+        set allowed-vlans ${allowed}
         set stp-state enabled
         set edge-port disabled
     next
@@ -3523,8 +3569,8 @@ end`
     : `# ── Access edge ports — 802.1X + PoE+ + port-security ────────────────────────
 config switch interface
     edit "port1"
-        set native-vlan 10${hasVoice ? `
-        set voice-vlan 20` : ''}
+        set native-vlan ${data.id}${hasVoice ? `
+        set voice-vlan ${voice.id}` : ''}
         set stp-state enabled
         set edge-port enabled
         set stp-bpdu-guard enabled
@@ -3537,8 +3583,8 @@ end
 # ── Uplink trunk to distribution ────────────────────────────────────────────
 config switch interface
     edit "port49"
-        set native-vlan 999
-        set allowed-vlans 10,30${hasVoice ? ',20' : ''},999
+        set native-vlan ${mgmt.id}
+        set allowed-vlans ${allowed}
         set stp-state enabled
         set edge-port disabled
     next
@@ -4076,28 +4122,35 @@ ${evpnActivate || '        ! No overlay peers'}
  * IGP and a first-hop gateway, not a VXLAN overlay — and access switches had
  * no uplinks at all, so their VLANs reached nothing.
  */
-function arubaCampusConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+function arubaCampusConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = [], appTypes: AppType[] = []): string {
+  const mgmtIp = campusMgmtIp(dev, allDevices, idx)
   idx = roleIndex(dev, allDevices, idx)
+  const { data, voice, mgmt } = CAMPUS_VLANS
+  const hasVoice = appTypes.includes('voice')
+  const allowed = [data.id, ...(hasVoice ? [voice.id] : []), mgmt.id].join(',')
   const isDist = dev.subLayer === 'distribution'
   const { isPrimary, peerHostname } = haPairInfo(dev, idx, allDevices)
   const lo0 = roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)
-  const vlans = `vlan 10
-    name MANAGEMENT
-vlan 20
-    name DATA
-vlan 30
-    name VOICE
+  // AN7: was 10 MANAGEMENT / 20 DATA / 30 VOICE — VLAN 10 meant management
+  // here and user data on every other vendor.
+  const vlans = `vlan ${data.id}
+    name ${data.name}
+${hasVoice ? `vlan ${voice.id}
+    name ${voice.name}
+` : ''}vlan ${mgmt.id}
+    name ${mgmt.name}
 !`
   if (isDist) {
-    const me = isPrimary ? 2 : 3
     const prio = isPrimary ? 110 : 100
     const downMax = Math.max(1, (dev.ports || 48) - 4)
-    const svi = (v: number) => `interface vlan ${v}
-    ip address 10.10.${v}.${me}/24
+    // AN7: data/voice used to be 10.10.<vlan>.x — the fabric TENANT block in
+    // ADDRESS_PLAN. Site user subnets are the customer's to assign.
+    const svi = (v: number, ip: string, vip: string) => `interface vlan ${v}
+    ip address ${ip}
     ip ospf 1 area 0.0.0.0
     ip ospf passive
     vrrp ${v} address-family ipv4
-        address 10.10.${v}.1 primary
+        address ${vip} primary
         priority ${prio}
         no shutdown
 !`
@@ -4122,14 +4175,15 @@ router ospf 1
     router-id ${lo0}
     area 0.0.0.0
 !
-${svi(20)}
-${svi(30)}
+${svi(data.id, `<CHANGE-ME-vlan${data.id}-ip>/<CHANGE-ME-vlan${data.id}-prefixlen>`, `<CHANGE-ME-vlan${data.id}-vip>`)}
+${hasVoice ? `${svi(voice.id, `<CHANGE-ME-vlan${voice.id}-ip>/<CHANGE-ME-vlan${voice.id}-prefixlen>`, `<CHANGE-ME-vlan${voice.id}-vip>`)}
+` : ''}${svi(mgmt.id, `${mgmtIp}/24`, mgmt.vip)}
 interface 1/1/1-1/1/${downMax}
     no shutdown
     description DOWNLINK-TO-ACCESS
     no routing
-    vlan trunk native 10
-    vlan trunk allowed 10,20,30
+    vlan trunk native ${mgmt.id}
+    vlan trunk allowed ${allowed}
 !
 `
   }
@@ -4146,11 +4200,16 @@ ${arubaMgmtBlock(dev.hostname)}
 ${vlans}
 spanning-tree
 !
+interface vlan ${mgmt.id}
+    ip address ${mgmtIp}/24
+!
+ip route 0.0.0.0/0 ${mgmt.vip}
+!
 interface 1/1/1-1/1/${dev.ports || 48}
     no shutdown
     no routing
-    vlan access 20
-    voice-vlan 30
+    vlan access ${data.id}${hasVoice ? `
+    voice-vlan ${voice.id}` : ''}
     spanning-tree bpdu-guard
     spanning-tree port-type admin-edge
 !
@@ -4160,15 +4219,15 @@ interface 1/1/${upStart}
     no shutdown
     description UPLINK-1
     no routing
-    vlan trunk native 10
-    vlan trunk allowed 10,20,30
+    vlan trunk native ${mgmt.id}
+    vlan trunk allowed ${allowed}
 !
 interface 1/1/${upStart + 1}
     no shutdown
     description UPLINK-2
     no routing
-    vlan trunk native 10
-    vlan trunk allowed 10,20,30
+    vlan trunk native ${mgmt.id}
+    vlan trunk allowed ${allowed}
 !
 `
 }
@@ -4791,47 +4850,67 @@ ${evpnBlock}${storageBlock}
 
 // ── Juniper Campus Config (distribution / access) ────────────────────────────
 
-function juniperCampusConfig(dev: BOMDevice, idx: number): string {
+function juniperCampusConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = [], appTypes: AppType[] = []): string {
+  const mgmtIp = campusMgmtIp(dev, allDevices, idx)
+  idx = roleIndex(dev, allDevices, idx)
   const isDist = dev.subLayer === 'distribution'
   const role = isDist ? 'Campus Distribution' : 'Campus Access'
-  const lo0ip = isDist ? `10.254.1.${idx + 1}` : `10.254.2.${idx + 1}`
-  const vlanBlock = isDist
-    ? `set vlans Data vlan-id 100
-set vlans Voice vlan-id 200
-set vlans IoT vlan-id 300
-set vlans Guest vlan-id 400
-set vlans Mgmt vlan-id 999
-!
-set interfaces irb unit 100 family inet address 10.100.${idx}.1/24
-set interfaces irb unit 100 description "Data VLAN"
-set interfaces irb unit 200 family inet address 10.200.${idx}.1/24
-set interfaces irb unit 200 description "Voice VLAN"
-set interfaces irb unit 999 family inet address 10.254.${idx}.1/24
-set interfaces irb unit 999 description "Management VLAN"`
-    : `set vlans Data vlan-id 100
-set vlans Voice vlan-id 200
-set vlans IoT vlan-id 300
-set vlans Guest vlan-id 400
-!
-set interfaces ge-0/0/0 unit 0 family ethernet-switching vlan members Data
-set interfaces ge-0/0/1 unit 0 family ethernet-switching vlan members Voice`
+  const { isPrimary } = haPairInfo(dev, idx, allDevices)
+  const { data, voice, mgmt } = CAMPUS_VLANS
+  const hasVoice = appTypes.includes('voice')
+  // AN7: the router-id used to be 10.254.x — the anycast VTEP / vPC VIP
+  // block — and access switches carried one too. Campus router-ids live in
+  // 10.255.3.x like every other vendor's; access switches do not route.
+  const lo0ip = roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)
+  const trunkMembers = `[ ${data.name}${hasVoice ? ` ${voice.name}` : ''} ${mgmt.name} ]`
+  const vlanBlock = `set vlans ${data.name} vlan-id ${data.id}
+${hasVoice ? `set vlans ${voice.name} vlan-id ${voice.id}
+` : ''}set vlans ${mgmt.name} vlan-id ${mgmt.id}
+set vlans ${mgmt.name} l3-interface irb.${mgmt.id}`
+  const prio = isPrimary ? 110 : 100
+  // AN7: each distribution switch used to put its SVIs in its OWN /24
+  // (10.100.<idx>.1) with the VRRP VIP 10.100.0.1 — the pair shared no subnet,
+  // so VRRP could never form and the second switch's VIP was not even on-link.
+  const irb = (v: { id: number, name: string }) => `set vlans ${v.name} l3-interface irb.${v.id}
+set interfaces irb unit ${v.id} description "${v.name}"
+set interfaces irb unit ${v.id} family inet address <CHANGE-ME-vlan${v.id}-ip>/<CHANGE-ME-vlan${v.id}-prefixlen> vrrp-group ${v.id} virtual-address <CHANGE-ME-vlan${v.id}-vip> priority ${prio} preempt`
 
   const routingBlock = isDist
-    ? `# ── OSPF UNDERLAY ────────────────────────────────────────────────────────
+    ? `# ── SVIs + VRRP (shared subnet with the peer distribution switch) ──────────
+${irb(data)}
+${hasVoice ? `${irb(voice)}
+` : ''}set interfaces irb unit ${mgmt.id} description "${mgmt.name}"
+set interfaces irb unit ${mgmt.id} family inet address ${mgmtIp}/24 vrrp-group ${mgmt.id} virtual-address ${mgmt.vip} priority ${prio} preempt
+!
+# ── OSPF UNDERLAY ────────────────────────────────────────────────────────
 set protocols ospf area 0.0.0.0 interface lo0.0 passive
-set protocols ospf area 0.0.0.0 interface irb.100
-set protocols ospf area 0.0.0.0 interface irb.200
+set protocols ospf area 0.0.0.0 interface irb.${data.id} passive
+${hasVoice ? `set protocols ospf area 0.0.0.0 interface irb.${voice.id} passive
+` : ''}set protocols ospf area 0.0.0.0 interface irb.${mgmt.id} passive
 set protocols ospf area 0.0.0.0 interface et-0/0/48.0 interface-type p2p
 set protocols ospf area 0.0.0.0 interface et-0/0/49.0 interface-type p2p
 !
-# ── FHRP (VRRP) ─────────────────────────────────────────────────────────
-set interfaces irb unit 100 family inet address 10.100.${idx}.1/24 vrrp-group 100 virtual-address 10.100.0.1 priority ${idx % 2 === 0 ? 110 : 100}
-set interfaces irb unit 200 family inet address 10.200.${idx}.1/24 vrrp-group 200 virtual-address 10.200.0.1 priority ${idx % 2 === 0 ? 110 : 100}`
-    : `# ── ACCESS LAYER (no routing, trunk to distribution) ────────────────────
-set interfaces ge-0/0/46 unit 0 family ethernet-switching port-mode trunk
-set interfaces ge-0/0/46 unit 0 family ethernet-switching vlan members [ Data Voice IoT Guest ]
-set interfaces ge-0/0/47 unit 0 family ethernet-switching port-mode trunk
-set interfaces ge-0/0/47 unit 0 family ethernet-switching vlan members [ Data Voice IoT Guest ]`
+# ── DOWNLINK TRUNKS TO ACCESS ────────────────────────────────────────────
+set interfaces interface-range DOWNLINKS member-range xe-0/0/0 to xe-0/0/45
+set interfaces interface-range DOWNLINKS unit 0 family ethernet-switching interface-mode trunk
+set interfaces interface-range DOWNLINKS unit 0 family ethernet-switching vlan members ${trunkMembers}
+set interfaces interface-range DOWNLINKS native-vlan-id ${mgmt.id}`
+    : `# ── ACCESS LAYER (no routing, trunks to both distribution switches) ────
+set interfaces irb unit ${mgmt.id} description "${mgmt.name}"
+set interfaces irb unit ${mgmt.id} family inet address ${mgmtIp}/24
+set routing-options static route 0.0.0.0/0 next-hop ${mgmt.vip}
+!
+set interfaces interface-range EDGE member-range ge-0/0/0 to ge-0/0/45
+set interfaces interface-range EDGE unit 0 family ethernet-switching interface-mode access
+set interfaces interface-range EDGE unit 0 family ethernet-switching vlan members ${data.name}
+${hasVoice ? `set switch-options voip interface access-ports vlan ${voice.name}
+` : ''}!
+set interfaces ge-0/0/46 unit 0 family ethernet-switching interface-mode trunk
+set interfaces ge-0/0/46 unit 0 family ethernet-switching vlan members ${trunkMembers}
+set interfaces ge-0/0/46 native-vlan-id ${mgmt.id}
+set interfaces ge-0/0/47 unit 0 family ethernet-switching interface-mode trunk
+set interfaces ge-0/0/47 unit 0 family ethernet-switching vlan members ${trunkMembers}
+set interfaces ge-0/0/47 native-vlan-id ${mgmt.id}`
 
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
@@ -4866,11 +4945,11 @@ set interfaces fxp0 unit 0 family inet address <CHANGE-ME-mgmt-ip>/24
 set system management-instance
 set routing-instances mgmt_junos routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-oob-gateway>
 !
-# ── LOOPBACK ────────────────────────────────────────────────────────────
+${isDist ? `# ── LOOPBACK ────────────────────────────────────────────────────────────
 set interfaces lo0 unit 0 description "ROUTER-ID"
 set interfaces lo0 unit 0 family inet address ${lo0ip}/32
 !
-# ── VLANs ────────────────────────────────────────────────────────────────
+` : ''}# ── VLANs ────────────────────────────────────────────────────────────────
 ${vlanBlock}
 !
 ${routingBlock}
@@ -5066,62 +5145,82 @@ set protocols lldp interface all
 
 // ── Arista Campus Config (distribution / access) ─────────────────────────────
 
-function aristaCampusConfig(dev: BOMDevice, idx: number): string {
+function aristaCampusConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = [], appTypes: AppType[] = []): string {
+  const mgmtIp = campusMgmtIp(dev, allDevices, idx)
+  idx = roleIndex(dev, allDevices, idx)
   const isDist = dev.subLayer === 'distribution'
   const role = isDist ? 'Campus Distribution' : 'Campus Access'
-  const lo0ip = isDist ? `10.254.1.${idx + 1}` : `10.254.2.${idx + 1}`
+  const { data, voice, mgmt } = CAMPUS_VLANS
+  const hasVoice = appTypes.includes('voice')
+  // AN7: was 10.254.x (the VTEP / vPC VIP block), on access switches too.
+  const lo0ip = roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)
+  const allowed = [data.id, ...(hasVoice ? [voice.id] : []), mgmt.id].join(',')
 
-  const vlanBlock = `vlan 100
-   name Data
-vlan 200
-   name Voice
-vlan 300
-   name IoT
-vlan 400
-   name Guest
-vlan 999
-   name Management`
+  const vlanBlock = `vlan ${data.id}
+   name ${data.name}
+${hasVoice ? `vlan ${voice.id}
+   name ${voice.name}
+` : ''}vlan ${mgmt.id}
+   name ${mgmt.name}`
 
+  // AN7: each switch used to address its SVIs out of its OWN /24
+  // (10.100.<idx>.1) behind a virtual-router address of 10.100.0.1, so the
+  // pair shared no subnet and the VIP was off-link on the second switch.
+  const svi = (v: { id: number, name: string }) => `interface Vlan${v.id}
+   description ${v.name}
+   ip address <CHANGE-ME-vlan${v.id}-ip>/<CHANGE-ME-vlan${v.id}-prefixlen>
+   ip virtual-router address <CHANGE-ME-vlan${v.id}-vip>
+!`
   const routingBlock = isDist
     ? `!
-interface Vlan100
-   description Data
-   ip address 10.100.${idx}.1/24
-   ip virtual-router address 10.100.0.1
-!
-interface Vlan200
-   description Voice
-   ip address 10.200.${idx}.1/24
-   ip virtual-router address 10.200.0.1
+${svi(data)}
+${hasVoice ? `${svi(voice)}
+` : ''}interface Vlan${mgmt.id}
+   description ${mgmt.name}
+   ip address ${mgmtIp}/24
+   ip virtual-router address ${mgmt.vip}
 !
 ip virtual-router mac-address 00:1c:73:00:00:01
 !
 ip routing
 !
+interface Ethernet1-46
+   description DOWNLINK-TO-ACCESS
+   switchport mode trunk
+   switchport trunk native vlan ${mgmt.id}
+   switchport trunk allowed vlan ${allowed}
+!
 router ospf 1
    router-id ${lo0ip}
+   passive-interface Vlan${data.id}
    network ${lo0ip}/32 area 0.0.0.0
-   network 10.100.${idx}.0/24 area 0.0.0.0
-   network 10.200.${idx}.0/24 area 0.0.0.0
+   network ${mgmt.subnet} area 0.0.0.0
+   network <CHANGE-ME-vlan${data.id}-network>/<CHANGE-ME-vlan${data.id}-prefixlen> area 0.0.0.0
    max-lsa 12000`
     : `!
-interface Ethernet1
-   switchport access vlan 100
-   spanning-tree portfast
+interface Vlan${mgmt.id}
+   description ${mgmt.name}
+   ip address ${mgmtIp}/24
 !
-interface Ethernet2
-   switchport access vlan 200
-   spanning-tree portfast
+ip route 0.0.0.0/0 ${mgmt.vip}
+!
+interface Ethernet1-46
+   switchport access vlan ${data.id}
+${hasVoice ? `   switchport phone vlan ${voice.id}
+` : ''}   spanning-tree portfast
+   spanning-tree bpduguard enable
 !
 interface Ethernet47
-   description "UPLINK-TO-DIST"
+   description "UPLINK-TO-DIST-1"
    switchport mode trunk
-   switchport trunk allowed vlan 100,200,300,400,999
+   switchport trunk native vlan ${mgmt.id}
+   switchport trunk allowed vlan ${allowed}
 !
 interface Ethernet48
-   description "UPLINK-TO-DIST"
+   description "UPLINK-TO-DIST-2"
    switchport mode trunk
-   switchport trunk allowed vlan 100,200,300,400,999`
+   switchport trunk native vlan ${mgmt.id}
+   switchport trunk allowed vlan ${allowed}`
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -5137,11 +5236,11 @@ ${eosMgmtBlock()}
 !
 ${vlanBlock}
 !
-interface Loopback0
+${isDist ? `interface Loopback0
    description ROUTER-ID
    ip address ${lo0ip}/32
 !
-spanning-tree mode rapid-pvst
+` : ''}spanning-tree mode rapid-pvst
 spanning-tree priority ${isDist ? '4096' : '32768'}
 !
 ${routingBlock}
@@ -6632,18 +6731,18 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes, allDevices)
   if (v === 'Arista'    && l === 'spine')                            return aristaSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
   if (v === 'Arista'    && l === 'leaf')                             return aristaLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
-  if (v === 'Arista'    && (l === 'distribution' || l === 'access')) return aristaCampusConfig(dev, idx)
+  if (v === 'Arista'    && (l === 'distribution' || l === 'access')) return aristaCampusConfig(dev, idx, allDevices, appTypes)
   if (v === 'Juniper'   && l === 'spine')                            return juniperSpineConfig(dev, idx, protoFeatures, needsRoce, allDevices)
   if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures, needsRoce, appTypes, allDevices)
-  if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx)
+  if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx, allDevices, appTypes)
   if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
   if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx)
   if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite', protoFeatures, appTypes, allDevices)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
-  if (v === 'Fortinet'  && (l === 'distribution' || l === 'access')) return fortinetCampusConfig(dev, idx, appTypes)
+  if (v === 'Fortinet'  && (l === 'distribution' || l === 'access')) return fortinetCampusConfig(dev, idx, appTypes, allDevices)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce, allDevices)
   if (v === 'HPE Aruba' && (l === 'spine' || l === 'leaf'))          return arubaFabricConfig(dev, idx, allDevices)
-  if (v === 'HPE Aruba')                                             return arubaCampusConfig(dev, idx, allDevices)
+  if (v === 'HPE Aruba')                                             return arubaCampusConfig(dev, idx, allDevices, appTypes)
   if (v === 'NVIDIA'    && (l === 'spine' || l === 'leaf'))          return nvidiaSpectrumConfig(dev, idx, needsRoce, allDevices)
   if (v === 'Extreme Networks')                                      return extremeExosConfig(dev, idx, allDevices)
   return genericConfig(dev)

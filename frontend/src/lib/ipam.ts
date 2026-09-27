@@ -1,5 +1,5 @@
 import type { BOMDevice } from '@/types'
-import { TENANT_OVERLAY, ADDRESS_PLAN, RoleSlot, roleIp, fwHandoffIp } from '@/lib/configgen'
+import { TENANT_OVERLAY, CAMPUS_VLANS, ADDRESS_PLAN, RoleSlot, roleIp, fwHandoffIp, ipAdd } from '@/lib/configgen'
 
 // ── IPAM data model ──────────────────────────────────────────────────────────
 // Canonical IP / VLAN / VNI planning, derived from the BOM + intent. This is
@@ -77,7 +77,10 @@ export function genIPRows(_useCase: string, devices: BOMDevice[]): IPRow[] {
     // generators use. They used to be invented — a firewall inside 10.0.0.0/24
     // that configgen never emits, and a "VTEP" at 10.255.3.x, which is the
     // campus loopback range.
-    rows.push({ device: d.hostname, layer: 'Firewall', iface: 'Inside (to border leaf)', ip: fwHandoffIp(0, i, fws.length), prefix: '/31', purpose: 'Firewall↔border-leaf handoff' })
+    // AN7: this used to be the FABRIC side of the /31 (…​.0), which the border
+    // leaf / distribution switch owns — NetBox would have recorded one address
+    // on two devices. The firewall holds the far side.
+    rows.push({ device: d.hostname, layer: 'Firewall', iface: 'Inside (first handoff)', ip: ipAdd(fwHandoffIp(0, i, fws.length), 1), prefix: '/31', purpose: 'Firewall end of the firewall↔fabric handoff' })
   })
 
   spines.forEach((d, i) => {
@@ -138,6 +141,17 @@ export function genVLANs(useCase: string): VLANRow[] {
   if (isDC) {
     const t = TENANT_OVERLAY
     return [{ id: t.vlan, name: t.vlanName, subnet: '10.10.0.0/16 (tenant block)', gw: 'Anycast gateway', dhcp: 'Static', purpose: `Tenant servers — L2VNI ${t.l2vni}, ${t.vrf}`, layer: 'leaf' }]
+  }
+  // AN7: the campus VLANs every campus generator configures. This list used to
+  // put MGMT on VLAN 10 — which every generator uses for user data — and
+  // declare 21/40/50/60 that no campus switch creates.
+  if (useCase === 'campus') {
+    const { data, voice, mgmt } = CAMPUS_VLANS
+    return [
+      { id: data.id,  name: data.name,  subnet: '<CHANGE-ME-site-data-subnet>',  gw: 'FHRP VIP (distribution pair)', dhcp: 'Site DHCP', purpose: 'User endpoints', layer: 'access' },
+      { id: voice.id, name: voice.name, subnet: '<CHANGE-ME-site-voice-subnet>', gw: 'FHRP VIP (distribution pair)', dhcp: 'Site DHCP', purpose: 'IP telephony — configured only when the voice app type is selected', layer: 'access' },
+      { id: mgmt.id,  name: mgmt.name,  subnet: mgmt.subnet, gw: mgmt.vip, dhcp: 'Static', purpose: 'Switch management SVI and trunk native VLAN', layer: 'mgmt' },
+    ]
   }
   return base
 }
