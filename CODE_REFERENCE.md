@@ -1274,6 +1274,7 @@ management-plane Day-0 + the role-matched Day-N production config).
 - `generateDhcpConfig(ids, opts)` — ISC dhcpd.conf with one option-60 class
   per distinct vendor-class (true multi-vendor auto-classification) + IOS-XE
   option-43 PnP redirect + per-subnet pool.
+- `provisioningPath(dev): ProvisioningPath` — how a device is really onboarded (AN1): `{kind:'ztp'}` for DHCP-driven switch ZTP, or `{kind:'external', method, note, day0?}` for Aviatrix cloud gateways (`Terraform`), SD-WAN controllers and PTP grandmasters (`Manual`), O-RAN CU/DU/UPF servers (`PXE`), O-RUs (`O-RAN-Callhome`), Firepower (`FMC-LTP`, with the FTD pre-registration bootstrap) and vEdge (`Viptela-ZTP`, with a Viptela bootstrap). Plan entries carry `path` + `note`; external entries take no DHCP class, and `generateDhcpConfig` skips them.
 - `buildZTPPlan(devices, configs, day0Opts): ZTPPlan` — identifies every
   device, generates its Day-0, and pairs it with its Day-N production config
   (by BOM id from `generateAllConfigs`); `summary` byVendor/byMethod/byRole +

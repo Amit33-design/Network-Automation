@@ -3502,8 +3502,8 @@ export function Step6Deploy() {
                         <td className="py-1.5 px-2 text-gray-400">{e.identity.model}</td>
                         <td className="py-1.5 px-2 text-gray-400">{e.identity.roleLabel}</td>
                         <td className="py-1.5 px-2 text-gray-400">{e.identity.platform}</td>
-                        <td className="py-1.5 px-2"><span className="text-blue-300">{e.identity.method}</span></td>
-                        <td className="py-1.5 px-2 text-gray-500">{e.identity.dhcpVendorClass}</td>
+                        <td className="py-1.5 px-2"><span className={e.path === 'ztp' ? 'text-blue-300' : 'text-amber-300'} title={e.note}>{e.identity.method}</span></td>
+                        <td className="py-1.5 px-2 text-gray-500">{e.identity.dhcpVendorClass || <span className="text-gray-600" title={e.note}>not DHCP-provisioned</span>}</td>
                         <td className="py-1.5 px-2">
                           {e.hasDayN
                             ? <span className="text-green-400">✓</span>
@@ -3514,7 +3514,7 @@ export function Step6Deploy() {
                             className="text-blue-400 hover:underline cursor-pointer"
                             onClick={() => setZtpDay0View(ztpDay0View === e.identity.id ? null : e.identity.id)}
                           >
-                            {ztpDay0View === e.identity.id ? 'hide' : 'view'}
+                            {ztpDay0View === e.identity.id ? 'hide' : (e.day0 ? 'view' : 'why')}
                           </button>
                         </td>
                       </tr>
@@ -3533,13 +3533,14 @@ export function Step6Deploy() {
                 return (
                   <div className="mt-3">
                     <div className="text-xs text-gray-400 mb-1">
-                      Day-0 management-plane bootstrap — {e.identity.hostname} ({e.identity.method})
+                      {e.path === 'ztp' ? 'Day-0 management-plane bootstrap' : 'Onboarding'} — {e.identity.hostname} ({e.identity.method})
                     </div>
-                    <pre className="bg-black/40 border border-white/10 rounded p-3 text-xs text-green-300 overflow-x-auto max-h-72">{e.day0}</pre>
-                    <button
+                    {e.note && <p className="text-xs text-amber-200/90 mb-2">{e.note}</p>}
+                    {e.day0 && <pre className="bg-black/40 border border-white/10 rounded p-3 text-xs text-green-300 overflow-x-auto max-h-72">{e.day0}</pre>}
+                    {e.day0 && <button
                       className="mt-1 text-xs text-blue-400 hover:underline cursor-pointer"
                       onClick={() => { downloadBlob(`${e.identity.hostname}-day0.cfg`, e.day0); showToast('Day-0 config downloaded', 'success') }}
-                    >⬇ Download Day-0 config</button>
+                    >⬇ Download Day-0 config</button>}
                   </div>
                 )
               })()}

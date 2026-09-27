@@ -315,16 +315,22 @@ function assertZTPPlanInvariants(j: Journey, p: ReturnType<typeof runPipeline>) 
 
   for (const e of plan.entries) {
     const id = e.identity
-    // 1. Fully identified: platform, mechanism, DHCP class, boot file.
     expect(id.platform, `${ctx}: ${id.hostname} has no ZTP platform`).toBeTruthy()
     expect(id.method, `${ctx}: ${id.hostname} has no ZTP method`).toBeTruthy()
-    expect(id.dhcpVendorClass, `${ctx}: ${id.hostname} has no DHCP vendor-class`).toBeTruthy()
-    expect(id.bootFile, `${ctx}: ${id.hostname} has no boot file`).toBeTruthy()
-
-    // 2. Day-0 is a real management-plane bootstrap: identifies the host,
-    //    carries placeholder secrets, and contains NO production config.
-    expect(e.day0.length, `${ctx}: ${id.hostname} Day-0 empty`).toBeGreaterThan(50)
-    expect(e.day0, `${ctx}: ${id.hostname} Day-0 missing hostname`).toContain(id.hostname)
+    if (e.path === 'external') {
+      // Onboarded outside DHCP ZTP: it must say how, and must not claim a
+      // DHCP class or boot file (which would put a dead class in dhcpd.conf).
+      expect(e.note?.length ?? 0, `${ctx}: ${id.hostname} external with no reason`).toBeGreaterThan(20)
+      expect(id.dhcpVendorClass, `${ctx}: ${id.hostname} external but claims a DHCP class`).toBe('')
+      if (e.day0) expect(e.day0, `${ctx}: ${id.hostname} bootstrap missing hostname`).toContain(id.hostname)
+    } else {
+      // 1. Fully identified: DHCP class and boot file.
+      expect(id.dhcpVendorClass, `${ctx}: ${id.hostname} has no DHCP vendor-class`).toBeTruthy()
+      expect(id.bootFile, `${ctx}: ${id.hostname} has no boot file`).toBeTruthy()
+      // 2. Day-0 is a real management-plane bootstrap.
+      expect(e.day0.length, `${ctx}: ${id.hostname} Day-0 empty`).toBeGreaterThan(50)
+      expect(e.day0, `${ctx}: ${id.hostname} Day-0 missing hostname`).toContain(id.hostname)
+    }
     expect(e.day0, `${ctx}: ${id.hostname} Day-0 has hardcoded cred`).not.toMatch(/ChangeMe!|NetDesignZTP1!/)
     expect(e.day0, `${ctx}: ${id.hostname} Day-0 leaks production BGP`).not.toMatch(/\brouter bgp\b/i)
 
@@ -341,7 +347,7 @@ function assertZTPPlanInvariants(j: Journey, p: ReturnType<typeof runPipeline>) 
 
   // 5. The multi-vendor DHCP config classifies every vendor present.
   const dhcp = generateDhcpConfig(plan.entries.map(e => e.identity))
-  const classes = new Set(plan.entries.map(e => e.identity.dhcpVendorClass))
+  const classes = new Set(plan.entries.map(e => e.identity.dhcpVendorClass).filter(Boolean))
   for (const vclass of classes) {
     expect(dhcp, `${ctx}: DHCP config missing option-60 class for ${vclass}`)
       .toContain(vclass.replace(/[^A-Za-z0-9]/g, '-'))

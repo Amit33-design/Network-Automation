@@ -16,6 +16,7 @@
  */
 
 import type { BOMDevice } from '@/types'
+import { isFtdModel, isViptelaOs } from '@/lib/configgen'
 
 // ── ZTP mechanisms ─────────────────────────────────────────────────────────
 
@@ -32,6 +33,14 @@ export type ZTPMethod =
   | 'Aruba-ZTP'   // HPE Aruba Central / Activate
   | 'ZTP+'        // Extreme
   | 'Panorama-ZTP'// Palo Alto
+  // Not DHCP-driven switch ZTP — devices onboarded another way (see
+  // `provisioningPath`). They are still in the plan, with the reason.
+  | 'FMC-LTP'        // Cisco Firepower: low-touch provisioning via CDO/FMC
+  | 'Viptela-ZTP'    // Cisco vEdge: ZTP server → vBond redirect
+  | 'Terraform'      // Cloud gateways: API-provisioned, nothing boots
+  | 'PXE'            // x86 servers (O-RAN CU/DU/UPF): bare-metal install
+  | 'O-RAN-Callhome' // O-RU M-plane start-up (O-RAN WG4)
+  | 'Manual'         // Appliances with no standard ZTP
 
 export interface ZTPVendorProfile {
   vendor: string
@@ -140,7 +149,7 @@ export interface ZTPIdentity {
   platform: ZTPPlatform
   method: ZTPMethod
   dhcpVendorClass: string
-  bootProtocol: 'http' | 'https' | 'tftp'
+  bootProtocol: 'http' | 'https' | 'tftp' | 'none'
   dhcpRedirect: string
   /** Relative boot-file path the DHCP server hands the device. */
   bootFile: string
@@ -500,7 +509,10 @@ export function generateDhcpConfig(ids: ZTPIdentity[], opts: DhcpOpts = {}): str
 
   // One class per distinct vendor-class present in the plan.
   const byClass = new Map<string, ZTPIdentity>()
-  for (const id of ids) if (!byClass.has(id.dhcpVendorClass)) byClass.set(id.dhcpVendorClass, id)
+  for (const id of ids) {
+    if (!id.dhcpVendorClass) continue   // onboarded outside DHCP ZTP (provisioningPath)
+    if (!byClass.has(id.dhcpVendorClass)) byClass.set(id.dhcpVendorClass, id)
+  }
 
   for (const [vclass, sample] of byClass) {
     const safe = vclass.replace(/[^A-Za-z0-9]/g, '-')
@@ -553,6 +565,10 @@ export interface ZTPPlanEntry {
   hasDayN: boolean
   /** The Day-N production config id (BOM device id) to push after VERIFIED. */
   dayNConfigId: string | null
+  /** `ztp` = DHCP-driven zero-touch; `external` = onboarded another way. */
+  path: 'ztp' | 'external'
+  /** How an external device is onboarded, and why switch ZTP does not apply. */
+  note?: string
 }
 
 export interface ZTPPlan {
@@ -564,6 +580,77 @@ export interface ZTPPlan {
     byRole: Record<string, number>
     withDayN: number
   }
+}
+
+/**
+ * How a device is really onboarded. `ztpPlatform` answers "which NOS does this
+ * run", which the rollback, telemetry, NETCONF and Ansible exports all need —
+ * but "how does it get its first config" is a different question, and for
+ * five device kinds the answer is not DHCP-driven switch ZTP. They used to be
+ * handed an IOS-XE PnP Day-0 regardless: an Aviatrix cloud gateway, a
+ * Firepower (onboards through FMC/CDO), a vEdge (Viptela ZTP via vBond), the
+ * O-RAN CU/DU/UPF x86 servers (resolved through the SERVER vendor, so a Dell
+ * R750 got Dell OS10 switch ZTP) and the O-RU / PTP grandmaster.
+ */
+export type ProvisioningPath =
+  | { kind: 'ztp' }
+  | { kind: 'external'; method: ZTPMethod; note: string; day0?: (hostname: string, o: Required<Day0Opts>) => string }
+
+export function provisioningPath(dev: BOMDevice): ProvisioningPath {
+  const l = dev.subLayer
+  if (l === 'cloud-gw' || l === 'cloud-transit') {
+    return { kind: 'external', method: 'Terraform', note: 'Cloud gateway — created through the provider API by the Cloud Terraform export. Nothing boots from DHCP, so there is no Day-0.' }
+  }
+  if (l === 'sdwan-controller') {
+    return { kind: 'external', method: 'Manual', note: 'SD-WAN controller (vManage / vSmart / vBond) — deployed as a VM or cloud instance from the Cisco image and brought up with its own first-boot wizard, not ZTP.' }
+  }
+  if (l === 'oran-cu' || l === 'oran-du' || l === 'oran-core') {
+    return { kind: 'external', method: 'PXE', note: 'x86 server — installed bare-metal over PXE (or iDRAC/Redfish virtual media); the network function is then deployed by the SMO/NF orchestrator using the generated manifest. Switch ZTP does not apply.' }
+  }
+  if (l === 'oran-ru') {
+    return { kind: 'external', method: 'O-RAN-Callhome', note: 'O-RU M-plane start-up (O-RAN WG4): the radio takes an address by DHCP, learns its O-RU controller from DHCP option 43, and calls home over NETCONF/SSH. Accounts and config are then pushed by the O-DU/SMO.' }
+  }
+  if (l === 'oran-timing') {
+    return { kind: 'external', method: 'Manual', note: 'PTP grandmaster — configured through the vendor\'s own management interface; there is no standard ZTP for timing appliances.' }
+  }
+  if (isFtdModel(dev.model || '')) {
+    return {
+      kind: 'external', method: 'FMC-LTP',
+      note: 'Firepower onboards by low-touch provisioning: claim the serial number in CDO/FMC and the device registers itself. Where LTP is unavailable, the bootstrap below is the only CLI a Firepower accepts before FMC takes over.',
+      day0: (h, o) => [
+        `! Firepower (FTD) pre-registration bootstrap — ${h}`,
+        `configure network hostname ${h}`,
+        `configure network ipv4 manual ${o.mgmtIp} <CHANGE-ME-mgmt-mask> ${o.mgmtGw}`,
+        `configure network dns servers <CHANGE-ME-dns-ip>`,
+        `configure ntp servers ${o.ntp}`,
+        `configure manager add <CHANGE-ME-fmc-ip> <CHANGE-ME-fmc-registration-key>`,
+      ].join('\n'),
+    }
+  }
+  if (isViptelaOs(dev)) {
+    return {
+      kind: 'external', method: 'Viptela-ZTP',
+      note: 'vEdge contacts the ZTP server (Cisco-hosted, or an on-premises ZTP vBond), which redirects it to the organisation\'s vBond. Its serial number must be in the vManage allow-list; the minimal bootstrap below is for sites without ZTP reachability.',
+      day0: (h, o) => [
+        `system`,
+        ` host-name ${h}`,
+        ` organization-name <CHANGE-ME-org-name>`,
+        ` vbond <CHANGE-ME-vbond-ip>`,
+        `!`,
+        `vpn 0`,
+        ` interface ge0/0`,
+        `  ip address ${o.mgmtIp}/24`,
+        `  tunnel-interface`,
+        `   encapsulation ipsec`,
+        `  !`,
+        `  no shutdown`,
+        ` !`,
+        ` ip route 0.0.0.0/0 ${o.mgmtGw}`,
+        `!`,
+      ].join('\n'),
+    }
+  }
+  return { kind: 'ztp' }
 }
 
 /**
@@ -583,19 +670,34 @@ export function buildZTPPlan(
   const byRole: Record<string, number> = {}
   let withDayN = 0
 
+  const o: Required<Day0Opts> = { ...D, ...day0Opts }
   for (const dev of devices) {
-    const identity = identifyDevice(dev)
+    const path = provisioningPath(dev)
+    const base = identifyDevice(dev)
+    // An externally onboarded device takes no DHCP class and no boot file:
+    // advertising one would put a class in dhcpd.conf that nothing requests.
+    const identity: ZTPIdentity = path.kind === 'ztp' ? base : {
+      ...base, method: path.method, dhcpVendorClass: '', bootProtocol: 'none', dhcpRedirect: 'none', bootFile: '',
+    }
     const dayN = configs[dev.id]
     const hasDayN = typeof dayN === 'string' && dayN.trim().length > 0
     if (hasDayN) withDayN++
     byVendor[identity.vendor] = (byVendor[identity.vendor] ?? 0) + 1
     byMethod[identity.method] = (byMethod[identity.method] ?? 0) + 1
     byRole[identity.roleLabel] = (byRole[identity.roleLabel] ?? 0) + 1
-    entries.push({
+    entries.push(path.kind === 'ztp' ? {
       identity,
       day0: generateDay0Config(identity, day0Opts),
       hasDayN,
       dayNConfigId: hasDayN ? dev.id : null,
+      path: 'ztp',
+    } : {
+      identity,
+      day0: path.day0 ? path.day0(identity.hostname, o) : '',
+      hasDayN,
+      dayNConfigId: hasDayN ? dev.id : null,
+      path: 'external',
+      note: path.note,
     })
   }
 
@@ -611,12 +713,12 @@ export function buildZTPPlan(
 
 /** Export the plan as a provisioning manifest CSV (one row per device). */
 export function ztpPlanToCsv(plan: ZTPPlan): string {
-  const rows = ['hostname,vendor,model,role,platform,ztp_method,dhcp_vendor_class,boot_file,has_day_n']
+  const rows = ['hostname,vendor,model,role,platform,ztp_method,dhcp_vendor_class,boot_file,has_day_n,provisioning,note']
   for (const e of plan.entries) {
     const i = e.identity
     rows.push([
       i.hostname, i.vendor, i.model, i.roleLabel, i.platform, i.method,
-      i.dhcpVendorClass, i.bootFile, e.hasDayN ? 'yes' : 'no',
+      i.dhcpVendorClass, i.bootFile, e.hasDayN ? 'yes' : 'no', e.path, e.note ?? '',
     ].map(csv).join(','))
   }
   return rows.join('\n')

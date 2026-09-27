@@ -5,6 +5,8 @@ import {
   type ZTPPlatform,
 } from '@/lib/ztp'
 import type { BOMDevice } from '@/types'
+import { buildDeviceList } from '@/lib/bom'
+import { generateAllConfigs } from '@/lib/configgen'
 
 const dev = (o: Partial<BOMDevice>): BOMDevice => ({
   id: o.hostname ?? o.id ?? 'd', hostname: 'H', role: 'leaf', subLayer: 'leaf',
@@ -193,5 +195,79 @@ describe('buildZTPPlan', () => {
     expect(lines).toHaveLength(4)
     expect(csv).toContain('SP-01')
     expect(csv).toContain('POAP')
+  })
+})
+
+// ── Provisioning paths other than DHCP switch ZTP ───────────────────────────
+describe('provisioning path (how a device is really onboarded)', () => {
+  const plan = (uc: Parameters<typeof buildDeviceList>[0]['useCase'], vendorPrefs: string[] = []) => {
+    const devs = buildDeviceList({ useCase: uc, scale: 'medium', siteCode: 'T', vendorPrefs })
+    return buildZTPPlan(devs, generateAllConfigs(devs, uc))
+  }
+
+  it('an Aviatrix cloud gateway is Terraform-provisioned, with no Day-0 and no DHCP class', () => {
+    const p = plan('multicloud')
+    const cloud = p.entries.filter(e => e.identity.vendor === 'Aviatrix')
+    expect(cloud.length).toBeGreaterThan(0)
+    for (const e of cloud) {
+      expect(e.identity.method).toBe('Terraform')
+      expect(e.day0).toBe('')
+      expect(e.identity.dhcpVendorClass).toBe('')
+    }
+  })
+
+  it('a Firepower onboards via FMC low-touch provisioning, not IOS-XE PnP', () => {
+    const fw = plan('dc').entries.filter(e => /firepower/i.test(e.identity.model))
+    expect(fw.length).toBeGreaterThan(0)
+    for (const e of fw) {
+      expect(e.identity.method).toBe('FMC-LTP')
+      expect(e.day0).toMatch(/^configure manager add /m)
+      expect(e.day0).not.toMatch(/^ip ssh|^aaa new-model|pnp/im)
+    }
+  })
+
+  it('a vEdge onboards via Viptela ZTP / vBond with a Viptela bootstrap', () => {
+    const v = plan('multisite').entries.filter(e => /vedge/i.test(e.identity.model))
+    expect(v.length).toBeGreaterThan(0)
+    for (const e of v) {
+      expect(e.identity.method).toBe('Viptela-ZTP')
+      expect(e.day0).toMatch(/^ vbond /m)
+    }
+  })
+
+  it('O-RAN servers, radios and the grandmaster are not given switch ZTP', () => {
+    const p = plan('oran')
+    const want: Record<string, string> = { 'oran-cu': 'PXE', 'oran-du': 'PXE', 'oran-core': 'PXE', 'oran-ru': 'O-RAN-Callhome', 'oran-timing': 'Manual' }
+    const devs = buildDeviceList({ useCase: 'oran', scale: 'medium', siteCode: 'T' })
+    for (const e of p.entries) {
+      const d = devs.find(x => x.id === e.identity.id)!
+      if (want[d.subLayer]) {
+        expect(e.identity.method, d.subLayer).toBe(want[d.subLayer])
+        expect(e.path).toBe('external')
+      }
+    }
+  })
+
+  it('the DHCP config carries no class for externally onboarded devices', () => {
+    const p = plan('multicloud')
+    const dhcp = generateDhcpConfig(p.entries.map(e => e.identity))
+    expect(dhcp).not.toMatch(/class ""/)
+    expect(dhcp).not.toMatch(/Aviatrix/)
+  })
+
+  it('no device outside Cisco IOS-XE hardware is handed a PnP Day-0', () => {
+    // The old behaviour: every unrecognised device fell to ios-xe PnP.
+    const bad: string[] = []
+    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks', 'Fortinet', 'Palo Alto', 'HPE Aruba']) {
+      for (const uc of ['dc', 'gpu', 'campus', 'wan', 'multisite', 'multicloud', 'oran'] as const) {
+        for (const e of plan(uc, [vendor]).entries) {
+          if (e.identity.method !== 'PnP') continue
+          if (e.identity.vendor !== 'Cisco' || /firepower|ftd|vedge/i.test(e.identity.model)) {
+            bad.push(`${uc}/${vendor}: ${e.identity.vendor} ${e.identity.model}`)
+          }
+        }
+      }
+    }
+    expect([...new Set(bad)]).toEqual([])
   })
 })
