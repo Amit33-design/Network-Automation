@@ -646,6 +646,44 @@ function fwHandoffPlan(
     .filter(x => x.port <= (dev.ports || 48))
 }
 
+/** A firewall's end of one fabric / distribution handoff /31 (AN8). */
+export interface FirewallHandoff { peer: BOMDevice; peerIp: string; fwIp: string }
+
+/** Use cases whose firewall hands off to the border leaves rather than distribution. */
+const FABRIC_HANDOFF_USE_CASES = new Set<string>(['dc', 'gpu', 'multisite'])
+
+/**
+ * Every handoff a firewall terminates, read from each PEER's own
+ * `fwHandoffPlan` so the two ends cannot disagree — including when a peer runs
+ * out of ports and drops one (AN8). Before this only the FTD manifest derived
+ * its side; PAN-OS, FortiGate and SRX left the inside interface a placeholder,
+ * so every /31 the fabric configured pointed at an address nothing held.
+ */
+export function firewallHandoffs(fw: BOMDevice, allDevices: BOMDevice[], useCase: UseCase | '' = ''): FirewallHandoff[] {
+  const fabric = FABRIC_HANDOFF_USE_CASES.has(useCase)
+  const role = fabric ? 'border-leaf' : 'distribution'
+  const peers = fabric ? borderLeaves(allDevices) : allDevices.filter(d => d.subLayer === 'distribution')
+  const out: FirewallHandoff[] = []
+  for (const peer of peers) {
+    const x = fwHandoffPlan(peer, allDevices, role).find(y => y.fw.id === fw.id)
+    if (x) out.push({ peer, peerIp: x.ip, fwIp: nextIp(x.ip) })
+  }
+  return out
+}
+
+/** Networks behind the firewall's inside, which it routes back to the handoffs. */
+export function firewallInsideNets(useCase: UseCase | '' = ''): Array<{ cidr: string; net: string; mask: string; label: string }> {
+  return FABRIC_HANDOFF_USE_CASES.has(useCase)
+    ? [
+        { cidr: '10.10.0.0/16',  net: '10.10.0.0',  mask: '255.255.0.0', label: 'tenant subnets' },
+        { cidr: '10.255.0.0/16', net: '10.255.0.0', mask: '255.255.0.0', label: 'fabric loopbacks' },
+      ]
+    : [
+        { cidr: '<CHANGE-ME-site-data-subnet>', net: '<CHANGE-ME-site-data-network>', mask: '<CHANGE-ME-site-data-mask>', label: `VLAN ${CAMPUS_VLANS.data.id} ${CAMPUS_VLANS.data.name}` },
+        { cidr: CAMPUS_VLANS.mgmt.subnet, net: '10.255.99.0', mask: '255.255.255.0', label: 'campus MGMT' },
+      ]
+}
+
 /**
  * IOS-style interface-name prefix implied by a port speed (Z4). A campus SKU
  * whose commands name a port type the chassis does not have is rejected
@@ -2294,22 +2332,18 @@ function ciscoFtdFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase |
   // INSIDE side from the fabric this FW is actually cabled to — DC/GPU fabrics
   // hand off to the BORDER LEAVES (Z3 — a spine has no tenant VRF to route
   // into), campus to the distribution pair (VLAN 10 data + the mgmt VLAN).
-  const isFabric = useCase === 'dc' || useCase === 'gpu' || useCase === 'multisite'
-  const peers = isFabric
-    ? borderLeaves(allDevices)
-    : allDevices.filter(d => d.subLayer === 'distribution')
-  const fws = allDevices.filter(d => d.subLayer === 'firewall')
-  const fwIdx = Math.max(0, fws.findIndex(d => d.id === dev.id))
-  // Mirror of fwHandoffPlan: the fabric side owns .0, the firewall side .1.
-  const handoffLines = peers.length
-    ? peers.map((p, pi) => `!   Ethernet1/${2 + pi}  zone=INSIDE  ip=${nextIp(fwHandoffIp(pi, fwIdx, fws.length))}/31  ← ${p.hostname} (fabric handoff)`).join('\n')
+  const isFabric = FABRIC_HANDOFF_USE_CASES.has(useCase)
+  // The fabric side owns .0, the firewall side .1 — read from the peers' plans.
+  const handoffs = firewallHandoffs(dev, allDevices, useCase)
+  const handoffLines = handoffs.length
+    ? handoffs.map((h, pi) => `!   Ethernet1/${2 + pi}  zone=INSIDE  ip=${h.fwIp}/31  ← ${h.peer.hostname} (fabric handoff)`).join('\n')
     : `!   Ethernet1/2  zone=INSIDE   ip=<CHANGE-ME-inside-ip>/<CHANGE-ME-inside-prefix>  desc=TRUSTED-LAN`
   const insideNets = isFabric
     ? '10.10.0.0/16 (tenant subnets), 10.255.0.0/16 (fabric loopbacks)'
     : `<CHANGE-ME-site-data-subnet> (VLAN ${CAMPUS_VLANS.data.id} ${CAMPUS_VLANS.data.name}), ${CAMPUS_VLANS.mgmt.subnet} (campus MGMT)`
-  const dmzPort = 2 + Math.max(peers.length, 1)
-  const routingLines = peers.length
-    ? peers.map((p, pi) => `!   ${isFabric ? '10.10.0.0/16' : '<CHANGE-ME-site-data-subnet>'} via ${fwHandoffIp(pi, fwIdx, fws.length)} (${p.hostname}) — ECMP across the ${peers.length} handoff link(s)`).join('\n')
+  const dmzPort = 2 + Math.max(handoffs.length, 1)
+  const routingLines = handoffs.length
+    ? handoffs.map(h => `!   ${isFabric ? '10.10.0.0/16' : '<CHANGE-ME-site-data-subnet>'} via ${h.peerIp} (${h.peer.hostname}) — ECMP across the ${handoffs.length} handoff link(s)`).join('\n')
     : '!   <CHANGE-ME-inside-net> via <CHANGE-ME-inside-gateway>'
 
   return `! ═══════════════════════════════════════════════════════════════
@@ -2503,7 +2537,21 @@ ip sla schedule 1 life forever start-time now
 
 // ── Palo Alto PAN-OS ──────────────────────────────────────────────────────────
 
-function paloAltoFirewallConfig(dev: BOMDevice, _idx: number): string {
+function paloAltoFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase | '' = '', allDevices: BOMDevice[] = []): string {
+  // AN8: the inside was one placeholder interface, so every handoff /31 the
+  // fabric configured pointed at an address nothing held. One routed inside
+  // interface per handoff now, from the peers' own plans; DMZ moves after them.
+  const handoffs = firewallHandoffs(dev, allDevices, useCase)
+  const insideIfs = handoffs.length ? handoffs.map((_, i) => `ethernet1/${2 + i}`) : ['ethernet1/2']
+  const dmzIf = `ethernet1/${2 + insideIfs.length}`
+  const insideBlock = handoffs.length
+    ? handoffs.map((h, i) => `set network interface ethernet ${insideIfs[i]} layer3 ipv4 addr primary ip-address ${h.fwIp}/31
+set network interface ethernet ${insideIfs[i]} comment "INSIDE: ${h.peer.hostname}"`).join('\n!\n')
+    : `set network interface ethernet ethernet1/2 layer3 ipv4 addr primary ip-address <CHANGE-ME-inside-ip>/<CHANGE-ME-prefix>
+set network interface ethernet ethernet1/2 comment "INSIDE-CORP"`
+  const insideRoutes = handoffs.flatMap((h, i) => firewallInsideNets(useCase).map((n, ni) =>
+    `set network virtual-router default routing-table ip static-route INSIDE-${ni + 1}-${i + 1} destination ${n.cidr}
+set network virtual-router default routing-table ip static-route INSIDE-${ni + 1}-${i + 1} nexthop ip-address ${h.peerIp}`)).join('\n')
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : Internet Perimeter Firewall
@@ -2556,18 +2604,20 @@ set server-profile snmp SNMP-PROFILE version v3 users NETDESIGN-USER privpwd <CH
 set network interface ethernet ethernet1/1 layer3 ipv4 addr primary ip-address <CHANGE-ME-outside-ip>/<CHANGE-ME-prefix>
 set network interface ethernet ethernet1/1 comment "OUTSIDE-INTERNET"
 !
-set network interface ethernet ethernet1/2 layer3 ipv4 addr primary ip-address <CHANGE-ME-inside-ip>/<CHANGE-ME-prefix>
-set network interface ethernet ethernet1/2 comment "INSIDE-CORP"
+${insideBlock}
 !
-set network interface ethernet ethernet1/3 layer3 ipv4 addr primary ip-address <CHANGE-ME-dmz-ip>/<CHANGE-ME-prefix>
-set network interface ethernet ethernet1/3 comment "DMZ-SERVERS"
+set network interface ethernet ${dmzIf} layer3 ipv4 addr primary ip-address <CHANGE-ME-dmz-ip>/<CHANGE-ME-prefix>
+set network interface ethernet ${dmzIf} comment "DMZ-SERVERS"
+!
+# An interface outside every virtual router forwards nothing.
+set network virtual-router default interface [ ethernet1/1 ${insideIfs.join(' ')} ${dmzIf} ]
 !
 # ── ZONES ─────────────────────────────────────────────────────────────────────
 set zone OUTSIDE network layer3 ethernet1/1
 set zone OUTSIDE enable-user-identification no
-set zone INSIDE  network layer3 ethernet1/2
+set zone INSIDE  network layer3 [ ${insideIfs.join(' ')} ]
 set zone INSIDE  enable-user-identification yes
-set zone DMZ     network layer3 ethernet1/3
+set zone DMZ     network layer3 ${dmzIf}
 set zone DMZ     enable-user-identification no
 !
 # ── SECURITY POLICY ───────────────────────────────────────────────────────────
@@ -2624,7 +2674,10 @@ set deviceconfig setting wildfire file-size-limit elf 16
 !
 # ── ROUTING ───────────────────────────────────────────────────────────────────
 set network virtual-router default routing-table ip static-route DEFAULT-ROUTE destination 0.0.0.0/0
-set network virtual-router default routing-table ip static-route DEFAULT-ROUTE nexthop ip-address <CHANGE-ME-default-gateway>
+set network virtual-router default routing-table ip static-route DEFAULT-ROUTE nexthop ip-address <CHANGE-ME-default-gateway>${insideRoutes ? `
+# Return routes to the inside networks, one per handoff (ECMP).
+${insideRoutes}${handoffs.length > 1 ? `
+set network virtual-router default ecmp enable yes` : ''}` : ''}
 !
 # ── HA (Active/Passive) ────────────────────────────────────────────────────────
 # set high-availability mode active-passive
@@ -3259,7 +3312,32 @@ interface ${accessUplink2}
 
 // ── Fortinet FortiOS ─────────────────────────────────────────────────────────
 
-function fortinetFirewallConfig(dev: BOMDevice, _idx: number): string {
+function fortinetFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase | '' = '', allDevices: BOMDevice[] = []): string {
+  // AN8: one routed inside port per handoff (from the peers' own plans), all
+  // in an INSIDE zone so the policies name the zone, not a single port.
+  const handoffs = firewallHandoffs(dev, allDevices, useCase)
+  const insidePorts = handoffs.length ? handoffs.map((_, i) => `port${2 + i}`) : ['port2']
+  const insideIfBlock = handoffs.length
+    ? handoffs.map((h, i) => `    edit "${insidePorts[i]}"
+        set mode static
+        set ip ${h.fwIp}/31
+        set allowaccess ping
+        set type physical
+        set role lan
+        set description "INSIDE: ${h.peer.hostname}"
+    next`).join('\n')
+    : `    edit "port2"
+        set mode static
+        set ip <CHANGE-ME-inside-ip>/30
+        set allowaccess ping
+        set type physical
+        set role lan
+    next`
+  const insideRoutes = handoffs.flatMap((h, i) => firewallInsideNets(useCase).map((n, ni) => `    edit ${10 + ni * 10 + i}
+        set dst ${n.net} ${n.mask}
+        set gateway ${h.peerIp}
+        set device "${insidePorts[i]}"
+    next`)).join('\n')
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : NGFW (FortiGate)
@@ -3326,12 +3404,12 @@ config system interface
         set type physical
         set role wan
     next
-    edit "port2"
-        set mode static
-        set ip <CHANGE-ME-inside-ip>/30
-        set allowaccess ping
-        set type physical
-        set role lan
+${insideIfBlock}
+end
+
+config system zone
+    edit "INSIDE"
+        set interface ${insidePorts.map(x => `"${x}"`).join(' ')}
     next
 end
 
@@ -3339,7 +3417,7 @@ config router static
     edit 1
         set gateway <CHANGE-ME-default-gw>
         set device "port1"
-    next
+    next${insideRoutes ? `\n${insideRoutes}` : ''}
 end
 
 config system dns
@@ -3392,7 +3470,7 @@ end
 config firewall policy
     edit 1
         set name "Allow-Outbound"
-        set srcintf "port2"
+        set srcintf "INSIDE"
         set dstintf "port1"
         set srcaddr "all"
         set dstaddr "all"
@@ -3408,7 +3486,7 @@ config firewall policy
     edit 2
         set name "Deny-Inbound"
         set srcintf "port1"
-        set dstintf "port2"
+        set dstintf "INSIDE"
         set srcaddr "all"
         set dstaddr "all"
         set action deny
@@ -3448,6 +3526,14 @@ function fortinetCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[] =
   // access switches pointed their default at an address nothing owned.
   const vrrpPrio = haPairInfo(dev, idx, allDevices).isPrimary ? 200 : 100
   const allowed = [data.id, ...(hasVoice ? [voice.id] : []), mgmt.id].join(',')
+  // First uplink port — FortiSwitch uplinks follow the access ports (a
+  // T1024E is 24 + 4: its first uplink is port25, not the port49 hardcoded
+  // before).
+  const upPort = `port${(dev.ports || 48) + 1}`
+  // AN8: firewall handoff (Cisco parity). FortiSwitch routes on SVIs, so each
+  // handoff is a dedicated transit VLAN carried untagged on its port.
+  const fwLinks = isDist ? fwHandoffPlan(dev, allDevices, 'distribution') : []
+  const fwVlan = (fi: number) => 3900 + fi
 
   // VLAN database — Data + Mgmt always; Voice when the voice app type is set.
   const vlanDb = `config switch vlan
@@ -3521,7 +3607,7 @@ config router ospf
     end
     config ospf-interface
         edit "core-uplink"
-            set interface "port49"
+            set interface "${upPort}"
             set network-type point-to-point
             set dead-interval 12
             set hello-interval 3
@@ -3534,9 +3620,45 @@ config router ospf
         next
         edit 2
             set prefix <CHANGE-ME-vlan${data.id}-network> <CHANGE-ME-vlan${data.id}-mask>
-        next
+        next${fwLinks.map((x, fi) => `
+        edit ${3 + fi}
+            set prefix ${x.ip} 255.255.255.254
+        next`).join('')}
+    end${fwLinks.length ? `
+    config redistribute "static"
+        set status enable
     end
-end`
+    set default-information-originate enable` : ''}
+end${fwLinks.length ? `
+
+# ── FIREWALL HANDOFF (routed /31 per firewall on a transit VLAN; FW holds .1) ─
+config switch vlan${fwLinks.map((x, fi) => `
+    edit ${fwVlan(fi)}
+        set description "FW-HANDOFF-${x.fw.hostname}"
+    next`).join('')}
+end
+config system interface${fwLinks.map((x, fi) => `
+    edit "fwh${fi + 1}"
+        set vdom "root"
+        set ip ${x.ip} 255.255.255.254
+        set allowaccess ping
+        set vlanid ${fwVlan(fi)}
+        set interface "internal"
+    next`).join('')}
+end
+config switch interface${fwLinks.map((x, fi) => `
+    edit "port${x.port}"
+        set native-vlan ${fwVlan(fi)}
+        set description "FW-HANDOFF: ${x.fw.hostname}"
+        set stp-state disabled
+    next`).join('')}
+end
+config router static${fwLinks.map((x, fi) => `
+    edit ${10 + fi}
+        set gateway ${nextIp(x.ip)}
+        set device "fwh${fi + 1}"
+    next`).join('')}
+end` : ''}`
     : `# ── Access layer — L2 only, default GW via distribution VRRP VIP ─────────────
 config system interface
     edit "vlan${mgmt.id}"
@@ -3582,7 +3704,7 @@ end
 
 # ── Uplink trunk to distribution ────────────────────────────────────────────
 config switch interface
-    edit "port49"
+    edit "${upPort}"
         set native-vlan ${mgmt.id}
         set allowed-vlans ${allowed}
         set stp-state enabled
@@ -4142,7 +4264,9 @@ ${hasVoice ? `vlan ${voice.id}
 !`
   if (isDist) {
     const prio = isPrimary ? 110 : 100
-    const downMax = Math.max(1, (dev.ports || 48) - 4)
+    // AN8: firewall handoff on the top of the host block (Cisco parity).
+    const fwLinks = fwHandoffPlan(dev, allDevices, 'distribution')
+    const downMax = Math.max(1, (dev.ports || 48) - Math.max(4, fwLinks.length))
     // AN7: data/voice used to be 10.10.<vlan>.x — the fabric TENANT block in
     // ADDRESS_PLAN. Site user subnets are the customer's to assign.
     const svi = (v: number, ip: string, vip: string) => `interface vlan ${v}
@@ -4173,8 +4297,18 @@ interface loopback 0
 !
 router ospf 1
     router-id ${lo0}
-    area 0.0.0.0
-!
+    area 0.0.0.0${fwLinks.length ? `
+    default-information originate` : ''}
+!${fwLinks.map(x => `
+interface 1/1/${x.port}
+    no shutdown
+    description FW-HANDOFF: ${x.fw.hostname}
+    routing
+    ip address ${x.ip}/31
+    ip ospf 1 area 0.0.0.0
+    ip ospf network point-to-point
+!`).join('')}${fwLinks.map(x => `
+ip route 0.0.0.0/0 ${nextIp(x.ip)}`).join('')}${fwLinks.length ? '\n!' : ''}
 ${svi(data.id, `<CHANGE-ME-vlan${data.id}-ip>/<CHANGE-ME-vlan${data.id}-prefixlen>`, `<CHANGE-ME-vlan${data.id}-vip>`)}
 ${hasVoice ? `${svi(voice.id, `<CHANGE-ME-vlan${voice.id}-ip>/<CHANGE-ME-vlan${voice.id}-prefixlen>`, `<CHANGE-ME-vlan${voice.id}-vip>`)}
 ` : ''}${svi(mgmt.id, `${mgmtIp}/24`, mgmt.vip)}
@@ -4863,6 +4997,10 @@ function juniperCampusConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[
   // 10.255.3.x like every other vendor's; access switches do not route.
   const lo0ip = roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)
   const trunkMembers = `[ ${data.name}${hasVoice ? ` ${voice.name}` : ''} ${mgmt.name} ]`
+  // AN8: the firewall handoff took the top of the host block on Cisco only;
+  // every other campus distribution left the cabled ports unconfigured.
+  const fwLinks = isDist ? fwHandoffPlan(dev, allDevices, 'distribution') : []
+  const downlinkLast = Math.max(1, (dev.ports || 48) - fwLinks.length) - 1
   const vlanBlock = `set vlans ${data.name} vlan-id ${data.id}
 ${hasVoice ? `set vlans ${voice.name} vlan-id ${voice.id}
 ` : ''}set vlans ${mgmt.name} vlan-id ${mgmt.id}
@@ -4891,10 +5029,20 @@ set protocols ospf area 0.0.0.0 interface et-0/0/48.0 interface-type p2p
 set protocols ospf area 0.0.0.0 interface et-0/0/49.0 interface-type p2p
 !
 # ── DOWNLINK TRUNKS TO ACCESS ────────────────────────────────────────────
-set interfaces interface-range DOWNLINKS member-range xe-0/0/0 to xe-0/0/45
+set interfaces interface-range DOWNLINKS member-range xe-0/0/0 to xe-0/0/${downlinkLast}
 set interfaces interface-range DOWNLINKS unit 0 family ethernet-switching interface-mode trunk
 set interfaces interface-range DOWNLINKS unit 0 family ethernet-switching vlan members ${trunkMembers}
-set interfaces interface-range DOWNLINKS native-vlan-id ${mgmt.id}`
+set interfaces interface-range DOWNLINKS native-vlan-id ${mgmt.id}${fwLinks.length ? `
+!
+# ── FIREWALL HANDOFF (routed /31 per firewall; the firewall holds the .1) ─
+${fwLinks.map(x => `set interfaces xe-0/0/${x.port - 1} description "FW-HANDOFF: ${x.fw.hostname}"
+set interfaces xe-0/0/${x.port - 1} unit 0 family inet address ${x.ip}/31
+set protocols ospf area 0.0.0.0 interface xe-0/0/${x.port - 1}.0 interface-type p2p
+set routing-options static route 0.0.0.0/0 next-hop ${nextIp(x.ip)}`).join('\n')}
+set policy-options policy-statement ORIGINATE-DEFAULT term 1 from protocol static
+set policy-options policy-statement ORIGINATE-DEFAULT term 1 from route-filter 0.0.0.0/0 exact
+set policy-options policy-statement ORIGINATE-DEFAULT term 1 then accept
+set protocols ospf export ORIGINATE-DEFAULT` : ''}`
     : `# ── ACCESS LAYER (no routing, trunks to both distribution switches) ────
 set interfaces irb unit ${mgmt.id} description "${mgmt.name}"
 set interfaces irb unit ${mgmt.id} family inet address ${mgmtIp}/24
@@ -5155,6 +5303,10 @@ function aristaCampusConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[]
   // AN7: was 10.254.x (the VTEP / vPC VIP block), on access switches too.
   const lo0ip = roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)
   const allowed = [data.id, ...(hasVoice ? [voice.id] : []), mgmt.id].join(',')
+  // AN8: firewall handoff on the top of the host block (Cisco parity). The
+  // downlink range also used to be a fixed Ethernet1-46 on a 24-port box.
+  const fwLinks = isDist ? fwHandoffPlan(dev, allDevices, 'distribution') : []
+  const downlinkMax = Math.max(1, (dev.ports || 48) - fwLinks.length)
 
   const vlanBlock = `vlan ${data.id}
    name ${data.name}
@@ -5184,15 +5336,25 @@ ip virtual-router mac-address 00:1c:73:00:00:01
 !
 ip routing
 !
-interface Ethernet1-46
+interface ${aristaIf(dev, 1)}-${downlinkMax}
    description DOWNLINK-TO-ACCESS
    switchport mode trunk
    switchport trunk native vlan ${mgmt.id}
    switchport trunk allowed vlan ${allowed}
 !
-router ospf 1
+${fwLinks.map(x => `interface ${aristaIf(dev, x.port)}
+   description FW-HANDOFF: ${x.fw.hostname}
+   no switchport
+   ip address ${x.ip}/31
+   ip ospf network point-to-point
+!`).join('\n')}${fwLinks.length ? `
+${fwLinks.map(x => `ip route 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
+!
+` : ''}router ospf 1
    router-id ${lo0ip}
-   passive-interface Vlan${data.id}
+   passive-interface Vlan${data.id}${fwLinks.map(x => `
+   network ${x.ip}/31 area 0.0.0.0`).join('')}${fwLinks.length ? `
+   default-information originate` : ''}
    network ${lo0ip}/32 area 0.0.0.0
    network ${mgmt.subnet} area 0.0.0.0
    network <CHANGE-ME-vlan${data.id}-network>/<CHANGE-ME-vlan${data.id}-prefixlen> area 0.0.0.0
@@ -6719,7 +6881,7 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   // Other vendors (Cisco/Arista) only get the lossless path when use case is explicitly gpu.
   const needsRoce = isGpu || ((v === 'Dell EMC' || v === 'NVIDIA') && useCase === 'dc')
 
-  if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx)
+  if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx, useCase, allDevices)
   if (isOranSubLayer(l))                                             return oranConfig(dev, idx, allDevices)
   if (v === 'Cisco'     && l === 'firewall')                         return isFtdModel(dev.model) ? ciscoFtdFirewallConfig(dev, idx, useCase, allDevices) : ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'sdwan-controller')                 return sdwanControllerConfig(dev, idx)
@@ -6738,7 +6900,7 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
   if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx)
   if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite', protoFeatures, appTypes, allDevices)
-  if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx)
+  if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx, useCase, allDevices)
   if (v === 'Fortinet'  && (l === 'distribution' || l === 'access')) return fortinetCampusConfig(dev, idx, appTypes, allDevices)
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce, allDevices)
   if (v === 'HPE Aruba' && (l === 'spine' || l === 'leaf'))          return arubaFabricConfig(dev, idx, allDevices)
