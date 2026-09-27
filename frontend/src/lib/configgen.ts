@@ -2097,8 +2097,20 @@ set protocols isis topologies ipv6-unicast
 !
 # ── Multisite DCI: stretched RT ${DCI_RT_ASN}:<vni> on extended VNIs ────────
 set protocols evpn vni-options vni 10010 vrf-target target:${DCI_RT_ASN}:10010
-set switch-options vrf-target auto
-set routing-instances EVPN-L3 vrf-target target:${DCI_RT_ASN}:50000
+# AN5: TENANT-A carries BOTH the site L3 RT and the stretched DCI RT. Junos
+# takes one vrf-target, so two RTs need import/export policies. This block
+# used to set a DCI RT on a routing-instance EVPN-L3 that did not exist, plus
+# a 'switch-options vrf-target auto' that contradicted the explicit target
+# below — and auto RTs derive from the local AS, which differs per leaf pair.
+set policy-options community RT-SITE-L3 members target:65000:50000
+set policy-options community RT-DCI-L3 members target:${DCI_RT_ASN}:50000
+set policy-options policy-statement TENANT-A-EXPORT term 1 then community add RT-SITE-L3
+set policy-options policy-statement TENANT-A-EXPORT term 1 then community add RT-DCI-L3
+set policy-options policy-statement TENANT-A-EXPORT term 1 then accept
+set policy-options policy-statement TENANT-A-IMPORT term 1 from community [ RT-SITE-L3 RT-DCI-L3 ]
+set policy-options policy-statement TENANT-A-IMPORT term 1 then accept
+set routing-instances TENANT-A vrf-import TENANT-A-IMPORT
+set routing-instances TENANT-A vrf-export TENANT-A-EXPORT
 ` : ''
 
   return `# ═══════════════════════════════════════════════════════════════
@@ -3791,6 +3803,15 @@ nve
 virtual-network 1
   vxlan-vni 10001
 !
+! AN5: explicit route-target. Auto-EVI derives it from the local AS, and each
+! leaf pair has its own AS, so leaves in different pairs never imported each
+! other's routes.
+evpn
+  evi 10001
+    vni 10001
+    rd auto
+    route-target 65000:10001 both
+!
 interface vlan10
   virtual-network 1
 !
@@ -4458,12 +4479,15 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
                 }` : ''
   // Multisite DCI: stretch the mac-vrf across sites with the shared
   // ${DCI_RT_ASN}:<vni> route-target namespace (A7 parity with NX-OS/Arista).
-  const dciRt = isMultisite
-    ? `route-target {
-                        export-rt target:${DCI_RT_ASN}:10010
-                        import-rt target:${DCI_RT_ASN}:10010
+  // AN5: always explicit. With no route-target SR Linux derives one from the
+  // local AS, and Z8 gave every leaf pair its own AS — so leaves in different
+  // pairs never imported each other's MACs. Multisite uses the stretched
+  // ${DCI_RT_ASN} namespace so every site imports the same target.
+  const macVrfRt = `target:${isMultisite ? DCI_RT_ASN : 65000}:${isMultisite ? 10010 : 10001}`
+  const dciRt = `route-target {
+                        export-rt ${macVrfRt}
+                        import-rt ${macVrfRt}
                     }`
-    : ''
 
   // Z8 — real eBGP peers derived from the BOM, the same treatment X1/X3/X4
   // gave Cisco/Arista/Juniper. The spine had NO neighbors at all (just an
