@@ -151,10 +151,10 @@ describe('Step 3 — Config generation', () => {
     const dcConfigs  = generateAllConfigs(dcDevices, 'dc')
 
     const gpuSpine = devices.find(d => d.vendor === 'Cisco' && d.subLayer === 'spine')
-    if (gpuSpine) expect(gpuConfigs[gpuSpine.id]).toContain('pause no-drop')
+    if (gpuSpine) expect(gpuConfigs[gpuSpine.id]).toContain('pause pfc-cos 3')
 
     const dcSpine = dcDevices.find(d => d.vendor === 'Cisco' && d.subLayer === 'spine')
-    if (dcSpine) expect(dcConfigs[dcSpine.id]).not.toContain('pause no-drop')
+    if (dcSpine) expect(dcConfigs[dcSpine.id]).not.toContain('pause pfc-cos')
   })
 
   it('no hardcoded secrets in any config for a dc/medium BOM', () => {

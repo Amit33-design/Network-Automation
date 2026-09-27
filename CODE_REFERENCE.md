@@ -535,10 +535,12 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   `ingress-replication protocol bgp`, L3VNI 50000 → `associate-vrf`); when
   `isMultisite`, the TENANT-A VRF and the MAC-VRF additionally import/export
   `65100:50000` / `65100:10010` DCI route-targets.
-- **`nxosStdQoS(): string`** / **`nxosGpuQoS(): string`** — standard 4-class
-  DSCP QoS vs full RoCEv2 QoS (PFC priority-3 lossless `pause no-drop`,
-  RDMA class `bandwidth percent 60`, ECN `congestion-control ecn` +
-  `random-detect` on lossy queues, `hardware qos pfc-watchdog on`, DCQCN).
+- **`nxosStdQoS(): string`** / **`nxosGpuQoS(dev): string`** — standard 4-class
+  DSCP QoS vs RoCEv2 lossless QoS (AM7): Nexus 9000 system classes, DSCP 26 →
+  qos-group 3 with `pause pfc-cos 3` in `c-8q-nq3`, ECN `random-detect … ecn`
+  on the RoCE queue `c-out-8q-q3` (60% remaining BW), CNP (DSCP 48) strict
+  priority, `priority-flow-control watch-dog-interval on`, and
+  `priority-flow-control mode on` on `Ethernet1/1-<ports>`.
 
 ### Arista EOS — DC/GPU spine-leaf
 - **`aristaSpineConfig(dev, idx, isGpu, allDevices = [], protoFeatures = []):
@@ -577,8 +579,10 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   so all leaves in the site share it — `redistribute learned`, previously
   absent entirely); when `isMultisite`, adds `route-target import/export
   evpn 65100:10010` DCI RTs.
-- **`aristaGpuQoS(): string`** — PFC priority 3 RoCEv2 (`pfc enable`, `pfc
-  priority 3 no-drop`), ECN on lossy queues.
+- **`aristaGpuQoS(dev): string`** — RoCEv2 lossless QoS (AM7): `qos profile
+  GPU-LOSSLESS` (`priority-flow-control on`, `priority 3 no-drop`, pause
+  watchdog, `tx-queue 3` 60% + `random-detect ecn`, CNP on tx-queue 6 strict)
+  applied with `service-profile` on the port range.
 - **`aristaTelemetryBlock(): string`** *(added 2026-06-11, Enterprise Upgrade
   A4)* — Arista streaming-telemetry/automation block, appended to both
   `aristaSpineConfig` and `aristaLeafConfig`: `management api gnmi` (gRPC
@@ -1049,11 +1053,11 @@ review exactly what a redeploy will change before committing. Pure + determinist
 
 Dialect-free management-plane facts extracted once per device, so checks query facts instead of carrying per-vendor regexes.
 
-- `MgmtFactName` (`hostname`/`sshV2`/`ntp`/`syslog`/`aaa`, listed in `FACT_NAMES`) and `RoutingFactName` (`bgp`/`isis`/`ospf`/`loopback`/`vxlan`/`evpn`/`bfd`/`jumboMtu`, in `ROUTING_FACT_NAMES`); `FactName` is their union, `ALL_FACT_NAMES` both lists, `FACT_NAMES`, `FACT_LABEL`; `Fact {state: 'present'|'absent'|'unknown', evidence?, note?}`.
+- `MgmtFactName` (`hostname`/`sshV2`/`ntp`/`syslog`/`aaa`, listed in `FACT_NAMES`) and `RoutingFactName` (`bgp`/`isis`/`ospf`/`loopback`/`vxlan`/`evpn`/`bfd`/`jumboMtu`/`pfc`/`ecnLossless`/`pfcWatchdog`, in `ROUTING_FACT_NAMES`); `FactName` is their union, `ALL_FACT_NAMES` both lists, `FACT_NAMES`, `FACT_LABEL`; `Fact {state: 'present'|'absent'|'unknown', evidence?, note?}`.
 - `FactPlatform` = `ZTPPlatform` + `ftd`, `viptela` (vEdge), `oran-nf` (CU/DU/UPF/PTP-GM manifests), `oran-ru`.
 - `RULES: Record<FactPlatform, Record<MgmtFactName, …>>` + `ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, …>>` (AM3) — compiler-enforced completeness; `unsupported` → `unknown` with a reason (FTD syslog/AAA in FMC, vEdge SSH v2-only, O-RU PTP time / NACM accounts).
 - `factPlatform(dev)`, `extractFacts(config, platform)` (strips comments first), `extractFactsAnyDialect(config)` (lenient fallback for configs with no resolvable device), `deviceForConfig`, `fleetFact(configs, devices, name)`.
-- Also consumed by `config-validator.ts`: V-06/V-07 (AM2) and V-01/V-03/V-08/V-12/V-13/V-14 (AM3) through one per-validation `FactMap`; the validator no longer holds any cross-vendor routing regex. V-09 (GPU QoS) still scans text.
+- Also consumed by `config-validator.ts`: V-06/V-07 (AM2) and V-01/V-03/V-08/V-12/V-13/V-14 (AM3) and V-09 (AM7 — per GPU fabric device: PFC no-drop + ECN on the lossless class required, watchdog warned) through one per-validation `FactMap`; the validator holds no cross-vendor routing or QoS regex.
 - `closFabricLinks` also returns each link's far-end `peerIp`/`peerIdx`, used for the per-/31 eBGP underlay on Dell, EXOS and Aruba (AM6/AM5).
 - `test/source-interface.test.ts` (AM3): every interface an IOS-shaped config sources a service from must be defined in that config.
 - Comment handling lives in `lib/config-text.ts` (`isCommentLine`, `stripComments`), shared by facts, the validator (which re-exports `stripComments`) and `ipam-truth.test.ts`.

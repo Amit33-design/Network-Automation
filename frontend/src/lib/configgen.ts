@@ -212,7 +212,7 @@ function nxosSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices
 
   // GPU fabric: ECN + DCQCN + PFC lossless queuing.
   // Non-GPU: standard 4-class DSCP queuing.
-  const qosBlock = isGpu ? nxosGpuQoS() : nxosStdQoS()
+  const qosBlock = isGpu ? nxosGpuQoS(dev) : nxosStdQoS()
 
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -898,7 +898,7 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   const isisNet  = `49.0001.0102.5501.${String(idx + 1).padStart(4, '0')}.00`
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:2::${idx + 1}`
-  const qosBlock = isGpu ? nxosGpuQoS() : nxosStdQoS()
+  const qosBlock = isGpu ? nxosGpuQoS(dev) : nxosStdQoS()
   const fabricLinks = renderNxosFabricLinks('leaf', dev, allDevices, ipv6Underlay)
   // Z3 — north-south handoff. The firewall used to attach to the SPINES, which
   // have no tenant VRF and are not VTEPs, so nothing could route into TENANT-A
@@ -1400,126 +1400,69 @@ system qos
   service-policy type network-qos  PM-JUMBO`
 }
 
-function nxosGpuQoS(): string {
-  return `! ── QoS — GPU/RoCEv2 Fabric (IS-IS underlay, ECN + DCQCN + PFC) ────────────
-! Priority mapping:
-!   PFC priority 3 → RoCEv2 / RDMA (lossless, no-drop)
-!   PFC priority 6 → Storage (FCoE/NVMe-oF, lossless)
-!   PFC priority 0-2,4,5,7 → lossy (ECN-marked)
+/**
+ * NX-OS GPU/RoCEv2 lossless QoS (AM7), after Cisco's Nexus 9000 RoCEv2 design.
+ * The previous block was not lossless in three ways: the RDMA queue carried
+ * NO ECN marking (only the lossy queues did), so DCQCN never received a
+ * congestion signal for RoCE traffic; PFC was never enabled on a single port
+ * (the per-port lines were a comment); and it defined custom queuing and
+ * network-qos classes, where Nexus 9000 only accepts its system classes
+ * (`c-out-8q-qN` / `c-8q-nqN`). It also set `congestion-control ecn` under
+ * network-qos (not a command there) and enabled FabricPath forwarding mode on
+ * a VXLAN/IS-IS fabric.
+ */
+function nxosGpuQoS(dev: BOMDevice): string {
+  const ports = dev.ports || 32
+  return `! ── QoS — GPU/RoCEv2 lossless fabric (PFC + ECN/DCQCN) ─────────────────────
+!   DSCP 26 (RoCEv2 data) → qos-group 3 → PFC priority 3, no-drop, ECN-marked
+!   DSCP 48 (CNP)         → qos-group 7 → strict priority, so congestion
+!                                          notifications are never queued
+!   everything else       → qos-group 0 (lossy)
 !
-! DSCP → qos-group mapping:
-!   DSCP 26 (AF31) — RoCEv2 → qos-group 3 (PFC priority 3, lossless)
-!   DSCP 46 (EF)   — Voice/ctrl → qos-group 6
-!   DSCP 34 (AF41) — Video  → qos-group 5
-!   DSCP  0 (CS0)  — Default → qos-group 0
-!
-class-map type qos match-any CM-RDMA
-  match dscp 26 28
-class-map type qos match-any CM-STORAGE
-  match dscp 24 16
-class-map type qos match-any CM-VOICE
-  match dscp 46
-class-map type qos match-any CM-VIDEO
-  match dscp 34 32
-class-map type qos match-any CM-BULK
-  match dscp 10 12
-class-map type qos match-any CM-SCAVENGER
-  match dscp 8
-!
-class-map type queuing CM-RDMA-Q
-  match qos-group 3
-class-map type queuing CM-STORAGE-Q
-  match qos-group 6
-class-map type queuing CM-VOICE-Q
-  match qos-group 5
-class-map type queuing CM-VIDEO-Q
-  match qos-group 4
-class-map type queuing CM-BULK-Q
-  match qos-group 1
+class-map type qos match-all CM-ROCE
+  match dscp 26
+class-map type qos match-all CM-CNP
+  match dscp 48
 !
 policy-map type qos PM-INGRESS-CLASSIFY
-  class CM-RDMA
+  class CM-ROCE
     set qos-group 3
-    set dscp 26
-  class CM-STORAGE
-    set qos-group 6
-  class CM-VOICE
-    set qos-group 5
-  class CM-VIDEO
-    set qos-group 4
-  class CM-BULK
-    set qos-group 1
-  class CM-SCAVENGER
-    set qos-group 0
-    set dscp 8
+  class CM-CNP
+    set qos-group 7
   class class-default
     set qos-group 0
 !
-! Egress queuing — buffer carving:
-!   RDMA   : 60% guaranteed BW, PFC enabled (lossless)
-!   Storage: 10% guaranteed BW, PFC enabled (lossless)
-!   Lossy  : remaining BW with ECN + WRED for congestion isolation
+! Egress queuing — system queue classes. ECN marks the RDMA queue itself:
+! that is the signal DCQCN rate-limits on. Marking only lossy queues (as
+! before) leaves RoCE with PFC pauses as its only brake.
 policy-map type queuing PM-EGRESS-QUEUING
-  class type queuing CM-RDMA-Q
-    bandwidth percent 60
-    pause buffer-size 300
-  class type queuing CM-STORAGE-Q
-    bandwidth percent 10
-    pause buffer-size 150
-  class type queuing CM-VOICE-Q
-    priority percent 5
-  class type queuing CM-VIDEO-Q
-    bandwidth percent 10
-    random-detect dscp-based
-    random-detect dscp 34 minimum-threshold 2000 maximum-threshold 8000
-  class type queuing CM-BULK-Q
-    bandwidth percent 5
-    random-detect dscp-based
-    random-detect dscp 10 minimum-threshold 500  maximum-threshold 4000
-  class type queuing class-default
-    bandwidth percent 10
-    random-detect dscp-based
-    random-detect dscp 0 minimum-threshold 1000 maximum-threshold 6000
+  class type queuing c-out-8q-q7
+    priority level 1
+  class type queuing c-out-8q-q3
+    bandwidth remaining percent 60
+    random-detect minimum-threshold 150 kbytes maximum-threshold 3000 kbytes drop-probability 7 weight 0 ecn
+  class type queuing c-out-8q-q-default
+    bandwidth remaining percent 40
 !
-! Network-QoS: PFC lossless + ECN on congestion queues
-! PFC priority 3 = RDMA (RoCEv2), priority 6 = storage
 policy-map type network-qos PM-PFC-LOSSLESS
-  class type network-qos CM-RDMA-Q
-    pause no-drop
+  class type network-qos c-8q-nq3
+    pause pfc-cos 3
     mtu 9216
-    congestion-control ecn
-  class type network-qos CM-STORAGE-Q
-    pause no-drop
-    mtu 9216
-  class type network-qos CM-VIDEO-Q
-    congestion-control ecn
-    mtu 9216
-  class type network-qos CM-BULK-Q
-    congestion-control ecn
-    mtu 9216
-  class type network-qos class-default
-    congestion-control ecn
+  class type network-qos c-8q-nq-default
     mtu 9216
 !
 system qos
-  service-policy type qos         input PM-INGRESS-CLASSIFY
-  service-policy type queuing     output PM-EGRESS-QUEUING
+  service-policy type qos input PM-INGRESS-CLASSIFY
+  service-policy type queuing output PM-EGRESS-QUEUING
   service-policy type network-qos PM-PFC-LOSSLESS
 !
-! ── DCQCN parameters (RoCEv2 congestion control) ────────────────────────────
-! These must be consistent across ALL switches in the GPU fabric.
-! Adjust thresholds to match actual ASIC buffer size (see vendor datasheet).
-hardware qos dcbx default
-hardware qos pfc-watchdog on
-hardware profile forwarding-mode fabricpath
+! PFC watchdog: a host stuck sending pauses must not freeze the fabric.
+priority-flow-control watch-dog-interval on
 !
-! Per-port PFC/ECN settings (apply to every GPU-connected interface):
-! interface Ethernet<N>
-!   priority-flow-control mode on
-!   priority-flow-control watch-dog-interval on
-!   congestion-control ecn mark
-!   no flowcontrol receive off
-!   no flowcontrol send off`
+! PFC is negotiated per port; hosts rarely speak DCBX, so it is forced on.
+interface Ethernet1/1-${ports}
+  priority-flow-control mode on
+  service-policy type qos input PM-INGRESS-CLASSIFY`
 }
 
 // ── Arista EOS ────────────────────────────────────────────────────────────────
@@ -1584,7 +1527,7 @@ function aristaSpineConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevic
   const isisNet  = `0101.0255.${String(idx + 1).padStart(4, '0')}`
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:1::${idx + 1}`
-  const qos      = isGpu ? aristaGpuQoS() : ''
+  const qos      = isGpu ? aristaGpuQoS(dev) : ''
   const fabricLinks = renderAristaFabricLinks('spine', dev, allDevices, ipv6Underlay)
   // Z3: firewall handoff moved to the border leaves (a spine has no tenant VRF).
   const fwHandoffBlock = ''
@@ -1704,7 +1647,7 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const isisNet  = `0102.5500.${String(idx + 1).padStart(4, '0')}`
   const ipv6Underlay = protoFeatures.includes('IPv6 Dual-Stack')
   const routerIdV6 = `fd00:255:2::${idx + 1}`
-  const qos      = isGpu ? aristaGpuQoS() : ''
+  const qos      = isGpu ? aristaGpuQoS(dev) : ''
   const fabricLinks = renderAristaFabricLinks('leaf', dev, allDevices, ipv6Underlay)
   // Real spine peers from the fabric (spine lo0 10.255.1.(i+1), ASN 65000).
   // Host/server ports: the access block below the uplinks + peer-link members
@@ -1926,37 +1869,38 @@ daemon TerminAttr
   no shutdown`
 }
 
-function aristaGpuQoS(): string {
-  return `! ── QoS — Arista EOS GPU/RoCEv2 (ECN + PFC + DCQCN) ────────────────────────
-! PFC priority 3 for RoCEv2, ECN on all lossy queues.
+/**
+ * Arista EOS GPU/RoCEv2 lossless QoS (AM7). The previous block was mostly not
+ * EOS: `interface profile`, `pfc enable`, `pfc mode on`, `pfc priority N
+ * no-drop` and `pfc pause disable` are not EOS commands, and it put ECN on
+ * tx-queue 0 (lossy) while the RDMA queue got none — so DCQCN never saw a
+ * congestion mark for RoCE traffic. Real EOS: a `qos profile` carrying
+ * `priority-flow-control` and per-queue `random-detect ecn`, applied to ports
+ * with `service-profile`.
+ */
+function aristaGpuQoS(dev: BOMDevice): string {
+  const ports = dev.ports || 32
+  return `! ── QoS — GPU/RoCEv2 lossless fabric (PFC + ECN/DCQCN) ─────────────────────
+!   DSCP 26 (RoCEv2 data) → TC3 → PFC priority 3, no-drop, ECN-marked
+!   DSCP 48 (CNP)         → TC6 → strict priority
+qos map dscp 26 to traffic-class 3
+qos map dscp 48 to traffic-class 6
 !
-qos map dscp 26 28 to traffic-class 3    ! RoCEv2 → TC3 (lossless)
-qos map dscp 46     to traffic-class 6    ! Voice  → TC6
-qos map dscp 34 32  to traffic-class 5    ! Video  → TC5 (ECN)
-qos map dscp 0      to traffic-class 0    ! Default
+qos profile GPU-LOSSLESS
+   qos trust dscp
+   priority-flow-control on
+   priority-flow-control priority 3 no-drop
+   priority-flow-control pause watchdog
+   tx-queue 3
+      bandwidth percent 60
+      random-detect ecn minimum-threshold 150 kbytes maximum-threshold 3000 kbytes max-mark-probability 10
+   tx-queue 6
+      priority strict
 !
-qos profile RDMA-TC3
-  tx-queue 3
-    bandwidth percent 60
-    no priority
-    pfc pause disable
-  tx-queue 0
-    bandwidth percent 40
-    random-detect ecn
+priority-flow-control pause watchdog default timeout 0.2
 !
-interface profile GPU-PORT
-  pfc enable
-  pfc mode on
-  pfc priority 3 no-drop
-  pfc priority 6 no-drop
-  qos trust dscp
-  qos profile RDMA-TC3
-  flowcontrol receive off
-  flowcontrol send off
-!
-! Apply profile to all GPU-connected ports:
-! interface EthernetN
-!   inherit profile GPU-PORT`
+interface ${aristaIf(dev, 1)}-${ports}
+   service-profile GPU-LOSSLESS`
 }
 
 // ── Juniper QFX ───────────────────────────────────────────────────────────────
@@ -3895,8 +3839,12 @@ dcb-map RDMA-LOSSLESS
     priority 3 no-drop
     priority 6 no-drop
 !
-! ECN thresholds on lossy queues (TC0, TC6)
+! ECN thresholds. TC3 is the one DCQCN needs: RoCE rate-limits on ECN marks
+! from its OWN lossless class. This profile used to mark only the lossy
+! queues (TC0, TC6), so RoCE's only brake was PFC pauses (AM7). The OS10
+! syntax of this block is unverified against hardware — check before deploy.
 qos-map wred-profile LOSSY-ECN
+  traffic-class 3 green  min-threshold 20 max-threshold 60 drop-probability 10
   traffic-class 0 green  min-threshold 40 max-threshold 80 drop-probability 100
   traffic-class 0 yellow min-threshold 35 max-threshold 70 drop-probability 100
   traffic-class 6 green  min-threshold 50 max-threshold 90 drop-probability 100

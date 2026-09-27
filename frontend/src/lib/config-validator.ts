@@ -30,12 +30,6 @@ export interface ValidationResult {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function hostnamesWithPattern(configs: Record<string, string>, pattern: RegExp): string[] {
-  return Object.entries(configs)
-    .filter(([, cfg]) => pattern.test(cfg))
-    .map(([host]) => host)
-}
-
 function extractRouterIds(configs: Record<string, string>): Map<string, string[]> {
   const ridMap = new Map<string, string[]>()
   for (const [host, cfg] of Object.entries(configs)) {
@@ -509,8 +503,18 @@ function checkEVPNConsistency(
   }
 }
 
+/**
+ * V-09 — GPU lossless QoS, per fabric device, in each device's own dialect
+ * (AM7). It used to ask whether the words PFC / ECN / RDMA appeared on ANY
+ * device, which passed Cisco, Arista and Dell GPU fabrics whose ECN marked
+ * only the LOSSY queues: DCQCN rate-limits on ECN marks from RoCE's own
+ * no-drop class, so those fabrics had PFC pauses as their only brake. It now
+ * requires PFC no-drop AND ECN on the lossless class on every spine and leaf,
+ * and a PFC watchdog where the dialect has one.
+ */
 function checkGPUQoS(
-  configs: Record<string, string>,
+  facts: FactMap,
+  devices: BOMDevice[],
   useCase: UseCase | '',
 ): ValidationCheck {
   if (useCase !== 'gpu') {
@@ -523,36 +527,47 @@ function checkGPUQoS(
     }
   }
 
-  // Vendor-aware (Z6, same class as M3/M4). NVIDIA Cumulus NVUE expresses the
-  // whole lossless contract in ONE profile — `nv set qos roce enable on` +
-  // `mode lossless` configures PFC, ECN/WRED and buffer carving together — so
-  // the Cisco/Arista keyword scan false-FAILED a correctly lossless fabric
-  // once the explanatory comments were stripped.
-  const hasPFC = hostnamesWithPattern(configs, /priority-flow-control|pfc|nv set qos roce\b/i)
-  const hasECN = hostnamesWithPattern(configs, /ecn|explicit-congestion|nv set qos roce\b/i)
-  const hasRDMA = hostnamesWithPattern(configs, /rdma|rocev2|dcqcn|nv set qos roce\b/i)
+  // The fabric is the spines and leaves; hosts and firewalls carry no RoCE
+  // queues. Configs that match no BOM device are all checked.
+  const fabric = Object.entries(facts).filter(([host]) => {
+    const d = deviceForConfig(host, devices)
+    return !d || d.subLayer === 'spine' || d.subLayer === 'leaf'
+  })
+  const noPfc = fabric.filter(([, f]) => f.pfc.state !== 'present').map(([h]) => h)
+  const noEcn = fabric.filter(([, f]) => f.ecnLossless.state !== 'present').map(([h]) => h)
+  const noWatchdog = fabric.filter(([, f]) => f.pfcWatchdog.state === 'absent').map(([h]) => h)
+  const unverifiedWatchdog = fabric.filter(([, f]) => f.pfcWatchdog.state === 'unknown').length
 
   const issues: string[] = []
-  if (hasPFC.length === 0) issues.push('PFC not configured on any device')
-  if (hasECN.length === 0) issues.push('ECN not configured on any device')
-  if (hasRDMA.length === 0) issues.push('RDMA/RoCEv2/DCQCN not configured on any device')
-
-  if (issues.length > 0) {
+  if (noPfc.length) issues.push(`PFC no-drop missing on ${noPfc.length} fabric device(s): ${noPfc.slice(0, 3).join(', ')}`)
+  if (noEcn.length) issues.push(`ECN not marking the lossless (RoCE) class on ${noEcn.length} fabric device(s): ${noEcn.slice(0, 3).join(', ')}`)
+  if (issues.length) {
     return {
       id: 'V-09',
       name: 'GPU QoS (PFC/ECN/DCQCN)',
       category: 'QoS',
       severity: 'fail',
       detail: issues.join('; '),
+      devices: [...new Set([...noPfc, ...noEcn])],
     }
   }
-
+  if (noWatchdog.length) {
+    return {
+      id: 'V-09',
+      name: 'GPU QoS (PFC/ECN/DCQCN)',
+      category: 'QoS',
+      severity: 'warn',
+      detail: `Lossless QoS present, but no PFC watchdog on ${noWatchdog.length} device(s) — a host stuck sending pauses can freeze the fabric: ${noWatchdog.slice(0, 3).join(', ')}`,
+      devices: noWatchdog,
+    }
+  }
   return {
     id: 'V-09',
     name: 'GPU QoS (PFC/ECN/DCQCN)',
     category: 'QoS',
     severity: 'pass',
-    detail: `PFC on ${hasPFC.length}, ECN on ${hasECN.length}, RDMA/DCQCN on ${hasRDMA.length} device(s)`,
+    detail: `PFC no-drop and ECN on the lossless class on all ${fabric.length} fabric device(s)` +
+      (unverifiedWatchdog ? `; PFC watchdog unverified for ${unverifiedWatchdog} (not generated for that platform)` : ''),
   }
 }
 
@@ -803,7 +818,7 @@ export function validateConfigs(input: ValidateInput): ValidationResult {
     checkManagementBlock(live, facts),
     checkNoHardcodedSecrets(live),
     checkUndefinedACLReferences(live),
-    checkGPUQoS(live, useCase),
+    checkGPUQoS(facts, devices, useCase),
     checkLoopbackPresence(live, facts),
     checkBFDEnabled(facts, useCase),
     checkJumboMtu(facts, useCase),

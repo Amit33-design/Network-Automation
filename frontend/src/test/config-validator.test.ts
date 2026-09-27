@@ -207,8 +207,9 @@ describe('config-validator', () => {
 
     it('passes GPU QoS when PFC/ECN/RDMA present', () => {
       const gpuCfg = dcConfig('LEAF-01', '10.0.0.1', '10.0.0.2') +
-        '\npriority-flow-control mode on\npriority-flow-control priority 3 no-drop\n' +
-        'random-detect ecn\nrdma qos-group 3\ndcqcn enable\n'
+        // AM7: ECN must mark the lossless queue itself, not just appear.
+        '\nqos profile GPU-LOSSLESS\n   priority-flow-control on\n   priority-flow-control priority 3 no-drop\n' +
+        '   priority-flow-control pause watchdog\n   tx-queue 3\n      random-detect ecn minimum-threshold 150 kbytes maximum-threshold 3000 kbytes\n'
       const configs = { 'LEAF-01': gpuCfg }
       const result = validateConfigs({ configs, devices: [], useCase: 'gpu' })
       const v09 = result.checks.find(c => c.id === 'V-09')!
@@ -770,6 +771,35 @@ describe('V-05 encoding keywords (AM5)', () => {
   it('a real value after an encoding keyword is still caught', () => {
     expect(v05('tacacs-server host 10.0.0.3 key plaintext MySecretKey99')).toBe('fail')
     expect(v05('user admin password ciphertext Hunter2Secret')).toBe('fail')
+  })
+})
+
+describe('V-09 per device and per dialect (AM7)', () => {
+  const spine = { ...device('S-01'), subLayer: 'spine', model: 'N9K-C9364C-GX' }
+  const v09 = (cfg: string) => validateConfigs({ configs: { 'S-01': `hostname S-01\n${cfg}` }, devices: [spine], useCase: 'gpu' })
+    .checks.find(c => c.id === 'V-09')!
+
+  it('fails a fabric whose ECN marks only the lossy queues', () => {
+    // The shape Cisco generated before AM7: no-drop on q3, ECN only on default.
+    const r = v09([
+      'policy-map type queuing Q',
+      '  class type queuing c-out-8q-q-default',
+      '    random-detect minimum-threshold 1 kbytes maximum-threshold 2 kbytes drop-probability 7 weight 0 ecn',
+      'policy-map type network-qos N',
+      '  class type network-qos c-8q-nq3',
+      '    pause pfc-cos 3',
+    ].join('\n'))
+    expect(r.severity).toBe('fail')
+    expect(r.detail).toMatch(/ECN not marking the lossless/)
+  })
+
+  it('passes real generated GPU fabrics for every GPU vendor', () => {
+    for (const vendor of ['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Dell EMC']) {
+      const devices = buildDeviceList({ useCase: 'gpu', scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+      const r = validateConfigs({ configs: generateAllConfigs(devices, 'gpu'), devices, useCase: 'gpu' })
+        .checks.find(c => c.id === 'V-09')!
+      expect(r.severity, `${vendor}: ${r.detail}`).toBe('pass')
+    }
   })
 })
 
