@@ -2,7 +2,7 @@
  * One campus VLAN plan across every campus vendor, matching the IPAM export
  * (AN7). Each generator used to invent its own — Cisco 10/20/99, Arista and
  * Juniper 100/200/300/400/999, Aruba 10 MANAGEMENT / 20 DATA, Fortinet
- * 10/20/30/999 — while `genVLANs('campus')` declared yet another, and the
+ * 10/20/30/999, and EXOS distribution ran the fabric-leaf config (AN9) — while `genVLANs('campus')` declared yet another, and the
  * non-Cisco distribution pairs addressed their SVIs from per-switch subnets,
  * so the FHRP VIP was never shared and VRRP could not form.
  */
@@ -13,7 +13,7 @@ import { genVLANs, genIPRows } from '@/lib/ipam'
 import { stripComments } from '@/lib/config-text'
 import type { BOMDevice } from '@/types'
 
-const VENDORS = ['Cisco', 'Arista', 'Juniper', 'Fortinet', 'HPE Aruba']
+const VENDORS = ['Cisco', 'Arista', 'Juniper', 'Fortinet', 'HPE Aruba', 'Extreme Networks']
 
 function build(vendor: string) {
   const devices = buildDeviceList({ useCase: 'campus', scale: 'medium', siteCode: 'AN7', vendorPrefs: [vendor] })
@@ -26,6 +26,7 @@ function vlansOf(cfg: string): Set<number> {
   const ids = new Set<number>()
   for (const m of c.matchAll(/^vlan (\d+)\s*$/gm)) ids.add(Number(m[1]))            // IOS / EOS / AOS-CX
   for (const m of c.matchAll(/^set vlans \S+ vlan-id (\d+)/gm)) ids.add(Number(m[1])) // Junos
+  for (const m of c.matchAll(/^create vlan \S+ tag (\d+)/gm)) ids.add(Number(m[1]))    // EXOS
   const forti = /config switch vlan\n([\s\S]*?)\nend/.exec(c)                        // FortiSwitchOS
   if (forti) for (const m of forti[1].matchAll(/^\s+edit (\d+)/gm)) ids.add(Number(m[1]))
   return ids
@@ -35,7 +36,7 @@ function vlansOf(cfg: string): Set<number> {
 function mgmtSvi(cfg: string): { ip?: string, vip?: string } {
   const c = stripComments(cfg)
   const ip = /\b(10\.255\.99\.\d+)(?:\/24| 255\.255\.255\.0)/.exec(c)?.[1]
-  const vip = /(?:standby \d+ ip|virtual-router address|virtual-address|address|vrip) (10\.255\.99\.254)\b/.exec(c)?.[1]
+  const vip = /(?:standby \d+ ip|virtual-router address|virtual-address|address|vrip|vrid \d+ add) (10\.255\.99\.254)\b/.exec(c)?.[1]
   return { ip, vip }
 }
 
