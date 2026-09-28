@@ -29,7 +29,7 @@ const isSrx = (model: string) => /srx/i.test(model)
 
 const SCENARIOS: Array<[UseCase, string]> = [
   ['campus', 'Cisco'], ['campus', 'Arista'], ['campus', 'Fortinet'],
-  ['campus', 'HPE Aruba'], ['campus', 'Palo Alto'],
+  ['campus', 'HPE Aruba'], ['campus', 'Extreme Networks'], ['campus', 'Palo Alto'],
   ['dc', 'Cisco'], ['dc', 'Arista'], ['dc', 'Nokia'], ['dc', 'Palo Alto'], ['dc', 'Fortinet'],
 ]
 
@@ -51,7 +51,7 @@ describe('firewall handoff — both ends (AN8)', () => {
     expect(checked, 'no handoff was checked').toBeGreaterThan(0)
   })
 
-  it.each(['Cisco', 'Arista', 'Juniper', 'Fortinet', 'HPE Aruba'])(
+  it.each(['Cisco', 'Arista', 'Juniper', 'Fortinet', 'HPE Aruba', 'Extreme Networks'])(
     '%s campus: every distribution switch configures a handoff per firewall', vendor => {
       const { devices, configs } = build('campus', vendor)
       const nFw = devices.filter(d => d.subLayer === 'firewall').length
