@@ -4388,8 +4388,15 @@ interface 1/1/${upStart + 1}
 // topology, `nv set qos roce` for a genuinely lossless GPU fabric (the old
 // output had PFC/ECN only as comments — §6.5 violation), and no empty EVPN
 // (a GPU fabric is standard pure eBGP L3; RFC 7938).
-function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDevices: BOMDevice[] = []): string {
+function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDevices: BOMDevice[] = [], useCase: UseCase | '' = ''): string {
   idx = roleIndex(dev, allDevices, idx)
+  // AN11: a GPU back-end fabric is correctly pure eBGP L3 (Y6, RFC 7938), but a
+  // DC or multisite fabric needs the tenant overlay every other vendor runs —
+  // without it the design had no VLAN 10, no VNI 10010 and no gateway, while
+  // the IPAM export declared all three.
+  const evpnFabric = useCase === 'dc' || useCase === 'multisite'
+  const isMultisite = useCase === 'multisite'
+  const t = TENANT_OVERLAY
   const isSpine = dev.subLayer === 'spine'
   const asn = isSpine ? 65000 : 65000 + Math.floor(idx / 2) + 1
   const lo0ip = isSpine
@@ -4427,7 +4434,37 @@ nv set vrf default router bgp address-family ipv4-unicast redistribute static en
 nv set vrf default router bgp neighbor swp${p} type unnumbered
 nv set vrf default router bgp neighbor swp${p} timers keepalive 3
 nv set vrf default router bgp neighbor swp${p} timers hold 9
-nv set vrf default router bgp neighbor swp${p} bfd enable on`).join('\n')
+nv set vrf default router bgp neighbor swp${p} bfd enable on${evpnFabric ? `
+nv set vrf default router bgp neighbor swp${p} address-family l2vpn-evpn enable on` : ''}`).join('\n')
+  // Explicit route-targets: FRR's auto RT is ASN:VNI and every leaf pair has its
+  // own ASN (Z5), so auto RTs would mean no pair imports another's routes (AN5).
+  const rtL2 = [t.rtL2, ...(isMultisite ? [`${DCI_RT_ASN}:${t.l2vni}`] : [])]
+  const rtL3 = [t.rtL3, ...(isMultisite ? [`${DCI_RT_ASN}:${t.l3vni}`] : [])]
+  const overlayBlock = !evpnFabric ? '' : isSpine ? `
+# ── EVPN (AN11) — the spine is not a VTEP; it carries the l2vpn-evpn address
+# family between leaves (enabled per fabric session above). FRR keeps the
+# originating VTEP as the EVPN next-hop, so no next-hop policy is needed.
+nv set evpn enable on
+` : `
+# ── VXLAN / EVPN TENANT OVERLAY (AN11 — the same TENANT_OVERLAY every vendor runs)
+nv set evpn enable on
+nv set nve vxlan enable on
+nv set nve vxlan source address ${lo0ip}
+nv set bridge domain br_default vlan ${t.vlan} vni ${t.l2vni}
+${rtL2.map(rt => `nv set evpn vni ${t.l2vni} route-target both ${rt}`).join('\n')}
+nv set vrf ${t.vrf} evpn vni ${t.l3vni}
+nv set vrf ${t.vrf} evpn enable on
+${rtL3.map(rt => `nv set vrf ${t.vrf} router bgp route-import from-evpn route-target ${rt}
+nv set vrf ${t.vrf} router bgp route-export to-evpn route-target ${rt}`).join('\n')}
+nv set vrf ${t.vrf} router bgp address-family ipv4-unicast route-export to-evpn enable on
+nv set vrf ${t.vrf} router bgp address-family ipv4-unicast redistribute connected enable on
+# Anycast gateway — the same VRR address and MAC on every leaf.
+nv set interface vlan${t.vlan} ip vrf ${t.vrf}
+nv set interface vlan${t.vlan} ip address <CHANGE-ME-tenant-svi-ip>/24
+nv set interface vlan${t.vlan} ip vrr address <CHANGE-ME-tenant-anycast-gw>/24
+nv set interface vlan${t.vlan} ip vrr mac-address 00:00:5e:00:01:01
+nv set interface vlan${t.vlan} ip vrr state up
+`
 
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
@@ -4467,7 +4504,10 @@ ${sshHardeningBlock('nvue')}
 nv set interface lo ip address ${lo0ip}/32
 nv set interface swp1-${ports} link mtu 9216
 nv set interface swp1-${ports} link state up
-${isSpine ? '' : `#
+${isSpine ? '' : evpnFabric ? `#
+# ── SERVER PORTS — access ports in the tenant VLAN (AN11) ────────────────────
+nv set interface swp1-${nvHostMax} bridge domain br_default access ${t.vlan}
+#` : `#
 # ── GPU SERVER PORTS (Z1 — swp1-${nvHostMax} are cabled to compute nodes but had no
 # L3 config at all: 512 GPUs had no network. Rail-optimized L3-to-the-host:
 # each server port is a routed /31 in the default VRF, RoCE DSCP trust is
@@ -4486,7 +4526,7 @@ nv set vrf default router bgp address-family ipv4-unicast redistribute connected
 nv set vrf default router bgp address-family ipv4-unicast multipaths ebgp 64
 nv set vrf default router bgp path-selection multipath aspath-ignore on
 ${neighborLines}
-${isGpu ? `
+${overlayBlock}${isGpu ? `
 # ── RoCEv2 LOSSLESS (Spectrum — programs PFC priority 3 no-drop, ECN/WRED
 # on lossy queues, buffer carving and DSCP trust in one switchd profile;
 # the §6.5 requirement. This was previously comments only — the fabric
@@ -7036,7 +7076,7 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Dell EMC'  && (l === 'spine' || l === 'leaf'))          return dellOs10SwitchConfig(dev, idx, needsRoce, allDevices)
   if (v === 'HPE Aruba' && (l === 'spine' || l === 'leaf'))          return arubaFabricConfig(dev, idx, allDevices)
   if (v === 'HPE Aruba')                                             return arubaCampusConfig(dev, idx, allDevices, appTypes)
-  if (v === 'NVIDIA'    && (l === 'spine' || l === 'leaf'))          return nvidiaSpectrumConfig(dev, idx, needsRoce, allDevices)
+  if (v === 'NVIDIA'    && (l === 'spine' || l === 'leaf'))          return nvidiaSpectrumConfig(dev, idx, needsRoce, allDevices, useCase)
   if (v === 'Extreme Networks')                                      return extremeExosConfig(dev, idx, allDevices, appTypes)
   return genericConfig(dev)
 }

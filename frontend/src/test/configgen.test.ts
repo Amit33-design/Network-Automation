@@ -2168,7 +2168,8 @@ describe('NVIDIA Cumulus border leaf terminates the firewall handoff (Z3b)', () 
 
   it('the handoff port never collides with the GPU server-port range', () => {
     const c = fabric()
-    const hostMax = +/nv set interface swp1-(\d+) ip address <CHANGE-ME-host-p2p>/.exec(c['l4'])![1]
+    // DC leaves bridge host ports into the tenant VLAN (AN11); GPU leaves route them.
+    const hostMax = +/nv set interface swp1-(\d+) (?:ip address <CHANGE-ME-host-p2p>|bridge domain br_default access)/.exec(c['l4'])![1]
     const fwPorts = [...c['l4'].matchAll(/nv set interface swp(\d+) description FW-HANDOFF/g)].map(m => +m[1])
     expect(fwPorts.length).toBeGreaterThan(0)
     for (const p of fwPorts) expect(p, 'handoff port overlaps the compute range').toBeGreaterThan(hostMax)

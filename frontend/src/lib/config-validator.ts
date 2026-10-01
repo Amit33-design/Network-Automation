@@ -472,6 +472,19 @@ function checkEVPNConsistency(
   const hasNVE = hostsWith(facts, 'vxlan')
   const hasEVPN = hostsWith(facts, 'evpn')
 
+  // AN11: a GPU back-end fabric is commonly pure eBGP L3 to the host (RFC 7938,
+  // the Spectrum-X reference design) — no tenant VLANs to stretch, so no overlay.
+  // That is a design, not a gap, as long as the fabric routes.
+  if (useCase === 'gpu' && hasNVE.length === 0 && hasEVPN.length === 0 && hostsWith(facts, 'bgp').length > 0) {
+    return {
+      id: 'V-08',
+      name: 'EVPN/VXLAN consistency',
+      category: 'Fabric',
+      severity: 'info',
+      detail: 'Pure L3 eBGP GPU fabric (RFC 7938) — no VXLAN overlay expected',
+    }
+  }
+
   if (hasNVE.length === 0 && hasEVPN.length === 0) {
     return {
       id: 'V-08',
