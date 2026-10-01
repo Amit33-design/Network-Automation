@@ -16,10 +16,10 @@ import { buildLLDTopology } from '@/components/LLDTopologyDiagram'
 
 const VENDORS = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks', 'HPE Aruba', 'Palo Alto', 'Fortinet']
 
-function design(vendor: string) {
-  const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'AO1', vendorPrefs: [vendor], totalEndpoints: 512 })
-  const configs = generateAllConfigs(devices, 'dc')
-  return { devices, configs, lld: buildLLDTopology(devices, 'dc', 'AO1') }
+function design(vendor: string, useCase: 'dc' | 'gpu' = 'dc') {
+  const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'AO1', vendorPrefs: [vendor], totalEndpoints: 512 })
+  const configs = generateAllConfigs(devices, useCase)
+  return { devices, configs, lld: buildLLDTopology(devices, useCase, 'AO1') }
 }
 
 /** True when `ip` (no mask) occurs as a whole address in `text`. */
@@ -69,6 +69,24 @@ describe('DC LLD is drawn from the design (AO1)', () => {
       const up = fabricInterfaceView(leaf, devices, 'dc').find(i => i.kind === 'fabric' && i.peer === spine && i.name === l.toPort)
       expect(up, `${leaf.hostname} has no uplink ${l.toPort} to ${spine}`).toBeDefined()
     }
+  })
+
+  // AO2: the GPU LLD invented an OOB switch, DGX servers and NetApp storage.
+  it.each(['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Dell EMC'])('%s GPU: only BOM devices, only config addresses', vendor => {
+    const { devices, configs, lld } = design(vendor, 'gpu')
+    const byHost = new Map(devices.map(d => [d.hostname, d]))
+    const cfgOf = new Map(devices.map(d => [d.hostname, `${stripComments(configs[d.id] ?? '')}\n${configs[d.id] ?? ''}`]))
+    for (const n of lld.nodes) {
+      expect(byHost.has(n.hostname), `${n.hostname} is not in the BOM`).toBe(true)
+      for (const i of n.interfaces) if (/^10\./.test(i.ip)) expect(hasAddr(cfgOf.get(n.hostname)!, i.ip.split('/')[0]), `${n.hostname} ${i.ip}`).toBe(true)
+    }
+    expect(lld.nodes.some(n => byHost.get(n.hostname)!.subLayer === 'gpu-compute')).toBe(true)
+  })
+
+  it('a pure-L3 NVIDIA GPU fabric is not captioned as VXLAN/EVPN', () => {
+    const { lld } = design('NVIDIA', 'gpu')
+    const text = JSON.stringify(lld.zones) + JSON.stringify(lld.nodes.map(n => [n.configLines, n.services]))
+    expect(text).not.toMatch(/VXLAN|EVPN|VNI/)
   })
 
   it('the address check catches an invented address (mutation guard)', () => {

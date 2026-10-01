@@ -214,13 +214,16 @@ function buildDCLLD(devices: BOMDevice[], sc: string, useCase = 'dc'): LLDTopo {
   }
   const shownHosts = new Set([...shownSpines, ...shownLeaves, ...shownFws].map(d => d.hostname))
   const t = TENANT_OVERLAY
+  // A Cumulus GPU fabric is pure eBGP L3 to the host (Y6) — no VXLAN, no VNI,
+  // no EVPN — so the overlay captions would be false there (AN11).
+  const pureL3 = useCase === 'gpu' && leafDevs.some(d => d.vendor === 'NVIDIA')
 
   const zones: LLDZone[] = [
     { id: 'z-fw', label: 'PERIMETER', sublabel: 'Firewalls · routed /31 handoff to the border leaves',
       yStart: 0, yEnd: 180, fill: 'rgba(127,29,29,0.22)', stroke: '#B91C1C' },
-    { id: 'z-spine', label: 'SPINE', sublabel: 'eBGP underlay /31s · EVPN route exchange (not a VTEP)',
+    { id: 'z-spine', label: 'SPINE', sublabel: pureL3 ? 'eBGP unnumbered · ECMP (pure L3, RFC 7938)' : 'eBGP underlay /31s · EVPN route exchange (not a VTEP)',
       yStart: 180, yEnd: 380, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
-    { id: 'z-leaf', label: 'LEAF / VTEP', sublabel: `VXLAN · VLAN ${t.vlan} ↔ VNI ${t.l2vni} · ${t.vrf} L3VNI ${t.l3vni}`,
+    { id: 'z-leaf', label: pureL3 ? 'LEAF / ToR' : 'LEAF / VTEP', sublabel: pureL3 ? 'eBGP unnumbered uplinks · routed host ports' : `VXLAN · VLAN ${t.vlan} ↔ VNI ${t.l2vni} · ${t.vrf} L3VNI ${t.l3vni}`,
       yStart: 380, yEnd: 590, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
     { id: 'z-srv', label: `SERVERS · VLAN ${t.vlan} ${t.vlanName}`, sublabel: 'Access ports on every leaf · anycast gateway',
       yStart: 590, yEnd: 740, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
@@ -233,14 +236,15 @@ function buildDCLLD(devices: BOMDevice[], sc: string, useCase = 'dc'): LLDTopo {
   }))
   const spXs = xCenter(Math.max(1, shownSpines.length), 40, NW)
   const spNodes = shownSpines.map((d, i) => mkNode(`sp${i}`, d.hostname, d.model, 'spine', d.vendor, spXs[i], Y.spine, NW, 130, {
-    interfaces: ifaces(d, shownHosts), services: ['eBGP', 'EVPN', 'BFD'],
+    interfaces: ifaces(d, shownHosts), services: pureL3 ? ['eBGP', 'BFD'] : ['eBGP', 'EVPN', 'BFD'],
   }))
   const LW = 220
   const lfXs = xCenter(Math.max(1, shownLeaves.length), 30, LW)
   const lfNodes = shownLeaves.map((d, i) => mkNode(`lf${i}`, d.hostname, d.model, 'leaf', d.vendor, lfXs[i], Y.leaf, LW, 140, {
     interfaces: ifaces(d, shownHosts),
-    configLines: [`VLAN ${t.vlan} → VNI ${t.l2vni}`, `${t.vrf} · L3VNI ${t.l3vni}`, ...(border.some(b => b.id === d.id) ? ['Border leaf — firewall handoff'] : [])],
-    services: ['VXLAN', 'BGP EVPN', 'Anycast GW'],
+    configLines: [...(pureL3 ? ['eBGP unnumbered · ECMP'] : [`VLAN ${t.vlan} → VNI ${t.l2vni}`, `${t.vrf} · L3VNI ${t.l3vni}`]),
+      ...(border.some(b => b.id === d.id) ? ['Border leaf — firewall handoff'] : [])],
+    services: pureL3 ? ['eBGP', 'ECMP'] : ['VXLAN', 'BGP EVPN', 'Anycast GW'],
   }))
   const nodeOf = new Map<string, LLDNode>()
   ;[...shownFws, ...shownSpines, ...shownLeaves].forEach((d, i) => nodeOf.set(d.hostname, [...fwNodes, ...spNodes, ...lfNodes][i]))
@@ -262,7 +266,9 @@ function buildDCLLD(devices: BOMDevice[], sc: string, useCase = 'dc'): LLDTopo {
 
   const more = (shown: number, all: number, what: string) => all > shown ? ` (showing ${shown} of ${all} ${what})` : ''
   return {
-    nodes: [...fwNodes, ...spNodes, ...lfNodes], links, zones, cabling: [],
+    nodes: [...fwNodes, ...spNodes, ...lfNodes], links,
+    // No perimeter band on a design that has no firewall.
+    zones: zones.filter(z => z.id !== 'z-fw' || shownFws.length > 0), cabling: [],
     title: `DATA CENTER FABRIC LLD${sc ? ` · ${sc}` : ''}`,
     subtitle: `${spineDevs.length} spine · ${leafDevs.length} leaf · ${fwDevs.length} firewall` +
       more(shownSpines.length, spineDevs.length, 'spines') + more(shownLeaves.length, leafDevs.length, 'leaves') +
@@ -419,146 +425,40 @@ function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
 // ─── GPU AI Fabric LLD ────────────────────────────────────────────────────────
 
 function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
-  const NW = 190
-  const Y = { oob: 50, spine: 180, leaf: 340, gpu: 510, stor: 680 }
-
-  // Use the actual BOM spine/leaf hardware (vendor/model/hostname) rather than
-  // hardcoding a single vendor — the fabric switches must reflect the BOM.
-  const spineDevs = devices.filter(d => d.subLayer === 'spine')
-  const leafDevs  = devices.filter(d => d.subLayer === 'leaf')
-  const spineVendor = spineDevs[0]?.vendor ?? 'NVIDIA'
-  const spineModel  = spineDevs[0]?.model  ?? 'SN4800'
-  const leafVendor  = leafDevs[0]?.vendor  ?? 'NVIDIA'
-  const leafModel   = leafDevs[0]?.model   ?? 'SN4600C'
-  const spineName = (i: number) => spineDevs[i]?.hostname ?? `GPU-SPINE-0${i + 1}`
-  const leafName  = (i: number) => leafDevs[i]?.hostname  ?? `GPU-LEAF-0${i + 1}`
-
-  const zones: LLDZone[] = [
-    { id: 'z-oob', label: 'OOB MANAGEMENT', sublabel: 'SSH · SNMPv3 · Syslog · VLAN 10',
-      yStart: 0, yEnd: 130, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
-    { id: 'z-spine', label: 'SPINE FABRIC', sublabel: 'IS-IS underlay · 400G QSFP-DD · ECMP 16-path',
-      yStart: 130, yEnd: 290, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
-    { id: 'z-leaf', label: 'LEAF / ToR', sublabel: 'VXLAN NVE · BGP EVPN · Anycast-GW · PFC P3',
-      yStart: 290, yEnd: 460, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
-    { id: 'z-gpu', label: 'GPU COMPUTE', sublabel: 'NVIDIA A100/H100 · NVLink · GPUDirect RDMA · PFC lossless',
-      yStart: 460, yEnd: 630, fill: 'rgba(6,78,59,0.20)', stroke: '#065F46' },
-    { id: 'z-stor', label: 'STORAGE', sublabel: 'NVMe-oF TCP · GPUDirect Storage · RDMA',
-      yStart: 630, yEnd: 790, fill: 'rgba(30,27,75,0.20)', stroke: '#3730A3' },
-  ]
-
-  const [oobX] = xCenter(1, 0, 200)
-  const oob = mkNode('oob', 'OOB-MGMT-SW', 'C9300-24T', 'oob', 'Cisco', oobX, Y.oob, 200, 90, {
-    interfaces: [
-      { name: 'Gi0/1-8', ip: '10.0.0.250/24', vlan: 'VLAN 10 OOB' },
-    ],
-    configLines: ['VLAN 10 OOB · SSH · SNMPv3', 'Syslog → 10.0.0.100'],
-    services: ['SSH', 'SNMPv3', 'Syslog'],
-  })
-
-  const [s1x, s2x] = xCenter(2, 280, NW)
-  const sp1 = mkNode('sp1', spineName(0), spineModel, 'spine', spineVendor, s1x, Y.spine, NW, 110, {
-    haRole: 'active',    interfaces: [
-      { name: 'e1/1-4', ip: '10.1.0.x/31', speed: '400G' },
-      { name: 'Lo0', ip: '10.255.1.1/32' },
-      { name: 'Gi0/48', ip: '10.0.0.31/24', vlan: 'OOB VLAN10' },
-    ],
-    configLines: ['IS-IS level-2', 'BFD interval 100ms', 'PFC priority 3 no-drop', 'ECN DCQCN enabled'],
-    services: ['IS-IS', 'BFD', 'PFC', 'ECN', 'DCQCN'],
-  })
-  const sp2 = mkNode('sp2', spineName(1), spineModel, 'spine', spineVendor, s2x, Y.spine, NW, 110, {
-    haRole: 'active',    interfaces: [
-      { name: 'e1/1-4', ip: '10.1.1.x/31', speed: '400G' },
-      { name: 'Lo0', ip: '10.255.1.2/32' },
-      { name: 'Gi0/48', ip: '10.0.0.32/24', vlan: 'OOB VLAN10' },
-    ],
-    configLines: ['IS-IS level-2', 'BFD interval 100ms', 'PFC priority 3 no-drop', 'ECN DCQCN enabled'],
-    services: ['IS-IS', 'BFD', 'PFC', 'ECN', 'DCQCN'],
-  })
-
-  const leafW = 180
-  const leafXs = xCenter(4, 20, leafW)
-  const leaves = leafXs.map((x, i) => mkNode(
-    `lf${i+1}`, leafName(i), leafModel, 'leaf', leafVendor, x, Y.leaf, leafW, 120, {
-      interfaces: [
-        { name: 'e1/1', ip: `10.1.0.${i*4+1}/31`, speed: '400G', vlan: 'Spine-01 uplink' },
-        { name: 'e1/2', ip: `10.1.1.${i*4+1}/31`, speed: '400G', vlan: 'Spine-02 uplink' },
-        { name: `e1/20-21`, ip: `192.168.100.${i*4}/30`, speed: '400G', vlan: 'GPU host' },
-        { name: 'Po1', ip: '—', vlan: `MLAG Pair #${Math.floor(i/2)+1}` },
-        { name: 'Lo0', ip: `10.255.2.${i+1}/32` },
-      ],
-      configLines: [
-        'VXLAN NVE · BGP EVPN',
-        'PFC priority 3 no-drop',
-        'ECN · DCQCN · WRED',
-        `MLAG Pair #${Math.floor(i/2)+1}`,
-      ],
-      services: ['VXLAN', 'BGP EVPN', 'PFC', 'ECN'],
-    },
-  ))
-
-  const gpuW = 170
-  const gpuXs = xCenter(4, 20, gpuW)
-  const gpus = gpuXs.map((x, i) => mkNode(
-    `gpu${i+1}`, `A100-SRV-0${i+1}`, 'DGX A100', 'gpu', 'NVIDIA', x, Y.gpu, gpuW, 110, {
-      interfaces: [
-        { name: 'mlx0', ip: `192.168.100.${i*4+1}/30`, speed: '400G', vlan: 'RoCEv2' },
-        { name: 'mlx1', ip: `192.168.100.${i*4+5}/30`, speed: '400G', vlan: 'RoCEv2 backup' },
-      ],
-      configLines: [
-        '8× A100 80GB GPU',
-        'NVLink 4th gen · 600GB/s',
-        'GPUDirect RDMA · RoCEv2',
-        'PFC priority 3 lossless',
-      ],
-      services: ['RDMA', 'GPUDirect', 'NVLink'],
-      specs: '8× A100 · 2TB RAM · 15TB NVMe',
-    },
-  ))
-
-  const storW = 180
-  const [st1x, st2x] = xCenter(2, 200, storW)
-  const stor1 = mkNode('stor1', 'NVMe-STOR-01', 'EF-570', 'storage', 'NetApp', st1x, Y.stor, storW, 90, {
-    interfaces: [
-      { name: 'e0a', ip: '192.168.200.1/30', speed: '400G' },
-      { name: 'e0b', ip: '192.168.200.5/30', speed: '400G' },
-    ],
-    configLines: ['NVMe-oF TCP · 24×7.68TB NVMe', 'GPUDirect Storage · RDMA'],
-    services: ['NVMe-oF', 'GPUDirect Storage'],
-  })
-  const stor2 = mkNode('stor2', 'NVMe-STOR-02', 'EF-570', 'storage', 'NetApp', st2x, Y.stor, storW, 90, {
-    interfaces: [
-      { name: 'e0a', ip: '192.168.200.9/30', speed: '400G' },
-      { name: 'e0b', ip: '192.168.200.13/30', speed: '400G' },
-    ],
-    configLines: ['NVMe-oF TCP · 24×7.68TB NVMe', 'GPUDirect Storage · RDMA'],
-    services: ['NVMe-oF', 'GPUDirect Storage'],
-  })
-
-  const nodes = [oob, sp1, sp2, ...leaves, ...gpus, stor1, stor2]
-
-  const links: LLDLink[] = [
-    mkLink('oob', 'sp1', 'Gi0/1', 'Gi0/48', '1G', 'OOB Mgmt', { isDashed: true, vlan: 'VLAN10' }),
-    mkLink('oob', 'sp2', 'Gi0/2', 'Gi0/48', '1G', 'OOB Mgmt', { isDashed: true, vlan: 'VLAN10' }),
-    ...leaves.map((lf, i) => mkLink('sp1', lf.id, `e1/${i+1}`, 'e1/1', '400G', 'IS-IS / RoCEv2', { subnet: `10.1.0.${i*4}/31` })),
-    ...leaves.map((lf, i) => mkLink('sp2', lf.id, `e1/${i+1}`, 'e1/2', '400G', 'IS-IS / RoCEv2', { subnet: `10.1.1.${i*4}/31` })),
-    mkLink('lf1', 'lf2', 'Po1', 'Po1', '2×100G', 'MLAG Peer', { isDashed: true }),
-    mkLink('lf3', 'lf4', 'Po1', 'Po1', '2×100G', 'MLAG Peer', { isDashed: true }),
-    ...gpus.map((g, i) => mkLink(leaves[i].id, g.id, `e1/20`, 'mlx0', '400G', 'RoCEv2 PFC lossless', { subnet: `192.168.100.${i*4}/30` })),
-    mkLink('lf1', 'stor1', 'e1/40', 'e0a', '400G', 'NVMe-oF TCP', { subnet: '192.168.200.0/30' }),
-    mkLink('lf2', 'stor2', 'e1/40', 'e0a', '400G', 'NVMe-oF TCP', { subnet: '192.168.200.8/30' }),
-  ]
-
-  const cabling: CablingEntry[] = [
-    ...gpus.map((g, i) => ({ server: g.hostname, serverPort: 'mlx0', ipv4: g.interfaces[0]?.ip ?? '', switchPort: `LEAF-0${i+1} e1/20`, mgmtPort: 'OOB', vlan: 'RoCEv2' })),
-    { server: 'NVMe-STOR-01', serverPort: 'e0a', ipv4: '192.168.200.1', switchPort: 'LEAF-01 e1/40', mgmtPort: 'OOB', vlan: 'NVMe-oF' },
-    { server: 'NVMe-STOR-02', serverPort: 'e0a', ipv4: '192.168.200.9', switchPort: 'LEAF-02 e1/40', mgmtPort: 'OOB', vlan: 'NVMe-oF' },
-  ]
-
+  // AO2: the GPU LLD invented an OOB switch, four DGX A100 servers and a NetApp
+  // storage pair — none in the BOM — and 13 of its 19 addresses were in no
+  // config. It now reuses the design-driven fabric view (AO1) and adds the
+  // BOM's own GPU servers as the host tier.
+  const base = buildDCLLD(devices, sc, 'gpu')
+  const leafNodes = base.nodes.filter(n => n.tier === 'leaf')
+  const servers = devices.filter(d => d.subLayer === 'gpu-compute')
+  const shown = servers.slice(0, Math.max(1, Math.min(4, leafNodes.length || 1)))
+  const routedHost = devices.some(d => d.subLayer === 'leaf' && d.vendor === 'NVIDIA')
+  const W = 200
+  const xs = xCenter(Math.max(1, shown.length), 30, W)
+  const gpuNodes = shown.map((d, i) => mkNode(`gpu${i}`, d.hostname, d.model, 'gpu', d.vendor, xs[i], 650, W, 100, {
+    interfaces: [{
+      name: 'RDMA NIC',
+      ip: routedHost ? '<CHANGE-ME-host-p2p>/31' : `VLAN ${TENANT_OVERLAY.vlan} (<CHANGE-ME-tenant-ip>)`,
+      vlan: leafNodes.length ? `→ ${leafNodes[i % leafNodes.length].hostname}` : undefined,
+    }],
+    configLines: ['RoCEv2 · DSCP 26 / PFC priority 3', 'mlnx_qos --trust dscp'],
+    services: ['RDMA', 'RoCEv2'],
+  }))
+  const hostLinks = gpuNodes.map((g, i) => leafNodes.length
+    ? mkLink(leafNodes[i % leafNodes.length].id, g.id, 'host port', 'RDMA NIC', '', 'RoCEv2 lossless')
+    : null).filter((l): l is LLDLink => l !== null)
+  const zones = base.zones.map(z => z.id === 'z-srv'
+    ? { ...z, label: 'GPU COMPUTE', sublabel: routedHost ? 'Routed /31 to the host · PFC priority 3 lossless' : `VLAN ${TENANT_OVERLAY.vlan} access · PFC priority 3 lossless` }
+    : z.id === 'z-leaf' ? { ...z, sublabel: `${z.sublabel} · RoCEv2 PFC/ECN` } : z)
   return {
-    nodes, links, zones, cabling,
-    title: `GPU AI FABRIC LLD — SPECIFIC IMPLEMENTATION${sc ? ` · ${sc}` : ''}`,
-    subtitle: '2 Spine · 4 Leaf ToR · 4 GPU Nodes · NVMe-oF Storage · RoCEv2 lossless · PFC P3',
-    svgH: 830,
+    ...base,
+    nodes: [...base.nodes, ...gpuNodes],
+    links: [...base.links, ...hostLinks],
+    zones,
+    title: `GPU AI FABRIC LLD${sc ? ` · ${sc}` : ''}`,
+    subtitle: `${base.subtitle.replace(' · addresses from the generated configs', '')} · ${servers.length} GPU servers` +
+      (servers.length > shown.length ? ` (showing ${shown.length})` : '') + ' · addresses from the generated configs',
   }
 }
 
