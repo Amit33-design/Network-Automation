@@ -803,3 +803,25 @@ describe('V-09 per device and per dialect (AM7)', () => {
   })
 })
 
+
+describe('V-08 accepts a pure L3 GPU fabric (AN11)', () => {
+  const v08 = (vendor: string, useCase: 'gpu' | 'dc') => {
+    const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'T', vendorPrefs: [vendor] })
+    const configs = generateAllConfigs(devices, useCase)
+    return validateConfigs({ configs, devices, useCase }).checks.find(c => c.id === 'V-08')!
+  }
+
+  it('an NVIDIA GPU fabric (eBGP L3, no overlay) is info, not a warning', () => {
+    expect(v08('NVIDIA', 'gpu').severity).toBe('info')
+  })
+
+  it('an NVIDIA DC fabric now carries the EVPN overlay', () => {
+    expect(v08('NVIDIA', 'dc').severity).toBe('pass')
+  })
+
+  it('a GPU design with neither an overlay nor BGP still warns', () => {
+    const devices = buildDeviceList({ useCase: 'gpu', scale: 'medium', siteCode: 'T', vendorPrefs: ['NVIDIA'] })
+    const configs = Object.fromEntries(devices.map(d => [d.id, `hostname ${d.hostname}\n`]))
+    expect(validateConfigs({ configs, devices, useCase: 'gpu' }).checks.find(c => c.id === 'V-08')!.severity).toBe('warn')
+  })
+})

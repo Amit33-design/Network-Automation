@@ -31,6 +31,13 @@ const X: Record<string, (c: string) => Record<string, string>> = {
   }),
   'Dell EMC': c => ({ vlanVni: [...c.matchAll(/vxlan-vni (\d+)/g)].map(m => m[1]).join(','), rts: [...c.matchAll(/route-target (\S+)/g)].map(m => m[1]).sort().join(','), agwMac: '', l3vni: '' }),
   'Extreme Networks': c => ({ vlanVni: [...c.matchAll(/vxlan vni (\d+)/g)].map(m => m[1]).join(','), rts: '', agwMac: '', l3vni: '' }),
+  // AN11: NVIDIA Cumulus NVUE — DC/multisite leaves are EVPN VTEPs (GPU stays pure L3).
+  NVIDIA: c => ({
+    vlanVni: [...c.matchAll(/bridge domain \S+ vlan (\d+) vni (\d+)/g)].map(m => `${m[1]}=${m[2]}`).sort().join(','),
+    rts: [...c.matchAll(/route-target (?:both |from-evpn route-target |to-evpn route-target )?(\d+:\d+)/g)].map(m => m[1]).sort().join(','),
+    agwMac: c.match(/ip vrr mac-address (\S+)/)?.[1] ?? '',
+    l3vni: c.match(/nv set vrf \S+ evpn vni (\d+)/)?.[1] ?? '',
+  }),
   'HPE Aruba': c => ({ vlanVni: [...c.matchAll(/vni (\d+)\n\s+vlan (\d+)/g)].map(m => `${m[2]}=${m[1]}`).join(','), rts: [...c.matchAll(/route-target (?:import|export) (\S+)/g)].map(m => m[1]).sort().join(','), agwMac: '', l3vni: '' }),
 }
 
@@ -48,7 +55,7 @@ function disagreements(vendor: string, cfgs: Record<string, string>, leaves: { i
   return Object.entries(vals).filter(([, s]) => s.size > 1).map(([k]) => k)
 }
 
-const EXPLICIT_RT = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'HPE Aruba']
+const EXPLICIT_RT = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'Dell EMC', 'HPE Aruba', 'NVIDIA']
 
 describe('EVPN overlay is consistent across leaves, with explicit route-targets (AN5)', () => {
   for (const vendor of EXPLICIT_RT) for (const uc of ['dc', 'multisite'] as const) {
