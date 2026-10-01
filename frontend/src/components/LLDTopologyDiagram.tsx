@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import type { BOMDevice, UseCase } from '@/types'
-import { fabricInterfaceView, borderLeaves, TENANT_OVERLAY } from '@/lib/configgen'
+import { fabricInterfaceView, borderLeaves, TENANT_OVERLAY, CAMPUS_VLANS } from '@/lib/configgen'
 import { tierIcon } from '@/components/icons'
 import { CloseButton } from '@/components/ui/CloseButton'
 
@@ -280,145 +280,73 @@ function buildDCLLD(devices: BOMDevice[], sc: string, useCase = 'dc'): LLDTopo {
 // ─── Campus LLD ───────────────────────────────────────────────────────────────
 
 function buildCampusLLD(devices: BOMDevice[], sc: string): LLDTopo {
-  const NW = 190
-  const Y = { wan: 60, core: 200, dist: 370, access: 530, hosts: 700 }
+  // AO3: the campus LLD drew a core pair and two WAN routers the campus BOM does
+  // not contain, and none of its 23 addresses was in any config. It now draws
+  // the BOM's firewalls, distribution and access switches with addresses from
+  // the campus allocators (AN7 VLAN plan, AN8 firewall handoff).
+  const IF_CAP = 6
+  const Y = { fw: 60, dist: 240, access: 440 }
+  const fwDevs = devices.filter(d => d.subLayer === 'firewall')
+  const distDevs = devices.filter(d => d.subLayer === 'distribution')
+  const accDevs = devices.filter(d => d.subLayer === 'access')
+  const shownFws = fwDevs.slice(0, 2)
+  const shownDist = distDevs.slice(0, 4)
+  const shownAcc = accDevs.slice(0, 4)
+  const shownHosts = new Set([...shownFws, ...shownDist, ...shownAcc].map(d => d.hostname))
+  const { data, voice, mgmt } = CAMPUS_VLANS
+  const ifaces = (d: BOMDevice): LLDInterface[] => {
+    const all = fabricInterfaceView(d, devices, 'campus')
+    const rows: LLDInterface[] = all.slice(0, IF_CAP).map(i => ({ name: i.name, ip: i.ip, vlan: i.peer ? `→ ${i.peer}` : undefined }))
+    if (all.length > IF_CAP) rows.push({ name: `+${all.length - IF_CAP} more`, ip: '—' })
+    return rows
+  }
 
-  // Reflect the BOM's actual vendor/model for the campus L2/L3 switching tiers.
-  const coreRole = bomRole(devices, 'core', { vendor: 'Cisco', model: 'C9500-32QC', name: i => `CORE-SW-0${i + 1}` })
-  const distRole = bomRole(devices, 'distribution', { vendor: 'Cisco', model: 'C9500-48Y4C', name: i => `DIST-SW-0${i + 1}` })
-  const accRole = bomRole(devices, 'access', { vendor: 'Cisco', model: 'C9300-48P', name: i => `ACC-SW-0${i + 1}` })
-  const wanRole = bomRole(devices, 'wan-edge', { vendor: 'Cisco', model: 'ASR-1001X', name: i => `WAN-RTR-0${i + 1}` })
+  const zones: LLDZone[] = ([
+    { id: 'z-fw', label: 'PERIMETER', sublabel: 'Firewalls · routed /31 handoff to the distribution pair',
+      yStart: 0, yEnd: 180, fill: 'rgba(127,29,29,0.22)', stroke: '#B91C1C' },
+    { id: 'z-dist', label: 'DISTRIBUTION', sublabel: `OSPF area 0 · FHRP VIP ${mgmt.vip} on VLAN ${mgmt.id} · L3 gateway for VLAN ${data.id}`,
+      yStart: 180, yEnd: 380, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
+    { id: 'z-access', label: 'ACCESS', sublabel: '802.1X · PoE · split uplinks to the distribution pair',
+      yStart: 380, yEnd: 590, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
+    { id: 'z-ep', label: 'ENDPOINTS', sublabel: `VLAN ${data.id} ${data.name} · VLAN ${voice.id} ${voice.name} (with voice) · native VLAN ${mgmt.id}`,
+      yStart: 590, yEnd: 740, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
+  ] as LLDZone[]).filter(z => z.id !== 'z-fw' || shownFws.length > 0)
 
-  const zones: LLDZone[] = [
-    { id: 'z-wan', label: 'WAN EDGE', sublabel: 'Dual ISP · BGP eBGP · BFD',
-      yStart: 0, yEnd: 150, fill: 'rgba(180,83,9,0.20)', stroke: '#B45309' },
-    { id: 'z-core', label: 'CAMPUS CORE', sublabel: 'OSPF Area 0 · VSS · HSRP · L3 GW',
-      yStart: 150, yEnd: 320, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
-    { id: 'z-dist', label: 'DISTRIBUTION LAYER', sublabel: 'MLAG Pairs · DHCP Relay · Inter-VLAN',
-      yStart: 320, yEnd: 480, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
-    { id: 'z-access', label: 'ACCESS LAYER', sublabel: '802.1X · PoE+ · DAI · LLDP · Voice VLAN',
-      yStart: 480, yEnd: 650, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
-    { id: 'z-ep', label: 'ENDPOINTS', sublabel: 'PCs · IP Phones · APs · Printers',
-      yStart: 650, yEnd: 810, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
-  ]
+  const NW = 210
+  const fwXs = xCenter(Math.max(1, shownFws.length), 160, NW)
+  const fwNodes = shownFws.map((d, i) => mkNode(`fw${i}`, d.hostname, d.model, 'firewall', d.vendor, fwXs[i], Y.fw, NW, 110, {
+    interfaces: ifaces(d), services: ['NGFW', 'Routed handoff'],
+  }))
+  const dXs = xCenter(Math.max(1, shownDist.length), 30, NW)
+  const distNodes = shownDist.map((d, i) => mkNode(`dist${i}`, d.hostname, d.model, 'distribution', d.vendor, dXs[i], Y.dist, NW, 130, {
+    interfaces: ifaces(d), configLines: [`VLAN ${data.id} SVI + FHRP`, `VLAN ${mgmt.id} mgmt · VIP ${mgmt.vip}`, 'OSPF area 0'],
+    services: ['OSPF', 'FHRP', 'STP root'],
+  }))
+  const aXs = xCenter(Math.max(1, shownAcc.length), 30, NW)
+  const accNodes = shownAcc.map((d, i) => mkNode(`acc${i}`, d.hostname, d.model, 'access', d.vendor, aXs[i], Y.access, NW, 110, {
+    interfaces: ifaces(d), configLines: [`VLAN ${data.id} access · 802.1X`, `Default → ${mgmt.vip}`], services: ['802.1X', 'PoE'],
+  }))
+  const nodeOf = new Map<string, LLDNode>()
+  ;[...shownFws, ...shownDist, ...shownAcc].forEach((d, i) => nodeOf.set(d.hostname, [...fwNodes, ...distNodes, ...accNodes][i]))
 
-  const [w1x, w2x] = xCenter(2, 200, NW)
-  const wan1 = mkNode('wan1', wanRole.name(0), wanRole.model(0), 'wan', wanRole.vendor(0), w1x, Y.wan, NW, 100, {
-    haRole: 'active',    interfaces: [
-      { name: 'Gi0/0/0', ip: '203.0.113.1/30', vlan: 'ISP-A' },
-      { name: 'Gi0/0/1', ip: '10.0.0.1/30', vlan: 'Core-uplink' },
-      { name: 'Lo0', ip: '10.255.0.1/32' },
-    ],
-    configLines: ['BGP AS65000', 'OSPF Area 0', 'BFD multihop'],
-    services: ['BGP eBGP', 'OSPF', 'BFD'],
-  })
-  const wan2 = mkNode('wan2', wanRole.name(1), wanRole.model(1), 'wan', wanRole.vendor(1), w2x, Y.wan, NW, 100, {
-    haRole: 'standby',    interfaces: [
-      { name: 'Gi0/0/0', ip: '198.51.100.1/30', vlan: 'ISP-B' },
-      { name: 'Gi0/0/1', ip: '10.0.0.5/30', vlan: 'Core-uplink' },
-      { name: 'Lo0', ip: '10.255.0.2/32' },
-    ],
-    configLines: ['BGP AS65000', 'OSPF Area 0', 'iBGP peer'],
-    services: ['BGP eBGP', 'OSPF', 'BFD'],
-  })
+  const links: LLDLink[] = []
+  // Firewall handoffs, read from the distribution side's own plan.
+  for (const d of shownDist) for (const h of fabricInterfaceView(d, devices, 'campus').filter(i => i.kind === 'handoff' && i.peer && shownHosts.has(i.peer))) {
+    links.push(mkLink(nodeOf.get(h.peer!)!.id, nodeOf.get(d.hostname)!.id, 'inside', h.name, '', 'Routed handoff', { subnet: h.ip }))
+  }
+  // Access uplinks: UPLINK-1 / UPLINK-2 to the first distribution pair, as the
+  // access configs describe them.
+  const pair = shownDist.slice(0, 2)
+  for (const a of shownAcc) pair.forEach((d, k) => links.push(mkLink(nodeOf.get(d.hostname)!.id, nodeOf.get(a.hostname)!.id, 'downlink trunk', `UPLINK-${k + 1}`, '', `Trunk · native ${mgmt.id}`)))
 
-  const [c1x, c2x] = xCenter(2, 200, NW)
-  const core1 = mkNode('core1', coreRole.name(0), coreRole.model(0), 'core', coreRole.vendor(0), c1x, Y.core, NW, 120, {
-    haRole: 'active',    interfaces: [
-      { name: 'Te1/0/1', ip: '10.0.0.2/30', vlan: 'WAN-uplink' },
-      { name: 'Te1/0/48', ip: '—', vlan: 'VSS link' },
-      { name: 'Lo0', ip: '10.255.0.21/32' },
-      { name: 'Vlan10', ip: '10.10.0.2/24', vlan: 'DATA HSRP VIP: 10.10.0.1' },
-    ],
-    configLines: ['VSS Active', 'OSPF Area 0 DR', 'HSRP Priority 110', 'DHCP Server'],
-    services: ['VSS', 'OSPF', 'HSRP', 'DHCP'],
-  })
-  const core2 = mkNode('core2', coreRole.name(1), coreRole.model(1), 'core', coreRole.vendor(1), c2x, Y.core, NW, 120, {
-    haRole: 'standby',    interfaces: [
-      { name: 'Te1/0/1', ip: '10.0.0.6/30', vlan: 'WAN-uplink' },
-      { name: 'Te1/0/48', ip: '—', vlan: 'VSS link' },
-      { name: 'Lo0', ip: '10.255.0.22/32' },
-      { name: 'Vlan10', ip: '10.10.0.3/24', vlan: 'DATA HSRP Standby' },
-    ],
-    configLines: ['VSS Standby', 'OSPF Area 0 BDR', 'HSRP Priority 100'],
-    services: ['VSS', 'OSPF', 'HSRP'],
-  })
-
-  const distW = 180
-  const [d1x, d2x, d3x, d4x] = xCenter(4, 20, distW)
-  const dists = [d1x, d2x, d3x, d4x].map((x, i) => mkNode(
-    `dist${i+1}`, distRole.name(i), distRole.model(i), 'distribution', distRole.vendor(i), x, Y.dist, distW, 110, {
-      interfaces: [
-        { name: 'Te1/0/1', ip: `10.0.${1+Math.floor(i/2)*2}.${i%2 === 0 ? 1 : 2}/31`, vlan: 'Core-uplink' },
-        { name: 'Po1', ip: '—', vlan: 'MLAG Peer-Link' },
-        { name: `Vlan2${i}`, ip: `10.10.${i}.1/24`, vlan: `Data Vlan2${i}` },
-      ],
-      configLines: [
-        `MLAG Pair #${Math.floor(i/2)+1}`,
-        'OSPF Area 0',
-        'DHCP Relay → Core',
-        `STP Root Prio ${i < 2 ? '4096' : '8192'}`,
-      ],
-      services: ['MLAG', 'OSPF', 'DHCP Relay', 'STP'],
-    },
-  ))
-
-  const accW = 160
-  const accXs = xCenter(4, 20, accW)
-  const accs = accXs.map((x, i) => mkNode(
-    `acc${i+1}`, accRole.name(i), accRole.model(i), 'access', accRole.vendor(i), x, Y.access, accW, 120, {
-      interfaces: [
-        { name: 'Gi0/1', ip: '—', vlan: 'Trunk to Dist' },
-        { name: 'Gi1/0/1-24', ip: '—', vlan: 'VLAN 20 Data' },
-        { name: 'Gi1/0/25-48', ip: '—', vlan: 'VLAN 30 Voice' },
-      ],
-      configLines: [
-        '802.1X port-auth',
-        'PoE+ 30W per port',
-        'DAI + DHCP Snooping',
-        `VLAN 20 Data · VLAN 30 Voice`,
-      ],
-      services: ['802.1X', 'PoE+', 'DAI', 'LLDP-MED'],
-      specs: '48× 1G PoE+ · 4× 10G uplink',
-    },
-  ))
-
-  const epW = 100
-  const epXs = xCenter(5, 30, epW)
-  const epLabels = ['PC-01', 'IP-PHONE', 'AP-01', 'PRINTER', 'SERVER']
-  const eps = epXs.map((x, i) => mkNode(
-    `ep${i+1}`, epLabels[i], 'Endpoint', 'endpoint', '—', x, Y.hosts, epW, 70, {
-      interfaces: [{ name: 'eth0', ip: `10.10.0.${10+i}/24`, vlan: i === 1 ? 'VLAN30 Voice' : 'VLAN20 Data' }],
-      configLines: [i === 1 ? 'LLDP-MED Voice' : i === 2 ? 'WPA3-Enterprise' : '802.1X MAB'],
-    },
-  ))
-
-  const nodes = [wan1, wan2, core1, core2, ...dists, ...accs, ...eps]
-
-  const links: LLDLink[] = [
-    mkLink('wan1', 'wan2', 'Gi0/1', 'Gi0/1', '1G', 'iBGP peer', { isDashed: true }),
-    mkLink('wan1', 'core1', 'Gi0/0/1', 'Te1/0/1', '10G', 'OSPF Area 0', { subnet: '10.0.0.0/30' }),
-    mkLink('wan2', 'core2', 'Gi0/0/1', 'Te1/0/1', '10G', 'OSPF Area 0', { subnet: '10.0.0.4/30' }),
-    mkLink('core1', 'core2', 'Te1/0/48', 'Te1/0/48', '40G', 'VSS / MEC', { isDashed: true }),
-    ...dists.map((d, i) => mkLink('core1', d.id, `Te1/0/${i+2}`, 'Te1/0/1', '40G', 'OSPF · MLAG', { subnet: `10.0.${1+i*2}.0/31` })),
-    ...dists.map((d, i) => mkLink('core2', d.id, `Te1/0/${i+2}`, 'Te1/0/2', '40G', 'OSPF · MLAG', { subnet: `10.0.${2+i*2}.0/31` })),
-    mkLink('dist1', 'dist2', 'Po1', 'Po1', '2×40G', 'MLAG Peer-Link', { isDashed: true }),
-    mkLink('dist3', 'dist4', 'Po1', 'Po1', '2×40G', 'MLAG Peer-Link', { isDashed: true }),
-    ...accs.map((a, i) => mkLink(dists[i].id, a.id, 'Te1/0/3', 'Gi0/1', '10G', '802.1Q Trunk')),
-    ...eps.map((e, i) => mkLink(accs[Math.min(i, 3)].id, e.id, `Gi1/0/${i+1}`, 'eth0', '1G', '802.1X Access', { vlan: i === 1 ? 'VLAN30' : 'VLAN20' })),
-  ]
-
-  const cabling: CablingEntry[] = [
-    ...dists.map((d, i) => ({ server: d.hostname, serverPort: 'Te1/0/1', ipv4: d.interfaces[0]?.ip ?? '', switchPort: `Core Te1/0/${i+2}`, mgmtPort: 'Lo0', vlan: 'Trunk' })),
-    ...accs.map((a) => ({ server: a.hostname, serverPort: 'Gi0/1', ipv4: '—', switchPort: `Dist Te1/0/3`, mgmtPort: 'VLAN99', vlan: 'Trunk' })),
-    ...eps.map((e, i) => ({ server: e.hostname, serverPort: 'eth0', ipv4: e.interfaces[0]?.ip ?? '', switchPort: `Acc Gi1/0/${i+1}`, mgmtPort: '—', vlan: i === 1 ? 'VLAN30' : 'VLAN20' })),
-  ]
-
+  const more = (shown: number, all: number, what: string) => all > shown ? ` (showing ${shown} of ${all} ${what})` : ''
   return {
-    nodes, links, zones, cabling,
-    title: `CAMPUS LAN LLD — SPECIFIC IMPLEMENTATION${sc ? ` · ${sc}` : ''}`,
-    subtitle: 'WAN Edge · Core VSS · Distribution MLAG · Access 802.1X/PoE+ · VLAN/HSRP detail',
-    svgH: 830,
+    nodes: [...fwNodes, ...distNodes, ...accNodes], links, zones, cabling: [],
+    title: `CAMPUS LLD${sc ? ` · ${sc}` : ''}`,
+    subtitle: `${distDevs.length} distribution · ${accDevs.length} access · ${fwDevs.length} firewall` +
+      more(shownDist.length, distDevs.length, 'distribution') + more(shownAcc.length, accDevs.length, 'access') +
+      ' · addresses from the generated configs',
+    svgH: 760,
   }
 }
 

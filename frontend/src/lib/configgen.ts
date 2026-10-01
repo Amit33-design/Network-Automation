@@ -682,6 +682,17 @@ export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], use
         out.push({ name: portName(x.port), ip: `${x.ip}/31`, peer: x.fw.hostname, kind: 'handoff' })
       }
     }
+  } else if (dev.subLayer === 'distribution' || dev.subLayer === 'access') {
+    // AO3: campus switches, from the campus allocators (AN7/AN8).
+    if (dev.subLayer === 'distribution') {
+      out.push({ name: 'Loopback0', ip: `${roleIp('10.255.3.1', RoleSlot.CampusLoopback, tierIdx)}/32`, kind: 'loopback' })
+    }
+    out.push({ name: `Vlan${CAMPUS_VLANS.mgmt.id} (mgmt)`, ip: `${campusMgmtIp(dev, allDevices, tierIdx)}/24`, kind: 'loopback' })
+    if (dev.subLayer === 'distribution') {
+      for (const x of fwHandoffPlan(dev, allDevices, 'distribution')) {
+        out.push({ name: portName(x.port), ip: `${x.ip}/31`, peer: x.fw.hostname, kind: 'handoff' })
+      }
+    }
   } else if (dev.subLayer === 'firewall') {
     // A Juniper SRX pair is one chassis cluster on reth interfaces, not two
     // routed firewalls — the per-firewall /31 model does not apply (AN10), so
