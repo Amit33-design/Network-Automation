@@ -3534,6 +3534,10 @@ function fortinetCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[] =
   // handoff is a dedicated transit VLAN carried untagged on its port.
   const fwLinks = isDist ? fwHandoffPlan(dev, allDevices, 'distribution') : []
   const fwVlan = (fi: number) => 3900 + fi
+  // AN12: the OSPF router-id was set but no interface carried it, so the
+  // router-id was unreachable and the switch had no stable address for
+  // management services or troubleshooting. It now lives on a real loopback.
+  const lo0ip = roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)
 
   // VLAN database — Data + Mgmt always; Voice when the voice app type is set.
   const vlanDb = `config switch vlan
@@ -3553,6 +3557,12 @@ end`
   const l3Block = isDist
     ? `# ── L3 SVIs + VRRP (first-hop redundancy) ───────────────────────────────────
 config system interface
+    edit "loopback0"
+        set vdom "root"
+        set type loopback
+        set ip ${lo0ip} 255.255.255.255
+        set allowaccess ping
+    next
     edit "vlan${data.id}"
         set vdom "root"
         set ip <CHANGE-ME-vlan${data.id}-ip> <CHANGE-ME-vlan${data.id}-mask>
@@ -3600,7 +3610,7 @@ end
 
 # ── OSPF underlay to campus core ────────────────────────────────────────────
 config router ospf
-    set router-id ${roleIp('10.255.3.1', RoleSlot.CampusLoopback, idx)}
+    set router-id ${lo0ip}
     config area
         edit 0.0.0.0
         next
@@ -3617,6 +3627,9 @@ config router ospf
     config network
         edit 1
             set prefix 10.255.99.0 255.255.255.0
+        next
+        edit 9
+            set prefix ${lo0ip} 255.255.255.255
         next
         edit 2
             set prefix <CHANGE-ME-vlan${data.id}-network> <CHANGE-ME-vlan${data.id}-mask>

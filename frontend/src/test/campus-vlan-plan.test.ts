@@ -11,6 +11,7 @@ import { buildDeviceList } from '@/lib/bom'
 import { generateAllConfigs, CAMPUS_VLANS } from '@/lib/configgen'
 import { genVLANs, genIPRows } from '@/lib/ipam'
 import { stripComments } from '@/lib/config-text'
+import { validateConfigs } from '@/lib/config-validator'
 import type { BOMDevice } from '@/types'
 
 const VENDORS = ['Cisco', 'Arista', 'Juniper', 'Fortinet', 'HPE Aruba', 'Extreme Networks']
@@ -112,6 +113,14 @@ describe('campus VLAN plan (AN7)', () => {
       expect(c, `${d.hostname}`).not.toMatch(/\b10\.254\.\d+\.\d+/)
       expect(c, `${d.hostname}`).not.toMatch(/\b10\.(1\d|100|200)\.\d+\.\d+/)
     }
+  })
+
+  // AN12: FortiSwitch distribution set an OSPF router-id that no interface
+  // carried. Every routing campus switch must own a loopback.
+  it.each(VENDORS)('%s campus routers all carry a loopback (V-12)', vendor => {
+    const { devices, configs } = build(vendor)
+    const v12 = validateConfigs({ configs, devices, useCase: 'campus' }).checks.find(c => c.id === 'V-12')
+    expect(v12?.severity, v12?.detail).toBe('pass')
   })
 
   it('the VLAN parser catches a VLAN outside the plan (mutation guard)', () => {
