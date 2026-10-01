@@ -975,6 +975,7 @@ VNI" tabs.
 - `genIPRows(useCase, devices): IPRow[]` — per-device loopback/interface
   allocations (firewall/spine/leaf/dist/access), with "… +N more" summary
   rows when a layer exceeds the display cap.
+- `fabricInterfaceView(dev, allDevices, useCase): FabricInterfaceView[]` (configgen.ts, AO1) — a spine/leaf/firewall's loopback, fabric /31s and handoffs from the config allocators; drives the DC LLD. `buildLLDTopology` is exported from `LLDTopologyDiagram.tsx` for tests.
 - `nvidiaSpectrumConfig(dev, idx, isGpu, allDevices, useCase)` (configgen.ts) — NVUE; GPU fabrics are pure eBGP L3, DC/multisite leaves are EVPN VTEPs on `TENANT_OVERLAY` with explicit RTs (AN11).
 - `extremeCampusConfig(dev, idx, allDevices, appTypes)` / `exosMgmtBlock(dev)` (configgen.ts, AN9) — EXOS campus distribution/access on `CAMPUS_VLANS`; `extremeExosConfig` dispatches campus tiers there and keeps only spine/leaf.
 - `firewallHandoffs(fw, allDevices, useCase): FirewallHandoff[]` / `firewallInsideNets(useCase)` (configgen.ts, AN8) — a firewall's end of every handoff /31, read from each peer's own `fwHandoffPlan`; used by the FTD, PAN-OS and FortiGate generators.
