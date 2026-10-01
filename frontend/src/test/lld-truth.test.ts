@@ -16,7 +16,7 @@ import { buildLLDTopology } from '@/components/LLDTopologyDiagram'
 
 const VENDORS = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks', 'HPE Aruba', 'Palo Alto', 'Fortinet']
 
-function design(vendor: string, useCase: 'dc' | 'gpu' = 'dc') {
+function design(vendor: string, useCase: 'dc' | 'gpu' | 'campus' = 'dc') {
   const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'AO1', vendorPrefs: [vendor], totalEndpoints: 512 })
   const configs = generateAllConfigs(devices, useCase)
   return { devices, configs, lld: buildLLDTopology(devices, useCase, 'AO1') }
@@ -81,6 +81,21 @@ describe('DC LLD is drawn from the design (AO1)', () => {
       for (const i of n.interfaces) if (/^10\./.test(i.ip)) expect(hasAddr(cfgOf.get(n.hostname)!, i.ip.split('/')[0]), `${n.hostname} ${i.ip}`).toBe(true)
     }
     expect(lld.nodes.some(n => byHost.get(n.hostname)!.subLayer === 'gpu-compute')).toBe(true)
+  })
+
+  // AO3: the campus LLD drew a core pair and WAN routers the BOM lacks.
+  it.each(['Cisco', 'Arista', 'Juniper', 'Fortinet', 'HPE Aruba', 'Extreme Networks'])('%s campus: only BOM devices, only config addresses', vendor => {
+    const { devices, configs, lld } = design(vendor, 'campus')
+    const byHost = new Map(devices.map(d => [d.hostname, d]))
+    const cfgOf = new Map(devices.map(d => [d.hostname, `${stripComments(configs[d.id] ?? '')}\n${configs[d.id] ?? ''}`]))
+    let checked = 0
+    for (const n of lld.nodes) {
+      expect(byHost.has(n.hostname), `${n.hostname} is not in the BOM`).toBe(true)
+      for (const i of n.interfaces) if (/^10\./.test(i.ip)) { checked++; expect(hasAddr(cfgOf.get(n.hostname)!, i.ip.split('/')[0]), `${n.hostname} ${i.ip}`).toBe(true) }
+    }
+    expect(checked).toBeGreaterThan(0)
+    const tiers = new Set(lld.nodes.map(n => byHost.get(n.hostname)!.subLayer))
+    expect(tiers.has('distribution') && tiers.has('access')).toBe(true)
   })
 
   it('a pure-L3 NVIDIA GPU fabric is not captioned as VXLAN/EVPN', () => {

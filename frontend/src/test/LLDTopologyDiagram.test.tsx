@@ -33,21 +33,25 @@ describe('LLDTopologyDiagram — vendor-aware (D2)', () => {
     expect(text).not.toContain('C9300-48P')
   })
 
-  it('campus LLD partial BOM: derives present devices, falls back for the rest', () => {
+  // AO3: these used to assert that missing tiers were filled with Cisco
+  // placeholder hardware — drawing devices the design does not contain. The
+  // LLD now draws only what the BOM has.
+  it('campus LLD partial BOM: draws the device present and invents nothing', () => {
     const devices = [
       dev({ hostname: 'CAMP-DIST-01', subLayer: 'distribution', vendor: 'Juniper', model: 'EX4650-48Y' }),
     ]
     const { container } = render(<LLDTopologyDiagram devices={devices} useCase="campus" />)
     const text = container.textContent ?? ''
-    expect(text).toContain('EX4650-48Y')      // index 0 derived from BOM
-    expect(text).toContain('C9500-48Y4C')     // indices 1-3 fall back to Cisco
+    expect(text).toContain('EX4650-48Y')
+    expect(text).not.toContain('C9500-48Y4C')
+    expect(text).not.toContain('ASR-1001X')
   })
 
-  it('campus LLD falls back to Cisco defaults when BOM has no campus devices', () => {
+  it('campus LLD with no campus devices draws no placeholder hardware', () => {
     const { container } = render(<LLDTopologyDiagram devices={[]} useCase="campus" />)
     const text = container.textContent ?? ''
-    expect(text).toContain('C9500-48Y4C')
-    expect(text).toContain('C9300-48P')
+    expect(text).not.toContain('C9500-48Y4C')
+    expect(text).not.toContain('C9300-48P')
   })
 
   it('WAN LLD shows Juniper wan-edge model from the BOM', () => {
