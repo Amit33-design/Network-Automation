@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
-import type { BOMDevice } from '@/types'
+import type { BOMDevice, UseCase } from '@/types'
+import { fabricInterfaceView, borderLeaves, TENANT_OVERLAY } from '@/lib/configgen'
 import { tierIcon } from '@/components/icons'
 import { CloseButton } from '@/components/ui/CloseButton'
 
@@ -186,178 +187,87 @@ function mkLink(
 
 // ─── DC LLD ───────────────────────────────────────────────────────────────────
 
-function buildDCLLD(_devices: BOMDevice[], sc: string): LLDTopo {
-  const NW = 200
-  const Y = { inet: 60, fw: 180, router: 340, lb: 490, web: 640, app: 810 }
+function buildDCLLD(devices: BOMDevice[], sc: string, useCase = 'dc'): LLDTopo {
+  // AO1: this used to draw a fixed three-tier enterprise topology — internet,
+  // firewalls, routers, an F5 pair and web/app servers — and ignored the BOM
+  // entirely, so a spine-leaf design's LLD showed no spine or leaf at all, and
+  // none of its 23 interface addresses appeared in any generated config. Every
+  // node and address below now comes from the design and the config allocators.
+  const IF_CAP = 6
+  const Y = { fw: 60, spine: 240, leaf: 440, srv: 650 }
+  const spineDevs = devices.filter(d => d.subLayer === 'spine')
+  const leafDevs = devices.filter(d => d.subLayer === 'leaf')
+  const fwDevs = devices.filter(d => d.subLayer === 'firewall')
+  const border = borderLeaves(devices)
+  // Shown: every spine up to 4; the first leaf pair plus the border pair.
+  const shownSpines = spineDevs.slice(0, 4)
+  const shownLeaves = [...new Map([...leafDevs.slice(0, 2), ...border].map(d => [d.id, d])).values()].slice(0, 4)
+  const shownFws = fwDevs.slice(0, 2)
+  const view = (d: BOMDevice) => fabricInterfaceView(d, devices, useCase as UseCase)
+  const ifaces = (d: BOMDevice, shown: Set<string>): LLDInterface[] => {
+    const all = view(d)
+    // Prefer interfaces toward devices that are on the diagram.
+    const ordered = [...all.filter(i => i.kind === 'loopback'), ...all.filter(i => i.peer && shown.has(i.peer)), ...all.filter(i => i.kind !== 'loopback' && !(i.peer && shown.has(i.peer)))]
+    const rows: LLDInterface[] = ordered.slice(0, IF_CAP).map(i => ({ name: i.name, ip: i.ip, vlan: i.peer ? `→ ${i.peer}` : undefined }))
+    if (ordered.length > IF_CAP) rows.push({ name: `+${ordered.length - IF_CAP} more`, ip: '—' })
+    return rows
+  }
+  const shownHosts = new Set([...shownSpines, ...shownLeaves, ...shownFws].map(d => d.hostname))
+  const t = TENANT_OVERLAY
 
   const zones: LLDZone[] = [
-    { id: 'z-inet', label: 'INTERNET / UNTRUSTED ZONE', sublabel: 'External Networks',
-      yStart: 0, yEnd: 130, fill: 'rgba(17,17,17,0.9)', stroke: '#374151' },
-    { id: 'z-dmz', label: 'DMZ — PERIMETER', sublabel: 'Firewall HA Cluster · IPS · TLS Inspect',
-      yStart: 130, yEnd: 290, fill: 'rgba(127,29,29,0.22)', stroke: '#B91C1C' },
-    { id: 'z-int', label: 'INTERNAL NETWORK', sublabel: 'Core Routing · BGP · OSPF · QoS',
-      yStart: 290, yEnd: 440, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
-    { id: 'z-lb', label: 'LOAD BALANCED TIER', sublabel: 'F5 HA · SSL Offload · L7 Routing',
-      yStart: 440, yEnd: 590, fill: 'rgba(180,83,9,0.20)', stroke: '#B45309' },
-    { id: 'z-srv', label: 'SERVER TIER · 10.3.1.0/24', sublabel: 'Web Servers · Frontside + Backside VLAN',
-      yStart: 590, yEnd: 740, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
-    { id: 'z-app', label: 'APPLICATION TIER · 10.3.1.0/24', sublabel: 'API Gateway · App Server · Database',
-      yStart: 740, yEnd: 920, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
+    { id: 'z-fw', label: 'PERIMETER', sublabel: 'Firewalls · routed /31 handoff to the border leaves',
+      yStart: 0, yEnd: 180, fill: 'rgba(127,29,29,0.22)', stroke: '#B91C1C' },
+    { id: 'z-spine', label: 'SPINE', sublabel: 'eBGP underlay /31s · EVPN route exchange (not a VTEP)',
+      yStart: 180, yEnd: 380, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
+    { id: 'z-leaf', label: 'LEAF / VTEP', sublabel: `VXLAN · VLAN ${t.vlan} ↔ VNI ${t.l2vni} · ${t.vrf} L3VNI ${t.l3vni}`,
+      yStart: 380, yEnd: 590, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
+    { id: 'z-srv', label: `SERVERS · VLAN ${t.vlan} ${t.vlanName}`, sublabel: 'Access ports on every leaf · anycast gateway',
+      yStart: 590, yEnd: 740, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
   ]
 
-  const [ix] = xCenter(1, 0, NW)
-  const inet = mkNode('inet', 'INTERNET', 'Dual-ISP', 'internet', 'ISP',
-    ix + NW/2 - 60, Y.inet, 120, 50, {
-      interfaces: [
-        { name: 'Egress ISP', ip: '10.21.10/30', speed: '1G' },
-        { name: 'Ingress ISP', ip: '10.21.10/30', speed: '1G' },
-      ],
-    })
+  const NW = 200
+  const fwXs = xCenter(Math.max(1, shownFws.length), 160, NW)
+  const fwNodes = shownFws.map((d, i) => mkNode(`fw${i}`, d.hostname, d.model, 'firewall', d.vendor, fwXs[i], Y.fw, NW, 110, {
+    interfaces: ifaces(d, shownHosts), services: ['NGFW', 'Routed handoff'],
+  }))
+  const spXs = xCenter(Math.max(1, shownSpines.length), 40, NW)
+  const spNodes = shownSpines.map((d, i) => mkNode(`sp${i}`, d.hostname, d.model, 'spine', d.vendor, spXs[i], Y.spine, NW, 130, {
+    interfaces: ifaces(d, shownHosts), services: ['eBGP', 'EVPN', 'BFD'],
+  }))
+  const LW = 220
+  const lfXs = xCenter(Math.max(1, shownLeaves.length), 30, LW)
+  const lfNodes = shownLeaves.map((d, i) => mkNode(`lf${i}`, d.hostname, d.model, 'leaf', d.vendor, lfXs[i], Y.leaf, LW, 140, {
+    interfaces: ifaces(d, shownHosts),
+    configLines: [`VLAN ${t.vlan} → VNI ${t.l2vni}`, `${t.vrf} · L3VNI ${t.l3vni}`, ...(border.some(b => b.id === d.id) ? ['Border leaf — firewall handoff'] : [])],
+    services: ['VXLAN', 'BGP EVPN', 'Anycast GW'],
+  }))
+  const nodeOf = new Map<string, LLDNode>()
+  ;[...shownFws, ...shownSpines, ...shownLeaves].forEach((d, i) => nodeOf.set(d.hostname, [...fwNodes, ...spNodes, ...lfNodes][i]))
 
-  const [fw1x, fw2x] = xCenter(2, 160, NW)
-  const fw1 = mkNode('fw1', 'FW-01', 'PA-5450', 'dmz', 'Palo Alto', fw1x, Y.fw, NW, 120, {
-    haRole: 'active',
-    interfaces: [
-      { name: 'port 1', ip: '10.1.1.1/24', vlan: 'Outside' },
-      { name: 'port 2', ip: '10.1.2.1/24', vlan: 'Inside' },
-      { name: 'ha1', ip: '10.10.0.1/30', vlan: 'HA' },
-    ],
-    configLines: ['DMZ zone', 'External Heartbeat', 'External Egress IP 10.1.1.0/24'],
-    services: ['NGFW', 'IPS', 'App-ID', 'TLS Decrypt'],
-  })
-  const fw2 = mkNode('fw2', 'FW-02', 'PA-5450', 'dmz', 'Palo Alto', fw2x, Y.fw, NW, 120, {
-    haRole: 'standby',
-    interfaces: [
-      { name: 'port 1', ip: '10.1.1.2/24', vlan: 'Outside' },
-      { name: 'port 2', ip: '10.1.2.2/24', vlan: 'Inside' },
-      { name: 'ha1', ip: '10.10.0.2/30', vlan: 'HA' },
-    ],
-    configLines: ['Internal zone', 'ACL Inside', 'Internal IP 10.1.2.0/24'],
-    services: ['NGFW', 'HA-Sync', 'State-Sync'],
-  })
+  // Links: one per fabric /31 between devices that are both on the diagram.
+  const links: LLDLink[] = []
+  for (const lf of shownLeaves) {
+    for (const up of view(lf).filter(i => i.kind === 'fabric' && i.peer && shownHosts.has(i.peer))) {
+      const sp = devices.find(d => d.hostname === up.peer)!
+      const spSide = view(sp).find(i => i.kind === 'fabric' && i.peer === lf.hostname)
+      links.push(mkLink(nodeOf.get(sp.hostname)!.id, nodeOf.get(lf.hostname)!.id, spSide?.name ?? '—', up.name, lf.uplinkSpeed ?? lf.speed ?? '', 'eBGP underlay', { subnet: up.ip }))
+    }
+    for (const h of view(lf).filter(i => i.kind === 'handoff' && i.peer && shownHosts.has(i.peer))) {
+      const fw = devices.find(d => d.hostname === h.peer)!
+      const fwSide = view(fw).find(i => i.peer === lf.hostname)
+      links.push(mkLink(nodeOf.get(fw.hostname)!.id, nodeOf.get(lf.hostname)!.id, fwSide?.name ?? '—', h.name, '', 'Routed handoff', { subnet: h.ip }))
+    }
+  }
 
-  const [r1x, r2x] = xCenter(2, 160, NW)
-  const rtr1 = mkNode('rtr1', 'ROUTER-CORE', 'ASR-1002-HX', 'internal', 'Cisco', r1x, Y.router, NW, 120, {
-    interfaces: [
-      { name: 'Gi0/0', ip: '10.2.1.1/30', vlan: 'vlan_trunks' },
-      { name: 'Gi0/1', ip: '10.2.1.5/30', vlan: 'vlanI01' },
-    ],
-    configLines: [
-      'BGP neighbor 1',
-      'neighbor 222.12.110',
-      'bgp-cluster 10.1.1.0/24',
-      'neighbors-external 10.1.1.0/24',
-    ],
-    services: ['BGP', 'OSPF', 'QoS', 'Redundant Path A'],
-  })
-  const rtr2 = mkNode('rtr2', 'ROUTER-EDGE', 'ASR-1002-HX', 'internal', 'Cisco', r2x, Y.router, NW, 120, {
-    interfaces: [
-      { name: 'Gi0/0', ip: '10.2.1.2/30', vlan: 'vlan_trunks' },
-      { name: 'Gi0/1', ip: '10.2.1.6/30', vlan: 'vlanI01' },
-    ],
-    configLines: [
-      'BGP neighbor 2',
-      'neighbor 222.15.128.0',
-      'bgp-cluster 10.1.2.0/24',
-      'neighbors-external-size 10.1.2.0/25',
-    ],
-    services: ['BGP', 'OSPF', 'QoS', 'Redundant Path B'],
-    haRole: 'standby',
-  })
-
-  const [lbx] = xCenter(1, 0, 260)
-  const lb = mkNode('lb', 'F5-HA Cluster', 'BIG-IP i5800', 'loadbalancer', 'F5', lbx, Y.lb, 260, 110, {
-    haRole: 'active',
-    interfaces: [
-      { name: 'vlan101', ip: '10.2.1.0/30', vlan: 'Frontside VLAN' },
-      { name: 'vlan102', ip: '10.2.1.0/30', vlan: 'Backside VLAN' },
-    ],
-    configLines: [
-      'SSL Offload · L7 Routing · Health Checks',
-      'Round Robin · Least Conn · Persistence',
-      'Active-Standby HA Pair · MAF',
-    ],
-    services: ['SSL', 'L7 LB', 'WAF', 'Persistence'],
-  })
-
-  const webW = 170
-  const webXs = xCenter(3, 30, webW)
-  const webs = webXs.map((x, i) => mkNode(
-    `web${i+1}`, `WEB SERVER 0${i+1}`, 'Dell R750', 'server', 'Dell', x, Y.web, webW, 110, {
-      interfaces: [
-        { name: 'eth0', ip: `192.168.10.1${i+1}`, mac: '00:0c:29:ab:cd:ef' },
-        { name: 'eth1', ip: '10.3.1.1', vlan: 'Backside VLAN' },
-      ],
-      configLines: [`nginx · TLS 1.3`, `8 vCPU · 32GB RAM`],
-      services: ['nginx', 'TLS 1.3'],
-      specs: '8 vCPU · 32GB RAM',
-    },
-  ))
-
-  const appW = 180
-  const appXs = xCenter(3, 40, appW)
-  const apiGw = mkNode('apigw', 'API GATEWAY', 'Kong / Envoy', 'application', 'OSS', appXs[0], Y.app, appW, 110, {
-    interfaces: [
-      { name: 'eth0', ip: '10.3.1.11', mac: '00:0c:29:ab:cd:ef' },
-      { name: 'eth1', ip: '10.3.1.1', vlan: 'API' },
-    ],
-    configLines: ['Auth · Rate Limit', 'GraphQL · JWT', 'Routing · Versioning'],
-    services: ['Auth', 'Rate Limit', 'Routing'],
-  })
-  const appSrv = mkNode('appsrv', 'APP SERVER', 'Dell R750', 'application', 'Dell', appXs[1], Y.app, appW, 110, {
-    interfaces: [
-      { name: 'eth0', ip: '10.3.1.11', mac: '00:0c:29:ab:cd:ef' },
-      { name: 'eth1', ip: '10.3.1.1', vlan: 'App' },
-    ],
-    configLines: ['Node.js / Python / Java', 'Business Logic', 'Cache · Session Mgmt'],
-    services: ['App Runtime', 'Cache'],
-    specs: '16 vCPU · 64GB RAM',
-  })
-  const db = mkNode('db', 'DATABASE', 'Dell R750', 'database', 'Dell', appXs[2], Y.app, appW, 110, {
-    interfaces: [
-      { name: 'eth0', ip: '10.3.1.35', mac: '00:0c:29:ab:cd:ef' },
-      { name: 'eth1', ip: '10.3.1.32', vlan: 'DB' },
-    ],
-    configLines: ['PostgreSQL · Redis', 'Primary / Replica', 'Encrypted at Rest'],
-    services: ['PostgreSQL', 'Redis', 'Replication'],
-    specs: '32 vCPU · 128GB RAM',
-  })
-
-  const nodes = [inet, fw1, fw2, rtr1, rtr2, lb, ...webs, apiGw, appSrv, db]
-
-  const links: LLDLink[] = [
-    mkLink('inet', 'fw1', '—', 'port 1', '1G', 'BGP', { subnet: '10.1.1.0/24' }),
-    mkLink('inet', 'fw2', '—', 'port 1', '1G', 'BGP', { subnet: '10.1.1.0/24' }),
-    mkLink('fw1', 'fw2', 'ha1', 'ha1', '10G', 'Cluster Heartbeat', { isDashed: true }),
-    mkLink('fw1', 'rtr1', 'port 2', 'Gi0/0', '10G', 'L3 Routed', { subnet: '10.1.2.0/24', vlan: 'vlanI01' }),
-    mkLink('fw2', 'rtr2', 'port 2', 'Gi0/0', '10G', 'L3 Routed', { subnet: '10.1.2.0/24', vlan: 'vlanI01' }),
-    mkLink('rtr1', 'rtr2', 'Gi0/1', 'Gi0/1', '10G', 'iBGP / OSPF', { isDashed: true }),
-    mkLink('rtr1', 'lb', 'Gi0/0', 'vlan101', '10G', 'Frontside VLAN', { vlan: 'vlan101', subnet: '10.2.1.0/30' }),
-    mkLink('rtr2', 'lb', 'Gi0/1', 'vlan101', '10G', 'Frontside VLAN', { vlan: 'vlan101', subnet: '10.2.1.0/30' }),
-    ...webs.map((w, i) => mkLink('lb', w.id, 'vlan102', 'eth0', '25G', 'Backside VLAN', { vlan: 'vlan102', subnet: `192.168.10.${10+i}/24` })),
-    ...webs.map((w, i) => mkLink(w.id, i === 0 ? 'apigw' : i === 1 ? 'appsrv' : 'db', 'eth1', 'eth0', '25G', 'API / DB Conn', { vlan: 'App' })),
-    mkLink('apigw', 'appsrv', 'eth1', 'eth0', '25G', 'API calls', { vlan: 'App' }),
-    mkLink('appsrv', 'db', 'eth1', 'eth0', '25G', 'DB Connection', { vlan: 'DB' }),
-  ]
-
-  const cabling: CablingEntry[] = [
-    ...webs.map((w, i) => ({
-      server: w.hostname, serverPort: 'eth0', ipv4: w.interfaces[0]?.ip ?? '', switchPort: `POE_${i+1}`, mgmtPort: `vlan02`, vlan: 'vlan102',
-    })),
-    { server: 'API GW', serverPort: 'eth0', ipv4: '10.3.1.11', switchPort: 'POT_3', mgmtPort: 'vlan02', vlan: 'App' },
-    { server: 'APP SRV', serverPort: 'eth0', ipv4: '10.3.1.11', switchPort: 'POT_4', mgmtPort: 'vlan02', vlan: 'App' },
-    { server: 'DATABASE', serverPort: 'eth0', ipv4: '10.3.1.35', switchPort: 'POT_5', mgmtPort: 'vlan02', vlan: 'DB' },
-    { server: 'FW-01', serverPort: 'port 1', ipv4: '10.1.1.1', switchPort: 'POT_6', mgmtPort: 'HA', vlan: 'Outside' },
-    { server: 'FW-02', serverPort: 'port 1', ipv4: '10.1.1.2', switchPort: 'POT_7', mgmtPort: 'HA', vlan: 'Outside' },
-    { server: 'RTR-CORE', serverPort: 'Gi0/0', ipv4: '10.2.1.1', switchPort: 'POT_8', mgmtPort: 'BLOM', vlan: 'vlan101' },
-    { server: 'RTR-EDGE', serverPort: 'Gi0/0', ipv4: '10.2.1.2', switchPort: 'POT_9', mgmtPort: 'BLOM', vlan: 'vlan101' },
-  ]
-
+  const more = (shown: number, all: number, what: string) => all > shown ? ` (showing ${shown} of ${all} ${what})` : ''
   return {
-    nodes, links, zones, cabling,
-    title: `DATACENTER LLD — SPECIFIC IMPLEMENTATION${sc ? ` · ${sc}` : ''}`,
-    subtitle: 'Firewall HA · Core Routing · F5 LB · Web/App/DB tiers · Full port-level detail',
-    svgH: 960,
+    nodes: [...fwNodes, ...spNodes, ...lfNodes], links, zones, cabling: [],
+    title: `DATA CENTER FABRIC LLD${sc ? ` · ${sc}` : ''}`,
+    subtitle: `${spineDevs.length} spine · ${leafDevs.length} leaf · ${fwDevs.length} firewall` +
+      more(shownSpines.length, spineDevs.length, 'spines') + more(shownLeaves.length, leafDevs.length, 'leaves') +
+      ' · addresses from the generated configs',
+    svgH: 760,
   }
 }
 
@@ -1282,7 +1192,7 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
 // ─── Topology dispatcher ─────────────────────────────────────────────────────
 
-function buildLLDTopology(devices: BOMDevice[], useCase: string, sc: string): LLDTopo {
+export function buildLLDTopology(devices: BOMDevice[], useCase: string, sc: string): LLDTopo {
   switch (useCase) {
     case 'campus':     return buildCampusLLD(devices, sc)
     case 'gpu':        return buildGPULLD(devices, sc)
@@ -1291,7 +1201,7 @@ function buildLLDTopology(devices: BOMDevice[], useCase: string, sc: string): LL
     case 'multicloud': return buildMulticloudLLD(devices, sc)
     case 'aviatrix':   return buildAviatrixLLD(devices, sc)
     case 'oran':       return buildORANLLD(devices, sc)
-    default:           return buildDCLLD(devices, sc)
+    default:           return buildDCLLD(devices, sc, useCase)
   }
 }
 

@@ -646,6 +646,57 @@ function fwHandoffPlan(
     .filter(x => x.port <= (dev.ports || 48))
 }
 
+/** One interface as a diagram should show it — taken from the config allocators. */
+export interface FabricInterfaceView { name: string; ip: string; peer?: string; kind: 'loopback' | 'fabric' | 'handoff' }
+
+/**
+ * The addressed interfaces of a spine, leaf or firewall, computed by the SAME
+ * allocators the config generators use (AO1). The LLD diagram drew hardcoded
+ * addresses — 177 of its 181 interface IPs appeared in no generated config —
+ * so the document engineers cable and address from described a different
+ * network. Interface names are exact for Cisco NX-OS and Arista EOS (the
+ * renderers' own port arithmetic); other vendors get the port number.
+ */
+export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], useCase: UseCase | '' = ''): FabricInterfaceView[] {
+  const out: FabricInterfaceView[] = []
+  const tierIdx = roleIndex(dev, allDevices, 0)
+  const portName = (n: number) => dev.vendor === 'Arista' ? aristaIf(dev, n) : dev.vendor === 'Cisco' ? `Ethernet1/${n}`
+    : dev.vendor === 'NVIDIA' ? `swp${n}` : `port ${n}`
+  // Cumulus fabric links are BGP unnumbered (Y6) — no /31 exists to show.
+  const unnumbered = dev.vendor === 'NVIDIA'
+  if (dev.subLayer === 'spine' || dev.subLayer === 'leaf') {
+    const isSpine = dev.subLayer === 'spine'
+    out.push({
+      name: 'Loopback0', kind: 'loopback',
+      ip: `${isSpine ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, tierIdx) : roleIp('10.255.2.1', RoleSlot.LeafLoopback, tierIdx)}/32`,
+    })
+    const defPorts = dev.vendor === 'Arista' ? 32 : 48
+    const portBase = isSpine ? 0
+      : unnumbered ? (dev.ports || 64) - Math.max(2, dev.uplinks || 2)
+      : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || defPorts) - (dev.uplinks || 0)))
+    for (const l of closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)) {
+      out.push({ name: portName(portBase + l.ifIndex + 1), ip: unnumbered ? 'unnumbered' : l.localIp, peer: l.peerHostname, kind: 'fabric' })
+    }
+    if (!isSpine) {
+      for (const x of fwHandoffPlan(dev, allDevices, 'border-leaf')) {
+        out.push({ name: portName(x.port), ip: `${x.ip}/31`, peer: x.fw.hostname, kind: 'handoff' })
+      }
+    }
+  } else if (dev.subLayer === 'firewall') {
+    // A Juniper SRX pair is one chassis cluster on reth interfaces, not two
+    // routed firewalls — the per-firewall /31 model does not apply (AN10), so
+    // show what its config really carries rather than an address it lacks.
+    if (/\bsrx/i.test(dev.model)) {
+      out.push({ name: 'reth1.0 (TRUST)', ip: '<CHANGE-ME-trust-ip>/24', kind: 'handoff' })
+      return out
+    }
+    firewallHandoffs(dev, allDevices, useCase).forEach((h, i) => {
+      out.push({ name: `inside ${i + 1}`, ip: `${h.fwIp}/31`, peer: h.peer.hostname, kind: 'handoff' })
+    })
+  }
+  return out
+}
+
 /** A firewall's end of one fabric / distribution handoff /31 (AN8). */
 export interface FirewallHandoff { peer: BOMDevice; peerIp: string; fwIp: string }
 
