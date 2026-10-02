@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import type { BOMDevice, UseCase } from '@/types'
-import { fabricInterfaceView, borderLeaves, TENANT_OVERLAY, CAMPUS_VLANS } from '@/lib/configgen'
+import { fabricInterfaceView, borderLeaves, TENANT_OVERLAY, CAMPUS_VLANS, ORAN_FRONTHAUL_VLAN, ORAN_PTP_DOMAIN } from '@/lib/configgen'
+import { LAYER_ADJACENCY } from '@/lib/bom'
 import { tierIcon } from '@/components/icons'
 import { CloseButton } from '@/components/ui/CloseButton'
 
@@ -132,23 +133,6 @@ function xCenter(count: number, gap: number, nodeW: number): number[] {
   const totalW = count * nodeW + (count - 1) * gap
   const start = LEFT_W + (CONTENT_W - totalW) / 2
   return Array.from({ length: count }, (_, i) => start + i * (nodeW + gap))
-}
-
-// Derive the actual BOM hardware (vendor/model/hostname) for the i-th device
-// of a given role, so LLD nodes reflect the user's vendor selection instead of
-// a hardcoded Cisco model. Falls back to the supplied defaults when the BOM has
-// no device for that role (mirrors the GPU LLD / HLD vendor-derivation pattern).
-function bomRole(
-  devices: BOMDevice[], subLayer: string,
-  fallback: { vendor: string; model: string; name: (i: number) => string },
-) {
-  const matches = devices.filter(d => d.subLayer === subLayer)
-  return {
-    vendor: (i: number) => matches[i]?.vendor ?? fallback.vendor,
-    model: (i: number) => matches[i]?.model ?? fallback.model,
-    name: (i: number) => matches[i]?.hostname ?? fallback.name(i),
-    count: matches.length,
-  }
 }
 
 function mkNode(
@@ -390,632 +374,169 @@ function buildGPULLD(devices: BOMDevice[], sc: string): LLDTopo {
   }
 }
 
-// ─── WAN LLD ──────────────────────────────────────────────────────────────────
+// ─── Tiered LLD (WAN · multisite · multicloud · Aviatrix · O-RAN) ─────────────
+
+interface RowSpec {
+  subLayer: string
+  tier: string
+  label: string
+  sublabel: string
+  cap: number
+  fill: string
+  stroke: string
+}
+
+const ROW_FILLS: Record<string, [string, string]> = {
+  red:    ['rgba(127,29,29,0.22)', '#B91C1C'],
+  blue:   ['rgba(29,78,216,0.20)', '#1D4ED8'],
+  green:  ['rgba(21,128,61,0.20)', '#15803D'],
+  amber:  ['rgba(146,64,14,0.22)', '#B45309'],
+  purple: ['rgba(88,28,135,0.20)', '#7E22CE'],
+  teal:   ['rgba(17,94,89,0.22)',  '#0F766E'],
+}
+const row = (subLayer: string, tier: string, label: string, sublabel: string, colour: keyof typeof ROW_FILLS, cap = 4): RowSpec =>
+  ({ subLayer, tier, label, sublabel, cap, fill: ROW_FILLS[colour][0], stroke: ROW_FILLS[colour][1] })
+
+/**
+ * AO4: the WAN, multisite, multicloud, Aviatrix and O-RAN LLDs drew fixed
+ * topologies — SP backbones, branch CPEs, `DC-SPINE-01`, AWS/Azure/GCP VPCs,
+ * an `O-CU-01` — none of them BOM devices, and 106 of 108 addresses were in no
+ * config. Every node below is a BOM device, every address comes from the
+ * allocator its config uses (`fabricInterfaceView`), and a link is drawn only
+ * where the design really connects two devices: a peer named by the config
+ * (fabric /31, firewall handoff, F1 home CU, served DU) or a tier pair the BOM
+ * cables (`LAYER_ADJACENCY`) — never an invented one.
+ */
+function buildTieredLLD(
+  devices: BOMDevice[], sc: string, useCase: string, rows: RowSpec[],
+  head: { title: string; overlay?: Array<{ from: string; to: string; protocol: string }> },
+): LLDTopo {
+  const ROW_H = 200
+  const present = rows.filter(r => devices.some(d => d.subLayer === r.subLayer))
+  const border = new Set(borderLeaves(devices).map(d => d.id))
+  const pick = (r: RowSpec): BOMDevice[] => {
+    const all = devices.filter(d => d.subLayer === r.subLayer)
+    // Leaves: the first pair plus the border pair, as the DC LLD does.
+    if (r.subLayer === 'leaf') return [...new Map([...all.slice(0, 2), ...all.filter(d => border.has(d.id))].map(d => [d.id, d])).values()].slice(0, r.cap)
+    return all.slice(0, r.cap)
+  }
+  const shownRows = present.map(r => ({ r, devs: pick(r), total: devices.filter(d => d.subLayer === r.subLayer).length }))
+  const shownHosts = new Set(shownRows.flatMap(x => x.devs.map(d => d.hostname)))
+  const view = new Map(shownRows.flatMap(x => x.devs).map(d => [d.hostname, fabricInterfaceView(d, devices, useCase as UseCase)]))
+
+  const nodes: LLDNode[] = []
+  const nodeOf = new Map<string, LLDNode>()
+  const zones: LLDZone[] = []
+  shownRows.forEach(({ r, devs }, ri) => {
+    const y0 = ri * ROW_H
+    zones.push({ id: `z-${r.subLayer}`, label: r.label, sublabel: r.sublabel, yStart: y0, yEnd: y0 + ROW_H, fill: r.fill, stroke: r.stroke })
+    const W = devs.length > 4 ? 170 : 210
+    const xs = xCenter(devs.length, devs.length > 4 ? 20 : 40, W)
+    devs.forEach((d, i) => {
+      const ifs = view.get(d.hostname) ?? []
+      const rowsIf: LLDInterface[] = ifs.slice(0, 5).map(x => ({ name: x.name, ip: x.ip, vlan: x.peer ? `→ ${x.peer}` : undefined }))
+      if (ifs.length > 5) rowsIf.push({ name: `+${ifs.length - 5} more`, ip: '—' })
+      const cloud = r.subLayer.startsWith('cloud-')
+      const n = mkNode(`${r.subLayer}-${i}`, d.hostname, d.model, r.tier, d.vendor, xs[i], y0 + 50, W, 120, {
+        interfaces: rowsIf,
+        configLines: cloud ? ['Provisioned by Terraform — no device CLI'] : border.has(d.id) ? ['Border leaf — firewall handoff'] : [],
+      })
+      nodes.push(n); nodeOf.set(d.hostname, n)
+    })
+  })
+
+  const links: LLDLink[] = []
+  const seen = new Set<string>()
+  const add = (a: string, b: string, ap: string, bp: string, protocol: string, opts: { subnet?: string; isDashed?: boolean } = {}) => {
+    const key = [a, b].sort().join('|') + '|' + protocol + '|' + ap + bp
+    if (seen.has(key) || !nodeOf.has(a) || !nodeOf.has(b) || a === b) return
+    seen.add(key)
+    links.push(mkLink(nodeOf.get(a)!.id, nodeOf.get(b)!.id, ap, bp, '', protocol, opts))
+  }
+  // 1. Peers the configs name.
+  const peered = new Set<string>()
+  for (const [host, ifs] of view) for (const x of ifs) {
+    if (!x.peer || !shownHosts.has(x.peer)) continue
+    const back = view.get(x.peer)?.find(y => y.peer === host)
+    const proto = x.kind === 'handoff' ? 'Routed handoff' : /F1/.test(x.name) ? 'F1 (SCTP / GTP-U)' : /eCPRI/.test(x.name) ? 'eCPRI 7.2x' : 'eBGP underlay'
+    add(x.peer, host, back?.name ?? '—', x.name, proto, { subnet: x.ip })
+    peered.add([host, x.peer].sort().join('|'))
+  }
+  // 2. Tier pairs the BOM cables, where no config peer already drew them.
+  for (const c of LAYER_ADJACENCY) {
+    const froms = shownRows.find(x => x.r.subLayer === c.from)?.devs ?? []
+    const tos = shownRows.find(x => x.r.subLayer === c.to)?.devs ?? []
+    if (!froms.length || !tos.length) continue
+    if (c.from === c.to) {
+      // Same-tier runs pair consecutive members (an HA / site pair).
+      for (let i = 0; i + 1 < froms.length; i += 2) add(froms[i].hostname, froms[i + 1].hostname, '—', '—', 'HA pair', { isDashed: true })
+      continue
+    }
+    if (froms.some(f => tos.some(t => peered.has([f.hostname, t.hostname].sort().join('|'))))) continue
+    tos.forEach((t, i) => add(froms[i % froms.length].hostname, t.hostname, '—', '—', 'cabled (BOM)', { isDashed: true }))
+  }
+  // 3. Overlay sessions with no physical cable (IPsec to cloud transit).
+  for (const o of head.overlay ?? []) {
+    const froms = shownRows.find(x => x.r.subLayer === o.from)?.devs ?? []
+    const tos = shownRows.find(x => x.r.subLayer === o.to)?.devs ?? []
+    tos.forEach((t, i) => froms.length && add(froms[i % froms.length].hostname, t.hostname, '—', '—', o.protocol, { isDashed: true }))
+  }
+
+  const counts = shownRows.map(x => `${x.total} ${x.r.label.toLowerCase()}${x.total > x.devs.length ? ` (showing ${x.devs.length})` : ''}`)
+  return {
+    nodes, links, zones, cabling: [],
+    title: `${head.title}${sc ? ` · ${sc}` : ''}`,
+    subtitle: `${counts.join(' · ')} · addresses from the generated configs`,
+    svgH: Math.max(1, shownRows.length) * ROW_H + 40,
+  }
+}
 
 function buildWANLLD(devices: BOMDevice[], sc: string): LLDTopo {
-  const NW = 190
-  const Y = { sp: 50, hub: 190, cpe: 370, branch: 530, ep: 680 }
-
-  // PE/CE routers reflect the BOM's actual WAN-edge vendor/model selection.
-  const wanRole = bomRole(devices, 'wan-edge', { vendor: 'Cisco', model: 'ASR-9001', name: i => `HQ-PE-RTR-0${i + 1}` })
-
-  const zones: LLDZone[] = [
-    { id: 'z-sp', label: 'SP BACKBONE', sublabel: 'MPLS / Internet Transit · BGP full-table',
-      yStart: 0, yEnd: 140, fill: 'rgba(17,17,17,0.9)', stroke: '#374151' },
-    { id: 'z-hub', label: 'HQ / HUB SITE', sublabel: 'PE Routers · BGP Route Reflector · MPLS LDP',
-      yStart: 140, yEnd: 320, fill: 'rgba(127,29,29,0.20)', stroke: '#B91C1C' },
-    { id: 'z-wan', label: 'WAN TRANSPORT', sublabel: 'MPLS L3VPN · SD-WAN · QoS DSCP 6-class',
-      yStart: 320, yEnd: 480, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
-    { id: 'z-branch', label: 'BRANCH SITES', sublabel: 'CE Router · Local FW · OSPF Area 10',
-      yStart: 480, yEnd: 640, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
-    { id: 'z-ep', label: 'BRANCH ENDPOINTS', sublabel: 'Desktops · VoIP · Local Servers',
-      yStart: 640, yEnd: 790, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
-  ]
-
-  const [spX] = xCenter(1, 0, 200)
-  const sp = mkNode('sp', 'SP-BACKBONE', 'MPLS/Internet', 'internet', 'ISP', spX, Y.sp, 200, 80, {
-    interfaces: [
-      { name: 'PE1', ip: '203.0.0.1/30', vlan: 'MPLS Core' },
-      { name: 'PE2', ip: '203.0.0.5/30', vlan: 'MPLS Core' },
-    ],
-    configLines: ['MPLS L3VPN', 'BGP full-table', 'Internet Transit'],
-    services: ['MPLS', 'BGP', 'Internet Transit'],
-  })
-
-  const [h1x, h2x] = xCenter(2, 200, NW)
-  const hub1 = mkNode('hub1', wanRole.name(0), wanRole.model(0), 'wan', wanRole.vendor(0), h1x, Y.hub, NW, 110, {
-    haRole: 'active',    interfaces: [
-      { name: 'Gi0/0/0', ip: '203.0.0.2/30', vlan: 'SP-uplink' },
-      { name: 'Gi0/1', ip: '10.0.0.1/30', vlan: 'iBGP peer' },
-      { name: 'Lo0', ip: '10.0.0.1/32' },
-    ],
-    configLines: ['BGP Route Reflector', 'MPLS PE · LDP', 'SR-MPLS Adj-SID', 'BFD multihop 50ms'],
-    services: ['BGP RR', 'MPLS', 'SR-MPLS', 'BFD'],
-  })
-  const hub2 = mkNode('hub2', wanRole.name(1), wanRole.model(1), 'wan', wanRole.vendor(1), h2x, Y.hub, NW, 110, {
-    haRole: 'standby',    interfaces: [
-      { name: 'Gi0/0/0', ip: '203.0.0.6/30', vlan: 'SP-uplink' },
-      { name: 'Gi0/1', ip: '10.0.0.2/30', vlan: 'iBGP peer' },
-      { name: 'Lo0', ip: '10.0.0.2/32' },
-    ],
-    configLines: ['BGP RR standby', 'MPLS PE backup', 'SR-MPLS', 'BFD'],
-    services: ['BGP RR', 'MPLS', 'SR-MPLS'],
-  })
-
-  const cpeW = 170
-  const cpeXs = xCenter(3, 40, cpeW)
-  const cpes = cpeXs.map((x, i) => mkNode(
-    `cpe${i+1}`, `WAN-CPE-0${i+1}`, 'ISR-4331', 'branch', 'Cisco', x, Y.cpe, cpeW, 110, {
-      interfaces: [
-        { name: 'Gi0/0/0', ip: `10.100.${i}.1/30`, vlan: 'MPLS PE-link' },
-        { name: 'Gi0/0/1', ip: `10.100.${i}.5/30`, vlan: 'MPLS backup' },
-        { name: 'Gi0/1', ip: `10.10.${i+1}.1/24`, vlan: 'Branch LAN' },
-        { name: 'Lo0', ip: `10.0.1.${i+1}/32` },
-      ],
-      configLines: [
-        'L3VPN PE · VRF BRANCH',
-        'QoS DSCP 6-class marking',
-        'BFD sub-second detection',
-        'SD-WAN overlay tunnel',
-      ],
-      services: ['L3VPN', 'QoS', 'BFD', 'SD-WAN'],
-    },
-  ))
-
-  const brW = 160
-  const brXs = xCenter(3, 40, brW)
-  const branches = brXs.map((x, i) => mkNode(
-    `br${i+1}`, `BR-RTR-0${i+1}`, 'ISR-1100', 'distribution', 'Cisco', x, Y.branch, brW, 100, {
-      interfaces: [
-        { name: 'Gi0/0', ip: `10.10.${i+1}.2/24`, vlan: 'WAN-link' },
-        { name: 'Gi0/1', ip: `10.10.${i+1}.1/24`, vlan: 'LAN' },
-      ],
-      configLines: ['OSPF Area 10', 'IPSec fallback tunnel', 'Local internet breakout', 'ZBF firewall'],
-      services: ['OSPF', 'IPSec', 'ZBF', 'NAT'],
-    },
-  ))
-
-  const epW = 100
-  const epXs = xCenter(3, 120, epW)
-  const eps = epXs.map((x, i) => mkNode(
-    `ep${i+1}`, `BR${i+1}-HOST`, 'Endpoint', 'endpoint', '—', x, Y.ep, epW, 60, {
-      interfaces: [{ name: 'eth0', ip: `10.10.${i+1}.10/24`, vlan: 'VLAN20' }],
-      configLines: ['DHCP Client'],
-    },
-  ))
-
-  const nodes = [sp, hub1, hub2, ...cpes, ...branches, ...eps]
-
-  const links: LLDLink[] = [
-    mkLink('sp', 'hub1', 'PE1', 'Gi0/0/0', '10G', 'MPLS / BGP', { subnet: '203.0.0.0/30' }),
-    mkLink('sp', 'hub2', 'PE2', 'Gi0/0/0', '10G', 'MPLS / BGP', { subnet: '203.0.0.4/30' }),
-    mkLink('hub1', 'hub2', 'Gi0/1', 'Gi0/1', '1G', 'iBGP RR peer', { isDashed: true }),
-    ...cpes.map((c, i) => mkLink('hub1', c.id, `Gi0/${i+2}`, 'Gi0/0/0', '1G', 'MPLS L3VPN', { subnet: `10.100.${i}.0/30` })),
-    ...cpes.map((c, i) => mkLink('hub2', c.id, `Gi0/${i+2}`, 'Gi0/0/1', '1G', 'MPLS backup', { subnet: `10.101.${i}.0/30`, isDashed: true })),
-    ...cpes.map((c, i) => mkLink(c.id, branches[i].id, 'Gi0/1', 'Gi0/0', '100M', 'OSPF / QoS', { subnet: `10.10.${i+1}.0/24` })),
-    ...branches.map((b, i) => mkLink(b.id, eps[i].id, 'Gi0/1', 'eth0', '1G', '802.1Q Trunk', { vlan: 'VLAN20' })),
-  ]
-
-  const cabling: CablingEntry[] = [
-    ...cpes.map((c, i) => ({ server: c.hostname, serverPort: 'Gi0/0/0', ipv4: c.interfaces[0]?.ip ?? '', switchPort: `HQ-PE Gi0/${i+2}`, mgmtPort: 'Lo0', vlan: 'MPLS' })),
-    ...branches.map((b) => ({ server: b.hostname, serverPort: 'Gi0/0', ipv4: b.interfaces[0]?.ip ?? '', switchPort: `CPE Gi0/1`, mgmtPort: 'Lo0', vlan: 'LAN' })),
-  ]
-
-  return {
-    nodes, links, zones, cabling,
-    title: `WAN LLD — SPECIFIC IMPLEMENTATION${sc ? ` · ${sc}` : ''}`,
-    subtitle: 'MPLS L3VPN Hub-and-Spoke · 3 Branch Sites · PE HA · QoS · SD-WAN overlay',
-    svgH: 800,
-  }
+  return buildTieredLLD(devices, sc, 'wan', [
+    row('sdwan-controller', 'core', 'SD-WAN CONTROLLERS', 'vManage · vSmart · vBond', 'purple'),
+    row('wan-edge', 'wan', 'WAN EDGE', 'Dual-router sites · system-ip · VPN 1 LAN / VPN 2 guest', 'amber', 6),
+  ], { title: 'WAN LLD' })
 }
-
-// ─── Multisite LLD ────────────────────────────────────────────────────────────
 
 function buildMultisiteLLD(devices: BOMDevice[], sc: string): LLDTopo {
-  const NW = 180
-  const Y = { dci: 50, spine: 190, leaf: 340, srv: 490 }
-
-  // Both sites share the BOM's fabric hardware; derive vendor/model from it
-  // (keep the site-specific hostnames). DCI gateways follow the BOM wan-edge,
-  // falling back to the spine vendor + a chassis SKU when none is present.
-  const spineRole = bomRole(devices, 'spine', { vendor: 'Cisco', model: 'N9K-C9508', name: i => `SPINE-0${i + 1}` })
-  const leafRole = bomRole(devices, 'leaf', { vendor: 'Cisco', model: 'N9K-C9332C', name: i => `LEAF-0${i + 1}` })
-  const dciRole = bomRole(devices, 'wan-edge', { vendor: spineRole.vendor(0), model: 'N9K-C9504', name: i => `DCI-GW-0${i + 1}` })
-
-  const zones: LLDZone[] = [
-    { id: 'z-dci', label: 'DCI INTERCONNECT', sublabel: 'EVPN Type-5 · RT 65100:<vni> · BGP multi-AS',
-      yStart: 0, yEnd: 140, fill: 'rgba(127,29,29,0.20)', stroke: '#B91C1C' },
-    { id: 'z-spine', label: 'SPINE FABRIC', sublabel: 'IS-IS underlay · BGP EVPN overlay · ECMP',
-      yStart: 140, yEnd: 290, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
-    { id: 'z-leaf', label: 'LEAF / ToR', sublabel: 'VXLAN NVE · Anycast-GW · vPC domain',
-      yStart: 290, yEnd: 430, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
-    { id: 'z-srv', label: 'COMPUTE / STORAGE', sublabel: 'Dual-homed LAG · jumbo 9000 · 25G',
-      yStart: 430, yEnd: 600, fill: 'rgba(28,25,23,0.20)', stroke: '#57534E' },
-  ]
-
-  const siteASpineXs = xCenter(2, 40, NW)
-  const siteBSpineXs = [siteASpineXs[0] + 480, siteASpineXs[1] + 480]
-
-  const dciGw1 = mkNode('dci1', 'DCI-GW-SITE-A', dciRole.model(0), 'wan', dciRole.vendor(0),
-    siteASpineXs[0] + NW/2, Y.dci, NW, 90, { haRole: 'active',
-      interfaces: [
-        { name: 'e1/1', ip: '172.16.0.1/30', speed: '100G', vlan: 'DCI trunk' },
-        { name: 'Lo0', ip: '10.255.0.100/32' },
-      ],
-      configLines: ['EVPN Type-5 stretched RT', 'RT 65100:10010 (L2)', 'RT 65100:50000 (L3)'],
-      services: ['EVPN DCI', 'BGP Multi-AS'],
-    })
-  const dciGw2 = mkNode('dci2', 'DCI-GW-SITE-B', dciRole.model(0), 'wan', dciRole.vendor(0),
-    siteBSpineXs[0] + NW/2, Y.dci, NW, 90, { haRole: 'active',
-      interfaces: [
-        { name: 'e1/1', ip: '172.16.0.2/30', speed: '100G', vlan: 'DCI trunk' },
-        { name: 'Lo0', ip: '10.255.0.200/32' },
-      ],
-      configLines: ['EVPN Type-5 stretched RT', 'RT 65100:10010 (L2)', 'RT 65100:50000 (L3)'],
-      services: ['EVPN DCI', 'BGP Multi-AS'],
-    })
-
-  const mkSiteSpine = (site: string, xs: number[], baseIp: number) =>
-    xs.map((x, i) => mkNode(
-      `${site}sp${i+1}`, `${site.toUpperCase()}-SPINE-0${i+1}`, spineRole.model(i), 'spine', spineRole.vendor(i), x, Y.spine, NW, 100, {
-        interfaces: [
-          { name: `e1/1-4`, ip: `10.${baseIp}.0.${i*4}/31`, speed: '100G' },
-          { name: 'Lo0', ip: `10.255.${baseIp}.${i+1}/32` },
-        ],
-        configLines: ['IS-IS level-2', 'BGP EVPN', `ASN 6500${baseIp}`],
-        services: ['IS-IS', 'BGP EVPN', 'ECMP'],
-      },
-    ))
-
-  const mkSiteLeaf = (site: string, baseIp: number) => {
-    const xs = site === 'a' ? xCenter(2, 40, NW) : [siteASpineXs[0] + 480, siteASpineXs[1] + 480]
-    return xs.map((x, i) => mkNode(
-      `${site}lf${i+1}`, `${site.toUpperCase()}-LEAF-0${i+1}`, leafRole.model(i), 'leaf', leafRole.vendor(i), x, Y.leaf, NW, 100, {
-        interfaces: [
-          { name: 'e1/1-2', ip: `10.${baseIp}.1.${i*4}/31`, speed: '25G' },
-          { name: 'nve1', ip: `10.255.${baseIp+10}.${i+1}/32` },
-          { name: 'Po1', ip: '—', vlan: `vPC Domain ${Math.floor(i/2)+1}` },
-        ],
-        configLines: [
-          'VXLAN NVE · BGP EVPN',
-          `vPC Pair #${Math.floor(i/2)+1}`,
-          'Anycast-GW 10.100.x.1',
-          `Stretched RT 65100:<vni>`,
-        ],
-        services: ['VXLAN', 'BGP EVPN', 'vPC', 'Anycast-GW'],
-      },
-    ))
-  }
-
-  const mkSiteSrv = (site: string, baseIp: number) => {
-    const xs = site === 'a' ? xCenter(2, 40, 160) : [siteASpineXs[0] + 480, siteASpineXs[1] + 470]
-    return xs.map((x, i) => mkNode(
-      `${site}srv${i+1}`, `${site.toUpperCase()}-SRV-0${i+1}`, 'x86 2U', 'endpoint', 'Dell', x, Y.srv, 160, 80, {
-        interfaces: [{ name: 'eth0', ip: `10.100.${baseIp}.${i+10}/24`, speed: '25G' }],
-        configLines: ['25GE dual-homed LAG', 'jumbo 9000'],
-      },
-    ))
-  }
-
-  const aspines = mkSiteSpine('a', siteASpineXs, 1)
-  const bspines = mkSiteSpine('b', siteBSpineXs, 2)
-  const aleaves = mkSiteLeaf('a', 1)
-  const bleaves = mkSiteLeaf('b', 2)
-  const asrvs = mkSiteSrv('a', 1)
-  const bsrvs = mkSiteSrv('b', 2)
-
-  const nodes = [dciGw1, dciGw2, ...aspines, ...bspines, ...aleaves, ...bleaves, ...asrvs, ...bsrvs]
-
-  const links: LLDLink[] = [
-    mkLink('dci1', 'dci2', 'e1/1', 'e1/1', '100G', 'DCI EVPN Type-5', { subnet: '172.16.0.0/30', isDashed: false }),
-    mkLink('dci1', 'asp1', 'e1/2', 'e1/5', '100G', 'IS-IS / BGP', { subnet: '10.1.0.100/31' }),
-    mkLink('dci2', 'bsp1', 'e1/2', 'e1/5', '100G', 'IS-IS / BGP', { subnet: '10.2.0.100/31' }),
-    ...aspines.flatMap((sp, si) => aleaves.map((lf, li) => mkLink(sp.id, lf.id, `e1/${li+1}`, `e1/${si+1}`, '100G', 'IS-IS / VXLAN', { subnet: `10.1.${si}.${li*4}/31` }))),
-    ...bspines.flatMap((sp, si) => bleaves.map((lf, li) => mkLink(sp.id, lf.id, `e1/${li+1}`, `e1/${si+1}`, '100G', 'IS-IS / VXLAN', { subnet: `10.2.${si}.${li*4}/31` }))),
-    mkLink('alf1', 'alf2', 'Po1', 'Po1', '2×40G', 'vPC Peer', { isDashed: true }),
-    mkLink('blf1', 'blf2', 'Po1', 'Po1', '2×40G', 'vPC Peer', { isDashed: true }),
-    ...aleaves.map((lf, i) => mkLink(lf.id, asrvs[i].id, 'e1/49', 'eth0', '25G', 'LAG', { subnet: `10.100.1.${i*4}/30` })),
-    ...bleaves.map((lf, i) => mkLink(lf.id, bsrvs[i].id, 'e1/49', 'eth0', '25G', 'LAG', { subnet: `10.100.2.${i*4}/30` })),
-  ]
-
-  const cabling: CablingEntry[] = [
-    { server: 'DCI-GW-A', serverPort: 'e1/1', ipv4: '172.16.0.1', switchPort: 'DCI-GW-B e1/1', mgmtPort: 'Lo0', vlan: 'DCI' },
-    ...asrvs.map((s, i) => ({ server: s.hostname, serverPort: 'eth0', ipv4: s.interfaces[0]?.ip ?? '', switchPort: `A-LEAF-0${i+1} e1/49`, mgmtPort: '—', vlan: 'LAG' })),
-    ...bsrvs.map((s, i) => ({ server: s.hostname, serverPort: 'eth0', ipv4: s.interfaces[0]?.ip ?? '', switchPort: `B-LEAF-0${i+1} e1/49`, mgmtPort: '—', vlan: 'LAG' })),
-  ]
-
-  return {
-    nodes, links, zones, cabling,
-    title: `MULTISITE EVPN DCI LLD${sc ? ` · ${sc}` : ''}`,
-    subtitle: 'Site A + Site B · EVPN Type-5 DCI · Stretched VNI RT 65100 · vPC domains',
-    svgH: 620,
-  }
+  return buildTieredLLD(devices, sc, 'multisite', [
+    row('sdwan-controller', 'core', 'SD-WAN CONTROLLERS', 'vManage · vSmart · vBond', 'purple'),
+    row('wan-edge', 'wan', 'DCI / WAN EDGE', 'Inter-site transport · stretched EVPN RTs 65100:<vni>', 'amber'),
+    row('firewall', 'dmz', 'PERIMETER', 'Firewalls · routed /31 handoff to the border leaves', 'red', 2),
+    row('spine', 'spine', 'SPINE', 'eBGP underlay /31s · EVPN route exchange (not a VTEP)', 'blue'),
+    row('leaf', 'leaf', 'LEAF / VTEP', `VXLAN · VLAN ${TENANT_OVERLAY.vlan} ↔ VNI ${TENANT_OVERLAY.l2vni} · ${TENANT_OVERLAY.vrf} L3VNI ${TENANT_OVERLAY.l3vni}`, 'green'),
+  ], { title: 'MULTISITE DCI LLD' })
 }
 
-// ─── Multicloud LLD ───────────────────────────────────────────────────────────
+const cloudRows = (edgeLabel: string): RowSpec[] => [
+  row('cloud-transit', 'transit', 'CLOUD TRANSIT', 'Transit gateways · provider-managed routing (Terraform)', 'teal'),
+  row('cloud-gw', 'cloud', 'CLOUD GATEWAYS', 'Spoke / VPC gateways (Terraform)', 'blue'),
+  row('sdwan-controller', 'core', 'SD-WAN CONTROLLERS', 'vManage · vSmart · vBond', 'purple'),
+  row('wan-edge', 'wan', edgeLabel, 'On-prem on-ramp pair per site · IPsec to the cloud transit', 'amber'),
+]
+const CLOUD_OVERLAY = [
+  { from: 'cloud-transit', to: 'cloud-gw', protocol: 'Transit peering' },
+  { from: 'cloud-transit', to: 'wan-edge', protocol: 'IPsec / BGP' },
+]
 
 function buildMulticloudLLD(devices: BOMDevice[], sc: string): LLDTopo {
-  const NW = 180
-  const Y = { onprem: 50, gw: 200, cloud: 380, workload: 530 }
-
-  // On-prem DC spine reflects the BOM (cloud GW/VPC/workload nodes stay
-  // provider-native — AWS/Azure/GCP are correct as-is).
-  const spineRole = bomRole(devices, 'spine', { vendor: 'Cisco', model: 'N9K-C9508', name: i => `DC-SPINE-0${i + 1}` })
-
-  const zones: LLDZone[] = [
-    { id: 'z-onprem', label: 'ON-PREMISES DC', sublabel: 'Spine-Leaf · VXLAN/EVPN · BGP',
-      yStart: 0, yEnd: 150, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
-    { id: 'z-gw', label: 'CLOUD GATEWAY', sublabel: 'DirectConnect · ExpressRoute · Cloud Interconnect',
-      yStart: 150, yEnd: 320, fill: 'rgba(180,83,9,0.20)', stroke: '#B45309' },
-    { id: 'z-cloud', label: 'CLOUD PROVIDERS', sublabel: 'AWS VPC · Azure VNet · GCP VPC',
-      yStart: 320, yEnd: 470, fill: 'rgba(6,78,59,0.20)', stroke: '#065F46' },
-    { id: 'z-wl', label: 'CLOUD WORKLOADS', sublabel: 'EC2 · AKS · GKE · Serverless',
-      yStart: 470, yEnd: 640, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
-  ]
-
-  const [s1x, s2x] = xCenter(2, 200, NW)
-  const dcSpine1 = mkNode('dcsp1', 'DC-SPINE-01', spineRole.model(0), 'spine', spineRole.vendor(0), s1x, Y.onprem, NW, 90, {
-    interfaces: [
-      { name: 'e1/1-4', ip: '10.1.0.x/31', speed: '100G' },
-      { name: 'Lo0', ip: '10.255.1.1/32' },
-    ],
-    configLines: ['IS-IS · BGP EVPN', 'VXLAN NVE overlay'],
-    services: ['IS-IS', 'BGP EVPN', 'VXLAN'],
-  })
-  const dcSpine2 = mkNode('dcsp2', 'DC-SPINE-02', spineRole.model(1), 'spine', spineRole.vendor(1), s2x, Y.onprem, NW, 90, {
-    interfaces: [
-      { name: 'e1/1-4', ip: '10.1.1.x/31', speed: '100G' },
-      { name: 'Lo0', ip: '10.255.1.2/32' },
-    ],
-    configLines: ['IS-IS · BGP EVPN', 'VXLAN NVE overlay'],
-    services: ['IS-IS', 'BGP EVPN', 'VXLAN'],
-  })
-
-  const gwXs = xCenter(3, 40, NW)
-  const awsGw = mkNode('awsgw', 'AWS DX Gateway', 'DirectConnect', 'cloud', 'AWS', gwXs[0], Y.gw, NW, 100, {
-    interfaces: [
-      { name: 'dxcon-01', ip: '169.254.0.1/30', speed: '10G', vlan: 'VLAN 100' },
-      { name: 'vgw', ip: '10.200.0.1/24', vlan: 'VPC CIDR' },
-    ],
-    configLines: ['AWS DirectConnect 10G', 'BGP AS64512', 'Private VIF → VPC'],
-    services: ['DirectConnect', 'BGP', 'Private VIF'],
-  })
-  const azureGw = mkNode('azuregw', 'Azure ER Gateway', 'ExpressRoute', 'cloud', 'Azure', gwXs[1], Y.gw, NW, 100, {
-    interfaces: [
-      { name: 'er-circuit', ip: '169.254.1.1/30', speed: '10G', vlan: 'VLAN 200' },
-      { name: 'vnet-gw', ip: '10.201.0.1/24', vlan: 'VNet CIDR' },
-    ],
-    configLines: ['ExpressRoute Premium', 'BGP AS12076', 'Private Peering'],
-    services: ['ExpressRoute', 'BGP', 'Private Peering'],
-  })
-  const gcpGw = mkNode('gcpgw', 'GCP Interconnect', 'Cloud Interconnect', 'cloud', 'GCP', gwXs[2], Y.gw, NW, 100, {
-    interfaces: [
-      { name: 'attach-01', ip: '169.254.2.1/30', speed: '10G', vlan: 'VLAN 300' },
-      { name: 'vpc-gw', ip: '10.202.0.1/24', vlan: 'VPC CIDR' },
-    ],
-    configLines: ['Dedicated Interconnect', 'BGP AS16550', 'Cloud Router'],
-    services: ['Dedicated IC', 'BGP', 'Cloud Router'],
-  })
-
-  const cloudXs = xCenter(3, 40, NW)
-  const awsVpc = mkNode('awsvpc', 'AWS VPC', 'us-east-1', 'cloud', 'AWS', cloudXs[0], Y.cloud, NW, 80, {
-    interfaces: [{ name: 'subnet-a', ip: '10.200.1.0/24', vlan: 'Private' }],
-    configLines: ['VPC 10.200.0.0/16', 'Security Groups', 'NACLs'],
-    services: ['VPC', 'SG', 'NACL'],
-  })
-  const azureVnet = mkNode('azurevnet', 'Azure VNet', 'eastus2', 'cloud', 'Azure', cloudXs[1], Y.cloud, NW, 80, {
-    interfaces: [{ name: 'subnet-a', ip: '10.201.1.0/24', vlan: 'Private' }],
-    configLines: ['VNet 10.201.0.0/16', 'NSG · UDR', 'Private Endpoints'],
-    services: ['VNet', 'NSG', 'PE'],
-  })
-  const gcpVpc = mkNode('gcpvpc', 'GCP VPC', 'us-central1', 'cloud', 'GCP', cloudXs[2], Y.cloud, NW, 80, {
-    interfaces: [{ name: 'subnet-a', ip: '10.202.1.0/24', vlan: 'Private' }],
-    configLines: ['VPC 10.202.0.0/16', 'Firewall Rules', 'Private Google Access'],
-    services: ['VPC', 'FW Rules'],
-  })
-
-  const wlXs = xCenter(3, 40, 160)
-  const awsWl = mkNode('awswl', 'EC2 / EKS', 'i3.2xlarge', 'application', 'AWS', wlXs[0], Y.workload, 160, 80, {
-    interfaces: [{ name: 'eni-0', ip: '10.200.1.10/24' }],
-    configLines: ['K8s cluster (EKS)', 'Auto Scaling Group'],
-  })
-  const azureWl = mkNode('azurewl', 'AKS / VMs', 'Standard_D4', 'application', 'Azure', wlXs[1], Y.workload, 160, 80, {
-    interfaces: [{ name: 'nic-0', ip: '10.201.1.10/24' }],
-    configLines: ['AKS managed K8s', 'VM Scale Sets'],
-  })
-  const gcpWl = mkNode('gcpwl', 'GKE / VMs', 'n2-standard-4', 'application', 'GCP', wlXs[2], Y.workload, 160, 80, {
-    interfaces: [{ name: 'nic0', ip: '10.202.1.10/24' }],
-    configLines: ['GKE Autopilot', 'Managed Instance Groups'],
-  })
-
-  const nodes = [dcSpine1, dcSpine2, awsGw, azureGw, gcpGw, awsVpc, azureVnet, gcpVpc, awsWl, azureWl, gcpWl]
-
-  const links: LLDLink[] = [
-    mkLink('dcsp1', 'awsgw', 'e1/5', 'dxcon-01', '10G', 'DirectConnect', { vlan: 'VLAN100', subnet: '169.254.0.0/30' }),
-    mkLink('dcsp1', 'azuregw', 'e1/6', 'er-circuit', '10G', 'ExpressRoute', { vlan: 'VLAN200', subnet: '169.254.1.0/30' }),
-    mkLink('dcsp2', 'gcpgw', 'e1/5', 'attach-01', '10G', 'Cloud IC', { vlan: 'VLAN300', subnet: '169.254.2.0/30' }),
-    mkLink('dcsp1', 'dcsp2', 'e1/48', 'e1/48', '100G', 'IS-IS peer', { isDashed: true }),
-    mkLink('awsgw', 'awsvpc', 'vgw', 'rtb', '—', 'VPC Attachment', { subnet: '10.200.0.0/16' }),
-    mkLink('azuregw', 'azurevnet', 'vnet-gw', 'rtb', '—', 'VNet Peering', { subnet: '10.201.0.0/16' }),
-    mkLink('gcpgw', 'gcpvpc', 'vpc-gw', 'rtb', '—', 'Cloud Router', { subnet: '10.202.0.0/16' }),
-    mkLink('awsvpc', 'awswl', 'subnet-a', 'eni-0', '—', 'ENI attach', { subnet: '10.200.1.0/24' }),
-    mkLink('azurevnet', 'azurewl', 'subnet-a', 'nic-0', '—', 'NIC attach', { subnet: '10.201.1.0/24' }),
-    mkLink('gcpvpc', 'gcpwl', 'subnet-a', 'nic0', '—', 'NIC attach', { subnet: '10.202.1.0/24' }),
-  ]
-
-  const cabling: CablingEntry[] = [
-    { server: 'DC-SPINE-01', serverPort: 'e1/5', ipv4: '169.254.0.2', switchPort: 'AWS DX dxcon-01', mgmtPort: 'Lo0', vlan: 'VLAN100' },
-    { server: 'DC-SPINE-01', serverPort: 'e1/6', ipv4: '169.254.1.2', switchPort: 'Azure ER circuit', mgmtPort: 'Lo0', vlan: 'VLAN200' },
-    { server: 'DC-SPINE-02', serverPort: 'e1/5', ipv4: '169.254.2.2', switchPort: 'GCP IC attach-01', mgmtPort: 'Lo0', vlan: 'VLAN300' },
-  ]
-
-  return {
-    nodes, links, zones, cabling,
-    title: `MULTICLOUD LLD — SPECIFIC IMPLEMENTATION${sc ? ` · ${sc}` : ''}`,
-    subtitle: 'On-prem DC · AWS DirectConnect · Azure ExpressRoute · GCP Cloud Interconnect',
-    svgH: 660,
-  }
+  return buildTieredLLD(devices, sc, 'multicloud', cloudRows('ON-PREM EDGE'), { title: 'MULTI-CLOUD LLD', overlay: CLOUD_OVERLAY })
 }
-
-// ─── Aviatrix LLD ─────────────────────────────────────────────────────────────
 
 function buildAviatrixLLD(devices: BOMDevice[], sc: string): LLDTopo {
-  const NW = 180
-  const Y = { onprem: 50, transit: 200, spoke: 370, workload: 520 }
-
-  // On-prem DC-edge routers reflect the BOM wan-edge selection (transit/spoke
-  // gateways stay Aviatrix-native — correct as-is).
-  const edgeRole = bomRole(devices, 'wan-edge', { vendor: 'Cisco', model: 'ASR-1002-HX', name: i => `DC-EDGE-RTR-0${i + 1}` })
-
-  const zones: LLDZone[] = [
-    { id: 'z-onprem', label: 'ON-PREMISES', sublabel: 'DC Edge · BGP · IPSec tunnel',
-      yStart: 0, yEnd: 150, fill: 'rgba(29,78,216,0.20)', stroke: '#1D4ED8' },
-    { id: 'z-transit', label: 'AVIATRIX TRANSIT', sublabel: 'Transit Gateway · BGP over IPSec · FQDN Filter',
-      yStart: 150, yEnd: 320, fill: 'rgba(180,83,9,0.20)', stroke: '#B45309' },
-    { id: 'z-spoke', label: 'AVIATRIX SPOKES', sublabel: 'Spoke Gateways · Network Segmentation · NAT',
-      yStart: 320, yEnd: 460, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
-    { id: 'z-wl', label: 'CLOUD WORKLOADS', sublabel: 'EC2 · AKS · GKE · Cloud-native',
-      yStart: 460, yEnd: 640, fill: 'rgba(88,28,135,0.20)', stroke: '#7E22CE' },
-  ]
-
-  const [e1x, e2x] = xCenter(2, 200, NW)
-  const edge1 = mkNode('edge1', 'DC-EDGE-RTR-01', edgeRole.model(0), 'wan', edgeRole.vendor(0), e1x, Y.onprem, NW, 90, {
-    haRole: 'active',    interfaces: [
-      { name: 'Gi0/0/0', ip: '10.0.0.1/30', vlan: 'WAN' },
-      { name: 'Tu1', ip: '169.254.10.1/30', vlan: 'IPSec to Transit' },
-      { name: 'Lo0', ip: '10.255.0.1/32' },
-    ],
-    configLines: ['BGP AS65000', 'IPSec IKEv2 tunnel', 'BFD over tunnel'],
-    services: ['BGP', 'IPSec', 'BFD'],
-  })
-  const edge2 = mkNode('edge2', 'DC-EDGE-RTR-02', edgeRole.model(1), 'wan', edgeRole.vendor(1), e2x, Y.onprem, NW, 90, {
-    haRole: 'standby',    interfaces: [
-      { name: 'Gi0/0/0', ip: '10.0.0.5/30', vlan: 'WAN' },
-      { name: 'Tu1', ip: '169.254.10.5/30', vlan: 'IPSec to Transit' },
-      { name: 'Lo0', ip: '10.255.0.2/32' },
-    ],
-    configLines: ['BGP AS65000', 'IPSec IKEv2 backup', 'BFD'],
-    services: ['BGP', 'IPSec', 'BFD'],
-  })
-
-  const txXs = xCenter(3, 40, NW)
-  const txAws = mkNode('txaws', 'Aviatrix Transit GW', 'AWS us-east-1', 'transit', 'Aviatrix', txXs[0], Y.transit, NW, 100, {
-    interfaces: [
-      { name: 'eth0', ip: '10.200.0.10/24', vlan: 'Transit VPC' },
-      { name: 'tun-onprem', ip: '169.254.10.2/30', vlan: 'IPSec' },
-    ],
-    configLines: ['Transit Gateway (HA)', 'BGP AS64512', 'FQDN Egress Filter', 'HPE (High Perf Encryption)'],
-    services: ['BGP', 'IPSec', 'FQDN', 'HPE'],
-  })
-  const txAzure = mkNode('txazure', 'Aviatrix Transit GW', 'Azure eastus2', 'transit', 'Aviatrix', txXs[1], Y.transit, NW, 100, {
-    interfaces: [
-      { name: 'eth0', ip: '10.201.0.10/24', vlan: 'Transit VNet' },
-      { name: 'peering', ip: '10.201.0.100/30', vlan: 'Multi-cloud peering' },
-    ],
-    configLines: ['Transit Gateway', 'BGP AS64513', 'Connected Transit', 'Multi-cloud peering'],
-    services: ['BGP', 'Connected Transit'],
-  })
-  const txGcp = mkNode('txgcp', 'Aviatrix Transit GW', 'GCP us-central1', 'transit', 'Aviatrix', txXs[2], Y.transit, NW, 100, {
-    interfaces: [
-      { name: 'eth0', ip: '10.202.0.10/24', vlan: 'Transit VPC' },
-      { name: 'peering', ip: '10.202.0.100/30', vlan: 'Multi-cloud peering' },
-    ],
-    configLines: ['Transit Gateway', 'BGP AS64514', 'Segmentation Domain', 'Network Domain: Prod'],
-    services: ['BGP', 'Segmentation'],
-  })
-
-  const spXs = xCenter(3, 40, NW)
-  const spAws = mkNode('spaws', 'AWS Spoke GW', 'us-east-1a/b', 'spoke', 'Aviatrix', spXs[0], Y.spoke, NW, 80, {
-    interfaces: [{ name: 'eth0', ip: '10.200.1.10/24', vlan: 'Spoke VPC' }],
-    configLines: ['Spoke Gateway (HA)', 'Network Domain: Prod', 'NAT + SNAT'],
-  })
-  const spAzure = mkNode('spazure', 'Azure Spoke GW', 'eastus2', 'spoke', 'Aviatrix', spXs[1], Y.spoke, NW, 80, {
-    interfaces: [{ name: 'eth0', ip: '10.201.1.10/24', vlan: 'Spoke VNet' }],
-    configLines: ['Spoke Gateway', 'Network Domain: Dev', 'FQDN Filter'],
-  })
-  const spGcp = mkNode('spgcp', 'GCP Spoke GW', 'us-central1', 'spoke', 'Aviatrix', spXs[2], Y.spoke, NW, 80, {
-    interfaces: [{ name: 'eth0', ip: '10.202.1.10/24', vlan: 'Spoke VPC' }],
-    configLines: ['Spoke Gateway', 'Network Domain: Staging', 'Smart Egress'],
-  })
-
-  const wlXs = xCenter(3, 40, 160)
-  const wlAws = mkNode('wlaws', 'EC2 / EKS', 'Prod workloads', 'application', 'AWS', wlXs[0], Y.workload, 160, 80, {
-    interfaces: [{ name: 'eni-0', ip: '10.200.1.100/24' }],
-    configLines: ['Production EKS', 'Auto Scaling Group'],
-  })
-  const wlAzure = mkNode('wlazure', 'AKS / VMs', 'Dev workloads', 'application', 'Azure', wlXs[1], Y.workload, 160, 80, {
-    interfaces: [{ name: 'nic-0', ip: '10.201.1.100/24' }],
-    configLines: ['Development AKS', 'VM Scale Sets'],
-  })
-  const wlGcp = mkNode('wlgcp', 'GKE / VMs', 'Staging workloads', 'application', 'GCP', wlXs[2], Y.workload, 160, 80, {
-    interfaces: [{ name: 'nic0', ip: '10.202.1.100/24' }],
-    configLines: ['Staging GKE', 'Managed Instance Groups'],
-  })
-
-  const nodes = [edge1, edge2, txAws, txAzure, txGcp, spAws, spAzure, spGcp, wlAws, wlAzure, wlGcp]
-
-  const links: LLDLink[] = [
-    mkLink('edge1', 'txaws', 'Tu1', 'tun-onprem', '1G', 'IPSec / BGP', { subnet: '169.254.10.0/30' }),
-    mkLink('edge2', 'txaws', 'Tu1', 'tun-onprem', '1G', 'IPSec backup', { subnet: '169.254.10.4/30', isDashed: true }),
-    mkLink('edge1', 'edge2', 'Gi0/1', 'Gi0/1', '10G', 'iBGP peer', { isDashed: true }),
-    mkLink('txaws', 'txazure', 'peering', 'peering', '—', 'Multi-cloud peering', { subnet: 'BGP over IPSec' }),
-    mkLink('txazure', 'txgcp', 'peering', 'peering', '—', 'Multi-cloud peering', { subnet: 'BGP over IPSec' }),
-    mkLink('txaws', 'spaws', 'spoke-attach', 'eth0', '—', 'Spoke attachment', { subnet: '10.200.0.0/16' }),
-    mkLink('txazure', 'spazure', 'spoke-attach', 'eth0', '—', 'Spoke attachment', { subnet: '10.201.0.0/16' }),
-    mkLink('txgcp', 'spgcp', 'spoke-attach', 'eth0', '—', 'Spoke attachment', { subnet: '10.202.0.0/16' }),
-    mkLink('spaws', 'wlaws', 'eth0', 'eni-0', '—', 'VPC routing', { subnet: '10.200.1.0/24' }),
-    mkLink('spazure', 'wlazure', 'eth0', 'nic-0', '—', 'VNet routing', { subnet: '10.201.1.0/24' }),
-    mkLink('spgcp', 'wlgcp', 'eth0', 'nic0', '—', 'VPC routing', { subnet: '10.202.1.0/24' }),
-  ]
-
-  const cabling: CablingEntry[] = [
-    { server: 'DC-EDGE-01', serverPort: 'Tu1', ipv4: '169.254.10.1', switchPort: 'Aviatrix Transit', mgmtPort: 'Lo0', vlan: 'IPSec' },
-    { server: 'DC-EDGE-02', serverPort: 'Tu1', ipv4: '169.254.10.5', switchPort: 'Aviatrix Transit', mgmtPort: 'Lo0', vlan: 'IPSec' },
-  ]
-
-  return {
-    nodes, links, zones, cabling,
-    title: `AVIATRIX MULTI-CLOUD LLD${sc ? ` · ${sc}` : ''}`,
-    subtitle: 'On-prem → Aviatrix Transit GW → Spoke GWs → AWS/Azure/GCP workloads · Network Segmentation',
-    svgH: 660,
-  }
+  return buildTieredLLD(devices, sc, 'aviatrix', cloudRows('ON-PREM EDGE'), { title: 'AVIATRIX MULTI-CLOUD LLD', overlay: CLOUD_OVERLAY })
 }
 
-// ─── O-RAN / Private 5G LLD (G-A10) ──────────────────────────────────────────
-
 function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
-  const NW = 200
-  const Y = { core: 50, mid: 200, fh: 360, du: 530, ru: 700 }
-
-  const nDU = Math.min(Math.max(devices.filter(d => d.subLayer === 'oran-du').length, 2), 4)
-  const nRU = Math.min(Math.max(devices.filter(d => d.subLayer === 'oran-ru').length, 4), 6)
-
-  const zones: LLDZone[] = [
-    { id: 'z-core', label: '5G CORE + PTP GRANDMASTER', sublabel: 'UPF N3/N6 · GNSS-locked PTP GM · G.8275.1 PRC',
-      yStart: 0, yEnd: 140, fill: 'rgba(30,13,80,0.20)', stroke: '#3730A3' },
-    { id: 'z-mid', label: 'MIDHAUL + O-CU', sublabel: 'SR-MPLS transport · PTP boundary-clock · F1/E1 · NG to AMF',
-      yStart: 140, yEnd: 300, fill: 'rgba(146,64,14,0.20)', stroke: '#92400E' },
-    { id: 'z-fh', label: 'FRONTHAUL SWITCH', sublabel: 'eCPRI Class C7 · PTP transparent-clock · PFC · 9216 MTU',
-      yStart: 300, yEnd: 470, fill: 'rgba(21,128,61,0.20)', stroke: '#15803D' },
-    { id: 'z-du', label: 'O-DU (DISTRIBUTED UNIT)', sublabel: 'High-PHY/MAC/RLC · FAPI · L1 FPGA offload · eCPRI 25G',
-      yStart: 470, yEnd: 640, fill: 'rgba(8,40,64,0.20)', stroke: '#0E7490' },
-    { id: 'z-ru', label: 'O-RU (RADIO UNIT)', sublabel: 'Low-PHY/RF · 64T64R mMIMO · n78 3.5GHz · beamforming',
-      yStart: 640, yEnd: 810, fill: 'rgba(61,30,8,0.20)', stroke: '#9A3412' },
-  ]
-
-  const [coreX, gmX] = xCenter(2, 260, NW)
-  const upf = mkNode('upf', '5GC-UPF-01', '5G Core UPF', 'oran-core', 'Dell EMC', coreX, Y.core, NW, 110, {
-    haRole: 'active',    interfaces: [
-      { name: 'N3', ip: '10.250.0.1/30', speed: '100G', vlan: 'GTP-U' },
-      { name: 'N6', ip: '10.250.6.1/24', speed: '100G', vlan: 'Data Network' },
-      { name: 'N4', ip: '10.250.4.1/30', vlan: 'PFCP' },
-    ],
-    configLines: ['N3 GTP-U decap · DPDK', 'N6 → enterprise DNN', 'N4 PFCP to SMF', '5QI→DSCP QoS map'],
-    services: ['UPF', 'GTP-U', 'PFCP', 'DPDK'],
-    specs: 'COTS + SmartNIC offload',
-  })
-  const gm = mkNode('ptpgm', 'PTP-GM-01', 'Calnex PTP GM', 'oran-timing', 'Calnex', gmX, Y.core, NW, 110, {
-    interfaces: [
-      { name: 'GNSS', ip: 'GPS+Galileo', vlan: 'Antenna' },
-      { name: 'p1-4', ip: '10.250.9.1/24', speed: '1G', vlan: 'PTP master' },
-    ],
-    configLines: ['G.8275.1 domain 24', 'clock-class GM · ±100ns', 'SyncE PRC · ESMC', 'announce -3 · sync -4'],
-    services: ['PTP', 'GNSS', 'SyncE'],
-    specs: 'Class A grandmaster',
-  })
-
-  const [mhX, cuX] = xCenter(2, 260, NW)
-  const mh = mkNode('mh1', '5G-MH-RTR-01', 'ASR 9901', 'oran-midhaul', 'Cisco', mhX, Y.mid, NW, 120, {
-    haRole: 'active',    interfaces: [
-      { name: 'Gi0/0/0/0', ip: '10.250.10.1/30', speed: '100G', vlan: 'upstream/core' },
-      { name: 'Gi0/0/0/1', ip: '10.250.11.1/30', speed: '100G', vlan: 'midhaul/DU' },
-      { name: 'Lo0', ip: '10.250.1.1/32' },
-    ],
-    configLines: ['IS-IS + SR-MPLS', 'PTP boundary-clock', 'SyncE freq-sync', 'prefix-sid index 100'],
-    services: ['SR-MPLS', 'IS-IS', 'PTP-BC', 'SyncE'],
-    specs: 'Timing-grade aggregation',
-  })
-  const cu = mkNode('cu1', 'O-CU-01', 'O-CU Server', 'oran-cu', 'Dell EMC', cuX, Y.mid, NW, 120, {
-    interfaces: [
-      { name: 'F1-C/U', ip: '10.250.2.1/24', speed: '25G', vlan: 'F1 to DU' },
-      { name: 'E1', ip: '10.250.2.5/30', vlan: 'CU-CP↔CU-UP' },
-      { name: 'NG', ip: '10.250.2.9/30', vlan: 'to AMF/UPF' },
-    ],
-    configLines: ['CU-CP + CU-UP split', 'F1 SCTP 38472', 'E1 SCTP 38462', 'NG to 5GC AMF'],
-    services: ['CU-CP', 'CU-UP', 'F1', 'E1', 'NG'],
-    specs: 'COTS · RT-PHY',
-  })
-
-  const fhW = 220
-  const [fhX] = xCenter(1, 0, fhW)
-  const fh = mkNode('fh1', '5G-FH-SW-01', 'N9K-93180YC-FX3', 'oran-fronthaul', 'Cisco', fhX, Y.fh, fhW, 110, {
-    interfaces: [
-      { name: 'e1/1-48', ip: '—', speed: '25G', vlan: 'eCPRI fronthaul' },
-      { name: 'e1/49-54', ip: '10.250.3.1/24', speed: '100G', vlan: 'uplink to DU/MH' },
-    ],
-    configLines: ['PTP transparent-clock', 'eCPRI Class C7 QoS', 'PFC priority 7', 'jumbo MTU 9216'],
-    services: ['PTP-TC', 'eCPRI', 'PFC'],
-    specs: '48×25G + 6×100G',
-  })
-
-  const duW = 190
-  const duXs = xCenter(nDU, 24, duW)
-  const dus = duXs.map((x, i) => mkNode(
-    `du${i+1}`, `O-DU-0${i+1}`, 'O-DU Server', 'oran-du', 'Dell EMC', x, Y.du, duW, 120, {
-      interfaces: [
-        { name: 'eth0', ip: `10.250.4.${i+1}/24`, speed: '25G', vlan: 'F1 to CU' },
-        { name: 'ecpri', ip: `10.250.14.${i*4}/30`, speed: '25G', vlan: 'eCPRI to RU' },
-      ],
-      configLines: ['High-PHY + MAC + RLC', 'eCPRI 7.2x split', 'FAPI · L1 FPGA offload', 'n78 100MHz · SCS 30kHz'],
-      services: ['DU', 'eCPRI', 'FAPI', 'PTP'],
-      specs: 'x86 + FPGA · DPDK cores 4-11',
-    },
-  ))
-
-  const ruW = 180
-  const ruXs = xCenter(nRU, 16, ruW)
-  const rus = ruXs.map((x, i) => mkNode(
-    `ru${i+1}`, `O-RU-0${i+1}`, 'O-RU Radio', 'oran-ru', 'Fujitsu', x, Y.ru, ruW, 110, {
-      interfaces: [
-        { name: 'sfp0', ip: `10.250.15.${i*4+1}/30`, speed: '25G', vlan: 'eCPRI to DU' },
-        { name: 'mgmt', ip: `10.250.5.${i+1}/24`, vlan: 'O1/M-plane' },
-      ],
-      configLines: ['Low-PHY + RF', '64T64R mMIMO', 'digital beamforming', 'PTP slave G.8275.1'],
-      services: ['RU', 'eCPRI', 'beamforming', 'PTP'],
-      specs: 'n78 3.5GHz · 64T64R',
-    },
-  ))
-
-  const nodes = [upf, gm, mh, cu, fh, ...dus, ...rus]
-
-  const links: LLDLink[] = [
-    mkLink('ptpgm', 'mh1', 'p1', 'Gi0/0/0/0', '1G', 'PTP G.8275.1', { isDashed: true, vlan: 'timing' }),
-    mkLink('upf', 'mh1', 'N3', 'Gi0/0/0/0', '100G', 'N3 GTP-U', { subnet: '10.250.10.0/30' }),
-    mkLink('mh1', 'cu1', 'Gi0/0/0/1', 'NG', '100G', 'F1/NG SR-MPLS', { subnet: '10.250.11.0/30' }),
-    mkLink('cu1', 'fh1', 'F1-C/U', 'e1/49', '100G', 'F1-U/C', { subnet: '10.250.12.0/30' }),
-    mkLink('mh1', 'fh1', 'Gi0/0/0/1', 'e1/50', '100G', 'PTP TC / SR', { isDashed: true, vlan: 'timing' }),
-    ...dus.map((du, i) => mkLink('fh1', du.id, `e1/${i+1}`, 'eth0', '25G', 'eCPRI fronthaul', { subnet: `10.250.14.${i*4}/30` })),
-    ...rus.map((ru, i) => mkLink(dus[Math.floor(i / Math.ceil(nRU / nDU))]?.id ?? dus[0].id, ru.id, 'ecpri', 'sfp0', '25G', 'eCPRI 7.2x', { subnet: `10.250.15.${i*4}/30` })),
-  ]
-
-  const cabling: CablingEntry[] = [
-    ...rus.map((ru, i) => ({
-      server: ru.hostname, serverPort: 'sfp0', ipv4: `10.250.15.${i*4+1}`,
-      switchPort: `O-DU-0${Math.floor(i / Math.ceil(nRU / nDU)) + 1} ecpri`, mgmtPort: 'O1 M-plane', vlan: 'eCPRI',
-    })),
-    ...dus.map((du, i) => ({
-      server: du.hostname, serverPort: 'eth0', ipv4: `10.250.4.${i+1}`,
-      switchPort: `5G-FH-SW-01 e1/${i+1}`, mgmtPort: 'OOB', vlan: 'F1',
-    })),
-    { server: 'O-CU-01', serverPort: 'F1-C/U', ipv4: '10.250.2.1', switchPort: '5G-FH-SW-01 e1/49', mgmtPort: 'OOB', vlan: 'F1' },
-  ]
-
-  return {
-    nodes, links, zones, cabling,
-    title: `PRIVATE 5G / O-RAN LLD — SPECIFIC IMPLEMENTATION${sc ? ` · ${sc}` : ''}`,
-    subtitle: `5GC UPF · PTP GM · O-CU · ${nDU} O-DU · ${nRU} O-RU · eCPRI 7.2x · G.8275.1 timing`,
-    svgH: 850,
-  }
+  return buildTieredLLD(devices, sc, 'oran', [
+    row('oran-core', 'oran-core', '5G CORE', 'UPF · N3 / N6 / N9', 'purple', 2),
+    row('oran-midhaul', 'oran-midhaul', 'MIDHAUL', 'IS-IS + SR · PTP boundary clock', 'amber', 2),
+    row('oran-cu', 'oran-cu', 'O-CU', 'F1-C / F1-U toward the DUs', 'blue', 2),
+    row('oran-timing', 'oran-timing', 'TIMING', `PTP grandmaster · G.8275.1 domain ${ORAN_PTP_DOMAIN}`, 'red', 2),
+    row('oran-fronthaul', 'oran-fronthaul', 'FRONTHAUL SW', `eCPRI VLAN ${ORAN_FRONTHAUL_VLAN} · PTP transparent clock`, 'green', 2),
+    row('oran-du', 'oran-du', 'O-DU', 'Split 7.2x · homed round-robin to a CU', 'teal', 2),
+    row('oran-ru', 'oran-ru', 'O-RU', 'Three radios per DU · eCPRI + M-plane', 'red', 6),
+  ], { title: 'O-RAN / PRIVATE 5G LLD' })
 }
 
 // ─── Topology dispatcher ─────────────────────────────────────────────────────

@@ -693,6 +693,39 @@ export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], use
         out.push({ name: portName(x.port), ip: `${x.ip}/31`, peer: x.fw.hostname, kind: 'handoff' })
       }
     }
+  } else if (dev.subLayer === 'wan-edge') {
+    // AO4: WAN edges, from the same allocators as their configs.
+    if (isSdWanEdge(dev)) {
+      const a = sdwanAddressing(dev, allDevices, tierIdx)
+      const v = isViptelaOs(dev)
+      out.push({ name: 'system-ip', ip: `${a.sysIp}/32`, kind: 'loopback' })
+      out.push({ name: v ? 'ge0/0 (biz-internet)' : 'GigabitEthernet0/0/0 (INET)', ip: `${a.wanIp}/30`, kind: 'fabric' })
+      out.push({ name: v ? 'ge0/2 (VPN 1 LAN)' : 'GigabitEthernet0/0/2 (VRF 1 LAN)', ip: `${a.lanIp}/24`, kind: 'handoff' })
+      out.push({ name: v ? 'ge0/3 (VPN 2 guest)' : 'GigabitEthernet0/0/3 (VRF 2 guest)', ip: `${a.guestIp}/24`, kind: 'handoff' })
+    } else {
+      out.push({ name: dev.vendor === 'Juniper' ? 'lo0.0' : 'Loopback0', ip: `${wanLoopbackIp(dev, allDevices, tierIdx)}/32`, kind: 'loopback' })
+    }
+  } else if (dev.subLayer.startsWith('oran-')) {
+    // AO4: O-RAN elements, from the AD1 allocators their configs use.
+    const ofTier = (l: string) => allDevices.filter(d => d.subLayer === l)
+    if (dev.subLayer === 'oran-cu') {
+      out.push({ name: 'F1-C', ip: `${ipAdd('10.240.1.0', tierIdx + 1)}/24`, kind: 'loopback' })
+      out.push({ name: 'F1-U', ip: `${ipAdd('10.240.2.0', tierIdx + 1)}/24`, kind: 'fabric' })
+    } else if (dev.subLayer === 'oran-du') {
+      const cu = oranHomeCu(tierIdx, allDevices)
+      out.push({ name: 'F1-C', ip: `${ipAdd('10.241.1.0', tierIdx + 1)}/24`, peer: cu.hostname, kind: 'fabric' })
+      out.push({ name: 'F1-U', ip: `${ipAdd('10.241.2.0', tierIdx + 1)}/24`, peer: cu.hostname, kind: 'fabric' })
+      out.push({ name: `eCPRI (VLAN ${ORAN_FRONTHAUL_VLAN})`, ip: `${ipAdd('10.242.0.0', tierIdx + 1)}/24`, kind: 'handoff' })
+    } else if (dev.subLayer === 'oran-ru') {
+      const dus = ofTier('oran-du')
+      const du = dus.length ? dus[Math.floor(tierIdx / 3) % dus.length].hostname : undefined
+      out.push({ name: `eCPRI (VLAN ${ORAN_FRONTHAUL_VLAN})`, ip: `${ipAdd('10.242.128.0', tierIdx + 1)}/24`, peer: du, kind: 'fabric' })
+      out.push({ name: 'M-plane', ip: `${ipAdd('10.243.0.0', tierIdx + 1)}/24`, kind: 'loopback' })
+    } else if (dev.subLayer === 'oran-fronthaul') {
+      out.push({ name: `Vlan${ORAN_MGMT_VLAN} (mgmt)`, ip: `${ipAdd('10.243.128.0', tierIdx + 1)}/24`, kind: 'loopback' })
+    } else if (dev.subLayer === 'oran-midhaul') {
+      out.push({ name: 'Loopback0', ip: `${ipAdd('10.250.1.0', tierIdx + 1)}/32`, kind: 'loopback' })
+    }
   } else if (dev.subLayer === 'firewall') {
     // A Juniper SRX pair is one chassis cluster on reth interfaces, not two
     // routed firewalls — the per-firewall /31 model does not apply (AN10), so
@@ -859,7 +892,7 @@ export const ADDRESS_PLAN: AddressRange[] = [
     useCases: ['oran'] },
   { label: 'MLAG PEERING',       prefix: '10.253.0.0/16', purpose: '/31 per MLAG pair across the peer-link (Z7)' },
   { label: 'VTEP / vPC VIP',     prefix: '10.254.0.0/16', purpose: 'Anycast VTEP source and vPC virtual IP (X7)' },
-  { label: 'LOOPBACKS + MGMT SVI', prefix: '10.255.0.0/16', purpose: 'Router-IDs (spine .1.x, leaf .2.x, campus .3.x) and the campus management SVI (.99.x, HSRP VIP .99.254)' },
+  { label: 'LOOPBACKS + MGMT SVI', prefix: '10.255.0.0/16', purpose: 'Router-IDs (spine .1.x, leaf .2.x, campus .3.x, WAN edge .4.x) and the campus management SVI (.99.x, HSRP VIP .99.254)' },
   { label: 'TENANT / SERVER',    prefix: '10.10.0.0/16',  purpose: 'Anycast gateway and tenant subnets behind the fabric; also the SD-WAN system-ip block at 10.10.101.x' },
 ]
 
@@ -870,6 +903,7 @@ export const RoleSlot = {
   VpcVip:         3,
   CampusLoopback: 4,
   CampusMgmt:     5,
+  WanLoopback:    6,
 } as const
 type RoleSlot = (typeof RoleSlot)[keyof typeof RoleSlot]
 
@@ -877,6 +911,17 @@ type RoleSlot = (typeof RoleSlot)[keyof typeof RoleSlot]
 export function roleIp(primary: string, slot: RoleSlot, idx: number): string {
   if (idx < ROLE_POOL) return ipAdd(primary, idx)
   return ipAdd(ipAdd(OVERFLOW_SUPERNET, slot * OVERFLOW_SLOT_SIZE), idx - ROLE_POOL)
+}
+
+/**
+ * Router-id / Loopback0 of a non-SD-WAN WAN edge (AO4), tier-scoped. Juniper
+ * MX used `10.253.1.<globalIdx+1>` — the MLAG/vPC peering pool — and IOS-XR
+ * `10.255.10.<globalIdx+1>`, both from the GLOBAL device index, so a
+ * multisite design numbered its first WAN router 17 and could overflow an
+ * octet; IOS-XE left it a placeholder. One allocator for all three.
+ */
+export function wanLoopbackIp(dev: BOMDevice, allDevices: BOMDevice[], idx: number): string {
+  return roleIp('10.255.4.1', RoleSlot.WanLoopback, roleIndex(dev, allDevices, idx))
 }
 
 /**
@@ -2751,7 +2796,8 @@ set network virtual-router default ecmp enable yes` : ''}` : ''}
 
 // ── Cisco IOS-XE WAN Edge ─────────────────────────────────────────────────────
 
-function iosxeWanConfig(dev: BOMDevice, _idx: number): string {
+function iosxeWanConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  const lo0 = wanLoopbackIp(dev, allDevices, idx)
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
 ! Role   : WAN Edge Router
@@ -2765,12 +2811,12 @@ ${mgmtBlock(dev.hostname, 'Loopback0')}
 ! Management and router-id source (AM3): every mgmt service sources from here.
 interface Loopback0
  description ROUTER-ID / MGMT-SOURCE
- ip address <CHANGE-ME-loopback-ip> 255.255.255.255
+ ip address ${lo0} 255.255.255.255
  ip ospf 1 area 0
 !
 ! ── UNDERLAY: OSPF only (no IS-IS on WAN edge) ──────────────────────────────
 router ospf 1
-  router-id <CHANGE-ME-router-id>
+  router-id ${lo0}
   passive-interface default
   no passive-interface GigabitEthernet0/0/0
   no passive-interface GigabitEthernet0/0/1
@@ -2793,7 +2839,7 @@ interface GigabitEthernet0/0/1
 !
 ! ── BGP (eBGP to SP, iBGP to DC if multisite) ────────────────────────────────
 router bgp <CHANGE-ME-local-asn>
-  bgp router-id <CHANGE-ME-router-id>
+  bgp router-id ${lo0}
   bgp log-neighbor-changes
   !
   neighbor <CHANGE-ME-sp-peer-ip> remote-as <CHANGE-ME-sp-asn>
@@ -2856,10 +2902,11 @@ interface GigabitEthernet0/0/0
 // OSPF is intentionally NOT emitted so the single-underlay rule (CLAUDE.md §6
 // rule 4) holds. The BGP overlay carries L3VPN (VPNv4) for customer VRFs, with
 // a route-reflector client design toward the SP core.
-function iosxrPeConfig(dev: BOMDevice, idx: number): string {
-  const loopback0 = `10.255.10.${idx + 1}`
-  const isisNet   = `49.0001.0102.5510.${String(idx + 1).padStart(4, '0')}.00`
-  const prefixSid = 16000 + idx + 1          // global SR label block index
+function iosxrPeConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  const tierIdx   = roleIndex(dev, allDevices, idx)
+  const loopback0 = wanLoopbackIp(dev, allDevices, idx)
+  const isisNet   = `49.0001.0102.5510.${String(tierIdx + 1).padStart(4, '0')}.00`
+  const prefixSid = 16000 + tierIdx + 1          // global SR label block index
   const localAsn  = 65000
 
   return `! ═══════════════════════════════════════════════════════════════
@@ -5452,9 +5499,11 @@ set interfaces fab1 fabric-options member-interfaces xe-${n1}/0/2
 
 // ── Juniper MX WAN Edge Config ───────────────────────────────────────────────
 
-function juniperWanConfig(dev: BOMDevice, idx: number): string {
-  const lo0ip = `10.253.1.${idx + 1}`
-  const asn = 65100 + idx
+function juniperWanConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  const lo0ip = wanLoopbackIp(dev, allDevices, idx)
+  // 65100 is DCI_RT_ASN, and the global index made it depend on how many
+  // fabric devices preceded the router; tier-scoped from 65200 instead.
+  const asn = 65200 + roleIndex(dev, allDevices, idx)
 
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
@@ -5687,7 +5736,7 @@ export function isViptelaOs(dev: BOMDevice): boolean {
   return /vedge/i.test(dev.model || '')
 }
 
-interface SdWanCtx {
+export interface SdWanCtx {
   dev: BOMDevice
   siteId: number
   sysIp: string
@@ -5697,7 +5746,8 @@ interface SdWanCtx {
   guestIp: string
 }
 
-function sdwanEdgeConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+/** Site identity + addressing of an SD-WAN edge, shared by the config and the LLD (AO4). */
+export function sdwanAddressing(dev: BOMDevice, allDevices: BOMDevice[], idx = 0): SdWanCtx {
   // Identity is tier-scoped and SITE-scoped (Z5). The site-id used to come
   // from the GLOBAL device index, so a 2-site multicloud design whose BOM
   // also holds four cloud appliances produced site-ids 104-107: four SD-WAN
@@ -5709,7 +5759,7 @@ function sdwanEdgeConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = 
   const member = tierIdx % 2
   // Addresses go through ipAdd so a large site count walks into the next
   // octet instead of emitting 10.10.300.1 (the Z7 overflow class).
-  const ctx: SdWanCtx = {
+  return {
     dev,
     siteId: 101 + siteOrd,
     sysIp: ipAdd('10.10.101.0', siteOrd * 256 + member + 1),
@@ -5721,6 +5771,10 @@ function sdwanEdgeConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = 
     lanIp: ipAdd('10.101.0.0', siteOrd * 256 + member + 1),
     guestIp: ipAdd('10.101.128.0', siteOrd * 256 + member + 1),
   }
+}
+
+function sdwanEdgeConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  const ctx = sdwanAddressing(dev, allDevices, idx)
   return isViptelaOs(dev) ? sdwanVedgeConfig(ctx) : sdwanCedgeConfig(ctx)
 }
 
@@ -6845,7 +6899,7 @@ router isis XHAUL
     segment-routing mpls sr-prefer
   interface Loopback0
     address-family ipv4 unicast
-      prefix-sid index ${idx + 100}
+      prefix-sid index ${mhIdx + 100}
 !
 interface Loopback0
   ipv4 address ${routerId}/32
@@ -6923,7 +6977,9 @@ telemetry model-driven
 `
 }
 
-function oranCoreConfig(dev: BOMDevice, idx: number): string {
+function oranCoreConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  // Tier-scoped (Z5) — the global index numbered the first UPF after every RU/DU/CU.
+  idx = roleIndex(dev, allDevices, idx)
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : 5G Core — User Plane Function (UPF)
@@ -7002,7 +7058,10 @@ management:
 `
 }
 
-function oranTimingConfig(dev: BOMDevice, idx: number): string {
+function oranTimingConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): string {
+  // Tier-scoped (AO4): from the global index, priority2 reached ~1000 in a
+  // large O-RAN design — outside PTP's 0-255 range, so the clock rejected it.
+  idx = roleIndex(dev, allDevices, idx)
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : PTP Grandmaster Clock (GNSS-synced)
@@ -7027,7 +7086,7 @@ ptp:
   clock-accuracy 0x21            # ±100ns (GNSS-locked)
   time-source gps
   priority1 128
-  priority2 ${128 + idx}         # GM selection tiebreaker
+  priority2 ${Math.min(255, 128 + idx)}         # GM selection tiebreaker
   transport ethernet
   announce-interval -3           # 8 per second
   sync-interval -4               # 16 per second
@@ -7097,8 +7156,8 @@ function oranConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): 
     case 'oran-ru':        return oranRuConfig(dev, idx, allDevices)
     case 'oran-fronthaul': return oranFronthaulConfig(dev, idx, allDevices)
     case 'oran-midhaul':   return oranMidhaulConfig(dev, idx, allDevices)
-    case 'oran-core':      return oranCoreConfig(dev, idx)
-    case 'oran-timing':    return oranTimingConfig(dev, idx)
+    case 'oran-core':      return oranCoreConfig(dev, idx, allDevices)
+    case 'oran-timing':    return oranTimingConfig(dev, idx, allDevices)
     default:               return genericConfig(dev)
   }
 }
@@ -7119,8 +7178,8 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Cisco'     && l === 'firewall')                         return isFtdModel(dev.model) ? ciscoFtdFirewallConfig(dev, idx, useCase, allDevices) : ciscoFirewallConfig(dev, idx)
   if (v === 'Cisco'     && l === 'sdwan-controller')                 return sdwanControllerConfig(dev, idx)
   if (v === 'Cisco'     && l === 'wan-edge' && isSdWanEdge(dev))     return sdwanEdgeConfig(dev, idx, allDevices)
-  if (v === 'Cisco'     && l === 'wan-edge' && isIosXrPlatform(dev))  return iosxrPeConfig(dev, idx)
-  if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx)
+  if (v === 'Cisco'     && l === 'wan-edge' && isIosXrPlatform(dev))  return iosxrPeConfig(dev, idx, allDevices)
+  if (v === 'Cisco'     && l === 'wan-edge')                         return iosxeWanConfig(dev, idx, allDevices)
   if (v === 'Cisco'     && l === 'spine')                            return nxosSpineConfig(dev, idx, needsRoce, allDevices, protoFeatures)
   if (v === 'Cisco'     && l === 'leaf')                             return nxosLeafConfig(dev, idx, needsRoce, allDevices, protoFeatures, useCase === 'multisite', appTypes)
   if (v === 'Cisco'     && (l === 'distribution' || l === 'access')) return iosxeCampusConfig(dev, idx, appTypes, allDevices)
@@ -7131,7 +7190,7 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures, needsRoce, appTypes, allDevices)
   if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx, allDevices, appTypes)
   if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
-  if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx)
+  if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx, allDevices)
   if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite', protoFeatures, appTypes, allDevices)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx, useCase, allDevices)
   if (v === 'Fortinet'  && (l === 'distribution' || l === 'access')) return fortinetCampusConfig(dev, idx, appTypes, allDevices)

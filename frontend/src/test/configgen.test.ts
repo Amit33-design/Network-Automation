@@ -801,8 +801,9 @@ describe('Cisco IOS-XR SP/WAN PE config (Gap G-A9)', () => {
     const cfg1 = generateConfig(xrDevice({ hostname: 'IAD-PE-A02' }), 1, 'wan')
     expect(cfg0).toContain('prefix-sid index 1')
     expect(cfg1).toContain('prefix-sid index 2')
-    expect(cfg0).toContain('ipv4 address 10.255.10.1 255.255.255.255')
-    expect(cfg1).toContain('ipv4 address 10.255.10.2 255.255.255.255')
+    // AO4: WAN-edge loopbacks share one tier-scoped allocator (10.255.4.x).
+    expect(cfg0).toContain('ipv4 address 10.255.4.1 255.255.255.255')
+    expect(cfg1).toContain('ipv4 address 10.255.4.2 255.255.255.255')
   })
 
   it('streams model-driven telemetry to a placeholder collector', () => {

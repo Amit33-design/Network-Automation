@@ -975,7 +975,7 @@ VNI" tabs.
 - `genIPRows(useCase, devices): IPRow[]` — per-device loopback/interface
   allocations (firewall/spine/leaf/dist/access), with "… +N more" summary
   rows when a layer exceeds the display cap.
-- `fabricInterfaceView(dev, allDevices, useCase): FabricInterfaceView[]` (configgen.ts, AO1) — a spine/leaf/firewall's loopback, fabric /31s and handoffs from the config allocators; drives the DC LLD. `buildLLDTopology` is exported from `LLDTopologyDiagram.tsx` for tests.
+- `fabricInterfaceView(dev, allDevices, useCase): FabricInterfaceView[]` (configgen.ts, AO1–AO4) — a device's loopback, fabric /31s and handoffs from the config allocators, for spine/leaf, campus, firewall, wan-edge (SD-WAN system-ip/WAN/LAN via `sdwanAddressing`, else `wanLoopbackIp`) and O-RAN tiers; drives every LLD. `sdwanAddressing(dev, allDevices, idx)` is the SD-WAN site identity shared by the config and the LLD; `wanLoopbackIp(dev, allDevices, idx)` the tier-scoped WAN-edge router-id (`10.255.4.x`, `RoleSlot.WanLoopback`) used by Juniper MX, IOS-XR and IOS-XE WAN edges. `buildLLDTopology` is exported from `LLDTopologyDiagram.tsx` for tests.
 - `nvidiaSpectrumConfig(dev, idx, isGpu, allDevices, useCase)` (configgen.ts) — NVUE; GPU fabrics are pure eBGP L3, DC/multisite leaves are EVPN VTEPs on `TENANT_OVERLAY` with explicit RTs (AN11).
 - `extremeCampusConfig(dev, idx, allDevices, appTypes)` / `exosMgmtBlock(dev)` (configgen.ts, AN9) — EXOS campus distribution/access on `CAMPUS_VLANS`; `extremeExosConfig` dispatches campus tiers there and keeps only spine/leaf.
 - `firewallHandoffs(fw, allDevices, useCase): FirewallHandoff[]` / `firewallInsideNets(useCase)` (configgen.ts, AN8) — a firewall's end of every handoff /31, read from each peer's own `fwHandoffPlan`; used by the FTD, PAN-OS and FortiGate generators.
@@ -1996,15 +1996,12 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
 - Internal types: `LLDInterface` (name, ip, vlan?, mac?, speed?), `LLDNode` (id, hostname, model, tier, vendor, interfaces[], configLines[], services[], specs, haRole?, x/y/w/h, color/border/textColor, icon), `LLDLink` (id, from, to, fromPort, toPort, speed, vlan?, subnet?, protocol, isDashed?), `LLDZone` (id, label, sublabel, yStart/yEnd, fill, stroke), `CablingEntry` (server, serverPort, ipv4, switchPort, mgmtPort, vlan), `LLDTopo` (nodes, links, zones, cabling, title, subtitle, svgH)
 - Layout constants: `SVG_W=1400`, `LEFT_W=160`, `RIGHT_PAD=16`, `CONTENT_W = SVG_W - LEFT_W - RIGHT_PAD`
 - `TIER_STYLE` maps tier names (internet, dmz, internal, loadbalancer, server, application, database, wan, core, distribution, access, endpoint, spine, leaf, gpu, storage, oob, cloud, transit, spoke, branch) → `{ color, border, textColor }`
-- Helpers: `sty(tier)`, `xCenter(count, gap, nodeW)`, `bomRole(devices, subLayer, fallback)` *(D2 — derives `{vendor(i), model(i), name(i), count}` for the i-th BOM device of a role so LLD nodes reflect the selected vendor, with Cisco-default fallback)*, `mkNode(...)`, `mkLink(...)`, `lldLinkPath(n1, n2, isDashed?)`
-- **7 per-use-case topology builders** (each returns `LLDTopo`):
-  - `buildDCLLD` — Internet → Firewall HA (PA-5450) → Core/Edge routers → F5 LB cluster → 3× Web Servers → API GW + App Server + Database; mirrors the reference datacenter LLD image
-  - `buildCampusLLD` — WAN Edge pair → Core VSS (HSRP) → 4× Distribution MLAG → 4× Access 802.1X/PoE+ → 5× Endpoints (PC, Phone, AP, Printer, Server). **D2:** core/dist/access/wan-edge vendor+model+hostname derived from the BOM (Cisco SKUs are fallback only)
-  - `buildGPULLD` — OOB MGMT → 2× GPU Spine (SN4800) → 4× GPU Leaf/ToR (SN4600C MLAG) → 4× DGX A100 servers → 2× NVMe-oF storage; PFC P3, ECN, DCQCN detail
-  - `buildWANLLD` — SP Backbone → HQ PE pair (BGP RR, MPLS, SR-MPLS) → 3× WAN CPE → 3× Branch routers → 3× Branch endpoints; QoS DSCP 6-class, L3VPN, SD-WAN. **D2:** HQ PE-router vendor+model+hostname derived from the BOM `wan-edge` devices
-  - `buildMultisiteLLD` — Site A + Site B with DCI GW pair, EVPN Type-5 stretched RT 65100, per-site spine/leaf/server with vPC domains. **D4:** spine/leaf + DCI-gateway vendor+model derived from the BOM (site-specific hostnames kept; DCI follows wan-edge → spine vendor fallback)
-  - `buildMulticloudLLD` — On-prem spine pair → AWS DirectConnect + Azure ExpressRoute + GCP Cloud Interconnect → VPCs/VNets → Cloud workloads (EC2/AKS/GKE). **D4:** on-prem DC spine derived from the BOM (cloud nodes stay provider-native)
-  - `buildAviatrixLLD` — DC Edge pair → Aviatrix Transit GWs (AWS/Azure/GCP) with multi-cloud peering → Spoke GWs with network segmentation → Cloud workloads. **D4:** on-prem DC-edge routers derived from the BOM `wan-edge` (transit/spoke GWs stay Aviatrix-native)
+- Helpers: `sty(tier)`, `xCenter(count, gap, nodeW)`, `mkNode(...)`, `mkLink(...)`, `lldLinkPath(n1, n2, isDashed?)`. (`bomRole` removed in AO4 — no builder falls back to invented hardware any more.)
+- **Per-use-case builders** (each returns `LLDTopo`; every node is a BOM device and every address comes from `fabricInterfaceView`, AO1–AO4):
+  - `buildDCLLD(devices, sc, useCase)` — firewalls, up to 4 spines, first leaf pair + border pair; links are real fabric /31s and firewall handoffs (AO1)
+  - `buildGPULLD` — `buildDCLLD(…, 'gpu')` + the BOM's GPU servers; pure-L3 NVIDIA fabrics captioned eBGP unnumbered (AO2)
+  - `buildCampusLLD` — BOM firewalls, distribution and access switches; access `UPLINK-1/2` to the first distribution pair (AO3)
+  - `buildTieredLLD(devices, sc, useCase, rows, head)` (AO4) — generic row-per-tier builder behind `buildWANLLD`, `buildMultisiteLLD`, `buildMulticloudLLD`, `buildAviatrixLLD`, `buildORANLLD`. Links come from (1) peers the configs name (fabric /31, handoff, DU→home CU F1, RU→served DU eCPRI), (2) tier pairs the BOM cables (`LAYER_ADJACENCY` from `bom.ts`, dashed "cabled (BOM)"), (3) declared overlays (cloud transit ↔ gateways / on-prem edge IPsec). Rows absent from the BOM are skipped
   - Dispatched via `buildLLDTopology(devices, useCase, sc)`
 - **SVG rendering:** zone bands with left-column labels, larger device nodes (w=160-260, h=70-140) with interface IPs, config lines, port indicator dots, HA badges. Links show port labels at endpoints on hover with speed/protocol/VLAN/subnet
 - **Device-inspect panel:** clicking a node shows full interface table (name/IP/speed/VLAN/MAC), config snippet (green monospace), services/protocols chips, connected links list, specs
@@ -2014,8 +2011,7 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
 - Used by `Step4NetworkDesign.tsx` (LLD tab, added alongside HLD).
 - No external graph libraries (pure SVG/JSX) — per Implementation Rule 9.
 - Complements the HLD diagram: HLD shows network-wide topology flow; LLD shows per-device implementation detail.
-- **Tests:** `test/LLDTopologyDiagram.test.tsx` (9) — D2 vendor-awareness (campus dist/access + WAN PE) and D4 (multisite spine/leaf/DCI, multicloud on-prem spine, aviatrix DC-edge); Cisco fallback when role absent.
-- **Remaining hardcoders (not yet BOM-derived):** `buildDCLLD` (app-tier FW/router/LB/server shape — no clean spine/leaf role mapping; firewall/router could derive from BOM in future work), `buildORANLLD` (O-RAN nodes partly derived). All spine-leaf / campus / WAN / multisite / multicloud / aviatrix network-role nodes now derive from the BOM (D2 + D4).
+- **Tests:** `test/LLDTopologyDiagram.test.tsx` (vendor-awareness; asserts no invented hardware when a tier is absent) and `test/lld-truth.test.ts` (every LLD node is a BOM device and every address is in that device's own config, across all 8 use cases).
 
 ---
 
