@@ -92,26 +92,29 @@ describe('LLDTopologyDiagram — vendor-aware (D2)', () => {
     expect(text).not.toContain('N9K-C9332C')
   })
 
-  it('multisite LLD falls back to Cisco N9K when BOM lacks fabric devices', () => {
+  // AO4: these three asserted that missing tiers were filled with invented
+  // hardware (an N9K fabric, AWS/Azure VPCs, Aviatrix gateways) — the defect.
+  it('multisite LLD draws no hardware when the BOM has none', () => {
     const { container } = render(<LLDTopologyDiagram devices={[]} useCase="multisite" />)
     const text = container.textContent ?? ''
-    expect(text).toContain('N9K-C9508')
-    expect(text).toContain('N9K-C9332C')
+    expect(text).not.toContain('N9K-C9508')
+    expect(text).not.toContain('N9K-C9332C')
   })
 
-  it('multicloud LLD derives on-prem spine from the BOM', () => {
+  it('multicloud LLD draws the BOM cloud transit and on-prem edge, nothing invented', () => {
     const devices = [
-      dev({ hostname: 'SP-01', subLayer: 'spine', vendor: 'Juniper', model: 'QFX5220' }),
-      dev({ hostname: 'SP-02', subLayer: 'spine', vendor: 'Juniper', model: 'QFX5220' }),
+      dev({ hostname: 'CT-01', subLayer: 'cloud-transit', vendor: 'Aviatrix', model: 'Aviatrix Transit GW' }),
+      dev({ hostname: 'EDGE-01', subLayer: 'wan-edge', vendor: 'Juniper', model: 'MX204' }),
     ]
     const { container } = render(<LLDTopologyDiagram devices={devices} useCase="multicloud" />)
     const text = container.textContent ?? ''
-    expect(text).toContain('QFX5220')
-    // cloud providers stay provider-native
-    expect(text).toContain('AWS')
+    expect(text).toContain('CT-01')
+    expect(text).toContain('MX204')
+    expect(text).not.toContain('AWS VPC')
+    expect(text).not.toContain('DC-SPINE-01')
   })
 
-  it('aviatrix LLD derives on-prem DC-edge from the BOM wan-edge', () => {
+  it('aviatrix LLD draws the BOM wan-edge and invents no gateways', () => {
     const devices = [
       dev({ hostname: 'EDGE-01', subLayer: 'wan-edge', vendor: 'Juniper', model: 'MX240' }),
       dev({ hostname: 'EDGE-02', subLayer: 'wan-edge', vendor: 'Juniper', model: 'MX240' }),
@@ -120,8 +123,7 @@ describe('LLDTopologyDiagram — vendor-aware (D2)', () => {
     const text = container.textContent ?? ''
     expect(text).toContain('MX240')
     expect(text).not.toContain('ASR-1002-HX')
-    // transit/spoke gateways stay Aviatrix-native
-    expect(text).toContain('Aviatrix')
+    expect(text).not.toContain('Aviatrix Transit GW')
   })
 })
 

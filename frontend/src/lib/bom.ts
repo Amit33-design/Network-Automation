@@ -1008,6 +1008,9 @@ const LAYER_CONNECTS: Array<{
   { from: 'oran-timing',  to: 'oran-fronthaul', key: 'oran-fronthaul' },
 ]
 
+/** Which tiers the BOM cables to which — read by the LLD so it draws only links that are billed (AO4). */
+export const LAYER_ADJACENCY: ReadonlyArray<{ from: string; to: string }> = LAYER_CONNECTS.map(c => ({ from: c.from, to: c.to }))
+
 /** Default run lengths for the link keys the wizard does not expose. */
 const EXTRA_LINK_DISTANCES: Record<string, number> = {
   'oran-fronthaul': 300,    // RU → cell-site switch, typically <1 km
