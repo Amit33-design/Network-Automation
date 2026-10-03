@@ -1,5 +1,6 @@
 import type { AppState, BOMDevice, BudgetTier, Scale, UseCase } from '@/types'
 import { PRODUCTS } from './products'
+import { peerLinkPorts } from './configgen'
 
 // ── Scale definitions ────────────────────────────────────────────────────────
 
@@ -1099,12 +1100,16 @@ export function buildCabling(
   // ── HA peer-links (Z2) ─────────────────────────────────────────────────────
   // vPC / MLAG / campus-distribution pairs each run a 2-member peer-link that
   // the configs emit but the BOM never cabled: 25 leaf pairs = 50 missing runs.
+  // AP2: billed only where the config BUILDS a peer-link. Junos and SR Linux
+  // multihome with EVPN ESI (no peer-link by design), and several other
+  // leaf/distribution generators configure none — yet every leaf and
+  // distribution pair was billed two peer-link cables regardless.
   const PEER_LINK_LAYERS = ['leaf', 'distribution'] as const
   for (const layer of PEER_LINK_LAYERS) {
-    const devs = byLayer[layer] ?? []
+    const devs = (byLayer[layer] ?? []).filter(d => peerLinkPorts(d).length > 0)
     const pairs = Math.floor(devs.length / 2)
     if (pairs < 1) continue
-    const MEMBERS_PER_PEER_LINK = 2
+    const MEMBERS_PER_PEER_LINK = peerLinkPorts(devs[0]).length
     const qty = pairs * MEMBERS_PER_PEER_LINK
     const distM = 3   // intra-rack / adjacent-rack pair
     // Peer-link members land on the leftover dedicated uplink ports (Y2).

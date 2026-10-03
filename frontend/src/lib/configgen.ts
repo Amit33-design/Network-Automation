@@ -908,7 +908,7 @@ export function firewallMemberPort(fw: BOMDevice, allDevices: BOMDevice[], i: nu
 export interface PortPair {
   a: { device: string; iface: string }
   b: { device: string; iface: string }
-  kind: 'fabric' | 'firewall'
+  kind: 'fabric' | 'firewall' | 'peer-link'
 }
 
 /**
@@ -936,6 +936,18 @@ export function physicalPortMap(allDevices: BOMDevice[], useCase: UseCase | '' =
         b: { device: leaf.hostname, iface: fabricPort(leaf, 'leaf', l.ifIndex).name },
         kind: 'fabric',
       })
+    }
+  }
+  // HA peer-links: consecutive pair members, member port i to member port i.
+  for (const tier of ['leaf', 'distribution']) {
+    const devs = allDevices.filter(d => d.subLayer === tier && peerLinkPorts(d).length > 0)
+    for (let i = 0; i + 1 < devs.length; i += 2) {
+      const [a, b] = [peerLinkPorts(devs[i]), peerLinkPorts(devs[i + 1])]
+      a.forEach((ifA, m) => b[m] && out.push({
+        a: { device: devs[i].hostname, iface: ifA },
+        b: { device: devs[i + 1].hostname, iface: b[m] },
+        kind: 'peer-link',
+      }))
     }
   }
   const fabric = FABRIC_HANDOFF_USE_CASES.has(useCase)
@@ -1022,6 +1034,36 @@ export function fabricPort(dev: BOMDevice, role: 'spine' | 'leaf', ifIndex: numb
     : v === 'Extreme Networks' ? String(n)
     : `Ethernet1/${n}`
   return { n, name }
+}
+
+/**
+ * The two peer-link member interfaces of an HA pair member, or `[]` when this
+ * vendor/tier builds no peer-link (AP2). One decision shared by the renderers,
+ * the BOM (which bills peer-link cables only where a peer-link is configured)
+ * and the cable exports. Built by NX-OS vPC and EOS MLAG leaves and by IOS-XE
+ * and EXOS campus distribution. Not by Junos or SR Linux, which multihome with
+ * EVPN ESI (no peer-link by design), nor by the other leaf or distribution
+ * generators, whose configs build none.
+ */
+export function peerLinkPorts(dev: BOMDevice): string[] {
+  if (dev.subLayer === 'leaf' && (dev.vendor === 'Cisco' || dev.vendor === 'Arista')) {
+    // Leftover dedicated uplink ports when the SKU has a dedicated range,
+    // else the two ports just below the fabric uplinks (X7/Y2).
+    const p1 = dev.uplinkStart
+      ? dev.uplinkStart + (dev.uplinks || 0)
+      : Math.max(1, (dev.ports || (dev.vendor === 'Cisco' ? 48 : 32)) - (dev.uplinks || 0) - 1)
+    return dev.vendor === 'Cisco' ? [`Ethernet1/${p1}`, `Ethernet1/${p1 + 1}`] : [aristaIf(dev, p1), aristaIf(dev, p1 + 1)]
+  }
+  if (dev.subLayer === 'distribution' && dev.vendor === 'Cisco') {
+    // On the 100G uplink block, below the core uplink (Z4).
+    return [uplinkIf(dev, 1), uplinkIf(dev, Math.min(2, dev.uplinks || 4))]
+  }
+  if (dev.subLayer === 'distribution' && dev.vendor === 'Extreme Networks') {
+    // EXOS numbers uplinks after the host ports; the first two form the LAG.
+    const up = (dev.ports || 48) + 1
+    return [String(up), String(up + 1)]
+  }
+  return []
 }
 
 function aristaIf(dev: BOMDevice, n: number | string): string {
@@ -1374,10 +1416,7 @@ ${fwSegs.map(g => `  ip route 0.0.0.0/0 ${g.fwIp}`).join('\n')}
   // Peer-link members: on SKUs with a dedicated uplink range, use the
   // leftover dedicated high-speed ports (93180: uplinks on 49-52 → peer-link
   // 53-54); otherwise the two ports just below the fabric uplinks.
-  const plPort1 = dev.uplinkStart
-    ? dev.uplinkStart + (dev.uplinks || 0)
-    : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 1)
-  const plPort2 = plPort1 + 1
+  const [plIf1, plIf2] = peerLinkPorts(dev)
   const dciL3RtLines = isMultisite ? `
     route-target import ${DCI_RT_ASN}:50000 evpn
     route-target export ${DCI_RT_ASN}:50000 evpn` : ''
@@ -1620,14 +1659,14 @@ interface port-channel${pairId}
   spanning-tree port type network
   vpc peer-link
 !
-interface Ethernet1/${plPort1}
+interface ${plIf1}
   description vPC-PEER-LINK member 1 to ${peerHostname}
   switchport
   switchport mode trunk
   channel-group ${pairId} mode active
   no shutdown
 !
-interface Ethernet1/${plPort2}
+interface ${plIf2}
   description vPC-PEER-LINK member 2 to ${peerHostname}
   switchport
   switchport mode trunk
@@ -2069,10 +2108,7 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const mlagPeerIp  = ipAdd('10.253.1.0', (pairId - 1) * 2 + (isPrimary ? 1 : 0))
   // Peer-link members: leftover dedicated uplink ports when the SKU has a
   // dedicated range, else the two ports just below the fabric uplinks.
-  const plPort1 = dev.uplinkStart
-    ? dev.uplinkStart + (dev.uplinks || 0)
-    : Math.max(1, (dev.ports || 32) - (dev.uplinks || 0) - 1)
-  const plPort2 = plPort1 + 1
+  const [plIf1, plIf2] = peerLinkPorts(dev)
   // Valid 12-hex system-id (padStart); the old `000${idx+101}` overflowed to
   // 13/14 digits and EOS rejected the NET, so the underlay never started.
   const isisNet  = `0102.5500.${String(idx + 1).padStart(4, '0')}`
@@ -2272,11 +2308,11 @@ interface Port-Channel${pairId}00
   switchport mode trunk
   switchport trunk group MLAG_PEER
 !
-interface ${aristaIf(dev, plPort1)}
+interface ${plIf1}
   description MLAG_PEER_LINK member 1 to ${peerHostname}
   channel-group ${pairId}00 mode active
 !
-interface ${aristaIf(dev, plPort2)}
+interface ${plIf2}
   description MLAG_PEER_LINK member 2 to ${peerHostname}
   channel-group ${pairId}00 mode active
 !
@@ -3486,8 +3522,7 @@ ${hasVoice ? `vlan 20
     // handoff on the 25G ports. Previously every one of these commands named
     // TenGigabitEthernet, a port type the chassis does not have.
     const upCount = dev.uplinks || 4
-    const peerLinkIf1 = uplinkIf(dev, 1)
-    const peerLinkIf2 = uplinkIf(dev, Math.min(2, upCount))
+    const [peerLinkIf1, peerLinkIf2] = peerLinkPorts(dev)
     const coreUplinkIf = uplinkIf(dev, Math.min(3, upCount))
     // Firewall handoff eats the TOP of the host block (same discipline as the
     // border leaf, Z3), so it can never collide with the access downlinks.
@@ -5258,7 +5293,8 @@ configure iproute add default ${mgmt.vip}
   const fwLinks = fwHandoffPlan(dev, allDevices, 'distribution')
   const downMax = Math.max(1, ports - fwLinks.length)
   const prio = isPrimary ? 110 : 100
-  const peerLink = `${upStart}-${upStart + 1}`
+  const [plA, plB] = peerLinkPorts(dev)
+  const peerLink = `${plA}-${plB}`
   const coreUp = upStart + 2
   const svi = (name: string, id: number, ip: string, mask: string, vip: string) => `configure vlan ${name} ipaddress ${ip} ${mask}
 enable ipforwarding vlan ${name}

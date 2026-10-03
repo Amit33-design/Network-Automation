@@ -29,7 +29,13 @@ function design(vendor: string, useCase: UseCase) {
 function configures(cfg: string, iface: string): boolean {
   const text = cfg.includes('FMC POLICY MANIFEST') ? cfg : stripComments(cfg)
   const esc = iface.replace(/[/.]/g, m => '\\' + m)
-  return new RegExp(`(^|[^\\w/.-])${esc}(?![\\w/])`, 'm').test(text)
+  if (new RegExp(`(^|[^\\w/.-])${esc}(?![\\w/])`, 'm').test(text)) return true
+  // EXOS names ports by number and configures them in ranges (`grouping 49-50`).
+  if (/^\d+$/.test(iface)) {
+    const n = Number(iface)
+    return [...text.matchAll(/\b(\d+)-(\d+)\b/g)].some(m => Number(m[1]) <= n && n <= Number(m[2]))
+  }
+  return false
 }
 
 describe('DCIM cable plant lands on configured interfaces (AP1)', () => {
@@ -93,5 +99,41 @@ describe('DCIM cable plant lands on configured interfaces (AP1)', () => {
     const csv = toNetBoxInterfaceCsv(cables)
     expect(csv).toContain('Configured in the generated config')
     expect(csv).toContain('Port not assigned by the config engine — confirm on site')
+  })
+})
+
+// ── AP2: peer-links are billed only where a config builds one ───────────────
+describe('HA peer-link cables agree with the configs (AP2)', () => {
+  const CASES: Array<[UseCase, string, string]> = [
+    ['dc', 'Cisco', 'leaf'], ['dc', 'Arista', 'leaf'], ['dc', 'Juniper', 'leaf'], ['dc', 'Nokia', 'leaf'],
+    ['dc', 'Dell EMC', 'leaf'], ['dc', 'Extreme Networks', 'leaf'], ['dc', 'HPE Aruba', 'leaf'], ['dc', 'NVIDIA', 'leaf'],
+    ['campus', 'Cisco', 'distribution'], ['campus', 'Extreme Networks', 'distribution'], ['campus', 'Juniper', 'distribution'],
+    ['campus', 'Arista', 'distribution'], ['campus', 'HPE Aruba', 'distribution'], ['campus', 'Fortinet', 'distribution'],
+  ]
+  /** A config builds a peer-link: an LACP/sharing bundle labelled as one, or EXOS's peer-link sharing group. */
+  const buildsPeerLink = (cfg: string) => /PEER[-_]LINK member|enable sharing \d+ grouping/.test(stripComments(cfg))
+
+  it.each(CASES)('%s %s: peer-link cables are billed exactly where the %s configs build a peer-link', (uc, vendor, tier) => {
+    const { devices, configs, cables, byHost } = design(vendor, uc)
+    const pairDevs = devices.filter(d => d.subLayer === tier)
+    const built = pairDevs.some(d => buildsPeerLink(configs[d.id]))
+    const peerCables = cables.filter(c => byHost.get(c.a.device)!.subLayer === tier && byHost.get(c.b.device)!.subLayer === tier)
+    if (built) {
+      expect(peerCables.length, `${vendor} builds a peer-link but none is cabled`).toBe(Math.floor(pairDevs.length / 2) * 2)
+      for (const c of peerCables) {
+        expect(c.a.mapped && c.b.mapped).toBe(true)
+        for (const e of [c.a, c.b]) expect(configures(configs[byHost.get(e.device)!.id], e.iface), `${e.device} ${e.iface}`).toBe(true)
+      }
+    } else {
+      expect(peerCables.length, `${vendor} ${tier} configs build no peer-link, yet ${peerCables.length} peer-link cables are billed`).toBe(0)
+    }
+  })
+
+  it('Junos and SR Linux leaves multihome with EVPN ESI, so no leaf↔leaf cable is billed', () => {
+    for (const vendor of ['Juniper', 'Nokia']) {
+      const devices = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'AP2', vendorPrefs: [vendor], totalEndpoints: 512 })
+      const leafLeaf = buildCabling(devices, {} as never).filter(l => l.fromLayer === 'leaf' && l.toLayer === 'leaf')
+      expect(leafLeaf, vendor).toEqual([])
+    }
   })
 })
