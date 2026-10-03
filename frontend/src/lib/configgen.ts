@@ -624,26 +624,110 @@ export function isBorderLeaf(dev: BOMDevice, allDevices: BOMDevice[]): boolean {
  * the host block; distribution ports after the core uplink. Ports beyond the
  * SKU are dropped rather than overflowed (validateBOM errors on that).
  */
+/**
+ * Firewalls are deployed as active/passive HA clusters of two consecutive BOM
+ * firewalls (AN10). Every vendor in the catalogue does it the same way: the
+ * pair shares ONE data-plane address per segment that floats to whichever unit
+ * is active — Juniper SRX reth interfaces, PAN-OS HA config sync, FortiGate
+ * FGCP virtual MACs, FTD failover with a standby address. A lone firewall is a
+ * cluster of one.
+ */
+export interface FirewallCluster { index: number; members: BOMDevice[] }
+
+export function firewallClusters(allDevices: BOMDevice[]): FirewallCluster[] {
+  const fws = allDevices.filter(d => d.subLayer === 'firewall')
+  const out: FirewallCluster[] = []
+  for (let i = 0; i < fws.length; i += 2) out.push({ index: out.length, members: fws.slice(i, i + 2) })
+  return out
+}
+
+/** The cluster a firewall belongs to, and its position in it (0 = preferred active). */
+export function clusterOf(fw: BOMDevice, allDevices: BOMDevice[]): { cluster: FirewallCluster; member: number } | undefined {
+  for (const c of firewallClusters(allDevices)) {
+    const m = c.members.findIndex(d => d.id === fw.id)
+    if (m >= 0) return { cluster: c, member: m }
+  }
+  return undefined
+}
+
+/** First transit VLAN for firewall handoff segments (each switch × cluster gets its own). */
+export const FW_TRANSIT_VLAN_BASE = 3900
+
+/**
+ * One firewall-facing port on a border leaf / distribution switch. Both units
+ * of a cluster plug into the SAME switch-side transit VLAN as access ports, and
+ * the switch routes for the segment on an SVI: the floating firewall address
+ * moves between the units, so it cannot sit on two routed /31 ports — and
+ * Juniper requires each node's reth members to land on a SEPARATE switch LAG,
+ * never one bundle across both nodes, which plain access ports satisfy.
+ */
+export interface FwHandoffLink {
+  port: number
+  fw: BOMDevice
+  cluster: number
+  vlan: number
+  /** Switch SVI address (.1 of the /29). */
+  ip: string
+  /** Firewall floating / active address (.2). */
+  fwIp: string
+  /** Firewall standby address (.3) — used by FTD failover interface monitoring. */
+  fwStandbyIp: string
+  /** Network address of the /29. */
+  net: string
+}
+
+/** A switch's firewall segment for one cluster: one SVI, one port per unit. */
+export interface FwHandoffSegment {
+  cluster: number; vlan: number; ip: string; fwIp: string; fwStandbyIp: string; net: string
+  ports: number[]; fws: BOMDevice[]
+}
+
+export const FW_HANDOFF_PREFIX = 29
+export const FW_HANDOFF_MASK = '255.255.255.248'
+export const FW_HANDOFF_WILDCARD = '0.0.0.7'
+
 function fwHandoffPlan(
   dev: BOMDevice,
   allDevices: BOMDevice[],
   role: 'border-leaf' | 'distribution',
-): Array<{ port: number; fw: BOMDevice; ip: string }> {
-  const fws = allDevices.filter(d => d.subLayer === 'firewall')
-  if (!fws.length) return []
+): FwHandoffLink[] {
+  const clusters = firewallClusters(allDevices)
+  if (!clusters.length) return []
   if (role === 'border-leaf' && !isBorderLeaf(dev, allDevices)) return []
   const peers = role === 'border-leaf'
     ? borderLeaves(allDevices)
     : allDevices.filter(d => d.subLayer === role)
   const myIdx = Math.max(0, peers.findIndex(d => d.id === dev.id))
+  const fwCount = clusters.reduce((n, c) => n + c.members.length, 0)
   // Both roles take the TOP of the host/access block, leaving the uplink block
   // free for the fabric/core links and the peer-link (Z3/Z4).
   const firstFree = role === 'border-leaf'
     ? leafHostPortMax(dev, allDevices) + 1
-    : Math.max(1, (dev.ports || 48) - fws.length + 1)
-  return fws
-    .map((fw, fi) => ({ port: firstFree + fi, fw, ip: fwHandoffIp(myIdx, fi, fws.length) }))
-    .filter(x => x.port <= (dev.ports || 48))
+    : Math.max(1, (dev.ports || 48) - fwCount + 1)
+  const out: FwHandoffLink[] = []
+  let port = firstFree
+  for (const c of clusters) {
+    const net = fwHandoffIp(myIdx, c.index, clusters.length)
+    for (const fw of c.members) {
+      out.push({
+        port: port++, fw, cluster: c.index,
+        vlan: FW_TRANSIT_VLAN_BASE + myIdx * clusters.length + c.index,
+        ip: ipAdd(net, 1), fwIp: ipAdd(net, 2), fwStandbyIp: ipAdd(net, 3), net,
+      })
+    }
+  }
+  return out.filter(x => x.port <= (dev.ports || 48))
+}
+
+/** Group a switch's firewall ports into one segment per cluster. */
+export function fwHandoffSegments(links: FwHandoffLink[]): FwHandoffSegment[] {
+  const by = new Map<number, FwHandoffSegment>()
+  for (const x of links) {
+    const s = by.get(x.cluster) ?? { cluster: x.cluster, vlan: x.vlan, ip: x.ip, fwIp: x.fwIp, fwStandbyIp: x.fwStandbyIp, net: x.net, ports: [], fws: [] }
+    s.ports.push(x.port); s.fws.push(x.fw)
+    by.set(x.cluster, s)
+  }
+  return [...by.values()]
 }
 
 /** One interface as a diagram should show it — taken from the config allocators. */
@@ -678,8 +762,9 @@ export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], use
       out.push({ name: portName(portBase + l.ifIndex + 1), ip: unnumbered ? 'unnumbered' : l.localIp, peer: l.peerHostname, kind: 'fabric' })
     }
     if (!isSpine) {
-      for (const x of fwHandoffPlan(dev, allDevices, 'border-leaf')) {
-        out.push({ name: portName(x.port), ip: `${x.ip}/31`, peer: x.fw.hostname, kind: 'handoff' })
+      for (const g of fwHandoffSegments(fwHandoffPlan(dev, allDevices, 'border-leaf'))) {
+        out.push({ name: `SVI VLAN ${g.vlan}`, ip: `${g.ip}/${FW_HANDOFF_PREFIX}`, kind: 'handoff' })
+        g.ports.forEach((p, i) => out.push({ name: portName(p), ip: `access VLAN ${g.vlan}`, peer: g.fws[i].hostname, kind: 'handoff' }))
       }
     }
   } else if (dev.subLayer === 'distribution' || dev.subLayer === 'access') {
@@ -689,8 +774,9 @@ export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], use
     }
     out.push({ name: `Vlan${CAMPUS_VLANS.mgmt.id} (mgmt)`, ip: `${campusMgmtIp(dev, allDevices, tierIdx)}/24`, kind: 'loopback' })
     if (dev.subLayer === 'distribution') {
-      for (const x of fwHandoffPlan(dev, allDevices, 'distribution')) {
-        out.push({ name: portName(x.port), ip: `${x.ip}/31`, peer: x.fw.hostname, kind: 'handoff' })
+      for (const g of fwHandoffSegments(fwHandoffPlan(dev, allDevices, 'distribution'))) {
+        out.push({ name: `SVI VLAN ${g.vlan}`, ip: `${g.ip}/${FW_HANDOFF_PREFIX}`, kind: 'handoff' })
+        g.ports.forEach((p, i) => out.push({ name: portName(p), ip: `access VLAN ${g.vlan}`, peer: g.fws[i].hostname, kind: 'handoff' }))
       }
     }
   } else if (dev.subLayer === 'wan-edge') {
@@ -727,22 +813,41 @@ export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], use
       out.push({ name: 'Loopback0', ip: `${ipAdd('10.250.1.0', tierIdx + 1)}/32`, kind: 'loopback' })
     }
   } else if (dev.subLayer === 'firewall') {
-    // A Juniper SRX pair is one chassis cluster on reth interfaces, not two
-    // routed firewalls — the per-firewall /31 model does not apply (AN10), so
-    // show what its config really carries rather than an address it lacks.
-    if (/\bsrx/i.test(dev.model)) {
-      out.push({ name: 'reth1.0 (TRUST)', ip: '<CHANGE-ME-trust-ip>/24', kind: 'handoff' })
-      return out
-    }
+    // AN10: the floating inside address of the HA cluster, one per switch.
     firewallHandoffs(dev, allDevices, useCase).forEach((h, i) => {
-      out.push({ name: `inside ${i + 1}`, ip: `${h.fwIp}/31`, peer: h.peer.hostname, kind: 'handoff' })
+      out.push({ name: firewallInsideIf(dev, i), ip: `${h.fwIp}/${FW_HANDOFF_PREFIX}`, peer: h.peer.hostname, kind: 'handoff' })
     })
   }
   return out
 }
 
 /** A firewall's end of one fabric / distribution handoff /31 (AN8). */
-export interface FirewallHandoff { peer: BOMDevice; peerIp: string; fwIp: string }
+export interface FirewallHandoff {
+  peer: BOMDevice
+  /** Switch SVI address — the firewall's next hop back into the fabric. */
+  peerIp: string
+  /** Floating address the active unit holds (identical on both units). */
+  fwIp: string
+  /** Standby unit's address, for vendors that monitor the standby side (FTD). */
+  fwStandbyIp: string
+  /** Switch-side transit VLAN this segment rides on. */
+  vlan: number
+  net: string
+  /** This unit's physical port index on the switch (for documentation). */
+  peerPort: number
+}
+
+/**
+ * The firewall interface that carries handoff `i` (one per switch), named as
+ * each platform names it. Shared by the generators and the LLD (AN10).
+ * Index 0 is the outside interface on every platform, so inside starts at 1.
+ */
+export function firewallInsideIf(fw: BOMDevice, i: number): string {
+  if (/\bsrx/i.test(fw.model)) return `reth${i + 1}.0`
+  if (fw.vendor === 'Palo Alto') return `ethernet1/${i + 2}`
+  if (fw.vendor === 'Fortinet') return `port${i + 2}`
+  return `Ethernet1/${i + 2}`
+}
 
 /** Use cases whose firewall hands off to the border leaves rather than distribution. */
 const FABRIC_HANDOFF_USE_CASES = new Set<string>(['dc', 'gpu', 'multisite'])
@@ -761,9 +866,21 @@ export function firewallHandoffs(fw: BOMDevice, allDevices: BOMDevice[], useCase
   const out: FirewallHandoff[] = []
   for (const peer of peers) {
     const x = fwHandoffPlan(peer, allDevices, role).find(y => y.fw.id === fw.id)
-    if (x) out.push({ peer, peerIp: x.ip, fwIp: nextIp(x.ip) })
+    if (x) out.push({ peer, peerIp: x.ip, fwIp: x.fwIp, fwStandbyIp: x.fwStandbyIp, vlan: x.vlan, net: x.net, peerPort: x.port })
   }
   return out
+}
+
+/**
+ * Every firewall transit segment in the design, one per switch × cluster, as
+ * the IPAM export must declare it (AN10): VLAN, /29, the switch SVI address
+ * and the cluster's floating address.
+ */
+export function firewallTransitPlan(allDevices: BOMDevice[], useCase: UseCase | '' = ''): Array<FwHandoffSegment & { peer: BOMDevice }> {
+  const fabric = FABRIC_HANDOFF_USE_CASES.has(useCase)
+  const role = fabric ? 'border-leaf' : 'distribution'
+  const peers = fabric ? borderLeaves(allDevices) : allDevices.filter(d => d.subLayer === 'distribution')
+  return peers.flatMap(peer => fwHandoffSegments(fwHandoffPlan(peer, allDevices, role)).map(g => ({ ...g, peer })))
 }
 
 /** Networks behind the firewall's inside, which it routes back to the handoffs. */
@@ -881,7 +998,8 @@ export interface AddressRange {
 }
 
 export const ADDRESS_PLAN: AddressRange[] = [
-  { label: 'FIREWALL HANDOFF',   prefix: '10.98.0.0/16',  purpose: '/31 per firewall↔border-leaf link (Z3)' },
+  { label: 'FIREWALL HA LINKS',  prefix: '10.97.0.0/16',  purpose: 'Back-to-back control (HA1) and sync (HA2) /30s between the units of a firewall HA cluster (AN10)' },
+  { label: 'FIREWALL HANDOFF',   prefix: '10.98.0.0/16',  purpose: '/29 per switch × firewall HA cluster: switch SVI .1, floating firewall .2, standby .3 (AN10)' },
   { label: 'P2P FABRIC LINKS',   prefix: '10.99.0.0/16',  purpose: '/31 per leaf↔spine link, flat index (Z7)' },
   { label: 'ROLE OVERFLOW',      prefix: '10.128.0.0/14', purpose: 'Reserved — loopbacks past the 254th device of a role (Z7). Do NOT allocate.' },
   { label: 'SD-WAN SERVICE VPN', prefix: '10.101.0.0/16', purpose: 'Per-site LAN (10.101.<site>.x) and guest (10.101.<128+site>.x) on an SD-WAN edge',
@@ -925,17 +1043,22 @@ export function wanLoopbackIp(dev: BOMDevice, allDevices: BOMDevice[], idx: numb
 }
 
 /**
- * Firewall↔fabric handoff /31, shared by BOTH ends (the fabric generator and
- * the FTD manifest) so they can never drift. Flat index inside 10.98.0.0/16.
+ * Network address of the firewall handoff /29 between switch `peerIdx` and
+ * firewall cluster `clusterIdx`, shared by BOTH ends so they can never drift.
+ * Flat index inside 10.98.0.0/16 (AN10: a /29 per switch × cluster, not a /31
+ * per firewall — the address floats between the units of an HA pair).
  */
-export function fwHandoffIp(peerIdx: number, fwIdx: number, fwCount: number): string {
-  return ipAdd('10.98.1.0', (peerIdx * Math.max(1, fwCount) + fwIdx) * 2)
+export function fwHandoffIp(peerIdx: number, clusterIdx: number, clusterCount: number): string {
+  return ipAdd('10.98.1.0', (peerIdx * Math.max(1, clusterCount) + clusterIdx) * 8)
 }
 
-/** The far side of a /31 whose near side is `ip` (…​.0 → …​.1). */
-function nextIp(ip: string): string {
-  const o = ip.split('.')
-  return [...o.slice(0, 3), String(Number(o[3]) + 1)].join('.')
+/**
+ * Address of `member` (0/1) on HA link `link` (0 = control/HA1, 1 = data
+ * sync/HA2) of firewall cluster `clusterIdx`: a /30 per link inside
+ * 10.97.0.0/16, so each unit's peer address is the other unit's own (AN10).
+ */
+export function fwHaLinkIp(clusterIdx: number, link: 0 | 1, member: number): string {
+  return ipAdd('10.97.0.0', clusterIdx * 8 + link * 4 + 1 + member)
 }
 
 /**
@@ -1092,19 +1215,34 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
   // and no default was ever originated into the fabric. The border leaves now
   // own the handoff inside the VRF and originate the type-5 default.
   const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
+  const fwSegs = fwHandoffSegments(fwLinks)
   const fwHandoffBlock = fwLinks.length ? `
-! ── FIREWALL HANDOFF (border leaf, routed /31 inside TENANT-A — FW side .1) ──
+! ── FIREWALL HANDOFF (AN10) ──────────────────────────────────────────────────
+! The firewall pair is one active/passive HA cluster whose inside address
+! floats between the units, so both units plug into one transit VLAN here and
+! the leaf routes for it on an SVI inside TENANT-A.
+${fwSegs.map(g => `vlan ${g.vlan}
+  name FW-TRANSIT-${g.cluster + 1}`).join('\n')}
+!
 ${fwLinks.map(x => `interface Ethernet1/${x.port}
   description FW-HANDOFF: ${x.fw.hostname}
-  no switchport
-  vrf member TENANT-A
+  switchport
+  switchport mode access
+  switchport access vlan ${x.vlan}
+  spanning-tree port type edge
   mtu 9216
-  ip address ${x.ip}/31
   no shutdown`).join('\n!\n')}
 !
-! Default route toward the perimeter firewall, inside the tenant VRF.
+${fwSegs.map(g => `interface Vlan${g.vlan}
+  description FW-TRANSIT to ${g.fws.map(f => f.hostname).join(' / ')}
+  vrf member TENANT-A
+  mtu 9216
+  ip address ${g.ip}/${FW_HANDOFF_PREFIX}
+  no shutdown`).join('\n!\n')}
+!
+! Default route toward the cluster's floating inside address, in the tenant VRF.
 vrf context TENANT-A
-${fwLinks.map(x => `  ip route 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
+${fwSegs.map(g => `  ip route 0.0.0.0/0 ${g.fwIp}`).join('\n')}
 !` : ''
   // The tenant VRF BGP block: without it no type-5 (IP-prefix) routes are
   // advertised at all. On a border leaf it also originates the default the
@@ -1842,17 +1980,29 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
   const hostPortMax = leafHostPortMax(dev, allDevices)
   // Z3 — north-south handoff on the border leaves, inside TENANT-A.
   const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
+  const fwSegs = fwHandoffSegments(fwLinks)
   const fwHandoffBlock = fwLinks.length ? `
-! ── FIREWALL HANDOFF (border leaf, routed /31 inside TENANT-A — FW side .1) ──
+! ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster; the inside
+!    address floats between the units, so the leaf routes on an SVI) ─────────
+${fwSegs.map(g => `vlan ${g.vlan}
+   name FW-TRANSIT-${g.cluster + 1}`).join('\n')}
+!
 ${fwLinks.map(x => `interface ${aristaIf(dev, x.port)}
   description FW-HANDOFF: ${x.fw.hostname}
-  no switchport
-  vrf TENANT-A
+  switchport mode access
+  switchport access vlan ${x.vlan}
+  spanning-tree portfast
   mtu 9214
-  ip address ${x.ip}/31
   no shutdown`).join('\n!\n')}
 !
-${fwLinks.map(x => `ip route vrf TENANT-A 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
+${fwSegs.map(g => `interface Vlan${g.vlan}
+  description FW-TRANSIT to ${g.fws.map(f => f.hostname).join(' / ')}
+  vrf TENANT-A
+  mtu 9214
+  ip address ${g.ip}/${FW_HANDOFF_PREFIX}
+  no shutdown`).join('\n!\n')}
+!
+${fwSegs.map(g => `ip route vrf TENANT-A 0.0.0.0/0 ${g.fwIp}`).join('\n')}
 !` : ''
   // Border leaf injects the perimeter default into EVPN as a type-5 route so
   // the rest of the fabric has a north-south path (Z3).
@@ -2251,13 +2401,21 @@ function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, pro
   // to hang off the spines, which carry no tenant VRF at all.
   const { pairId: esiPair, peerHostname: esiPeer } = haPairInfo(dev, idx, allDevices)
   const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
+  const fwSegs = fwHandoffSegments(fwLinks)
   const fwHandoffBlock = fwLinks.length ? `#
-# ── FIREWALL HANDOFF (border leaf, routed /31 inside TENANT-A — FW side .1) ──
+# ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster — the inside
+#    address floats between the units, so the leaf routes on an IRB) ────────
+${fwSegs.flatMap(g => [
+  `set vlans FW-TRANSIT-${g.cluster + 1} vlan-id ${g.vlan}`,
+  `set vlans FW-TRANSIT-${g.cluster + 1} l3-interface irb.${g.vlan}`,
+  `set interfaces irb unit ${g.vlan} family inet address ${g.ip}/${FW_HANDOFF_PREFIX}`,
+  `set routing-instances TENANT-A interface irb.${g.vlan}`,
+  `set routing-instances TENANT-A routing-options static route 0.0.0.0/0 next-hop ${g.fwIp}`,
+]).join('\n')}
 ${fwLinks.flatMap(x => [
   `set interfaces xe-0/0/${x.port - 1} description "FW-HANDOFF: ${x.fw.hostname}"`,
-  `set interfaces xe-0/0/${x.port - 1} unit 0 family inet address ${x.ip}/31`,
-  `set routing-instances TENANT-A interface xe-0/0/${x.port - 1}.0`,
-  `set routing-instances TENANT-A routing-options static route 0.0.0.0/0 next-hop ${nextIp(x.ip)}`,
+  `set interfaces xe-0/0/${x.port - 1} unit 0 family ethernet-switching interface-mode access`,
+  `set interfaces xe-0/0/${x.port - 1} unit 0 family ethernet-switching vlan members FW-TRANSIT-${x.cluster + 1}`,
 ]).join('\n')}
 set policy-options policy-statement ORIGINATE-DEFAULT from route-filter 0.0.0.0/0 exact
 set policy-options policy-statement ORIGINATE-DEFAULT then accept
@@ -2440,15 +2598,27 @@ function ciscoFtdFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase |
   // hand off to the BORDER LEAVES (Z3 — a spine has no tenant VRF to route
   // into), campus to the distribution pair (VLAN 10 data + the mgmt VLAN).
   const isFabric = FABRIC_HANDOFF_USE_CASES.has(useCase)
-  // The fabric side owns .0, the firewall side .1 — read from the peers' plans.
+  // AN10: the switch SVI owns .1 of each /29, the HA pair's active address .2
+  // and its standby address .3 — read from the peers' plans.
   const handoffs = firewallHandoffs(dev, allDevices, useCase)
+  const where = clusterOf(dev, allDevices)
+  const ha = where && where.cluster.members.length === 2 ? where : undefined
   const handoffLines = handoffs.length
-    ? handoffs.map((h, pi) => `!   Ethernet1/${2 + pi}  zone=INSIDE  ip=${h.fwIp}/31  ← ${h.peer.hostname} (fabric handoff)`).join('\n')
+    ? handoffs.map((h, pi) => `!   Ethernet1/${2 + pi}  zone=INSIDE  ip=${h.fwIp}/${FW_HANDOFF_PREFIX}${ha ? `  standby=${h.fwStandbyIp}` : ''}  ← ${h.peer.hostname} (fabric handoff, VLAN ${h.vlan})`).join('\n')
     : `!   Ethernet1/2  zone=INSIDE   ip=<CHANGE-ME-inside-ip>/<CHANGE-ME-inside-prefix>  desc=TRUSTED-LAN`
   const insideNets = isFabric
     ? '10.10.0.0/16 (tenant subnets), 10.255.0.0/16 (fabric loopbacks)'
     : `<CHANGE-ME-site-data-subnet> (VLAN ${CAMPUS_VLANS.data.id} ${CAMPUS_VLANS.data.name}), ${CAMPUS_VLANS.mgmt.subnet} (campus MGMT)`
   const dmzPort = 2 + Math.max(handoffs.length, 1)
+  const failPort = dmzPort + 1
+  const haLines = ha ? `!
+! [High Availability]  (FMC > Devices > Add High Availability — AN10)
+!   pair: ${ha.cluster.members[0].hostname} (primary) / ${ha.cluster.members[1].hostname} (secondary) — this unit is ${ha.member === 0 ? 'PRIMARY' : 'SECONDARY'}
+!   failover link: Ethernet1/${failPort}  name=FAILOVER  ip=${fwHaLinkIp(ha.cluster.index, 0, 0)}/30  standby=${fwHaLinkIp(ha.cluster.index, 0, 1)}
+!   stateful link: same as the failover link (one dedicated data port per unit)
+!   monitored interfaces: every INSIDE interface, with the standby address above
+!   both units: same model, same FTD version, registered to the same FMC` : `!
+! [High Availability]  standalone — no HA peer in the design`
   const routingLines = handoffs.length
     ? handoffs.map(h => `!   ${isFabric ? '10.10.0.0/16' : '<CHANGE-ME-site-data-subnet>'} via ${h.peerIp} (${h.peer.hostname}) — ECMP across the ${handoffs.length} handoff link(s)`).join('\n')
     : '!   <CHANGE-ME-inside-net> via <CHANGE-ME-inside-gateway>'
@@ -2479,6 +2649,7 @@ configure manager add <CHANGE-ME-fmc-ip> <CHANGE-ME-registration-key>
 !   Ethernet1/1  zone=OUTSIDE  ip=<CHANGE-ME-outside-ip>/<CHANGE-ME-outside-prefix>  desc=UNTRUSTED-INTERNET
 ${handoffLines}
 !   Ethernet1/${dmzPort}  zone=DMZ      ip=<CHANGE-ME-dmz-ip>/<CHANGE-ME-dmz-prefix>          desc=PUBLIC-SERVERS
+${haLines}
 !
 ! [Routing]     (FMC > Devices > Routing)
 !   static 0.0.0.0/0 via <CHANGE-ME-upstream-gateway> (interface Ethernet1/1)
@@ -2644,6 +2815,39 @@ ip sla schedule 1 life forever start-time now
 
 // ── Palo Alto PAN-OS ──────────────────────────────────────────────────────────
 
+/**
+ * PAN-OS active/passive HA (AN10). The data-plane interfaces above are
+ * IDENTICAL on both units — HA config sync makes them so — and the active unit
+ * owns them. HA1 (control) and HA2 (state sync) use the dedicated HA ports on
+ * the PA-5200/PA-3200 (HA1-A / HA1-B / HSCI, per Palo Alto's "HA Ports on Palo
+ * Alto Networks Firewalls"); on a model without them the ports are placeholders.
+ * The lower device-priority wins the election, so the first BOM unit is active.
+ */
+function paloAltoHaBlock(dev: BOMDevice, allDevices: BOMDevice[], insideIfs: string[]): string {
+  const where = clusterOf(dev, allDevices)
+  if (!where || where.cluster.members.length < 2) return '# ── HA: standalone firewall (no HA peer in the design) ──────────────────────\n'
+  const c = where.cluster.index, me = where.member, peer = 1 - me
+  const dedicated = /PA-?(5[2-4]\d\d|3[24]\d\d)/i.test(dev.model)
+  const ha1 = dedicated ? 'ha1-a' : '<CHANGE-ME-ha1-port>'
+  const ha2 = dedicated ? 'hsci' : '<CHANGE-ME-ha2-port>'
+  return `# ── HA (active/passive, AN10) — peer: ${where.cluster.members[peer].hostname} ─────────────
+set deviceconfig high-availability enabled yes
+set deviceconfig high-availability group group-id ${c + 1}
+set deviceconfig high-availability group peer-ip ${fwHaLinkIp(c, 0, peer)}
+set deviceconfig high-availability group mode active-passive passive-link-state auto
+set deviceconfig high-availability group election-option device-priority ${me === 0 ? 100 : 110}
+set deviceconfig high-availability group election-option preemptive no
+set deviceconfig high-availability group state-synchronization enabled yes
+set deviceconfig high-availability group monitoring link-monitoring enabled yes
+set deviceconfig high-availability group monitoring link-monitoring link-group INSIDE enabled yes interface [ ${insideIfs.join(' ')} ] failure-condition all
+set deviceconfig high-availability interface ha1 port ${ha1}
+set deviceconfig high-availability interface ha1 ip-address ${fwHaLinkIp(c, 0, me)} netmask 255.255.255.252
+${dedicated ? `set deviceconfig high-availability interface ha1-backup port ha1-b
+` : ''}set deviceconfig high-availability interface ha2 port ${ha2}
+set deviceconfig high-availability interface ha2 ip-address ${fwHaLinkIp(c, 1, me)} netmask 255.255.255.252
+`
+}
+
 function paloAltoFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase | '' = '', allDevices: BOMDevice[] = []): string {
   // AN8: the inside was one placeholder interface, so every handoff /31 the
   // fabric configured pointed at an address nothing held. One routed inside
@@ -2652,7 +2856,7 @@ function paloAltoFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase |
   const insideIfs = handoffs.length ? handoffs.map((_, i) => `ethernet1/${2 + i}`) : ['ethernet1/2']
   const dmzIf = `ethernet1/${2 + insideIfs.length}`
   const insideBlock = handoffs.length
-    ? handoffs.map((h, i) => `set network interface ethernet ${insideIfs[i]} layer3 ipv4 addr primary ip-address ${h.fwIp}/31
+    ? handoffs.map((h, i) => `set network interface ethernet ${insideIfs[i]} layer3 ipv4 addr primary ip-address ${h.fwIp}/${FW_HANDOFF_PREFIX}
 set network interface ethernet ${insideIfs[i]} comment "INSIDE: ${h.peer.hostname}"`).join('\n!\n')
     : `set network interface ethernet ethernet1/2 layer3 ipv4 addr primary ip-address <CHANGE-ME-inside-ip>/<CHANGE-ME-prefix>
 set network interface ethernet ethernet1/2 comment "INSIDE-CORP"`
@@ -2786,12 +2990,7 @@ set network virtual-router default routing-table ip static-route DEFAULT-ROUTE n
 ${insideRoutes}${handoffs.length > 1 ? `
 set network virtual-router default ecmp enable yes` : ''}` : ''}
 !
-# ── HA (Active/Passive) ────────────────────────────────────────────────────────
-# set high-availability mode active-passive
-# set high-availability group 1 peer-ip <CHANGE-ME-peer-ha-ip>
-# set high-availability group 1 election-option priority 100
-# set high-availability group 1 interface ha1 ip-address <CHANGE-ME-ha1-ip>
-`
+${paloAltoHaBlock(dev, allDevices, insideIfs)}`
 }
 
 // ── Cisco IOS-XE WAN Edge ─────────────────────────────────────────────────────
@@ -3189,21 +3388,33 @@ ${hasVoice ? `vlan 20
     // border leaf, Z3), so it can never collide with the access downlinks.
     const fwLinks = fwHandoffPlan(dev, allDevices, 'distribution')
     const downlinkMax = Math.max(1, (dev.ports || 48) - fwLinks.length)
+    const fwSegs = fwHandoffSegments(fwLinks)
     const fwHandoffBlock = fwLinks.length ? `
-! ── FIREWALL HANDOFF (routed /31 per FW — FW side is the .1 of each pair) ────
-! Z3: the handoff /31s sit in OSPF (they were in no IGP, so no other campus
-! device could reach the perimeter) and the default is originated from here.
+! ── FIREWALL HANDOFF (AN10) ──────────────────────────────────────────────────
+! The firewall pair is one active/passive HA cluster whose inside address
+! floats between the units, so both units sit in one transit VLAN here and
+! this switch routes for it on an SVI. Z3: the segment is in OSPF and the
+! default toward the firewall is originated from here.
+${fwSegs.map(g => `vlan ${g.vlan}
+ name FW-TRANSIT-${g.cluster + 1}`).join('\n')}
+!
 ${fwLinks.map(x => `interface ${hostIf(dev, x.port)}
   description FW-HANDOFF: ${x.fw.hostname}
-  no switchport
-  ip address ${x.ip} 255.255.255.254
+  switchport mode access
+  switchport access vlan ${x.vlan}
+  spanning-tree portfast
+  no shutdown`).join('\n!\n')}
+!
+${fwSegs.map(g => `interface Vlan${g.vlan}
+  description FW-TRANSIT to ${g.fws.map(f => f.hostname).join(' / ')}
+  ip address ${g.ip} ${FW_HANDOFF_MASK}
   ip ospf 10 area 0
   no shutdown`).join('\n!\n')}
 !
-${fwLinks.map(x => `ip route 0.0.0.0 0.0.0.0 ${nextIp(x.ip)}`).join('\n')}
+${fwSegs.map(g => `ip route 0.0.0.0 0.0.0.0 ${g.fwIp}`).join('\n')}
 !
 router ospf 10
-${fwLinks.map(x => `  network ${x.ip} 0.0.0.1 area 0`).join('\n')}
+${fwSegs.map(g => `  network ${g.net} ${FW_HANDOFF_WILDCARD} area 0`).join('\n')}
   default-information originate
 !` : ''
     const igmpBlock = needsIgmp ? `
@@ -3421,6 +3632,43 @@ interface ${accessUplink2}
 
 // ── Fortinet FortiOS ─────────────────────────────────────────────────────────
 
+/**
+ * FortiGate FGCP active/passive HA (AN10), per Fortinet's \`config system ha\`
+ * reference: same group-id / group-name / mode / password and heartbeat
+ * interfaces on every member, session pickup for stateful failover, and the
+ * higher priority (with override disabled) preferred as primary. FGCP syncs
+ * the data-plane configuration, so both units carry identical interfaces.
+ */
+function fortiGateHaBlock(dev: BOMDevice, allDevices: BOMDevice[], insidePorts: string[]): string {
+  const where = clusterOf(dev, allDevices)
+  if (!where || where.cluster.members.length < 2) return ''
+  const c = where.cluster.index
+  return `
+# ── HA (FGCP active/passive, AN10) — peer: ${where.cluster.members[1 - where.member].hostname} ────────
+config system ha
+    set group-id ${c + 1}
+    set group-name "FW-CLUSTER-${c + 1}"
+    set mode a-p
+    set password <CHANGE-ME-ha-password>
+    set hbdev "ha1" 50 "ha2" 50
+    set session-pickup enable
+    set override disable
+    set priority ${where.member === 0 ? 200 : 100}
+    set monitor ${['port1', ...insidePorts].map(p => `"${p}"`).join(' ')}
+    # FGCP synchronises interface config; the per-unit "mgmt" address is
+    # kept local by reserving it as the HA management interface.
+    set ha-mgmt-status enable
+    set ha-direct enable
+    config ha-mgmt-interfaces
+        edit 1
+            set interface "mgmt"
+            set gateway <CHANGE-ME-oob-gateway>
+        next
+    end
+end
+`
+}
+
 function fortinetFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase | '' = '', allDevices: BOMDevice[] = []): string {
   // AN8: one routed inside port per handoff (from the peers' own plans), all
   // in an INSIDE zone so the policies name the zone, not a single port.
@@ -3429,7 +3677,7 @@ function fortinetFirewallConfig(dev: BOMDevice, _idx: number, useCase: UseCase |
   const insideIfBlock = handoffs.length
     ? handoffs.map((h, i) => `    edit "${insidePorts[i]}"
         set mode static
-        set ip ${h.fwIp}/31
+        set ip ${h.fwIp}/${FW_HANDOFF_PREFIX}
         set allowaccess ping
         set type physical
         set role lan
@@ -3466,7 +3714,7 @@ config system global
     set password-policy-min-length 12
     set password-policy-must-contain upper-case-letter lower-case-letter number non-alphanumeric
 end
-
+${fortiGateHaBlock(dev, allDevices, insidePorts)}
 config system admin
     edit "admin"
         set password <CHANGE-ME-admin-password>
@@ -3642,7 +3890,6 @@ function fortinetCampusConfig(dev: BOMDevice, idx: number, appTypes: AppType[] =
   // AN8: firewall handoff (Cisco parity). FortiSwitch routes on SVIs, so each
   // handoff is a dedicated transit VLAN carried untagged on its port.
   const fwLinks = isDist ? fwHandoffPlan(dev, allDevices, 'distribution') : []
-  const fwVlan = (fi: number) => 3900 + fi
   // AN12: the OSPF router-id was set but no interface carried it, so the
   // router-id was unreachable and the switch had no stable address for
   // management services or troubleshooting. It now lives on a real loopback.
@@ -3742,9 +3989,9 @@ config router ospf
         next
         edit 2
             set prefix <CHANGE-ME-vlan${data.id}-network> <CHANGE-ME-vlan${data.id}-mask>
-        next${fwLinks.map((x, fi) => `
-        edit ${3 + fi}
-            set prefix ${x.ip} 255.255.255.254
+        next${fwHandoffSegments(fwLinks).map((g, gi) => `
+        edit ${3 + gi}
+            set prefix ${g.net} ${FW_HANDOFF_MASK}
         next`).join('')}
     end${fwLinks.length ? `
     config redistribute "static"
@@ -3753,32 +4000,33 @@ config router ospf
     set default-information-originate enable` : ''}
 end${fwLinks.length ? `
 
-# ── FIREWALL HANDOFF (routed /31 per firewall on a transit VLAN; FW holds .1) ─
-config switch vlan${fwLinks.map((x, fi) => `
-    edit ${fwVlan(fi)}
-        set description "FW-HANDOFF-${x.fw.hostname}"
+# ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster — both units in
+#    it, the switch routes on an SVI; the firewall holds the floating .2) ────
+config switch vlan${fwHandoffSegments(fwLinks).map(g => `
+    edit ${g.vlan}
+        set description "FW-TRANSIT-${g.cluster + 1}"
     next`).join('')}
 end
-config system interface${fwLinks.map((x, fi) => `
-    edit "fwh${fi + 1}"
+config system interface${fwHandoffSegments(fwLinks).map(g => `
+    edit "fwh${g.cluster + 1}"
         set vdom "root"
-        set ip ${x.ip} 255.255.255.254
+        set ip ${g.ip} ${FW_HANDOFF_MASK}
         set allowaccess ping
-        set vlanid ${fwVlan(fi)}
+        set vlanid ${g.vlan}
         set interface "internal"
     next`).join('')}
 end
-config switch interface${fwLinks.map((x, fi) => `
+config switch interface${fwLinks.map(x => `
     edit "port${x.port}"
-        set native-vlan ${fwVlan(fi)}
+        set native-vlan ${x.vlan}
         set description "FW-HANDOFF: ${x.fw.hostname}"
         set stp-state disabled
     next`).join('')}
 end
-config router static${fwLinks.map((x, fi) => `
-    edit ${10 + fi}
-        set gateway ${nextIp(x.ip)}
-        set device "fwh${fi + 1}"
+config router static${fwHandoffSegments(fwLinks).map(g => `
+    edit ${10 + g.cluster}
+        set gateway ${g.fwIp}
+        set device "fwh${g.cluster + 1}"
     next`).join('')}
 end` : ''}`
     : `# ── Access layer — L2 only, default GW via distribution VRRP VIP ─────────────
@@ -4127,17 +4375,24 @@ interface range ethernet 1/1/1-1/1/${dellHostMax}
   mtu 9216
   no shutdown
 !` : ''}${dellFwLinks.length ? `
-! ── FIREWALL HANDOFF (border leaf, routed /31 — FW side is the .1) ───────────
-${dellFwLinks.map(x => `interface ethernet1/1/${x.port}
-  description FW-HANDOFF: ${x.fw.hostname}
-  no switchport
-  ip vrf forwarding TENANT-A
-  ip address ${x.ip}/31
-  no shutdown
-!`).join('\n')}
+! ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster; the inside
+!    address floats between the units, so the leaf routes on a VLAN SVI) ────
 ip vrf TENANT-A
 !
-${dellFwLinks.map(x => `ip route vrf TENANT-A 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
+${fwHandoffSegments(dellFwLinks).map(g => `interface vlan${g.vlan}
+  description FW-TRANSIT to ${g.fws.map(f => f.hostname).join(' / ')}
+  ip vrf forwarding TENANT-A
+  ip address ${g.ip}/${FW_HANDOFF_PREFIX}
+  no shutdown
+!`).join('\n')}
+${dellFwLinks.map(x => `interface ethernet1/1/${x.port}
+  description FW-HANDOFF: ${x.fw.hostname}
+  switchport mode access
+  switchport access vlan ${x.vlan}
+  spanning-tree port type edge
+  no shutdown
+!`).join('\n')}
+${fwHandoffSegments(dellFwLinks).map(g => `ip route vrf TENANT-A 0.0.0.0/0 ${g.fwIp}`).join('\n')}
 !` : ''}
 ${isGpu ? `! ── RoCEv2 / DCB / ECN — Full Lossless Fabric (OS10) ───────────────────────
 !   Priority 3 → RoCEv2/RDMA (lossless, PFC no-drop)
@@ -4331,17 +4586,24 @@ ${hostMax > 0 ? `interface 1/1/1-1/1/${hostMax}
     spanning-tree bpdu-guard
     spanning-tree port-type admin-edge
 !` : ''}${fwLinks.length ? `
-! ── FIREWALL HANDOFF (border leaf, routed /31 — FW side is the .1) ───────────
+! ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster; the inside
+!    address floats between the units, so the leaf routes on a VLAN SVI) ────
 vrf TENANT-A
 !
+${fwHandoffSegments(fwLinks).map(g => `vlan ${g.vlan}
+    name FW-TRANSIT-${g.cluster + 1}
+interface vlan ${g.vlan}
+    description FW-TRANSIT to ${g.fws.map(f => f.hostname).join(' / ')}
+    vrf attach TENANT-A
+    ip address ${g.ip}/${FW_HANDOFF_PREFIX}
+!`).join('\n')}
 ${fwLinks.map(x => `interface 1/1/${x.port}
     no shutdown
     description FW-HANDOFF: ${x.fw.hostname}
-    routing
-    vrf attach TENANT-A
-    ip address ${x.ip}/31
+    no routing
+    vlan access ${x.vlan}
 !`).join('\n')}
-${fwLinks.map(x => `ip route 0.0.0.0/0 ${nextIp(x.ip)} vrf TENANT-A`).join('\n')}
+${fwHandoffSegments(fwLinks).map(g => `ip route 0.0.0.0/0 ${g.fwIp} vrf TENANT-A`).join('\n')}
 !` : ''}
 `}! ── BGP: eBGP underlay on the /31s, eBGP EVPN overlay between loopbacks ────
 router bgp ${asn}
@@ -4421,16 +4683,22 @@ router ospf 1
     router-id ${lo0}
     area 0.0.0.0${fwLinks.length ? `
     default-information originate` : ''}
-!${fwLinks.map(x => `
+!${fwHandoffSegments(fwLinks).map(g => `
+! FIREWALL HANDOFF (AN10): one transit VLAN per HA cluster — both units in it.
+vlan ${g.vlan}
+    name FW-TRANSIT-${g.cluster + 1}
+interface vlan ${g.vlan}
+    description FW-TRANSIT to ${g.fws.map(f => f.hostname).join(' / ')}
+    ip address ${g.ip}/${FW_HANDOFF_PREFIX}
+    ip ospf 1 area 0.0.0.0
+!`).join('')}${fwLinks.map(x => `
 interface 1/1/${x.port}
     no shutdown
     description FW-HANDOFF: ${x.fw.hostname}
-    routing
-    ip address ${x.ip}/31
-    ip ospf 1 area 0.0.0.0
-    ip ospf network point-to-point
-!`).join('')}${fwLinks.map(x => `
-ip route 0.0.0.0/0 ${nextIp(x.ip)}`).join('')}${fwLinks.length ? '\n!' : ''}
+    no routing
+    vlan access ${x.vlan}
+!`).join('')}${fwHandoffSegments(fwLinks).map(g => `
+ip route 0.0.0.0/0 ${g.fwIp}`).join('')}${fwLinks.length ? '\n!' : ''}
 ${svi(data.id, `<CHANGE-ME-vlan${data.id}-ip>/<CHANGE-ME-vlan${data.id}-prefixlen>`, `<CHANGE-ME-vlan${data.id}-vip>`)}
 ${hasVoice ? `${svi(voice.id, `<CHANGE-ME-vlan${voice.id}-ip>/<CHANGE-ME-vlan${voice.id}-prefixlen>`, `<CHANGE-ME-vlan${voice.id}-vip>`)}
 ` : ''}${svi(mgmt.id, `${mgmtIp}/24`, mgmt.vip)}
@@ -4533,10 +4801,13 @@ function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
   // helper the other vendors use, so the two allocators can never drift.
   const nvHostMax = isSpine ? ports : leafHostPortMax(dev, allDevices)
   const nvFwBlock = nvFwLinks.length ? `#
-# ── FIREWALL HANDOFF (border leaf — routed /31, FW side is the .1) ───────────
-${nvFwLinks.map(x => `nv set interface swp${x.port} ip address ${x.ip}/31
+# ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster; the inside
+#    address floats between the units, so the leaf routes on a VLAN SVI) ────
+${nvFwLinks.map(x => `nv set interface swp${x.port} bridge domain br_default access ${x.vlan}
 nv set interface swp${x.port} description FW-HANDOFF: ${x.fw.hostname}`).join('\n')}
-${nvFwLinks.map(x => `nv set vrf default router static 0.0.0.0/0 via ${nextIp(x.ip)}`).join('\n')}
+${fwHandoffSegments(nvFwLinks).map(g => `nv set bridge domain br_default vlan ${g.vlan}
+nv set interface vlan${g.vlan} ip address ${g.ip}/${FW_HANDOFF_PREFIX}
+nv set vrf default router static 0.0.0.0/0 via ${g.fwIp}`).join('\n')}
 nv set vrf default router bgp address-family ipv4-unicast redistribute static enable on
 #` : ''
   const neighborLines = peerPorts.map(p => `nv set vrf default router bgp neighbor swp${p} remote-as external
@@ -4789,14 +5060,15 @@ configure bgp neighbor all timer 3 9
 configure bgp neighbor all bfd on
 enable bgp neighbor all
 #${exosFwLinks.length ? `
-# ── FIREWALL HANDOFF (border leaf, routed /31 — FW side is the .1) ───────────
+# ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster — both units'
+#    ports in it, the leaf routes on its VLAN interface) ────────────────────
 create vrf TENANT-A
-${exosFwLinks.map(x => `create vlan FW-${x.port} vr TENANT-A
-configure vlan FW-${x.port} add ports ${x.port} untagged
-configure vlan FW-${x.port} ipaddress ${x.ip} 255.255.255.254
-configure ports ${x.port} description-string "FW-HANDOFF: ${x.fw.hostname}"
-enable ipforwarding vlan FW-${x.port}`).join('\n')}
-${exosFwLinks.map(x => `configure iproute add default ${nextIp(x.ip)} vr TENANT-A`).join('\n')}
+${fwHandoffSegments(exosFwLinks).map(g => `create vlan FW-TRANSIT-${g.cluster + 1} tag ${g.vlan} vr TENANT-A
+configure vlan FW-TRANSIT-${g.cluster + 1} add ports ${g.ports.join(',')} untagged
+configure vlan FW-TRANSIT-${g.cluster + 1} ipaddress ${g.ip} ${FW_HANDOFF_MASK}
+enable ipforwarding vlan FW-TRANSIT-${g.cluster + 1}
+configure iproute add default ${g.fwIp} vr TENANT-A`).join('\n')}
+${exosFwLinks.map(x => `configure ports ${x.port} description-string "FW-HANDOFF: ${x.fw.hostname}"`).join('\n')}
 #` : ''}
 # ── Jumbo MTU (VXLAN 50B overhead → underlay must be jumbo) ───────────────────
 enable jumbo-frame ports all
@@ -4906,13 +5178,14 @@ configure vlan UPLINK-CORE add ports ${coreUp} untagged
 configure vlan UPLINK-CORE ipaddress <CHANGE-ME-core-uplink-ip> <CHANGE-ME-core-uplink-mask>
 enable ipforwarding vlan UPLINK-CORE
 ${fwLinks.length ? `#
-# ── FIREWALL HANDOFF (routed /31 per firewall; the firewall holds the .1) ────
-${fwLinks.map(x => `create vlan FW-${x.port}
-configure vlan FW-${x.port} add ports ${x.port} untagged
-configure vlan FW-${x.port} ipaddress ${x.ip} 255.255.255.254
-configure ports ${x.port} description-string "FW-HANDOFF: ${x.fw.hostname}"
-enable ipforwarding vlan FW-${x.port}`).join('\n')}
-${fwLinks.map(x => `configure iproute add default ${nextIp(x.ip)}`).join('\n')}
+# ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster — both units'
+#    ports in it; the firewall holds the floating .2) ──────────────────────
+${fwHandoffSegments(fwLinks).map(g => `create vlan FW-TRANSIT-${g.cluster + 1} tag ${g.vlan}
+configure vlan FW-TRANSIT-${g.cluster + 1} add ports ${g.ports.join(',')} untagged
+configure vlan FW-TRANSIT-${g.cluster + 1} ipaddress ${g.ip} ${FW_HANDOFF_MASK}
+enable ipforwarding vlan FW-TRANSIT-${g.cluster + 1}
+configure iproute add default ${g.fwIp}`).join('\n')}
+${fwLinks.map(x => `configure ports ${x.port} description-string "FW-HANDOFF: ${x.fw.hostname}"`).join('\n')}
 ` : ''}#
 # ── OSPF ─────────────────────────────────────────────────────────────────────
 configure ospf routerid ${lo0ip}
@@ -4921,7 +5194,7 @@ configure ospf add vlan ${data.name} area 0.0.0.0 passive
 ${hasVoice ? `configure ospf add vlan ${voice.name} area 0.0.0.0 passive
 ` : ''}configure ospf add vlan ${mgmt.name} area 0.0.0.0 passive
 configure ospf add vlan UPLINK-CORE area 0.0.0.0 link-type point-to-point
-${fwLinks.map(x => `configure ospf add vlan FW-${x.port} area 0.0.0.0 link-type point-to-point`).join('\n')}${fwLinks.length ? `
+${fwHandoffSegments(fwLinks).map(g => `configure ospf add vlan FW-TRANSIT-${g.cluster + 1} area 0.0.0.0 passive`).join('\n')}${fwLinks.length ? `
 enable ospf export static cost 10 type ase-type-2` : ''}
 enable ospf
 #
@@ -5038,20 +5311,32 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
   // Border-leaf firewall handoff (Z3b) — routed /31 inside the tenant ip-vrf.
   const nokiaFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
   const nokiaFwIfaces = nokiaFwLinks.length ? `
-    # ── FIREWALL HANDOFF (border leaf, routed /31 — FW side is the .1) ──────
+    # ── FIREWALL HANDOFF (AN10: one bridged transit segment per HA cluster —
+    #    both units' ports in a mac-vrf, routed by an IRB in TENANT-A; the
+    #    firewall's inside address floats between the units) ───────────────
 ${nokiaFwLinks.map(x => `    interface ethernet-1/${x.port} {
         description "FW-HANDOFF: ${x.fw.hostname}"
         admin-state enable
         subinterface 0 {
-            ipv4 {
-                address ${x.ip}/31 { }
-            }
+            type bridged
         }
+    }`).join('\n')}
+    interface irb0 {
+${fwHandoffSegments(nokiaFwLinks).map(g => `        subinterface ${g.vlan} {
+            ipv4 {
+                address ${g.ip}/${FW_HANDOFF_PREFIX} { }
+            }
+        }`).join('\n')}
+    }
+${fwHandoffSegments(nokiaFwLinks).map(g => `    network-instance FW-TRANSIT-${g.cluster + 1} {
+        type mac-vrf
+${g.ports.map(p => `        interface ethernet-1/${p}.0 { }`).join('\n')}
+        interface irb0.${g.vlan} { }
     }`).join('\n')}
 
     network-instance TENANT-A {
         type ip-vrf
-${nokiaFwLinks.map(x => `        interface ethernet-1/${x.port}.0 { }`).join('\n')}
+${fwHandoffSegments(nokiaFwLinks).map(g => `        interface irb0.${g.vlan} { }`).join('\n')}
         static-routes {
             route 0.0.0.0/0 {
                 next-hop-group fw-perimeter
@@ -5059,8 +5344,8 @@ ${nokiaFwLinks.map(x => `        interface ethernet-1/${x.port}.0 { }`).join('\n
         }
         next-hop-groups {
             group fw-perimeter {
-${nokiaFwLinks.map((x, i) => `                nexthop ${i + 1} {
-                    ip-address ${nextIp(x.ip)}
+${fwHandoffSegments(nokiaFwLinks).map((g, i) => `                nexthop ${i + 1} {
+                    ip-address ${g.fwIp}
                 }`).join('\n')}
             }
         }
@@ -5314,11 +5599,16 @@ set interfaces interface-range DOWNLINKS unit 0 family ethernet-switching interf
 set interfaces interface-range DOWNLINKS unit 0 family ethernet-switching vlan members ${trunkMembers}
 set interfaces interface-range DOWNLINKS native-vlan-id ${mgmt.id}${fwLinks.length ? `
 !
-# ── FIREWALL HANDOFF (routed /31 per firewall; the firewall holds the .1) ─
+# ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster — both units in
+#    it, routed on an IRB; the firewall holds the floating .2) ─────────────
+${fwHandoffSegments(fwLinks).map(g => `set vlans FW-TRANSIT-${g.cluster + 1} vlan-id ${g.vlan}
+set vlans FW-TRANSIT-${g.cluster + 1} l3-interface irb.${g.vlan}
+set interfaces irb unit ${g.vlan} family inet address ${g.ip}/${FW_HANDOFF_PREFIX}
+set protocols ospf area 0.0.0.0 interface irb.${g.vlan} passive
+set routing-options static route 0.0.0.0/0 next-hop ${g.fwIp}`).join('\n')}
 ${fwLinks.map(x => `set interfaces xe-0/0/${x.port - 1} description "FW-HANDOFF: ${x.fw.hostname}"
-set interfaces xe-0/0/${x.port - 1} unit 0 family inet address ${x.ip}/31
-set protocols ospf area 0.0.0.0 interface xe-0/0/${x.port - 1}.0 interface-type p2p
-set routing-options static route 0.0.0.0/0 next-hop ${nextIp(x.ip)}`).join('\n')}
+set interfaces xe-0/0/${x.port - 1} unit 0 family ethernet-switching interface-mode access
+set interfaces xe-0/0/${x.port - 1} unit 0 family ethernet-switching vlan members FW-TRANSIT-${x.cluster + 1}`).join('\n')}
 set policy-options policy-statement ORIGINATE-DEFAULT term 1 from protocol static
 set policy-options policy-statement ORIGINATE-DEFAULT term 1 from route-filter 0.0.0.0/0 exact
 set policy-options policy-statement ORIGINATE-DEFAULT term 1 then accept
@@ -5406,6 +5696,9 @@ set protocols lldp interface all
  * "Chassis Cluster Slot Numbering and Logical Interface Naming".
  */
 const SRX_NODE1_FPC: Array<[RegExp, number]> = [
+  // SRX4600: renumbering constant 7 (node 0 xe-1/0/0 → node 1 xe-8/0/0), per
+  // Juniper's chassis-cluster slot-numbering table (AN10).
+  [/SRX\s?4600\b/i,     7],
   [/SRX\s?3(00|20)\b/i, 3],
   [/SRX\s?3(40|45)\b/i, 5],
   [/SRX\s?550\b/i,      9],
@@ -5417,17 +5710,103 @@ function srxNode1Fpc(model: string): string {
   return '<CHANGE-ME-node1-fpc>'
 }
 
-function juniperSrxConfig(dev: BOMDevice, _idx: number): string {
-  const n1 = srxNode1Fpc(dev.model)
+/**
+ * Per-model SRX port plan, from Juniper's hardware guides (AN10). The
+ * generator used xe-0/0/0, xe-0/0/1 and xe-0/0/3 as data ports on every SRX —
+ * on the SRX4600 those are the DEDICATED chassis-cluster control
+ * (xe-0/0/0-1) and fabric (xe-0/0/2-3) ports, and the SRX1500 has no
+ * xe-0/0/0 at all (its 10G ports are xe-0/0/16-19).
+ */
+interface SrxProfile { data: (n: number) => string; maxData: number; fabric: string[]; control: string }
+const SRX_PROFILES: Array<[RegExp, SrxProfile]> = [
+  [/SRX\s?4600/i, {
+    data: n => `xe-1/0/${n}`, maxData: 8, fabric: ['xe-0/0/2', 'xe-0/0/3'],
+    control: 'dedicated HA control ports xe-0/0/0 and xe-0/0/1 — no control-link configuration is required',
+  }],
+  [/SRX\s?1500/i, {
+    data: n => `xe-0/0/${16 + n}`, maxData: 4, fabric: ['ge-0/0/1'],
+    control: 'dedicated HA control port — no control-link configuration is required',
+  }],
+]
+
+function srxProfile(model: string): SrxProfile | undefined {
+  for (const [re, p] of SRX_PROFILES) if (re.test(model)) return p
+  return undefined
+}
+
+/** A node-0 interface name as node 1 sees it: FPC + the platform's renumbering constant. */
+function srxNode1If(ifname: string, model: string): string {
+  const fpc = srxNode1Fpc(model)
+  const m = /^([a-z]+)-(\d+)\/(.+)$/.exec(ifname)
+  if (!m) return ifname
+  return /^\d+$/.test(fpc) ? `${m[1]}-${Number(m[2]) + Number(fpc)}/${m[3]}` : `${m[1]}-<CHANGE-ME-node1-fpc>/${m[3]}`
+}
+
+function juniperSrxConfig(dev: BOMDevice, _idx: number, useCase: UseCase | '' = '', allDevices: BOMDevice[] = []): string {
+  const prof = srxProfile(dev.model)
+  const dataIf = (n: number) => prof ? prof.data(n) : `xe-0/0/${n}`
+  const where = clusterOf(dev, allDevices)
+  const members = where?.cluster.members ?? [dev]
+  const clustered = members.length === 2
+  const handoffs = firewallHandoffs(dev, allDevices, useCase)
+  // reth0 outside, one reth per handoff (firewallInsideIf), then the DMZ.
+  const inside = handoffs.length
+    ? handoffs.map((h, i) => ({ unit: firewallInsideIf(dev, i), desc: `INSIDE: ${h.peer.hostname}`, addr: `${h.fwIp}/${FW_HANDOFF_PREFIX}` }))
+    : [{ unit: 'reth1.0', desc: 'INSIDE-LAN', addr: '<CHANGE-ME-trust-ip>/24' }]
+  const reths = [
+    { unit: 'reth0.0', desc: 'UNTRUST-INTERNET', addr: '<CHANGE-ME-untrust-ip>/30', zone: 'UNTRUST' },
+    ...inside.map(x => ({ ...x, zone: 'TRUST' })),
+    { unit: `reth${inside.length + 1}.0`, desc: 'DMZ-SERVERS', addr: '<CHANGE-ME-dmz-ip>/24', zone: 'DMZ' },
+  ]
+  const tooMany = prof && reths.length > prof.maxData
+  const ifOf = (u: string) => u.replace(/\.0$/, '')
+  // Without a cluster the "reths" are plain routed ports.
+  const phys = reths.map((r, i) => ({ ...r, node0: dataIf(i), node1: srxNode1If(dataIf(i), dev.model), name: clustered ? r.unit : `${dataIf(i)}.0` }))
+  const ifBlock = clustered
+    ? phys.map(r => `set interfaces ${r.node0} gigether-options redundant-parent ${ifOf(r.unit)}
+set interfaces ${r.node1} gigether-options redundant-parent ${ifOf(r.unit)}
+set interfaces ${ifOf(r.unit)} redundant-ether-options redundancy-group 1
+set interfaces ${ifOf(r.unit)} unit 0 description "${r.desc}"
+set interfaces ${ifOf(r.unit)} unit 0 family inet address ${r.addr}`).join('\n')
+    : phys.map(r => `set interfaces ${r.node0} unit 0 description "${r.desc}"
+set interfaces ${r.node0} unit 0 family inet address ${r.addr}`).join('\n')
+  const zoneLines = ['TRUST', 'UNTRUST', 'DMZ'].flatMap(z => phys.filter(r => r.zone === z).map(r => `set security zones security-zone ${z} interfaces ${r.name}`)).join('\n')
+  const routes = handoffs.flatMap(h => firewallInsideNets(useCase).map(n => `set routing-options static route ${n.cidr} next-hop ${h.peerIp}`)).join('\n')
+  const fab0 = prof?.fabric ?? ['xe-0/0/2']
+  const clusterBlock = clustered ? `
+# ── CHASSIS CLUSTER (AN10, per Juniper's chassis-cluster guide) ────────────
+# Form the cluster first, in operational mode on each node:
+#   ${members[0].hostname}: set chassis cluster cluster-id ${(where?.cluster.index ?? 0) + 1} node 0 reboot
+#   ${members[1].hostname}: set chassis cluster cluster-id ${(where?.cluster.index ?? 0) + 1} node 1 reboot
+# Control link: ${prof ? prof.control : '<CHANGE-ME-confirm-control-ports-for-this-model>'}.
+# Both nodes share this one configuration; per-node settings live in groups.
+set groups node0 system host-name ${members[0].hostname}
+set groups node0 interfaces fxp0 unit 0 family inet address <CHANGE-ME-node0-fxp0-ip>/24
+set groups node1 system host-name ${members[1].hostname}
+set groups node1 interfaces fxp0 unit 0 family inet address <CHANGE-ME-node1-fxp0-ip>/24
+set apply-groups "\${node}"
+set chassis cluster reth-count ${reths.length}
+set chassis cluster redundancy-group 0 node 0 priority 200
+set chassis cluster redundancy-group 0 node 1 priority 100
+set chassis cluster redundancy-group 1 node 0 priority 200
+set chassis cluster redundancy-group 1 node 1 priority 100
+set chassis cluster redundancy-group 1 preempt
+${phys.filter(r => r.zone !== 'DMZ').flatMap(r => [
+  `set chassis cluster redundancy-group 1 interface-monitor ${r.node0} weight 255`,
+  `set chassis cluster redundancy-group 1 interface-monitor ${r.node1} weight 255`,
+]).join('\n')}
+${fab0.map(f => `set interfaces fab0 fabric-options member-interfaces ${f}`).join('\n')}
+${fab0.map(f => `set interfaces fab1 fabric-options member-interfaces ${srxNode1If(f, dev.model)}`).join('\n')}` : `
+set system host-name ${dev.hostname}
+set interfaces fxp0 unit 0 family inet address <CHANGE-ME-mgmt-ip>/24`
   return `# ═══════════════════════════════════════════════════════════════
-# Device : ${dev.hostname}
+# Device : ${dev.hostname}${clustered ? ` (chassis cluster with ${members.find(m => m.id !== dev.id)?.hostname})` : ''}
 # Role   : Firewall (NGFW)
 # OS     : Juniper Junos (SRX)
 # Model  : ${dev.model}
 # Generated by NetDesign AI — replace <CHANGE-ME-*> before deploying.
 # ═══════════════════════════════════════════════════════════════
-
-set system host-name ${dev.hostname}
+${clusterBlock}
 set system domain-name <CHANGE-ME-domain.example.com>
 set system login user admin class super-user authentication encrypted-password "<CHANGE-ME-admin-password>"
 set system authentication-order [ tacplus password ]
@@ -5440,32 +5819,18 @@ set system services web-management https system-generated-certificate
 set system syslog host <CHANGE-ME-syslog-ip> any info
 set system ntp server <CHANGE-ME-ntp-primary> prefer
 !
-# ── DATA-PLANE INTERFACES (cluster reths — J-M3: zones must bind reth units,
-# and SRX4600 ports are xe-/et-, not ge-) ─────────────────────────────────
-set interfaces xe-0/0/0 gigether-options redundant-parent reth0
-set interfaces xe-${n1}/0/0 gigether-options redundant-parent reth0
-set interfaces xe-0/0/1 gigether-options redundant-parent reth1
-set interfaces xe-${n1}/0/1 gigether-options redundant-parent reth1
-set interfaces xe-0/0/3 gigether-options redundant-parent reth2
-set interfaces xe-${n1}/0/3 gigether-options redundant-parent reth2
-set interfaces reth0 redundant-ether-options redundancy-group 1
-set interfaces reth0 unit 0 description "UNTRUST-INTERNET"
-set interfaces reth0 unit 0 family inet address <CHANGE-ME-untrust-ip>/30
-set interfaces reth1 redundant-ether-options redundancy-group 1
-set interfaces reth1 unit 0 description "TRUST-LAN"
-set interfaces reth1 unit 0 family inet address <CHANGE-ME-trust-ip>/24
-set interfaces reth2 redundant-ether-options redundancy-group 1
-set interfaces reth2 unit 0 description "DMZ-SERVERS"
-set interfaces reth2 unit 0 family inet address <CHANGE-ME-dmz-ip>/24
+# ── DATA-PLANE INTERFACES (${clustered ? 'redundant Ethernet — one member on each node' : 'standalone'}) ─────────────
+${tooMany ? `# WARNING: ${reths.length} data interfaces needed but ${dev.model} has ${prof!.maxData} in this plan — add a port module.\n` : ''}${ifBlock}
 !
 # ── SECURITY ZONES ───────────────────────────────────────────────────────
-set security zones security-zone TRUST host-inbound-traffic system-services [ ping ssh dhcp ntp ]
-set security zones security-zone TRUST host-inbound-traffic protocols [ bgp ]
-set security zones security-zone TRUST interfaces reth1.0
+set security zones security-zone TRUST host-inbound-traffic system-services [ ping ssh ntp ]
 set security zones security-zone UNTRUST host-inbound-traffic system-services [ ping ike ]
-set security zones security-zone UNTRUST interfaces reth0.0
 set security zones security-zone DMZ host-inbound-traffic system-services [ ping ]
-set security zones security-zone DMZ interfaces reth2.0
+${zoneLines}
+!
+# ── ROUTING ──────────────────────────────────────────────────────────────
+set routing-options static route 0.0.0.0/0 next-hop <CHANGE-ME-untrust-gw>
+${routes}
 !
 # ── SECURITY POLICIES ───────────────────────────────────────────────────
 set security policies from-zone TRUST to-zone UNTRUST policy ALLOW-OUTBOUND match source-address any destination-address any application any
@@ -5485,15 +5850,6 @@ set security nat source rule-set TRUST-TO-UNTRUST from zone TRUST
 set security nat source rule-set TRUST-TO-UNTRUST to zone UNTRUST
 set security nat source rule-set TRUST-TO-UNTRUST rule SNAT match source-address 0.0.0.0/0
 set security nat source rule-set TRUST-TO-UNTRUST rule SNAT then source-nat interface
-!
-# ── HA CLUSTER (fab links carry the data-plane sync — J-M3) ───────────────
-set chassis cluster reth-count 4
-set chassis cluster redundancy-group 0 node 0 priority 200
-set chassis cluster redundancy-group 0 node 1 priority 100
-set chassis cluster redundancy-group 1 node 0 priority 200
-set chassis cluster redundancy-group 1 node 1 priority 100
-set interfaces fab0 fabric-options member-interfaces xe-0/0/2
-set interfaces fab1 fabric-options member-interfaces xe-${n1}/0/2
 `.replace(/^!$/gm, '#')
 }
 
@@ -5624,18 +5980,26 @@ interface ${aristaIf(dev, 1)}-${downlinkMax}
    switchport trunk native vlan ${mgmt.id}
    switchport trunk allowed vlan ${allowed}
 !
+${fwHandoffSegments(fwLinks).map(g => `! FIREWALL HANDOFF (AN10): one transit VLAN per HA cluster — both units in it.
+vlan ${g.vlan}
+   name FW-TRANSIT-${g.cluster + 1}
+interface Vlan${g.vlan}
+   description FW-TRANSIT to ${g.fws.map(f => f.hostname).join(' / ')}
+   ip address ${g.ip}/${FW_HANDOFF_PREFIX}
+!`).join('\n')}
 ${fwLinks.map(x => `interface ${aristaIf(dev, x.port)}
    description FW-HANDOFF: ${x.fw.hostname}
-   no switchport
-   ip address ${x.ip}/31
-   ip ospf network point-to-point
+   switchport mode access
+   switchport access vlan ${x.vlan}
+   spanning-tree portfast
 !`).join('\n')}${fwLinks.length ? `
-${fwLinks.map(x => `ip route 0.0.0.0/0 ${nextIp(x.ip)}`).join('\n')}
+${fwHandoffSegments(fwLinks).map(g => `ip route 0.0.0.0/0 ${g.fwIp}`).join('\n')}
 !
 ` : ''}router ospf 1
    router-id ${lo0ip}
-   passive-interface Vlan${data.id}${fwLinks.map(x => `
-   network ${x.ip}/31 area 0.0.0.0`).join('')}${fwLinks.length ? `
+   passive-interface Vlan${data.id}${fwHandoffSegments(fwLinks).map(g => `
+   passive-interface Vlan${g.vlan}
+   network ${g.net}/${FW_HANDOFF_PREFIX} area 0.0.0.0`).join('')}${fwLinks.length ? `
    default-information originate` : ''}
    network ${lo0ip}/32 area 0.0.0.0
    network ${mgmt.subnet} area 0.0.0.0
@@ -7189,7 +7553,7 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'Juniper'   && l === 'spine')                            return juniperSpineConfig(dev, idx, protoFeatures, needsRoce, allDevices)
   if (v === 'Juniper'   && l === 'leaf')                             return juniperLeafConfig(dev, idx, useCase === 'multisite', protoFeatures, needsRoce, appTypes, allDevices)
   if (v === 'Juniper'   && (l === 'distribution' || l === 'access')) return juniperCampusConfig(dev, idx, allDevices, appTypes)
-  if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx)
+  if (v === 'Juniper'   && l === 'firewall')                         return juniperSrxConfig(dev, idx, useCase, allDevices)
   if (v === 'Juniper'   && l === 'wan-edge')                         return juniperWanConfig(dev, idx, allDevices)
   if (v === 'Nokia'     && (l === 'spine' || l === 'leaf'))          return nokiaSrLinuxConfig(dev, idx, useCase === 'multisite', protoFeatures, appTypes, allDevices)
   if (v === 'Fortinet'  && l === 'firewall')                         return fortinetFirewallConfig(dev, idx, useCase, allDevices)

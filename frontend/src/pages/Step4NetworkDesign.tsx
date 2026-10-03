@@ -253,7 +253,7 @@ function exportLLDCSV(useCase: string, devices: BOMDevice[], totalEndpoints: num
   // VLAN Design
   sections.push('VLAN DESIGN')
   sections.push('VLAN ID,Name,Subnet,Gateway,DHCP,Purpose,Layer')
-  genVLANs(useCase).forEach(v => sections.push(`${v.id},"${v.name}","${v.subnet}","${v.gw}","${v.dhcp}","${v.purpose}","${v.layer}"`))
+  genVLANs(useCase, devices).forEach(v => sections.push(`${v.id},"${v.name}","${v.subnet}","${v.gw}","${v.dhcp}","${v.purpose}","${v.layer}"`))
   sections.push('')
 
   // BGP/Routing
@@ -728,7 +728,7 @@ export function Step4NetworkDesign() {
   // Derived data for tabs
   const ipBlocks  = useMemo(() => genIPBlocks(useCase, totalEndpoints, numSites, generatedDevices), [useCase, totalEndpoints, numSites, generatedDevices])
   const ipRows    = useMemo(() => genIPRows(useCase, generatedDevices), [useCase, generatedDevices])
-  const vlans     = useMemo(() => genVLANs(useCase), [useCase])
+  const vlans     = useMemo(() => genVLANs(useCase, generatedDevices), [useCase, generatedDevices])
   const vnis      = useMemo(() => genVNIs(), [])
   const isDC      = useCase === 'dc' || useCase === 'multisite'
   const routing   = useMemo(() => genRoutingData(useCase, underlayProtocol, overlayProtocols, generatedDevices), [useCase, underlayProtocol, overlayProtocols, generatedDevices])

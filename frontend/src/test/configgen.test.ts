@@ -1485,7 +1485,12 @@ describe('Juniper fabric wiring + SRX (group Y5)', () => {
   })
 
   it('J-M2/J-M3: SRX uses # comments, reth+fab cluster interfaces, zones bind reth units', () => {
-    const srx = generateConfig(makeDevice({ hostname: 'IAD-FW-A01', vendor: 'Juniper', subLayer: 'firewall', model: 'SRX4600' }), 0, 'dc')
+    // A chassis cluster needs both nodes in the design (AN10).
+    const pair = [
+      makeDevice({ id: 'f1', hostname: 'IAD-FW-A01', vendor: 'Juniper', subLayer: 'firewall', model: 'SRX4600' }),
+      makeDevice({ id: 'f2', hostname: 'IAD-FW-A02', vendor: 'Juniper', subLayer: 'firewall', model: 'SRX4600' }),
+    ]
+    const srx = generateAllConfigs(pair, 'dc')['f1']
     expect(srx.split('\n').some(l => l === '!')).toBe(false)
     expect(srx).toMatch(/set interfaces fab0 fabric-options member-interfaces/)
     expect(srx).toMatch(/set interfaces reth0 unit 0 family inet address/)
@@ -1581,29 +1586,34 @@ describe('Firewall/fabric handoff (group Y7)', () => {
     expect(c['s1']).not.toContain('FW-HANDOFF')
     expect(c['l2']).toMatch(/description FW-HANDOFF: IAD-FW-A01/)
     expect(c['l2']).toMatch(/description FW-HANDOFF: IAD-FW-A02/)
-    expect(c['l2']).toMatch(/FW-HANDOFF: IAD-FW-A01[\s\S]*?vrf member TENANT-A[\s\S]*?ip address 10\.98\.1\.0\/31/)
+    // AN10: both units sit in one transit VLAN; the leaf routes on its SVI.
+    expect(c['l2']).toMatch(/FW-HANDOFF: IAD-FW-A01\n\s+switchport\n\s+switchport mode access\n\s+switchport access vlan 3900/)
+    expect(c['l2']).toMatch(/FW-HANDOFF: IAD-FW-A02\n\s+switchport\n\s+switchport mode access\n\s+switchport access vlan 3900/)
+    expect(c['l2']).toMatch(/interface Vlan3900\n[^\n]*\n\s+vrf member TENANT-A\n\s+mtu 9216\n\s+ip address 10\.98\.1\.1\/29/)
   })
 
   it('the border leaf routes north-south: VRF default toward the FW + type-5 origination (Z3)', () => {
     const c = dcDesign()
-    expect(c['l2']).toMatch(/vrf context TENANT-A\n\s+ip route 0\.0\.0\.0\/0 10\.98\.1\.1/)
+    // one default, toward the HA cluster's FLOATING address — not ECMP across
+    // two independent firewalls, which breaks stateful inspection (AN10)
+    expect(c['l2']).toMatch(/vrf context TENANT-A\n\s+ip route 0\.0\.0\.0\/0 10\.98\.1\.2\n/)
     expect(c['l2']).toMatch(/vrf TENANT-A[\s\S]*?default-information originate always/)
     // a non-border leaf gets the tenant VRF but originates nothing
     expect(c['l1']).toMatch(/vrf TENANT-A[\s\S]*?advertise l2vpn evpn/)
     expect(c['l1']).not.toContain('default-information originate')
   })
 
-  it('the FTD manifest INSIDE side matches the border-leaf handoff /31s (both ends agree)', () => {
+  it('the FTD manifest INSIDE side matches the border-leaf handoff /29s (both ends agree)', () => {
     const c = dcDesign()
-    // border leaf owns .0, firewall claims .1 of the same /31
-    expect(c['l2']).toMatch(/ip address 10\.98\.1\.0\/31/)
-    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.1\/31\s+← IAD-LEAF-A02/)
-    // Z7: handoff /31s are a FLAT index in 10.98.0.0/16 — border leaf 2 with
-    // 2 firewalls starts at offset (1*2+0)*2 = 4.
-    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.5\/31\s+← IAD-LEAF-A03/)
-    // second firewall takes the next /31 in each border leaf's block
-    expect(c['l2']).toMatch(/FW-HANDOFF: IAD-FW-A02[\s\S]*?ip address 10\.98\.1\.2\/31/)
-    expect(c['f2']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.3\/31/)
+    // AN10: the switch SVI owns .1, the HA pair's active address .2, standby .3
+    expect(c['l2']).toMatch(/ip address 10\.98\.1\.1\/29/)
+    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.2\/29\s+standby=10\.98\.1\.3\s+← IAD-LEAF-A02/)
+    // a /29 per switch × cluster, flat in 10.98.0.0/16: border leaf 2 → offset 8
+    expect(c['f1']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.10\/29\s+standby=10\.98\.1\.11\s+← IAD-LEAF-A03/)
+    // the second UNIT of the pair carries the SAME addresses — it is one cluster
+    expect(c['f2']).toMatch(/zone=INSIDE\s+ip=10\.98\.1\.2\/29\s+standby=10\.98\.1\.3/)
+    expect(c['f1']).toMatch(/\[High Availability\][\s\S]*?this unit is PRIMARY/)
+    expect(c['f2']).toMatch(/\[High Availability\][\s\S]*?this unit is SECONDARY/)
   })
 
   it('FTD manifest is design-specific: DC gets tenant/fabric INSIDE-NETS, campus gets VLAN/mgmt', () => {
@@ -1617,7 +1627,8 @@ describe('Firewall/fabric handoff (group Y7)', () => {
     const campus = generateAllConfigs(campusDevices, 'campus')
     expect(campus['f1']).toContain('<CHANGE-ME-site-data-subnet> (VLAN 10 DATA), 10.255.99.0/24 (campus MGMT)')
     // campus distribution also emits its FW handoff port
-    expect(campus['d1']).toMatch(/description FW-HANDOFF: IAD-FW-A01[\s\S]*?ip address 10\.98\.1\.0 255\.255\.255\.254/)
+    expect(campus['d1']).toMatch(/description FW-HANDOFF: IAD-FW-A01\n\s+switchport mode access\n\s+switchport access vlan 3900/)
+    expect(campus['d1']).toMatch(/interface Vlan3900\n[^\n]*\n\s+ip address 10\.98\.1\.1 255\.255\.255\.248/)
     // and the two manifests are no longer byte-identical
     expect(campus['f1']).not.toBe(dcFw)
   })
@@ -1795,9 +1806,10 @@ describe('Firewall attaches to border leaves, not spines (group Z3)', () => {
   // Parity matrix: the handoff must behave the same on every EVPN vendor.
   const CASES: Array<[string, RegExp, RegExp]> = [
     // vendor, "handoff is in the tenant VRF", "default is originated into EVPN"
-    ['Cisco',   /FW-HANDOFF: IAD-FW-A01[\s\S]*?vrf member TENANT-A/,     /default-information originate always/],
-    ['Arista',  /FW-HANDOFF: IAD-FW-A01[\s\S]*?vrf TENANT-A/,            /ip route vrf TENANT-A 0\.0\.0\.0\/0 10\.98\.\d+\.1/],
-    ['Juniper', /set routing-instances TENANT-A interface xe-0\/0\/\d+\.0/, /ip-prefix-routes export ORIGINATE-DEFAULT/],
+    // AN10: the handoff is a transit-VLAN SVI (the HA pair's address floats).
+    ['Cisco',   /interface Vlan39\d\d[\s\S]*?vrf member TENANT-A/,          /default-information originate always/],
+    ['Arista',  /interface Vlan39\d\d[\s\S]*?vrf TENANT-A/,                 /ip route vrf TENANT-A 0\.0\.0\.0\/0 10\.98\.\d+\.2\b/],
+    ['Juniper', /set routing-instances TENANT-A interface irb\.39\d\d/,        /ip-prefix-routes export ORIGINATE-DEFAULT/],
   ]
 
   for (const [vendor, vrfRe, defaultRe] of CASES) {
@@ -1846,8 +1858,8 @@ describe('Firewall attaches to border leaves, not spines (group Z3)', () => {
       makeDevice({ id: 'f1', hostname: 'IAD-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW' }),
     ]
     const c = generateAllConfigs(devices, 'campus')
-    expect(c['d1']).toMatch(/FW-HANDOFF[\s\S]*?ip ospf 10 area 0/)
-    expect(c['d1']).toMatch(/ip route 0\.0\.0\.0 0\.0\.0\.0 10\.98\.1\.1/)
+    expect(c['d1']).toMatch(/interface Vlan3900[\s\S]*?ip ospf 10 area 0/)
+    expect(c['d1']).toMatch(/ip route 0\.0\.0\.0 0\.0\.0\.0 10\.98\.1\.2\n/)
     expect(c['d1']).toMatch(/default-information originate/)
   })
 })
@@ -2152,9 +2164,11 @@ describe('NVIDIA Cumulus border leaf terminates the firewall handoff (Z3b)', () 
     makeDevice({ id: 'f1', hostname: 'V-FW-A01', vendor: 'Cisco', subLayer: 'firewall', role: 'firewall', model: 'Firepower 4145 NGFW', ports: 8 }),
   ] as BOMDevice[], 'dc')
 
-  it('the border leaf gets a routed /31 and a default toward the perimeter', () => {
+  it('the border leaf gets a transit VLAN SVI and a default toward the perimeter', () => {
     const c = fabric()
-    expect(c['l4']).toMatch(/nv set interface swp\d+ ip address 10\.98\.\d+\.\d+\/31/)
+    // AN10: the firewall port is an access port in the transit VLAN, routed on its SVI
+    expect(c['l4']).toMatch(/nv set interface swp\d+ bridge domain br_default access 39\d\d/)
+    expect(c['l4']).toMatch(/nv set interface vlan39\d\d ip address 10\.98\.\d+\.(\d+)\/29/)
     expect(c['l4']).toMatch(/nv set interface swp\d+ description FW-HANDOFF: V-FW-A01/)
     expect(c['l4']).toMatch(/nv set vrf default router static 0\.0\.0\.0\/0 via 10\.98\.\d+\.\d+/)
     // …and the fabric must actually LEARN that default
@@ -2322,17 +2336,24 @@ describe('Final Z5b remainders (J3-3 / J3-8 / N3-4)', () => {
     expect(c['l1']).toContain('set chassis aggregated-devices ethernet device-count 8')
   })
 
-  it('J3-8: the SRX node-1 FPC offset is model-driven, never a blanket 7', () => {
-    const srx = (model: string) => generateConfig(
-      makeDevice({ hostname: 'E-FW-A01', vendor: 'Juniper', subLayer: 'firewall', role: 'firewall', model, ports: 8 }), 0, 'dc')
-    // SRX1500 is a documented 7-FPC platform
-    expect(srx('SRX1500')).toMatch(/set interfaces xe-7\/0\/0 gigether-options redundant-parent reth0/)
-    // a model we cannot state with confidence must be flagged, not guessed
+  it('J3-8 / AN10: SRX ports follow each model\'s manual, and the node-1 offset is model-driven', () => {
+    const srx = (model: string) => generateAllConfigs([
+      makeDevice({ id: 'f1', hostname: 'E-FW-A01', vendor: 'Juniper', subLayer: 'firewall', role: 'firewall', model, ports: 8 }),
+      makeDevice({ id: 'f2', hostname: 'E-FW-A02', vendor: 'Juniper', subLayer: 'firewall', role: 'firewall', model, ports: 8 }),
+    ], 'dc')['f1']
+    // SRX1500: 10G data ports are xe-0/0/16-19; renumbering constant 7; fabric ge-0/0/1
+    expect(srx('SRX1500')).toMatch(/set interfaces xe-0\/0\/16 gigether-options redundant-parent reth0/)
+    expect(srx('SRX1500')).toMatch(/set interfaces xe-7\/0\/16 gigether-options redundant-parent reth0/)
+    expect(srx('SRX1500')).toMatch(/set interfaces fab1 fabric-options member-interfaces ge-7\/0\/1/)
+    // SRX4600: data on FPC 1 (xe-1/0/0 → node 1 xe-8/0/0), constant 7
     const s4600 = srx('SRX4600')
-    expect(s4600).not.toMatch(/xe-7\/0\//)
-    expect(s4600).toMatch(/xe-<CHANGE-ME-node1-fpc>\/0\/0/)
-    // node 0 is unaffected either way
-    for (const m of ['SRX1500', 'SRX4600']) expect(srx(m)).toMatch(/set interfaces xe-0\/0\/0 gigether-options redundant-parent reth0/)
+    expect(s4600).toMatch(/set interfaces xe-1\/0\/0 gigether-options redundant-parent reth0/)
+    expect(s4600).toMatch(/set interfaces xe-8\/0\/0 gigether-options redundant-parent reth0/)
+    // …and never on its dedicated HA control (xe-0/0/0-1) or fabric (xe-0/0/2-3) ports
+    expect(s4600).not.toMatch(/xe-0\/0\/[0-3] gigether-options/)
+    expect(s4600).toMatch(/set interfaces fab0 fabric-options member-interfaces xe-0\/0\/2/)
+    // a model we cannot state with confidence is flagged, not guessed
+    expect(srx('SRX4200')).toMatch(/xe-<CHANGE-ME-node1-fpc>\/0\/0/)
   })
 
   it('N3-4: the GPU fabric documents the matching host-side RoCE settings', () => {

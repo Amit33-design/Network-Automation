@@ -49,7 +49,12 @@ describe('DC LLD is drawn from the design (AO1)', () => {
 
   it.each(['Cisco', 'Arista', 'NVIDIA'])('%s: interface names on the diagram exist in the config', vendor => {
     const { devices, configs, lld } = design(vendor)
-    const cfgOf = new Map(devices.map(d => [d.hostname, stripComments(configs[d.id] ?? '')]))
+    // An FTD's data interfaces exist only in its FMC manifest — the policy
+    // FMC applies — so that manifest is what its names are checked against.
+    const cfgOf = new Map(devices.map(d => {
+      const c = configs[d.id] ?? ''
+      return [d.hostname, c.includes('FMC POLICY MANIFEST') ? c : stripComments(c)]
+    }))
     for (const n of lld.nodes) for (const i of n.interfaces) {
       if (!/^(Ethernet|swp)\d/.test(i.name)) continue
       expect(cfgOf.get(n.hostname)!, `${n.hostname} ${i.name}`).toMatch(new RegExp(`\\b${i.name.replace(/\//g, '\\/')}\\b`))

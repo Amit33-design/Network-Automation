@@ -166,7 +166,8 @@ export const RULES: Record<FactPlatform, Record<MgmtFactName, Rule>> = {
     aaa: CENTRAL_AAA,
   },
   junos: {
-    hostname: /^\s*set system host-name\s+\S/m,
+    // A chassis cluster sets each node's name in its node group (AN10).
+    hostname: /^\s*set (?:groups node[01] )?system host-name\s+\S/m,
     // Not `system-services [ … ssh … ]` — that is a zone host-inbound rule.
     sshV2: /^\s*set system services ssh protocol-version v2\b/m,
     ntp: /^\s*set system ntp server\b/m,
