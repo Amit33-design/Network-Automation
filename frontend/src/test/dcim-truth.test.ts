@@ -95,7 +95,8 @@ describe('DCIM cable plant lands on configured interfaces (AP1)', () => {
   })
 
   it('the interface CSV says which ports the configs assign and which need confirming on site', () => {
-    const { cables } = design('Cisco', 'campus')
+    // GPU server links are not yet port-assigned (AP4), so both labels appear.
+    const { cables } = design('Cisco', 'gpu')
     const csv = toNetBoxInterfaceCsv(cables)
     expect(csv).toContain('Configured in the generated config')
     expect(csv).toContain('Port not assigned by the config engine — confirm on site')
@@ -135,5 +136,58 @@ describe('HA peer-link cables agree with the configs (AP2)', () => {
       const leafLeaf = buildCabling(devices, {} as never).filter(l => l.fromLayer === 'leaf' && l.toLayer === 'leaf')
       expect(leafLeaf, vendor).toEqual([])
     }
+  })
+})
+
+// ── AP3: campus access↔distribution cables land on configured ports ────────
+describe('campus access uplinks and distribution downlinks (AP3)', () => {
+  const CAMPUS = ['Cisco', 'Arista', 'Juniper', 'Fortinet', 'HPE Aruba', 'Extreme Networks']
+  // Each access SKU's real uplink block (vendor listings): the uplinks follow
+  // the 48 host ports, or sit on a module.
+  const EXPECTED_UPLINKS: Record<string, [string, string]> = {
+    Cisco: ['TenGigabitEthernet1/1/1', 'TenGigabitEthernet1/1/2'],
+    Arista: ['Ethernet49', 'Ethernet50'],
+    Juniper: ['et-0/2/0', 'et-0/2/1'],
+    Fortinet: ['port49', 'port50'],
+    'HPE Aruba': ['1/1/49', '1/1/50'],
+    'Extreme Networks': ['49', '50'],
+  }
+
+  it.each(CAMPUS)('%s: every access↔distribution cable is mapped and the access end is configured', vendor => {
+    const { configs, cables, byHost } = design(vendor, 'campus')
+    const runs = cables.filter(c => byHost.get(c.a.device)!.subLayer === 'distribution' && byHost.get(c.b.device)!.subLayer === 'access')
+    expect(runs.length).toBeGreaterThan(0)
+    for (const c of runs) {
+      expect(c.a.mapped && c.b.mapped, `${c.a.device}:${c.a.iface} ↔ ${c.b.device}:${c.b.iface}`).toBe(true)
+      expect(configures(configs[byHost.get(c.b.device)!.id], c.b.iface), `${c.b.device} does not configure ${c.b.iface}`).toBe(true)
+    }
+  })
+
+  it.each(CAMPUS)('%s: access switches uplink on the SKU uplink block, not on host ports', vendor => {
+    const { devices, configs } = design(vendor, 'campus')
+    for (const acc of devices.filter(d => d.subLayer === 'access')) {
+      const cfg = configs[acc.id]
+      for (const up of EXPECTED_UPLINKS[vendor]) expect(configures(cfg, up), `${acc.hostname} lacks uplink ${up}`).toBe(true)
+    }
+  })
+
+  it('Arista and Juniper access no longer uplink on 1G host ports', () => {
+    const arista = design('Arista', 'campus')
+    const a = arista.configs[arista.devices.find(d => d.subLayer === 'access')!.id]
+    expect(a).not.toMatch(/interface Ethernet4[78]\n\s+description "UPLINK/)
+    const juniper = design('Juniper', 'campus')
+    const j = juniper.configs[juniper.devices.find(d => d.subLayer === 'access')!.id]
+    expect(j).not.toMatch(/set interfaces ge-0\/0\/4[67] unit 0 family ethernet-switching interface-mode trunk/)
+  })
+
+  it('FortiSwitch: distribution configures every downlink, access has both split uplinks and all edge ports', () => {
+    const { devices, configs } = design('Fortinet', 'campus')
+    const dist = devices.find(d => d.subLayer === 'distribution')!
+    const acc = devices.find(d => d.subLayer === 'access')!
+    const downlinks = [...configs[dist.id].matchAll(/edit "port(\d+)"\n\s+set native-vlan 99\n\s+set allowed-vlans/g)].length
+    expect(downlinks).toBeGreaterThan(1)
+    expect(configs[acc.id]).toContain('UPLINK-1 to distribution A01')
+    expect(configs[acc.id]).toContain('UPLINK-2 to distribution A02')
+    expect([...configs[acc.id].matchAll(/set security-mode 802\.1X/g)].length).toBe(acc.ports || 48)
   })
 })
