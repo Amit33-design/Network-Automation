@@ -123,7 +123,7 @@ describe('firewall HA clusters (AN10)', () => {
     const { devices, configs } = build('dc', 'Palo Alto')
     const [c] = firewallClusters(devices)
     const own = (id: string) => /interface ha1 ip-address (\S+)/.exec(configs[id])![1]
-    const peer = (id: string) => /group peer-ip (\S+)/.exec(configs[id])![1]
+    const peer = (id: string) => /group group-id \d+ peer-ip (\S+)/.exec(configs[id])![1]
     expect(peer(c.members[0].id)).toBe(own(c.members[1].id))
     expect(peer(c.members[1].id)).toBe(own(c.members[0].id))
     // and the first unit wins the election (lower device-priority)

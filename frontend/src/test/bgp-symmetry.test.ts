@@ -32,7 +32,7 @@ function parse(cfg: string, vendor: string) {
     for (const m of c.matchAll(/^\s*neighbor (\d+\.\d+\.\d+\.\d+)\n((?:[ \t]{3,}.*\n)*)/gm)) {
       const r = m[2].match(/remote-as (\d+)/)?.[1]; if (r) seen.set(m[1], r)
     }
-    for (const m of c.matchAll(/neighbor (\d+\.\d+\.\d+\.\d+) remote-as (\d+)|add neighbor (\d+\.\d+\.\d+\.\d+) remote-AS-number (\d+)/g)) {
+    for (const m of c.matchAll(/neighbor (\d+\.\d+\.\d+\.\d+) remote-as (\d+)|create bgp neighbor (\d+\.\d+\.\d+\.\d+) remote-AS-number (\d+)/g)) {
       seen.set(m[1] ?? m[3], m[2] ?? m[4])
     }
     for (const m of c.matchAll(/neighbor (\d+\.\d+\.\d+\.\d+) peer group (\S+)/g)) if (!seen.has(m[1])) seen.set(m[1], groupAs[m[2]] ?? '?')

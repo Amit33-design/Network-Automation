@@ -2832,14 +2832,13 @@ function paloAltoHaBlock(dev: BOMDevice, allDevices: BOMDevice[], insideIfs: str
   const ha2 = dedicated ? 'hsci' : '<CHANGE-ME-ha2-port>'
   return `# ── HA (active/passive, AN10) — peer: ${where.cluster.members[peer].hostname} ─────────────
 set deviceconfig high-availability enabled yes
-set deviceconfig high-availability group group-id ${c + 1}
-set deviceconfig high-availability group peer-ip ${fwHaLinkIp(c, 0, peer)}
-set deviceconfig high-availability group mode active-passive passive-link-state auto
-set deviceconfig high-availability group election-option device-priority ${me === 0 ? 100 : 110}
-set deviceconfig high-availability group election-option preemptive no
-set deviceconfig high-availability group state-synchronization enabled yes
-set deviceconfig high-availability group monitoring link-monitoring enabled yes
-set deviceconfig high-availability group monitoring link-monitoring link-group INSIDE enabled yes interface [ ${insideIfs.join(' ')} ] failure-condition all
+set deviceconfig high-availability group group-id ${c + 1} peer-ip ${fwHaLinkIp(c, 0, peer)}
+set deviceconfig high-availability group group-id ${c + 1} mode active-passive passive-link-state auto
+set deviceconfig high-availability group group-id ${c + 1} election-option device-priority ${me === 0 ? 100 : 110}
+set deviceconfig high-availability group group-id ${c + 1} election-option preemptive no
+set deviceconfig high-availability group group-id ${c + 1} state-synchronization enabled yes
+set deviceconfig high-availability group group-id ${c + 1} monitoring link-monitoring enabled yes
+set deviceconfig high-availability group group-id ${c + 1} monitoring link-monitoring link-group INSIDE enabled yes interface [ ${insideIfs.join(' ')} ] failure-condition all
 set deviceconfig high-availability interface ha1 port ${ha1}
 set deviceconfig high-availability interface ha1 ip-address ${fwHaLinkIp(c, 0, me)} netmask 255.255.255.252
 ${dedicated ? `set deviceconfig high-availability interface ha1-backup port ha1-b
@@ -4344,7 +4343,12 @@ ${dellLeafPeers || '  ! No leaves in fabric'}`
 ${dellSpinePeers || '  ! No spines in fabric'}`}
 !
 ${isSpine ? `! The spine is NOT a VTEP — it must re-advertise EVPN routes with the
-! originating leaf's next-hop, or the overlay black-holes at the spine.
+! originating leaf's next-hop, or the overlay black-holes at the spine. OS10
+! already does this: per Dell's VXLAN/BGP EVPN guide it never overrides the
+! next-hop of EVPN routes, even toward eBGP peers (AM8). This permit-all map
+! changes nothing; it is kept as an explicit hook for outbound EVPN policy.
+! No sender-side-loop-detection change is needed: that applies only when
+! all leaves share one AS, and here each VLT pair has its own.
 route-map NH-UNCHANGED permit 10
 !` : ''}
 ${isSpine ? '' : `! ── VXLAN (leaf only — the spine is not a VTEP) ────────────────────────────
@@ -4969,7 +4973,7 @@ enable lldp ports all
 #`
 }
 
-function extremeExosConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = [], appTypes: AppType[] = []): string {
+function extremeExosConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = [], appTypes: AppType[] = [], useCase: UseCase | '' = ''): string {
   // AN9: a campus switch is not a fabric leaf. Distribution used to fall into
   // the leaf branch (eBGP, VXLAN, the SERVERS tenant VLAN) and never trunked
   // the Data/Voice VLANs its own access switches carried.
@@ -5002,10 +5006,10 @@ enable ipforwarding vlan ${vlanName}`
     .filter(d => d.subLayer === 'leaf')
     .map((_d, i) => {
       const ip = roleIp('10.255.2.1', RoleSlot.LeafLoopback, i)
-      return `configure bgp add neighbor ${ip} remote-AS-number ${65000 + Math.floor(i / 2) + 1}
-configure bgp neighbor ${ip} source-interface vlan Loopback0
-configure bgp neighbor ${ip} no-next-hop-self
-enable bgp neighbor ${ip} capability evpn`
+      return `create bgp neighbor ${ip} remote-AS-number ${65000 + Math.floor(i / 2) + 1} multi-hop
+configure bgp neighbor ${ip} source-interface ipaddress ${lo0ip}
+enable bgp neighbor ${ip} capability l2vpn-evpn
+enable bgp neighbor ${ip} address-family l2vpn-evpn next-hop-unchanged`
     }).join('\n')
   const exosLinkedSpines = new Set(exosLinks.map(l => l.peerHostname))
   const exosSpinePeers = allDevices
@@ -5014,13 +5018,19 @@ enable bgp neighbor ${ip} capability evpn`
     .filter(x => exosLinkedSpines.size === 0 || exosLinkedSpines.has(x.d.hostname))
     .map(x => {
       const ip = roleIp('10.255.1.1', RoleSlot.SpineLoopback, x.i)
-      return `configure bgp add neighbor ${ip} remote-AS-number 65000
-configure bgp neighbor ${ip} source-interface vlan Loopback0
-enable bgp neighbor ${ip} capability evpn`
+      return `create bgp neighbor ${ip} remote-AS-number 65000 multi-hop
+configure bgp neighbor ${ip} source-interface ipaddress ${lo0ip}
+enable bgp neighbor ${ip} capability l2vpn-evpn`
     }).join('\n')
   const exosHostMax = isSpine ? 0 : leafHostPortMax(dev, allDevices)
+  // AM8: per the ExtremeXOS command reference a neighbor is created with
+  // `create bgp neighbor` (there is no `configure bgp add neighbor`), and BFD
+  // protects only directly connected peers and must be set while the peer is
+  // still disabled — so it is configured here, on the /31 peers, before the
+  // `enable bgp neighbor all` below.
   const exosUnderlayPeers = exosLinks.map(l =>
-    `configure bgp add neighbor ${l.peerIp} remote-AS-number ${isSpine ? 65000 + Math.floor(l.peerIdx / 2) + 1 : 65000}`,
+    `create bgp neighbor ${l.peerIp} remote-AS-number ${isSpine ? 65000 + Math.floor(l.peerIdx / 2) + 1 : 65000}
+configure bgp neighbor ${l.peerIp} bfd on`,
   ).join('\n')
   const exosFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
   return `# ═══════════════════════════════════════════════════════════════
@@ -5050,14 +5060,14 @@ enable bgp
 configure bgp add network ${lo0ip}/32
 ${exosUnderlayPeers || '# No fabric links in this design'}
 ${isSpine
-  ? `# Spine: one eBGP session per leaf, derived from the BOM. no-next-hop-self is
+  ? `# Spine: one eBGP session per leaf, derived from the BOM. next-hop-unchanged is
 # mandatory — the spine is not a VTEP, so rewriting the EVPN next-hop to itself
-# black-holes every overlay route.
+# black-holes every overlay route. multi-hop: the sessions run loopback to
+# loopback, which EXOS refuses for eBGP without it.
 ${exosLeafPeers || '# No leaves in fabric'}`
   : `# Leaf: one eBGP session per LINKED spine
 ${exosSpinePeers || '# No spines in fabric'}`}
-configure bgp neighbor all timer 3 9
-configure bgp neighbor all bfd on
+configure bgp neighbor all timer keep-alive 3 hold-time 9
 enable bgp neighbor all
 #${exosFwLinks.length ? `
 # ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster — both units'
@@ -5083,7 +5093,14 @@ configure virtual-network local-endpoint ipaddress ${lo0ip} vr VR-Default
 # and no host could attach to it.
 create vlan ${TENANT_OVERLAY.vlanName} tag ${TENANT_OVERLAY.vlan}
 ${exosHostMax > 0 ? `configure vlan ${TENANT_OVERLAY.vlanName} add ports 1-${exosHostMax} untagged\n` : ''}create virtual-network "VNI-${TENANT_OVERLAY.l2vni}" vxlan vni ${TENANT_OVERLAY.l2vni}
-configure virtual-network "VNI-${TENANT_OVERLAY.l2vni}" add vlan ${TENANT_OVERLAY.vlanName}`}
+configure virtual-network "VNI-${TENANT_OVERLAY.l2vni}" add vlan ${TENANT_OVERLAY.vlanName}
+# EVPN instance with an EXPLICIT route-target (AM8). EXOS auto-derives RTs from
+# the local AS (RFC 8365), and each leaf pair has its own AS, so auto RTs would
+# differ per pair and no leaf would import another pair's routes (the AN5 defect).
+create bgp evpn instance EVI-${TENANT_OVERLAY.l2vni}
+configure bgp evpn instance EVI-${TENANT_OVERLAY.l2vni} vxlan vni ${TENANT_OVERLAY.l2vni}
+configure bgp evpn instance EVI-${TENANT_OVERLAY.l2vni} route-target both add ${TENANT_OVERLAY.rtL2}${useCase === 'multisite' ? `
+configure bgp evpn instance EVI-${TENANT_OVERLAY.l2vni} route-target both add ${DCI_RT_ASN}:${TENANT_OVERLAY.l2vni}` : ''}`}
 `
 }
 
@@ -7562,7 +7579,7 @@ export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '
   if (v === 'HPE Aruba' && (l === 'spine' || l === 'leaf'))          return arubaFabricConfig(dev, idx, allDevices)
   if (v === 'HPE Aruba')                                             return arubaCampusConfig(dev, idx, allDevices, appTypes)
   if (v === 'NVIDIA'    && (l === 'spine' || l === 'leaf'))          return nvidiaSpectrumConfig(dev, idx, needsRoce, allDevices, useCase)
-  if (v === 'Extreme Networks')                                      return extremeExosConfig(dev, idx, allDevices, appTypes)
+  if (v === 'Extreme Networks')                                      return extremeExosConfig(dev, idx, allDevices, appTypes, useCase)
   return genericConfig(dev)
 }
 

@@ -786,8 +786,11 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
 - **`arubaFabricConfig(dev, idx, allDevices)`** — ArubaOS-CX spine/leaf (AM5): tier-scoped identity (spine ASN 65000 / `10.255.1.x`, leaf pair-ASN / `10.255.2.x`), `closFabricLinks` /31s on `1/1/N` with `mtu 9198`, eBGP IPv4 underlay per /31 (AM6) + eBGP EVPN overlay between loopbacks (`next-hop-unchanged` on the spine), BFD, leaf-only `interface vxlan 1` + `evpn` RTs `65000:10010`, server ports from `leafHostPortMax`, border-leaf `vrf TENANT-A` firewall handoff.
 - **`arubaCampusConfig(dev, idx, allDevices)`** — ArubaOS-CX campus (AM5): distribution = OSPF area 0 + VRRP on Vlan20/30 (`10.10.<vlan>.1` VIP) + access-facing trunks; access = data/voice access ports + split uplinks (UPLINK-1/2) to the distribution pair.
 - **`nvidiaSpectrumConfig(dev, idx, isGpu, allDevices)`** — Cumulus Linux 5.x NVUE (`nv set`, Y6): auto identity, per-port BGP-unnumbered neighbors from `closFabricLinks`, `nv set qos roce` lossless on GPU fabrics, mgmt VRF, border-leaf handoff in the default VRF (Z3b).
-- **`extremeExosConfig(dev, idx)`** — EXOS. Spine → BGP+EVPN (VNI 10001);
-  access → VLANs+PoE+STP edge-safeguard.
+- **`extremeExosConfig(dev, idx, allDevices, appTypes, useCase)`** — EXOS spine/leaf (campus tiers go to
+  `extremeCampusConfig`). BGP per the ExtremeXOS command reference (AM9): `create bgp neighbor … {multi-hop}`,
+  `source-interface ipaddress`, `capability l2vpn-evpn`, spine `address-family l2vpn-evpn next-hop-unchanged`,
+  per-/31 BFD before `enable bgp neighbor all`; leaf EVPN instance `EVI-10010` with explicit RT `65000:10010`
+  (+ `65100:10010` in multisite).
 - **`nokiaSrLinuxConfig(dev, idx, isMultisite=false)`** — Nokia SR Linux
   YANG-style config: system (hostname, admin user, gNMI/JSON-RPC, syslog,
   NTP), management interface mgmt0, ISIS (`area 49.0001`,
