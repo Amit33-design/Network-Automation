@@ -908,7 +908,7 @@ export function firewallMemberPort(fw: BOMDevice, allDevices: BOMDevice[], i: nu
 export interface PortPair {
   a: { device: string; iface: string }
   b: { device: string; iface: string }
-  kind: 'fabric' | 'firewall' | 'peer-link'
+  kind: 'fabric' | 'firewall' | 'peer-link' | 'campus'
 }
 
 /**
@@ -937,6 +937,22 @@ export function physicalPortMap(allDevices: BOMDevice[], useCase: UseCase | '' =
         kind: 'fabric',
       })
     }
+  }
+  // Campus: access switch i lands on downlink port i+1 of distribution A01
+  // (its UPLINK-1) and A02 (UPLINK-2), inside each one's access-trunk range.
+  const dists = allDevices.filter(d => d.subLayer === 'distribution')
+  if (dists.length >= 1) {
+    allDevices.filter(d => d.subLayer === 'access').forEach((acc, i) => {
+      const ups = campusAccessUplinks(acc)
+      dists.slice(0, 2).forEach((dist, m) => {
+        if (i + 1 > campusDownlinkMax(dist, allDevices)) return
+        out.push({
+          a: { device: dist.hostname, iface: campusDownlinkPort(dist, i + 1) },
+          b: { device: acc.hostname, iface: ups[m] },
+          kind: 'campus',
+        })
+      })
+    })
   }
   // HA peer-links: consecutive pair members, member port i to member port i.
   for (const tier of ['leaf', 'distribution']) {
@@ -1064,6 +1080,45 @@ export function peerLinkPorts(dev: BOMDevice): string[] {
     return [String(up), String(up + 1)]
   }
   return []
+}
+
+/**
+ * The two uplinks of a campus access switch — UPLINK-1 to distribution A01,
+ * UPLINK-2 to A02 (split, never a cross-chassis bundle, Y3) — on the SKU's
+ * UPLINK block (AP3). Arista and Juniper used host ports: the 720XP-48Y6's
+ * Ethernet47/48 and the EX4400-48T's ge-0/0/46-47 are 1G RJ45 access ports,
+ * while the BOM billed 25G optics for these runs. Arista's six SFP28 uplinks
+ * follow port 48; the EX4400's 4x25G extension module sits in PIC 2.
+ */
+export function campusAccessUplinks(dev: BOMDevice): [string, string] {
+  const p = dev.ports || 48
+  switch (dev.vendor) {
+    case 'Arista': return [aristaIf(dev, p + 1), aristaIf(dev, p + 2)]
+    case 'Juniper': return ['et-0/2/0', 'et-0/2/1']
+    case 'Fortinet': return [`port${p + 1}`, `port${p + 2}`]
+    case 'HPE Aruba': return [`1/1/${p + 1}`, `1/1/${p + 2}`]
+    case 'Extreme Networks': return [String(p + 1), String(p + 2)]
+    default: return [uplinkIf(dev, 1), uplinkIf(dev, Math.min(2, dev.uplinks || 2))]
+  }
+}
+
+/** Downlink port `n` (1-based) of a campus distribution switch, in its configured access-trunk range (AP3). */
+export function campusDownlinkPort(dev: BOMDevice, n: number): string {
+  switch (dev.vendor) {
+    case 'Arista': return aristaIf(dev, n)
+    case 'Juniper': return `xe-0/0/${n - 1}`
+    case 'Fortinet': return `port${n}`
+    case 'HPE Aruba': return `1/1/${n}`
+    case 'Extreme Networks': return String(n)
+    default: return hostIf(dev, n)
+  }
+}
+
+/** Highest access-facing downlink port of a campus distribution switch (the firewall handoff takes the top). */
+export function campusDownlinkMax(dev: BOMDevice, allDevices: BOMDevice[]): number {
+  const fw = fwHandoffPlan(dev, allDevices, 'distribution').length
+  const ports = dev.ports || 48
+  return Math.max(1, ports - (dev.vendor === 'HPE Aruba' ? Math.max(4, fw) : fw))
 }
 
 function aristaIf(dev: BOMDevice, n: number | string): string {
@@ -3681,8 +3736,7 @@ ${igmpBlock}
   // Z4 — a C9200-48P's uplinks are the C9200-NM-4X module (TenGigabitEthernet
   // 1/1/1-4), NOT front-panel copper: all 48 in-chassis ports stay access.
   const accessPorts = dev.uplinkStart ? dev.ports : Math.max(1, dev.ports - 2)
-  const accessUplink1 = uplinkIf(dev, 1)
-  const accessUplink2 = uplinkIf(dev, Math.min(2, dev.uplinks || 2))
+  const [accessUplink1, accessUplink2] = campusAccessUplinks(dev)
   const igmpBlock = needsIgmp ? `
 ! ── IGMP SNOOPING (voice/video app types present) ────────────────────────────
 ip igmp snooping
@@ -4190,17 +4244,19 @@ end`
   // Access edge ports: PoE + port-security; voice VLAN tagging when enabled.
   const edgePorts = isDist
     ? `# ── Downlink trunks to access switches (FortiLink) ──────────────────────────
-config switch interface
-    edit "port1"
+# AP3: every access-facing port; FortiSwitchOS has no interface range, so
+# each is listed (only port1 was configured before).
+config switch interface${Array.from({ length: campusDownlinkMax(dev, allDevices) }, (_, i) => `
+    edit "${campusDownlinkPort(dev, i + 1)}"
         set native-vlan ${mgmt.id}
         set allowed-vlans ${allowed}
         set stp-state enabled
         set edge-port disabled
-    next
+    next`).join('')}
 end`
     : `# ── Access edge ports — 802.1X + PoE+ + port-security ────────────────────────
-config switch interface
-    edit "port1"
+config switch interface${Array.from({ length: dev.ports || 48 }, (_, i) => `
+    edit "port${i + 1}"
         set native-vlan ${data.id}${hasVoice ? `
         set voice-vlan ${voice.id}` : ''}
         set stp-state enabled
@@ -4209,17 +4265,18 @@ config switch interface
         set poe-status enable
         set poe-max-power 30000
         set security-mode 802.1X
-    next
+    next`).join('')}
 end
 
-# ── Uplink trunk to distribution ────────────────────────────────────────────
-config switch interface
-    edit "${upPort}"
+# ── Uplink trunks to distribution — split, one to each member (AP3) ─────────
+config switch interface${campusAccessUplinks(dev).map((u, i) => `
+    edit "${u}"
+        set description "UPLINK-${i + 1} to distribution A0${i + 1}"
         set native-vlan ${mgmt.id}
         set allowed-vlans ${allowed}
         set stp-state enabled
         set edge-port disabled
-    next
+    next`).join('')}
 end`
 
   return `# ═══════════════════════════════════════════════════════════════
@@ -5765,17 +5822,15 @@ set interfaces irb unit ${mgmt.id} description "${mgmt.name}"
 set interfaces irb unit ${mgmt.id} family inet address ${mgmtIp}/24
 set routing-options static route 0.0.0.0/0 next-hop ${mgmt.vip}
 !
-set interfaces interface-range EDGE member-range ge-0/0/0 to ge-0/0/45
+set interfaces interface-range EDGE member-range ge-0/0/0 to ge-0/0/${(dev.ports || 48) - 1}
 set interfaces interface-range EDGE unit 0 family ethernet-switching interface-mode access
 set interfaces interface-range EDGE unit 0 family ethernet-switching vlan members ${data.name}
 ${hasVoice ? `set switch-options voip interface access-ports vlan ${voice.name}
 ` : ''}!
-set interfaces ge-0/0/46 unit 0 family ethernet-switching interface-mode trunk
-set interfaces ge-0/0/46 unit 0 family ethernet-switching vlan members ${trunkMembers}
-set interfaces ge-0/0/46 native-vlan-id ${mgmt.id}
-set interfaces ge-0/0/47 unit 0 family ethernet-switching interface-mode trunk
-set interfaces ge-0/0/47 unit 0 family ethernet-switching vlan members ${trunkMembers}
-set interfaces ge-0/0/47 native-vlan-id ${mgmt.id}`
+${campusAccessUplinks(dev).map((u, i) => `set interfaces ${u} description "UPLINK-${i + 1} to distribution A0${i + 1}"
+set interfaces ${u} unit 0 family ethernet-switching interface-mode trunk
+set interfaces ${u} unit 0 family ethernet-switching vlan members ${trunkMembers}
+set interfaces ${u} native-vlan-id ${mgmt.id}`).join('\n')}`
 
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
@@ -6159,19 +6214,19 @@ interface Vlan${mgmt.id}
 !
 ip route 0.0.0.0/0 ${mgmt.vip}
 !
-interface Ethernet1-46
+interface ${aristaIf(dev, 1)}-${dev.ports || 48}
    switchport access vlan ${data.id}
 ${hasVoice ? `   switchport phone vlan ${voice.id}
 ` : ''}   spanning-tree portfast
    spanning-tree bpduguard enable
 !
-interface Ethernet47
+interface ${campusAccessUplinks(dev)[0]}
    description "UPLINK-TO-DIST-1"
    switchport mode trunk
    switchport trunk native vlan ${mgmt.id}
    switchport trunk allowed vlan ${allowed}
 !
-interface Ethernet48
+interface ${campusAccessUplinks(dev)[1]}
    description "UPLINK-TO-DIST-2"
    switchport mode trunk
    switchport trunk native vlan ${mgmt.id}
