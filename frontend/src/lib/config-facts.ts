@@ -384,7 +384,8 @@ export const ROUTING_RULES: Record<FactPlatform, Record<RoutingFactName, Rule>> 
     ospf: /^\s*(?:enable|configure) ospf\b/m,
     loopback: /^\s*enable loopback-mode vlan\b/m,
     vxlan: /^\s*create virtual-network\s+\S+\s+vxlan vni\b/m,
-    evpn: /\bcapability evpn\b|\baddress-family l2vpn-evpn\b/m,
+    // AM8: the EXOS keyword is l2vpn-evpn; `capability evpn` is not a command.
+    evpn: /\bcapability l2vpn-evpn\b|\baddress-family l2vpn-evpn\b/m,
     bfd: /^\s*configure bgp neighbor \S+ bfd on\b/m,
     jumboMtu: /^\s*configure jumbo-frame-size 9\d{3}\b/m,
     pfc: NEVER, ecnLossless: NEVER, pfcWatchdog: NEVER,

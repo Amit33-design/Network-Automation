@@ -2129,7 +2129,7 @@ describe('Nokia, Dell and Extreme fabrics are deployable (group Z8)', () => {
     it(`${vendor}: the eBGP spine preserves the overlay next-hop (it is not a VTEP)`, () => {
       const c = fabric(vendor)
       expect(c['s1'], `${vendor} spine rewrites the EVPN next-hop to itself`)
-        .toMatch(/next-hop-self false|no-next-hop-self|NH-UNCHANGED/)
+        .toMatch(/next-hop-self false|address-family l2vpn-evpn next-hop-unchanged|NH-UNCHANGED/)
     })
 
     it(`${vendor}: fabric interfaces are topology-driven, one per planned link`, () => {
@@ -2445,7 +2445,7 @@ describe('fabric underlay (AM6)', () => {
   const FABRIC = ['Cisco', 'Arista', 'Juniper', 'Nokia', 'NVIDIA', 'Dell EMC', 'Extreme Networks', 'HPE Aruba']
   const IGP = /^\s*(?:router isis|router ospf|set protocols (?:isis|ospf)|isis\s*\{|ospf\s*\{)/m
   const UNNUMBERED = /^\s*nv set vrf \S+ router bgp neighbor swp\d+ type unnumbered/m
-  const P2P_NEIGHBOR = /(?:^\s*neighbor|add neighbor)\s+(10\.99\.\d+\.\d+)\b/gm
+  const P2P_NEIGHBOR = /(?:^\s*neighbor|create bgp neighbor)\s+(10\.99\.\d+\.\d+)\b/gm
   const P2P_ADDRESS = /(?:ip address|ipaddress)\s+(10\.99\.\d+\.\d+)/g
 
   it('every spine and leaf of every fabric vendor has an underlay', () => {
@@ -2578,6 +2578,64 @@ describe('HPE Aruba AOS-CX (AM5)', () => {
     const { devs, cfgs } = build('campus')
     for (const d of devs.filter(x => x.subLayer === 'access')) {
       expect(cfgs[d.id].match(/description UPLINK-\d/g) ?? []).toHaveLength(2)
+    }
+  })
+})
+
+// ── AM8: EXOS BGP syntax per the ExtremeXOS command reference ───────────────
+describe('Extreme EXOS BGP/EVPN syntax (AM8)', () => {
+  function exos(useCase: 'dc' | 'multisite' = 'dc') {
+    const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'AM8', vendorPrefs: ['Extreme Networks'], totalEndpoints: 512, numSites: 2 })
+    return { devices, configs: generateAllConfigs(devices, useCase) }
+  }
+  it('creates neighbors with `create bgp neighbor` — `configure bgp add neighbor` is not an EXOS command', () => {
+    const { devices, configs } = exos()
+    for (const d of devices.filter(x => x.subLayer === 'spine' || x.subLayer === 'leaf')) {
+      expect(configs[d.id]).not.toMatch(/configure bgp add neighbor/)
+      expect(configs[d.id]).toMatch(/^create bgp neighbor \S+ remote-AS-number \d+/m)
+    }
+  })
+
+  it('loopback (overlay) sessions are multi-hop and sourced from the loopback address', () => {
+    const { devices, configs } = exos()
+    const leaf = devices.find(x => x.subLayer === 'leaf')!
+    const c = configs[leaf.id]
+    const lo = /configure vlan Loopback0 ipaddress (\S+)/.exec(c)![1]
+    for (const m of c.matchAll(/^create bgp neighbor (10\.255\.\S+) remote-AS-number \d+(.*)$/gm)) {
+      expect(m[2], `${m[1]} lacks multi-hop`).toContain('multi-hop')
+      expect(c).toContain(`configure bgp neighbor ${m[1]} source-interface ipaddress ${lo}`)
+      expect(c).toContain(`enable bgp neighbor ${m[1]} capability l2vpn-evpn`)
+    }
+    expect(c).not.toMatch(/capability evpn\b|source-interface vlan/)
+  })
+
+  it('the spine keeps the EVPN next-hop unchanged toward every leaf', () => {
+    const { devices, configs } = exos()
+    const spine = devices.find(x => x.subLayer === 'spine')!
+    const leaves = [...configs[spine.id].matchAll(/^create bgp neighbor (10\.255\.2\.\S+)/gm)].map(m => m[1])
+    expect(leaves.length).toBeGreaterThan(0)
+    for (const ip of leaves) expect(configs[spine.id]).toContain(`enable bgp neighbor ${ip} address-family l2vpn-evpn next-hop-unchanged`)
+  })
+
+  it('BFD is set only on directly connected /31 peers, before the neighbors are enabled', () => {
+    const { devices, configs } = exos()
+    const c = configs[devices.find(x => x.subLayer === 'leaf')!.id]
+    expect(c).not.toMatch(/neighbor all bfd/)
+    const bfd = [...c.matchAll(/^configure bgp neighbor (\S+) bfd on$/gm)].map(m => m[1])
+    expect(bfd.length).toBeGreaterThan(0)
+    for (const ip of bfd) expect(ip.startsWith('10.99.')).toBe(true)
+    expect(c.lastIndexOf('bfd on')).toBeLessThan(c.indexOf('enable bgp neighbor all'))
+    expect(c).toContain('configure bgp neighbor all timer keep-alive 3 hold-time 9')
+  })
+
+  it('every leaf carries the same explicit EVPN route-target (auto RTs differ per leaf-pair AS)', () => {
+    for (const uc of ['dc', 'multisite'] as const) {
+      const { devices, configs } = exos(uc)
+      for (const d of devices.filter(x => x.subLayer === 'leaf')) {
+        expect(configs[d.id]).toMatch(/configure bgp evpn instance EVI-10010 vxlan vni 10010/)
+        expect(configs[d.id]).toContain('route-target both add 65000:10010')
+        if (uc === 'multisite') expect(configs[d.id]).toContain('route-target both add 65100:10010')
+      }
     }
   })
 })
