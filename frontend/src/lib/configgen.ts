@@ -543,19 +543,13 @@ function fabricRateMismatch(
  */
 function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[], ipv6Enabled = false): string {
   const links = closFabricLinks(role, dev, allDevices)
-  // Leaf uplinks go on the SKU's DEDICATED uplink range when it has one
-  // (93180YC-FX: Eth1/49-54 — fabric links on 25G server ports won't come up
-  // against 100G spine ports, Y2); otherwise the top of the shared port block.
-  const portBase = role === 'leaf'
-    ? (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 48) - (dev.uplinks || 0)))
-    : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
   const rate = fabricRateMismatch(role, dev, allDevices)
   // Z2: pin the rate when the two ends are not native-matched (400G cage
   // running the 100G optic the BOM bills). `speed` is in Mbps on NX-OS.
   const rateLine = rate ? `
   speed ${rate.linkGbps * 1000}` : ''
-  return links.map(link => `interface Ethernet1/${portBase + link.ifIndex + 1}
+  return links.map(link => `interface ${fabricPort(dev, role, link.ifIndex).name}
   description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
   no switchport${rateLine}
   mtu 9216
@@ -575,14 +569,11 @@ function renderNxosFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevice
  */
 function renderAristaFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[], ipv6Enabled = false): string {
   const links = closFabricLinks(role, dev, allDevices)
-  const portBase = role === 'leaf'
-    ? (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
-    : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
   const rate = fabricRateMismatch(role, dev, allDevices)
   const rateLine = rate ? `
   speed forced ${rate.linkGbps}gfull` : ''
-  return links.map(link => `interface ${aristaIf(dev, portBase + link.ifIndex + 1)}
+  return links.map(link => `interface ${fabricPort(dev, role, link.ifIndex).name}
   description ${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})
   no switchport${rateLine}
   mtu 9214
@@ -663,6 +654,8 @@ export const FW_TRANSIT_VLAN_BASE = 3900
  */
 export interface FwHandoffLink {
   port: number
+  /** The switch interface name the renderer configures for `port` (AP1). */
+  name: string
   fw: BOMDevice
   cluster: number
   vlan: number
@@ -710,13 +703,33 @@ function fwHandoffPlan(
     const net = fwHandoffIp(myIdx, c.index, clusters.length)
     for (const fw of c.members) {
       out.push({
-        port: port++, fw, cluster: c.index,
+        port, name: handoffPortName(dev, port), fw, cluster: c.index,
         vlan: FW_TRANSIT_VLAN_BASE + myIdx * clusters.length + c.index,
         ip: ipAdd(net, 1), fwIp: ipAdd(net, 2), fwStandbyIp: ipAdd(net, 3), net,
       })
+      port++
     }
   }
   return out.filter(x => x.port <= (dev.ports || 48))
+}
+
+/**
+ * Interface name of firewall-facing port `n` on a border leaf or distribution
+ * switch — the one place this is decided, used by every renderer and by the
+ * cable exports (AP1).
+ */
+export function handoffPortName(dev: BOMDevice, n: number): string {
+  switch (dev.vendor) {
+    case 'Arista': return aristaIf(dev, n)
+    case 'Juniper': return `xe-0/0/${n - 1}`
+    case 'Nokia': return `ethernet-1/${n}`
+    case 'NVIDIA': return `swp${n}`
+    case 'Dell EMC': return `ethernet1/1/${n}`
+    case 'HPE Aruba': return `1/1/${n}`
+    case 'Extreme Networks': return String(n)
+    case 'Fortinet': return `port${n}`
+    default: return dev.subLayer === 'distribution' ? hostIf(dev, n) : `Ethernet1/${n}`
+  }
 }
 
 /** Group a switch's firewall ports into one segment per cluster. */
@@ -744,8 +757,6 @@ export interface FabricInterfaceView { name: string; ip: string; peer?: string; 
 export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], useCase: UseCase | '' = ''): FabricInterfaceView[] {
   const out: FabricInterfaceView[] = []
   const tierIdx = roleIndex(dev, allDevices, 0)
-  const portName = (n: number) => dev.vendor === 'Arista' ? aristaIf(dev, n) : dev.vendor === 'Cisco' ? `Ethernet1/${n}`
-    : dev.vendor === 'NVIDIA' ? `swp${n}` : `port ${n}`
   // Cumulus fabric links are BGP unnumbered (Y6) — no /31 exists to show.
   const unnumbered = dev.vendor === 'NVIDIA'
   if (dev.subLayer === 'spine' || dev.subLayer === 'leaf') {
@@ -754,17 +765,13 @@ export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], use
       name: 'Loopback0', kind: 'loopback',
       ip: `${isSpine ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, tierIdx) : roleIp('10.255.2.1', RoleSlot.LeafLoopback, tierIdx)}/32`,
     })
-    const defPorts = dev.vendor === 'Arista' ? 32 : 48
-    const portBase = isSpine ? 0
-      : unnumbered ? (dev.ports || 64) - Math.max(2, dev.uplinks || 2)
-      : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || defPorts) - (dev.uplinks || 0)))
     for (const l of closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)) {
-      out.push({ name: portName(portBase + l.ifIndex + 1), ip: unnumbered ? 'unnumbered' : l.localIp, peer: l.peerHostname, kind: 'fabric' })
+      out.push({ name: fabricPort(dev, isSpine ? 'spine' : 'leaf', l.ifIndex).name, ip: unnumbered ? 'unnumbered' : l.localIp, peer: l.peerHostname, kind: 'fabric' })
     }
     if (!isSpine) {
       for (const g of fwHandoffSegments(fwHandoffPlan(dev, allDevices, 'border-leaf'))) {
         out.push({ name: `SVI VLAN ${g.vlan}`, ip: `${g.ip}/${FW_HANDOFF_PREFIX}`, kind: 'handoff' })
-        g.ports.forEach((p, i) => out.push({ name: portName(p), ip: `access VLAN ${g.vlan}`, peer: g.fws[i].hostname, kind: 'handoff' }))
+        g.ports.forEach((p, i) => out.push({ name: handoffPortName(dev, p), ip: `access VLAN ${g.vlan}`, peer: g.fws[i].hostname, kind: 'handoff' }))
       }
     }
   } else if (dev.subLayer === 'distribution' || dev.subLayer === 'access') {
@@ -776,7 +783,7 @@ export function fabricInterfaceView(dev: BOMDevice, allDevices: BOMDevice[], use
     if (dev.subLayer === 'distribution') {
       for (const g of fwHandoffSegments(fwHandoffPlan(dev, allDevices, 'distribution'))) {
         out.push({ name: `SVI VLAN ${g.vlan}`, ip: `${g.ip}/${FW_HANDOFF_PREFIX}`, kind: 'handoff' })
-        g.ports.forEach((p, i) => out.push({ name: portName(p), ip: `access VLAN ${g.vlan}`, peer: g.fws[i].hostname, kind: 'handoff' }))
+        g.ports.forEach((p, i) => out.push({ name: handoffPortName(dev, p), ip: `access VLAN ${g.vlan}`, peer: g.fws[i].hostname, kind: 'handoff' }))
       }
     }
   } else if (dev.subLayer === 'wan-edge') {
@@ -883,6 +890,71 @@ export function firewallTransitPlan(allDevices: BOMDevice[], useCase: UseCase | 
   return peers.flatMap(peer => fwHandoffSegments(fwHandoffPlan(peer, allDevices, role)).map(g => ({ ...g, peer })))
 }
 
+/**
+ * Physical interface of a firewall unit that carries handoff `i` (AN10/AP1).
+ * For a non-SRX firewall the physical port IS the inside interface; an SRX
+ * chassis cluster carries reth i+1 on one member port per node, named as the
+ * cluster names it (node 1 renumbered by the platform's FPC constant).
+ */
+export function firewallMemberPort(fw: BOMDevice, allDevices: BOMDevice[], i: number): string {
+  if (!/\bsrx/i.test(fw.model)) return firewallInsideIf(fw, i)
+  const prof = srxProfile(fw.model)
+  const node0 = prof ? prof.data(i + 1) : `xe-0/0/${i + 1}`
+  const where = clusterOf(fw, allDevices)
+  return where && where.cluster.members.length === 2 && where.member === 1 ? srxNode1If(node0, fw.model) : node0
+}
+
+/** One cabled port pair whose interfaces the config engine assigns (AP1). */
+export interface PortPair {
+  a: { device: string; iface: string }
+  b: { device: string; iface: string }
+  kind: 'fabric' | 'firewall'
+}
+
+/**
+ * Every cable whose two interfaces the generated configs actually configure,
+ * computed from the same allocators the renderers use: spine↔leaf fabric links
+ * (both ends paired by their shared /31) and firewall↔border-leaf /
+ * distribution handoffs (switch port from `fwHandoffPlan`, firewall port from
+ * `firewallMemberPort`). The NetBox DCIM export lands cables on these, so the
+ * cable plant names the interfaces the configs configure (AP1).
+ */
+export function physicalPortMap(allDevices: BOMDevice[], useCase: UseCase | '' = ''): PortPair[] {
+  const out: PortPair[] = []
+  const byHost = new Map(allDevices.map(d => [d.hostname, d]))
+  const spineLinks = new Map<string, FabricLink[]>()
+  for (const leaf of allDevices.filter(d => d.subLayer === 'leaf')) {
+    for (const l of closFabricLinks('leaf', leaf, allDevices)) {
+      const spine = byHost.get(l.peerHostname)
+      if (!spine) continue
+      if (!spineLinks.has(spine.hostname)) spineLinks.set(spine.hostname, closFabricLinks('spine', spine, allDevices))
+      const local = l.localIp.split('/')[0]
+      const sl = spineLinks.get(spine.hostname)!.find(x => x.peerIp === local)
+      if (!sl) continue
+      out.push({
+        a: { device: spine.hostname, iface: fabricPort(spine, 'spine', sl.ifIndex).name },
+        b: { device: leaf.hostname, iface: fabricPort(leaf, 'leaf', l.ifIndex).name },
+        kind: 'fabric',
+      })
+    }
+  }
+  const fabric = FABRIC_HANDOFF_USE_CASES.has(useCase)
+  const role = fabric ? 'border-leaf' : 'distribution'
+  const peers = fabric ? borderLeaves(allDevices) : allDevices.filter(d => d.subLayer === 'distribution')
+  for (const peer of peers) {
+    for (const x of fwHandoffPlan(peer, allDevices, role)) {
+      const i = firewallHandoffs(x.fw, allDevices, useCase).findIndex(h => h.peer.id === peer.id)
+      if (i < 0) continue
+      out.push({
+        a: { device: x.fw.hostname, iface: firewallMemberPort(x.fw, allDevices, i) },
+        b: { device: peer.hostname, iface: x.name },
+        kind: 'firewall',
+      })
+    }
+  }
+  return out
+}
+
 /** Networks behind the firewall's inside, which it routes back to the handoffs. */
 export function firewallInsideNets(useCase: UseCase | '' = ''): Array<{ cidr: string; net: string; mask: string; label: string }> {
   return FABRIC_HANDOFF_USE_CASES.has(useCase)
@@ -917,6 +989,41 @@ function iosIfPrefix(speed: string | undefined): string {
  * chassis — its ports are `Ethernet<slot>/<port>`, and a flat `Ethernet1`
  * simply does not exist on it. Fixed-config boxes keep the flat form.
  */
+/**
+ * Port number and interface name of fabric link `ifIndex` on a spine or leaf,
+ * exactly as that vendor's renderer configures it (AP1). The renderers and the
+ * cable exports (NetBox DCIM) both call this, so the interface a cable lands
+ * on is by construction the interface the config configures — the DCIM export
+ * used to invent sequential `Ethernet1/N` names that matched no config.
+ */
+export function fabricPort(dev: BOMDevice, role: 'spine' | 'leaf', ifIndex: number): { n: number; name: string } {
+  const v = dev.vendor
+  if (v === 'NVIDIA') {
+    // Spine: one swp per assigned leaf link; leaf: the TOP `uplinks` swps (Y6).
+    const ports = dev.ports || 64
+    const up = Math.max(2, dev.uplinks || 2)
+    const n = role === 'spine' ? ifIndex + 1 : ports - up + ifIndex + 1
+    return { n, name: `swp${n}` }
+  }
+  if (v === 'Juniper') {
+    // Junos counts from 0; leaf uplinks start after the access ports (Y5).
+    const n = (role === 'leaf' ? (dev.ports || 48) : 0) + ifIndex + 1
+    return { n, name: `et-0/0/${n - 1}` }
+  }
+  const defPorts = v === 'Cisco' || v === 'HPE Aruba' ? 48 : 32
+  const base = role === 'leaf'
+    ? (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || defPorts) - (dev.uplinks || 0)))
+    : 0
+  const n = base + ifIndex + 1
+  const name = v === 'Arista' ? aristaIf(dev, n)
+    : v === 'Nokia' ? `ethernet-1/${n}`
+    : v === 'Dell EMC' ? `ethernet1/1/${n}`
+    : v === 'HPE Aruba' ? `1/1/${n}`
+    : v === 'Extreme Networks' ? String(n)
+    : `Ethernet1/${n}`
+  return { n, name }
+}
+
 function aristaIf(dev: BOMDevice, n: number | string): string {
   return `${dev.portIf ?? 'Ethernet'}${n}`
 }
@@ -1085,12 +1192,11 @@ function leafHostPortMax(dev: BOMDevice, allDevices: BOMDevice[] = []): number {
  */
 function renderJuniperFabricLinks(role: 'spine' | 'leaf', dev: BOMDevice, allDevices: BOMDevice[]): string {
   const links = closFabricLinks(role, dev, allDevices)
-  const portBase = role === 'leaf' ? (dev.ports || 48) : 0
   const dirLabel = role === 'leaf' ? 'UPLINK' : 'DOWNLINK'
   const rate = fabricRateMismatch(role, dev, allDevices)
   const lines: string[] = []
   for (const link of links) {
-    const ifName = `et-0/0/${portBase + link.ifIndex}`
+    const ifName = fabricPort(dev, role, link.ifIndex).name
     lines.push(
       `set interfaces ${ifName} description "${dirLabel}: ${link.peerHostname} (${link.peerLabel}, link ${link.linkNum + 1})"`,
       ...(rate ? [`set interfaces ${ifName} speed ${rate.linkGbps}g`] : []),
@@ -1224,7 +1330,7 @@ function nxosLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevices:
 ${fwSegs.map(g => `vlan ${g.vlan}
   name FW-TRANSIT-${g.cluster + 1}`).join('\n')}
 !
-${fwLinks.map(x => `interface Ethernet1/${x.port}
+${fwLinks.map(x => `interface ${x.name}
   description FW-HANDOFF: ${x.fw.hostname}
   switchport
   switchport mode access
@@ -1987,7 +2093,7 @@ function aristaLeafConfig(dev: BOMDevice, idx: number, isGpu: boolean, allDevice
 ${fwSegs.map(g => `vlan ${g.vlan}
    name FW-TRANSIT-${g.cluster + 1}`).join('\n')}
 !
-${fwLinks.map(x => `interface ${aristaIf(dev, x.port)}
+${fwLinks.map(x => `interface ${x.name}
   description FW-HANDOFF: ${x.fw.hostname}
   switchport mode access
   switchport access vlan ${x.vlan}
@@ -2413,9 +2519,9 @@ ${fwSegs.flatMap(g => [
   `set routing-instances TENANT-A routing-options static route 0.0.0.0/0 next-hop ${g.fwIp}`,
 ]).join('\n')}
 ${fwLinks.flatMap(x => [
-  `set interfaces xe-0/0/${x.port - 1} description "FW-HANDOFF: ${x.fw.hostname}"`,
-  `set interfaces xe-0/0/${x.port - 1} unit 0 family ethernet-switching interface-mode access`,
-  `set interfaces xe-0/0/${x.port - 1} unit 0 family ethernet-switching vlan members FW-TRANSIT-${x.cluster + 1}`,
+  `set interfaces ${x.name} description "FW-HANDOFF: ${x.fw.hostname}"`,
+  `set interfaces ${x.name} unit 0 family ethernet-switching interface-mode access`,
+  `set interfaces ${x.name} unit 0 family ethernet-switching vlan members FW-TRANSIT-${x.cluster + 1}`,
 ]).join('\n')}
 set policy-options policy-statement ORIGINATE-DEFAULT from route-filter 0.0.0.0/0 exact
 set policy-options policy-statement ORIGINATE-DEFAULT then accept
@@ -3397,7 +3503,7 @@ ${hasVoice ? `vlan 20
 ${fwSegs.map(g => `vlan ${g.vlan}
  name FW-TRANSIT-${g.cluster + 1}`).join('\n')}
 !
-${fwLinks.map(x => `interface ${hostIf(dev, x.port)}
+${fwLinks.map(x => `interface ${x.name}
   description FW-HANDOFF: ${x.fw.hostname}
   switchport mode access
   switchport access vlan ${x.vlan}
@@ -4016,7 +4122,7 @@ config system interface${fwHandoffSegments(fwLinks).map(g => `
     next`).join('')}
 end
 config switch interface${fwLinks.map(x => `
-    edit "port${x.port}"
+    edit "${x.name}"
         set native-vlan ${x.vlan}
         set description "FW-HANDOFF: ${x.fw.hostname}"
         set stp-state disabled
@@ -4216,10 +4322,7 @@ function dellOs10SwitchConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
     ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
     : roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
   const dellLinks = closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)
-  const dellPortBase = isSpine
-    ? 0
-    : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
-  const dellFabricIfaces = dellLinks.map(l => `interface ethernet1/1/${dellPortBase + l.ifIndex + 1}
+  const dellFabricIfaces = dellLinks.map(l => `interface ${fabricPort(dev, isSpine ? 'spine' : 'leaf', l.ifIndex).name}
   description ${isSpine ? 'DOWNLINK' : 'UPLINK'}: ${l.peerHostname}
   no switchport
   mtu 9216
@@ -4389,7 +4492,7 @@ ${fwHandoffSegments(dellFwLinks).map(g => `interface vlan${g.vlan}
   ip address ${g.ip}/${FW_HANDOFF_PREFIX}
   no shutdown
 !`).join('\n')}
-${dellFwLinks.map(x => `interface ethernet1/1/${x.port}
+${dellFwLinks.map(x => `interface ${x.name}
   description FW-HANDOFF: ${x.fw.hostname}
   switchport mode access
   switchport access vlan ${x.vlan}
@@ -4510,10 +4613,7 @@ function arubaFabricConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] 
     ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
     : roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
   const links = closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)
-  const portBase = isSpine
-    ? 0
-    : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 48) - (dev.uplinks || 0)))
-  const fabricIfaces = links.map(l => `interface 1/1/${portBase + l.ifIndex + 1}
+  const fabricIfaces = links.map(l => `interface ${fabricPort(dev, isSpine ? 'spine' : 'leaf', l.ifIndex).name}
     no shutdown
     description ${isSpine ? 'DOWNLINK' : 'UPLINK'}: ${l.peerHostname}
     routing
@@ -4601,7 +4701,7 @@ interface vlan ${g.vlan}
     vrf attach TENANT-A
     ip address ${g.ip}/${FW_HANDOFF_PREFIX}
 !`).join('\n')}
-${fwLinks.map(x => `interface 1/1/${x.port}
+${fwLinks.map(x => `interface ${x.name}
     no shutdown
     description FW-HANDOFF: ${x.fw.hostname}
     no routing
@@ -4696,7 +4796,7 @@ interface vlan ${g.vlan}
     ip address ${g.ip}/${FW_HANDOFF_PREFIX}
     ip ospf 1 area 0.0.0.0
 !`).join('')}${fwLinks.map(x => `
-interface 1/1/${x.port}
+interface ${x.name}
     no shutdown
     description FW-HANDOFF: ${x.fw.hostname}
     no routing
@@ -4792,9 +4892,9 @@ function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
   let peerPorts: number[]
   if (isSpine) {
     const linkCount = closFabricLinks('spine', dev, allDevices).length || Math.min(ports, 32)
-    peerPorts = Array.from({ length: Math.min(linkCount, ports) }, (_, i) => i + 1)
+    peerPorts = Array.from({ length: Math.min(linkCount, ports) }, (_, i) => fabricPort(dev, 'spine', i).n)
   } else {
-    peerPorts = Array.from({ length: uplinks }, (_, i) => ports - uplinks + i + 1)
+    peerPorts = Array.from({ length: uplinks }, (_, i) => fabricPort(dev, 'leaf', i).n)
   }
   // Z3b — border-leaf firewall handoff. Cumulus is a pure eBGP L3 fabric
   // (Y6, RFC 7938) with no tenant VRF, so the handoff lives in the default
@@ -4807,8 +4907,8 @@ function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
   const nvFwBlock = nvFwLinks.length ? `#
 # ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster; the inside
 #    address floats between the units, so the leaf routes on a VLAN SVI) ────
-${nvFwLinks.map(x => `nv set interface swp${x.port} bridge domain br_default access ${x.vlan}
-nv set interface swp${x.port} description FW-HANDOFF: ${x.fw.hostname}`).join('\n')}
+${nvFwLinks.map(x => `nv set interface ${x.name} bridge domain br_default access ${x.vlan}
+nv set interface ${x.name} description FW-HANDOFF: ${x.fw.hostname}`).join('\n')}
 ${fwHandoffSegments(nvFwLinks).map(g => `nv set bridge domain br_default vlan ${g.vlan}
 nv set interface vlan${g.vlan} ip address ${g.ip}/${FW_HANDOFF_PREFIX}
 nv set vrf default router static 0.0.0.0/0 via ${g.fwIp}`).join('\n')}
@@ -4990,11 +5090,8 @@ function extremeExosConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] 
     ? roleIp('10.255.1.1', RoleSlot.SpineLoopback, idx)
     : roleIp('10.255.2.1', RoleSlot.LeafLoopback, idx)
   const exosLinks = closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)
-  const exosPortBase = isSpine
-    ? 0
-    : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
   const exosFabricIfaces = exosLinks.map(l => {
-    const port = exosPortBase + l.ifIndex + 1
+    const port = fabricPort(dev, isSpine ? 'spine' : 'leaf', l.ifIndex).n
     const vlanName = `P2P-${port}`
     return `create vlan ${vlanName}
 configure vlan ${vlanName} add ports ${port} untagged
@@ -5078,7 +5175,7 @@ configure vlan FW-TRANSIT-${g.cluster + 1} add ports ${g.ports.join(',')} untagg
 configure vlan FW-TRANSIT-${g.cluster + 1} ipaddress ${g.ip} ${FW_HANDOFF_MASK}
 enable ipforwarding vlan FW-TRANSIT-${g.cluster + 1}
 configure iproute add default ${g.fwIp} vr TENANT-A`).join('\n')}
-${exosFwLinks.map(x => `configure ports ${x.port} description-string "FW-HANDOFF: ${x.fw.hostname}"`).join('\n')}
+${exosFwLinks.map(x => `configure ports ${x.name} description-string "FW-HANDOFF: ${x.fw.hostname}"`).join('\n')}
 #` : ''}
 # ── Jumbo MTU (VXLAN 50B overhead → underlay must be jumbo) ───────────────────
 enable jumbo-frame ports all
@@ -5202,7 +5299,7 @@ configure vlan FW-TRANSIT-${g.cluster + 1} add ports ${g.ports.join(',')} untagg
 configure vlan FW-TRANSIT-${g.cluster + 1} ipaddress ${g.ip} ${FW_HANDOFF_MASK}
 enable ipforwarding vlan FW-TRANSIT-${g.cluster + 1}
 configure iproute add default ${g.fwIp}`).join('\n')}
-${fwLinks.map(x => `configure ports ${x.port} description-string "FW-HANDOFF: ${x.fw.hostname}"`).join('\n')}
+${fwLinks.map(x => `configure ports ${x.name} description-string "FW-HANDOFF: ${x.fw.hostname}"`).join('\n')}
 ` : ''}#
 # ── OSPF ─────────────────────────────────────────────────────────────────────
 configure ospf routerid ${lo0ip}
@@ -5296,10 +5393,7 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
   // Topology-driven fabric interfaces (Z8): the generator used to hardcode
   // ethernet-1/1 and 1/2 no matter how many links the BOM actually planned.
   const nokiaLinks = closFabricLinks(isSpine ? 'spine' : 'leaf', dev, allDevices)
-  const nokiaPortBase = isSpine
-    ? 0
-    : (dev.uplinkStart ? dev.uplinkStart - 1 : Math.max(0, (dev.ports || 32) - (dev.uplinks || 0)))
-  const nokiaFabricIfaces = nokiaLinks.map(l => `    interface ethernet-1/${nokiaPortBase + l.ifIndex + 1} {
+  const nokiaFabricIfaces = nokiaLinks.map(l => `    interface ${fabricPort(dev, isSpine ? 'spine' : 'leaf', l.ifIndex).name} {
         description "${isSpine ? 'DOWNLINK' : 'UPLINK'}: ${l.peerHostname}"
         admin-state enable
         mtu 9232
@@ -5313,7 +5407,7 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
         mtu 9232
     }`
   const nokiaFabricNiIfaces = nokiaLinks
-    .map(l => `        interface ethernet-1/${nokiaPortBase + l.ifIndex + 1}.0 { }`).join('\n')
+    .map(l => `        interface ${fabricPort(dev, isSpine ? 'spine' : 'leaf', l.ifIndex).name}.0 { }`).join('\n')
   // Server-facing ports — the mac-vrf and its VNI had no member ports (Z1 class).
   const nokiaHostMax = isSpine ? 0 : leafHostPortMax(dev, allDevices)
   const nokiaHostIfaces = nokiaHostMax > 0 ? `    # ── SERVER / HOST PORTS (tenant VLAN 10) ────────────────────────────────
@@ -5331,7 +5425,7 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
     # ── FIREWALL HANDOFF (AN10: one bridged transit segment per HA cluster —
     #    both units' ports in a mac-vrf, routed by an IRB in TENANT-A; the
     #    firewall's inside address floats between the units) ───────────────
-${nokiaFwLinks.map(x => `    interface ethernet-1/${x.port} {
+${nokiaFwLinks.map(x => `    interface ${x.name} {
         description "FW-HANDOFF: ${x.fw.hostname}"
         admin-state enable
         subinterface 0 {
@@ -5623,9 +5717,9 @@ set vlans FW-TRANSIT-${g.cluster + 1} l3-interface irb.${g.vlan}
 set interfaces irb unit ${g.vlan} family inet address ${g.ip}/${FW_HANDOFF_PREFIX}
 set protocols ospf area 0.0.0.0 interface irb.${g.vlan} passive
 set routing-options static route 0.0.0.0/0 next-hop ${g.fwIp}`).join('\n')}
-${fwLinks.map(x => `set interfaces xe-0/0/${x.port - 1} description "FW-HANDOFF: ${x.fw.hostname}"
-set interfaces xe-0/0/${x.port - 1} unit 0 family ethernet-switching interface-mode access
-set interfaces xe-0/0/${x.port - 1} unit 0 family ethernet-switching vlan members FW-TRANSIT-${x.cluster + 1}`).join('\n')}
+${fwLinks.map(x => `set interfaces ${x.name} description "FW-HANDOFF: ${x.fw.hostname}"
+set interfaces ${x.name} unit 0 family ethernet-switching interface-mode access
+set interfaces ${x.name} unit 0 family ethernet-switching vlan members FW-TRANSIT-${x.cluster + 1}`).join('\n')}
 set policy-options policy-statement ORIGINATE-DEFAULT term 1 from protocol static
 set policy-options policy-statement ORIGINATE-DEFAULT term 1 from route-filter 0.0.0.0/0 exact
 set policy-options policy-statement ORIGINATE-DEFAULT term 1 then accept
@@ -6004,7 +6098,7 @@ interface Vlan${g.vlan}
    description FW-TRANSIT to ${g.fws.map(f => f.hostname).join(' / ')}
    ip address ${g.ip}/${FW_HANDOFF_PREFIX}
 !`).join('\n')}
-${fwLinks.map(x => `interface ${aristaIf(dev, x.port)}
+${fwLinks.map(x => `interface ${x.name}
    description FW-HANDOFF: ${x.fw.hostname}
    switchport mode access
    switchport access vlan ${x.vlan}

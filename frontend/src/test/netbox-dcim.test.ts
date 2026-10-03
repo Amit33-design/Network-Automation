@@ -78,11 +78,14 @@ describe('CSV emitters', () => {
     const cables = expandCablePlan(devices, cabling)
     const csv = toNetBoxInterfaceCsv(cables)
     const lines = csv.trim().split('\n')
-    expect(lines[0]).toBe('device,name,type,enabled')
+    expect(lines[0]).toBe('device,name,type,enabled,description')
     // 4 cables × 2 endpoints = 8 unique interfaces (2 per leaf, 2 per spine).
     expect(lines.length).toBe(1 + 8)
     // Leaf interfaces are 100G; spine endpoints inherit the run speed (100G).
-    expect(csv).toContain('IAD-LEAF-01,Ethernet1/1,100gbase-x-qsfp28,true')
+    // AP1: the leaf end is the uplink port its config configures (the top of
+    // the port block), not an invented Ethernet1/1.
+    expect(csv).toMatch(/IAD-LEAF-01,Ethernet1\/\d+,100gbase-x-qsfp28,true,Configured in the generated config/)
+    expect(csv).not.toContain('IAD-LEAF-01,Ethernet1/1,')
   })
 
   it('cable CSV uses side_a/side_b interface endpoints + mapped cable type + length', () => {

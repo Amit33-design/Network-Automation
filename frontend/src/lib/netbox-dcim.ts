@@ -8,7 +8,8 @@
 // source-of-truth. Pure + deterministic (mirrors the RackElevation cable
 // schedule expansion; no component imports).
 
-import type { BOMDevice, CableLink } from '@/types'
+import type { BOMDevice, CableLink, UseCase } from '@/types'
+import { physicalPortMap, handoffPortName } from '@/lib/configgen'
 
 // ── CSV helpers (RFC 4180, same convention as ipam.ts) ────────────────────────
 
@@ -62,7 +63,12 @@ export function netboxCableType(cableType: string, medium?: string): string {
 
 // ── Cable-plant expansion (pure mirror of RackElevation.buildCableSchedule) ────
 
-export interface DcimEndpoint { device: string; iface: string }
+export interface DcimEndpoint {
+  device: string
+  iface: string
+  /** True when the generated config configures this interface for this cable (AP1). */
+  mapped?: boolean
+}
 export interface DcimCable {
   a: DcimEndpoint
   b: DcimEndpoint
@@ -130,19 +136,67 @@ function candidatePairs(
   return pairs
 }
 
-export function expandCablePlan(devices: BOMDevice[], cabling: CableLink[]): DcimCable[] {
+/** Host-side tiers the config engine does not name ports for. */
+const HOST_TIERS = new Set(['gpu-compute', 'cloud-gw', 'cloud-transit', 'oran-ru', 'oran-du', 'oran-cu', 'oran-core', 'oran-timing'])
+
+export function expandCablePlan(devices: BOMDevice[], cabling: CableLink[], useCase: UseCase | '' = ''): DcimCable[] {
   const cables: DcimCable[] = []
+  const byHost = new Map(devices.map(d => [d.hostname, d]))
+  // AP1: cables whose two interfaces the generated configs configure. Each is
+  // consumed once, in the order the fabric is wired, so a run lands on the
+  // exact interface pair the configs set up.
+  const mappedQ = new Map<string, Array<[string, string]>>()
+  const reserved = new Map<string, Set<string>>()
+  // Device pairs per tier pair, in wiring order — where the configs define
+  // which devices a cable joins, the export uses exactly those pairs.
+  const mappedPairs = new Map<string, Array<[string, string]>>()
+  const portMap = physicalPortMap(devices, useCase)
+  for (const p of portMap) {
+    const la = byHost.get(p.a.device)?.subLayer, lb = byHost.get(p.b.device)?.subLayer
+    if (la && lb) {
+      const k = `${la}|${lb}`
+      if (!mappedPairs.has(k)) mappedPairs.set(k, [])
+      mappedPairs.get(k)!.push([p.a.device, p.b.device])
+    }
+  }
+  for (const p of portMap) {
+    const k = `${p.a.device}|${p.b.device}`
+    if (!mappedQ.has(k)) mappedQ.set(k, [])
+    mappedQ.get(k)!.push([p.a.iface, p.b.iface])
+    for (const e of [p.a, p.b]) {
+      if (!reserved.has(e.device)) reserved.set(e.device, new Set())
+      reserved.get(e.device)!.add(e.iface)
+    }
+  }
+  const takeMapped = (a: string, b: string): [string, string] | undefined => {
+    const fwd = mappedQ.get(`${a}|${b}`)
+    if (fwd?.length) return fwd.shift()
+    const rev = mappedQ.get(`${b}|${a}`)
+    if (rev?.length) { const [x, y] = rev.shift()!; return [y, x] }
+    return undefined
+  }
+  // Ports the config engine does not assign (peer-links, access uplinks, host
+  // ports) get a vendor-style name that never collides with a configured one,
+  // and are flagged so the NetBox import says they need confirming on site.
   const portCounter = new Map<string, number>()
   const nextIface = (device: string): string => {
-    const n = (portCounter.get(device) ?? 0) + 1
-    portCounter.set(device, n)
-    return `Ethernet1/${n}`
+    const d = byHost.get(device)
+    const taken = reserved.get(device) ?? new Set<string>()
+    for (;;) {
+      const n = (portCounter.get(device) ?? 0) + 1
+      portCounter.set(device, n)
+      const name = !d ? `Ethernet1/${n}` : HOST_TIERS.has(d.subLayer) ? `eth${n}` : handoffPortName(d, n)
+      if (!taken.has(name)) return name
+    }
   }
-  const push = (a: string, b: string, link: CableLink) => cables.push({
-    a: { device: a, iface: nextIface(a) },
-    b: { device: b, iface: nextIface(b) },
-    cableType: link.cableType, medium: link.medium, speed: link.speed, lengthM: link.lengthM,
-  })
+  const push = (a: string, b: string, link: CableLink) => {
+    const m = takeMapped(a, b)
+    cables.push({
+      a: { device: a, iface: m ? m[0] : nextIface(a), mapped: !!m },
+      b: { device: b, iface: m ? m[1] : nextIface(b), mapped: !!m },
+      cableType: link.cableType, medium: link.medium, speed: link.speed, lengthM: link.lengthM,
+    })
+  }
 
   for (const link of cabling) {
     const fromDevs = devices.filter(d => d.subLayer === link.fromLayer)
@@ -157,7 +211,17 @@ export function expandCablePlan(devices: BOMDevice[], cabling: CableLink[]): Dci
       continue
     }
 
-    const pairs = candidatePairs(link, fromDevs, toDevs)
+    // AP1: the configs' own pairing wins. The firewall→leaf runs used to walk
+    // EVERY leaf, so the cables landed on the first leaves in the list rather
+    // than the border leaves the configs actually wire (the AG2 note claimed
+    // otherwise; the generic cross-product still applied).
+    const fwd = mappedPairs.get(`${link.fromLayer}|${link.toLayer}`)
+    const rev = mappedPairs.get(`${link.toLayer}|${link.fromLayer}`)
+    const toDev = (h: string) => byHost.get(h)!
+    const pairs: Array<[BOMDevice, BOMDevice]> = fwd?.length
+      ? fwd.map(([a, b]) => [toDev(a), toDev(b)])
+      : rev?.length ? rev.map(([a, b]) => [toDev(b), toDev(a)])
+      : candidatePairs(link, fromDevs, toDevs)
     if (!pairs.length) continue
     // Exactly `quantity` runs: the plan and the schedule must agree on how
     // many cables a contractor is being asked to pull.
@@ -254,14 +318,15 @@ export function toNetBoxDeviceCsv(
  * by the cable plan, de-duplicated by (device, name).
  */
 export function toNetBoxInterfaceCsv(cables: DcimCable[]): string {
-  const header = 'device,name,type,enabled'
+  const header = 'device,name,type,enabled,description'
   const seen = new Set<string>()
   const lines: string[] = []
   const add = (ep: DcimEndpoint, speed: string) => {
     const key = `${ep.device} ${ep.iface}`
     if (seen.has(key)) return
     seen.add(key)
-    lines.push(csvRow([ep.device, ep.iface, netboxInterfaceType(speed), 'true']))
+    lines.push(csvRow([ep.device, ep.iface, netboxInterfaceType(speed), 'true',
+      ep.mapped ? 'Configured in the generated config' : 'Port not assigned by the config engine — confirm on site']))
   }
   for (const c of cables) { add(c.a, c.speed); add(c.b, c.speed) }
   return [header, ...lines].join('\n') + '\n'
@@ -299,8 +364,9 @@ export function buildNetBoxDcimExport(
   cabling: CableLink[],
   siteName = 'NDAI Site',
   racks?: RackExport[],
+  useCase: UseCase | '' = '',
 ): NetBoxDcimExport {
-  const cables = expandCablePlan(devices, cabling)
+  const cables = expandCablePlan(devices, cabling, useCase)
   const out: NetBoxDcimExport = {
     devicesCsv: toNetBoxDeviceCsv(devices, siteName, racks),
     interfacesCsv: toNetBoxInterfaceCsv(cables),
