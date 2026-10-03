@@ -17,7 +17,7 @@ import { buildContainerlabTopology, containerlabBundle } from '@/lib/containerla
 import { buildCloudTerraform, cloudTerraformFilename } from '@/lib/cloud-terraform'
 import { buildDrawio, drawioFilename } from '@/lib/drawio-export'
 import type { DesignExport } from '@/lib/design-export'
-import type { BOMDevice, AppType, AppState } from '@/types'
+import type { BOMDevice, AppType, AppState, UseCase } from '@/types'
 import * as Icons from '@/components/icons'
 import { TabBar, type TabItem } from '@/components/ui/TabBar'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -969,26 +969,26 @@ export function Step4NetworkDesign() {
                 <p className="text-xs text-gray-500 mt-0.5">
                   Bulk-import CSVs for the physical layer — devices (with rack positions), interfaces, cables, and racks
                   {cablingData.length > 0 && (() => {
-                    const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices))
+                    const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices), useCase as UseCase)
                     return ` (${x.cableCount} cables, ${x.rackCount ?? 0} racks)`
                   })()}.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => {
-                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices))
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices), useCase as UseCase)
                   downloadCsv(x.devicesCsv, `netbox-devices-${useCase || 'network'}`)
                 }}>↓ Devices CSV</Button>
                 <Button variant="secondary" onClick={() => {
-                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode)
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, undefined, useCase as UseCase)
                   downloadCsv(x.interfacesCsv, `netbox-interfaces-${useCase || 'network'}`)
                 }}>↓ Interfaces CSV</Button>
                 <Button variant="secondary" onClick={() => {
-                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode)
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, undefined, useCase as UseCase)
                   downloadCsv(x.cablesCsv, `netbox-cables-${useCase || 'network'}`)
                 }}>↓ Cables CSV</Button>
                 <Button variant="secondary" onClick={() => {
-                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices))
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices), useCase as UseCase)
                   if (x.racksCsv) downloadCsv(x.racksCsv, `netbox-racks-${useCase || 'network'}`)
                 }}>↓ Racks CSV</Button>
               </div>
