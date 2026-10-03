@@ -1,5 +1,5 @@
 import type { BOMDevice } from '@/types'
-import { TENANT_OVERLAY, CAMPUS_VLANS, ADDRESS_PLAN, RoleSlot, roleIp, fwHandoffIp, ipAdd } from '@/lib/configgen'
+import { TENANT_OVERLAY, CAMPUS_VLANS, ADDRESS_PLAN, RoleSlot, roleIp, firewallHandoffs, firewallTransitPlan, FW_HANDOFF_PREFIX } from '@/lib/configgen'
 
 // ── IPAM data model ──────────────────────────────────────────────────────────
 // Canonical IP / VLAN / VNI planning, derived from the BOM + intent. This is
@@ -31,7 +31,7 @@ export function genIPBlocks(useCase: string, totalEndpoints: number, numSites: n
   const detailFor: Record<string, string> = {
     'P2P FABRIC LINKS': `/31 per link · ${p2pTotal} links`,
     'LOOPBACKS':        `/32 per device · ${totalInfra} devices`,
-    'FIREWALL HANDOFF': `/31 per firewall↔border-leaf pair`,
+    'FIREWALL HANDOFF': `/29 per switch × firewall HA cluster (switch .1, floating .2, standby .3)`,
     'TENANT / SERVER':  `${totalEndpoints || 0} endpoints across ${numSites} site(s)`,
   }
   const blocks: IPBlock[] = ADDRESS_PLAN
@@ -64,7 +64,7 @@ export function genIPBlocks(useCase: string, totalEndpoints: number, numSites: n
 
 // ── Per-device IP allocations ────────────────────────────────────────────────
 
-export function genIPRows(_useCase: string, devices: BOMDevice[]): IPRow[] {
+export function genIPRows(useCase: string, devices: BOMDevice[]): IPRow[] {
   const rows: IPRow[] = []
   const spines = devices.filter(d => d.subLayer === 'spine')
   const leaves = devices.filter(d => d.subLayer === 'leaf')
@@ -72,15 +72,13 @@ export function genIPRows(_useCase: string, devices: BOMDevice[]): IPRow[] {
   const access = devices.filter(d => d.subLayer === 'access')
   const fws    = devices.filter(d => d.subLayer === 'firewall')
 
-  fws.forEach((d, i) => {
-    // AF3: the addresses here now come from the SAME allocators the config
-    // generators use. They used to be invented — a firewall inside 10.0.0.0/24
-    // that configgen never emits, and a "VTEP" at 10.255.3.x, which is the
-    // campus loopback range.
-    // AN7: this used to be the FABRIC side of the /31 (…​.0), which the border
-    // leaf / distribution switch owns — NetBox would have recorded one address
-    // on two devices. The firewall holds the far side.
-    rows.push({ device: d.hostname, layer: 'Firewall', iface: 'Inside (first handoff)', ip: ipAdd(fwHandoffIp(0, i, fws.length), 1), prefix: '/31', purpose: 'Firewall end of the firewall↔fabric handoff' })
+  fws.forEach(d => {
+    // AF3: the addresses here come from the SAME allocators the config
+    // generators use. AN10: a firewall pair is one HA cluster whose inside
+    // address floats between the units, so both units list the same floating
+    // address (NetBox: the same IP on both members, role "vip").
+    const h = firewallHandoffs(d, devices, useCase as never)[0]
+    if (h) rows.push({ device: d.hostname, layer: 'Firewall', iface: 'Inside (first handoff, floating)', ip: h.fwIp, prefix: `/${FW_HANDOFF_PREFIX}`, purpose: `HA cluster floating address on the transit to ${h.peer.hostname}` })
   })
 
   spines.forEach((d, i) => {
@@ -122,7 +120,16 @@ export function genIPRows(_useCase: string, devices: BOMDevice[]): IPRow[] {
 
 // ── VLAN / VNI plan ──────────────────────────────────────────────────────────
 
-export function genVLANs(useCase: string): VLANRow[] {
+export function genVLANs(useCase: string, devices: BOMDevice[] = []): VLANRow[] {
+  // AN10: each firewall HA cluster lands on one transit VLAN per switch.
+  const transit: VLANRow[] = firewallTransitPlan(devices, useCase as never).map(g => ({
+    id: g.vlan, name: `FW-TRANSIT-${g.cluster + 1}`, subnet: `${g.net}/${FW_HANDOFF_PREFIX}`, gw: `${g.ip} (${g.peer.hostname})`,
+    dhcp: 'Static', purpose: `Firewall HA cluster transit — floating ${g.fwIp}`, layer: 'fw',
+  }))
+  return [...genVLANsBase(useCase), ...transit]
+}
+
+function genVLANsBase(useCase: string): VLANRow[] {
   const isDC = useCase === 'dc' || useCase === 'multisite' || useCase === 'gpu'
   const base: VLANRow[] = [
     { id: 10,  name: 'MGMT',          subnet: '10.0.0.0/24',   gw: '10.0.0.1',   dhcp: '10.0.0.10–250',   purpose: 'Network device OOB management',  layer: 'mgmt'  },
@@ -250,7 +257,7 @@ export function buildNetBoxIpamExport(
   devices: BOMDevice[],
 ): NetBoxIpamExport {
   const blocks = genIPBlocks(useCase, totalEndpoints, numSites, devices)
-  const vlans  = genVLANs(useCase)
+  const vlans  = genVLANs(useCase, devices)
   const rows   = genIPRows(useCase, devices)
   return {
     prefixesCsv: toNetBoxPrefixCsv(blocks, vlans),

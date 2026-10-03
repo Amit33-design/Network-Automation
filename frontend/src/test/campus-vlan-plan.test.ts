@@ -70,7 +70,10 @@ describe('campus VLAN plan (AN7)', () => {
     for (const d of sw) {
       const ids = vlansOf(configs[d.id])
       expect(ids.size, `${d.hostname}: parser found no VLANs`).toBeGreaterThan(0)
-      expect([...ids].filter(i => !planned.has(i)), `${d.hostname} creates VLANs the plan does not declare`).toEqual([])
+      // AN10: the firewall transit VLANs are design-specific — the plan built
+      // from this design's devices must declare them too.
+      const designPlan = new Set(genVLANs('campus', devices).map(v => v.id))
+      expect([...ids].filter(i => !designPlan.has(i)), `${d.hostname} creates VLANs the plan does not declare`).toEqual([])
       for (const need of [CAMPUS_VLANS.data.id, CAMPUS_VLANS.voice.id, CAMPUS_VLANS.mgmt.id]) {
         expect(ids.has(need), `${d.hostname} lacks VLAN ${need}`).toBe(true)
       }
