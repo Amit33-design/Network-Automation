@@ -1,6 +1,6 @@
 import type { AppState, BOMDevice, BudgetTier, Scale, UseCase } from '@/types'
 import { PRODUCTS } from './products'
-import { peerLinkPorts } from './configgen'
+import { peerLinkPorts, leafHostPortMax } from './configgen'
 
 // ── Scale definitions ────────────────────────────────────────────────────────
 
@@ -1060,7 +1060,9 @@ export function buildCabling(
       // billed 640 runs where only 560 leaf ports and 256 NIC ports exist.
       const leafDevs  = conn.from === 'leaf' ? froms : tos
       const hostDevs  = conn.to === 'gpu-compute' ? tos : froms
-      const leafSupply = leafDevs.reduce((s, d) => s + Math.max(0, d.ports - (d.uplinks ?? 0)), 0)
+      // The leaf side is the host block the leaf configs actually configure
+      // (AP4) — below the uplinks, minus a border leaf's firewall ports.
+      const leafSupply = leafDevs.reduce((s, d) => s + leafHostPortMax(d, devices), 0)
       const nicSupply  = hostDevs.reduce((s, d) => s + Math.max(1, d.ports || 1), 0)
       qty = Math.min(leafSupply, nicSupply)
     } else if (conn.from === 'wan-edge' && conn.to === 'wan-edge') {

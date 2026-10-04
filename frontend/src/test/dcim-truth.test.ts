@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest'
 import type { UseCase } from '@/types'
 import { buildDeviceList, buildCabling } from '@/lib/bom'
-import { generateAllConfigs, fabricInterfaceView, borderLeaves } from '@/lib/configgen'
+import { generateAllConfigs, fabricInterfaceView, borderLeaves, leafHostPortMax, fwHandoffPlan } from '@/lib/configgen'
 import { stripComments } from '@/lib/config-text'
 import { expandCablePlan, toNetBoxInterfaceCsv } from '@/lib/netbox-dcim'
 
@@ -189,5 +189,86 @@ describe('campus access uplinks and distribution downlinks (AP3)', () => {
     expect(configs[acc.id]).toContain('UPLINK-1 to distribution A01')
     expect(configs[acc.id]).toContain('UPLINK-2 to distribution A02')
     expect([...configs[acc.id].matchAll(/set security-mode 802\.1X/g)].length).toBe(acc.ports || 48)
+  })
+})
+
+/**
+ * Port `iface` falls inside a host range as each dialect writes one (AP4):
+ * NX-OS `Ethernet1/1-30`, EOS `Ethernet1-30`, Cumulus `swp1-60`, OS10
+ * `ethernet 1/1/1-1/1/44`, Junos `member-range xe-0/0/0 to xe-0/0/42`.
+ */
+function inHostRange(cfg: string, iface: string): boolean {
+  const text = stripComments(cfg)
+  const m = iface.match(/^(.*?)(\d+)$/)
+  if (!m) return false
+  const [, prefix, num] = m, n = Number(num)
+  const esc = (x: string) => x.replace(/[/.]/g, c => '\\' + c)
+  const p = esc(prefix).replace(/^([a-z]+)/i, '$1\\s?')
+  const pNum = esc(prefix.replace(/^[a-z-]+/i, ''))
+  const forms = [
+    new RegExp(`(?:^|[^\\w/.-])${p}(\\d+)-(?:${pNum})?(\\d+)\\b`, 'gm'),
+    new RegExp(`member-range ${p}(\\d+) to ${p}(\\d+)`, 'g'),
+  ]
+  return forms.some(re => [...text.matchAll(re)].some(x => Number(x[1]) <= n && n <= Number(x[2])))
+}
+
+describe('leaf↔server cables land on configured leaf host ports (AP4)', () => {
+  const GPU_VENDORS = ['Cisco', 'Arista', 'Juniper', 'NVIDIA', 'Dell EMC']
+
+  it.each(GPU_VENDORS)('%s GPU: every host cable lands on a host port the leaf config configures', vendor => {
+    const { devices, configs, cables, byHost } = design(vendor, 'gpu')
+    const host = cables.filter(c => byHost.get(c.b.device)?.subLayer === 'gpu-compute' || byHost.get(c.a.device)?.subLayer === 'gpu-compute')
+    expect(host.length).toBeGreaterThan(0)
+    const perLeaf = new Map<string, number>()
+    for (const c of host) {
+      const [leaf, srv] = byHost.get(c.a.device)!.subLayer === 'leaf' ? [c.a, c.b] : [c.b, c.a]
+      expect(leaf.mapped, `${leaf.device}:${leaf.iface} not config-mapped`).toBe(true)
+      // The server has no generated config, so its NIC is never claimed as configured.
+      expect(srv.mapped).toBe(false)
+      const cfg = configs[byHost.get(leaf.device)!.id]
+      expect(configures(cfg, leaf.iface) || inHostRange(cfg, leaf.iface), `${leaf.device} does not configure ${leaf.iface}`).toBe(true)
+      perLeaf.set(leaf.device, (perLeaf.get(leaf.device) ?? 0) + 1)
+    }
+    for (const [h, n] of perLeaf) expect(n).toBeLessThanOrEqual(leafHostPortMax(byHost.get(h)!, devices))
+  })
+
+  it.each(GPU_VENDORS)('%s GPU: no leaf interface carries two cables, and host ports never take a firewall port', vendor => {
+    const { devices, cables } = design(vendor, 'gpu')
+    const seen = new Set<string>()
+    for (const c of cables) for (const e of [c.a, c.b]) {
+      const k = `${e.device}|${e.iface}`
+      expect(seen.has(k), `${k} used twice`).toBe(false)
+      seen.add(k)
+    }
+    for (const bl of borderLeaves(devices)) {
+      const fwPorts = new Set(fwHandoffPlan(bl, devices, 'border-leaf').map(x => x.name))
+      for (const c of cables) {
+        const e = c.a.device === bl.hostname ? c.a : c.b.device === bl.hostname ? c.b : null
+        if (e && fwPorts.has(e.iface)) expect(devices.find(d => d.hostname === (e === c.a ? c.b : c.a).device)!.subLayer).toBe('firewall')
+      }
+    }
+  })
+
+  it('a server\'s NICs land on more than one leaf, so it survives a leaf failure', () => {
+    const { cables, byHost } = design('Cisco', 'gpu')
+    const leavesOf = new Map<string, Set<string>>()
+    for (const c of cables) {
+      if (byHost.get(c.b.device)?.subLayer !== 'gpu-compute') continue
+      if (!leavesOf.has(c.b.device)) leavesOf.set(c.b.device, new Set())
+      leavesOf.get(c.b.device)!.add(c.a.device)
+    }
+    expect(leavesOf.size).toBeGreaterThan(0)
+    for (const [srv, ls] of leavesOf) expect(ls.size, `${srv} is single-homed`).toBeGreaterThan(1)
+  })
+
+  it('Juniper: the server-access range and the ESI member never overlap the firewall handoff', () => {
+    const { devices, configs } = design('Juniper', 'dc')
+    for (const bl of borderLeaves(devices)) {
+      const cfg = configs[bl.id]
+      for (const x of fwHandoffPlan(bl, devices, 'border-leaf')) {
+        expect(inHostRange(cfg, x.name), `${bl.hostname} ${x.name} is in SERVER-ACCESS`).toBe(false)
+        expect(cfg).not.toMatch(new RegExp(`set interfaces ${x.name.replace(/\//g, '\\/')} ether-options 802\\.3ad`))
+      }
+    }
   })
 })
