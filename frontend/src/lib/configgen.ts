@@ -679,7 +679,7 @@ export const FW_HANDOFF_PREFIX = 29
 export const FW_HANDOFF_MASK = '255.255.255.248'
 export const FW_HANDOFF_WILDCARD = '0.0.0.7'
 
-function fwHandoffPlan(
+export function fwHandoffPlan(
   dev: BOMDevice,
   allDevices: BOMDevice[],
   role: 'border-leaf' | 'distribution',
@@ -906,9 +906,58 @@ export function firewallMemberPort(fw: BOMDevice, allDevices: BOMDevice[], i: nu
 
 /** One cabled port pair whose interfaces the config engine assigns (AP1). */
 export interface PortPair {
-  a: { device: string; iface: string }
-  b: { device: string; iface: string }
-  kind: 'fabric' | 'firewall' | 'peer-link' | 'campus'
+  a: PortEnd
+  b: PortEnd
+  kind: 'fabric' | 'firewall' | 'peer-link' | 'campus' | 'host'
+}
+/**
+ * One end of a cabled pair. `unconfigured` marks an end the config engine
+ * does not generate a config for (a GPU server NIC): its name is the cable
+ * plan's convention, not something a generated config sets (AP4).
+ */
+export interface PortEnd { device: string; iface: string; unconfigured?: boolean }
+
+/**
+ * A leaf's n-th server-facing port, named as that leaf's config names it
+ * (AP4). Host ports are the block below the fabric uplinks — the same block
+ * the firewall handoff takes its top ports from — so the naming is shared
+ * with `handoffPortName`.
+ */
+export function leafHostPort(dev: BOMDevice, n: number): string {
+  return handoffPortName(dev, n)
+}
+
+/**
+ * Leaf↔server runs, landed on real leaf host ports (AP4). Server NIC r of
+ * server s is run k = s·nics + r, and runs go round-robin across the leaves,
+ * so a server's NICs land on consecutive leaves — i.e. both members of a leaf
+ * pair — and each leaf fills its host block from port 1. A leaf whose host
+ * block is full (a border leaf gives its top ports to the firewalls) is
+ * skipped. Stops when either side runs out of ports, matching the BOM count.
+ */
+export function hostPortPlan(allDevices: BOMDevice[]): PortPair[] {
+  const leaves = allDevices.filter(d => d.subLayer === 'leaf')
+  const hosts = allDevices.filter(d => d.subLayer === 'gpu-compute')
+  if (!leaves.length || !hosts.length) return []
+  const cap = leaves.map(l => leafHostPortMax(l, allDevices))
+  const used = leaves.map(() => 0)
+  const out: PortPair[] = []
+  let next = 0
+  for (const h of hosts) {
+    for (let r = 0; r < Math.max(1, h.ports || 1); r++) {
+      let tries = 0
+      while (tries < leaves.length && used[next] >= cap[next]) { next = (next + 1) % leaves.length; tries++ }
+      if (tries === leaves.length) return out
+      used[next]++
+      out.push({
+        a: { device: leaves[next].hostname, iface: leafHostPort(leaves[next], used[next]) },
+        b: { device: h.hostname, iface: `eth${r + 1}`, unconfigured: true },
+        kind: 'host',
+      })
+      next = (next + 1) % leaves.length
+    }
+  }
+  return out
 }
 
 /**
@@ -966,6 +1015,7 @@ export function physicalPortMap(allDevices: BOMDevice[], useCase: UseCase | '' =
       }))
     }
   }
+  out.push(...hostPortPlan(allDevices))
   const fabric = FABRIC_HANDOFF_USE_CASES.has(useCase)
   const role = fabric ? 'border-leaf' : 'distribution'
   const peers = fabric ? borderLeaves(allDevices) : allDevices.filter(d => d.subLayer === 'distribution')
@@ -1270,7 +1320,7 @@ export function fwHaLinkIp(clusterIdx: number, link: 0 | 1, member: number): str
  * uplinks. A border leaf gives up the top of that block to the firewall
  * handoffs (Z3), so the two never claim the same interface.
  */
-function leafHostPortMax(dev: BOMDevice, allDevices: BOMDevice[] = []): number {
+export function leafHostPortMax(dev: BOMDevice, allDevices: BOMDevice[] = []): number {
   const base = dev.uplinkStart
     ? (dev.ports || 48)
     : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 2)
@@ -2597,6 +2647,7 @@ function juniperLeafConfig(dev: BOMDevice, idx: number, isMultisite = false, pro
   // with the perimeter default originated into EVPN as a type-5 route. It used
   // to hang off the spines, which carry no tenant VRF at all.
   const { pairId: esiPair, peerHostname: esiPeer } = haPairInfo(dev, idx, allDevices)
+  const jHostMax = leafHostPortMax(dev, allDevices)
   const fwLinks = fwHandoffPlan(dev, allDevices, 'border-leaf')
   const fwSegs = fwHandoffSegments(fwLinks)
   const fwHandoffBlock = fwLinks.length ? `#
@@ -2727,16 +2778,19 @@ set vlans V10 l3-interface irb.10
 # ── SERVER / HOST PORTS + IRB ANYCAST GATEWAY (Z1 — Juniper was the only
 # vendor with no tenant gateway and no access ports; NX-OS got this in X1,
 # Arista in Y4) ──────────────────────────────────────────────────────────────
-set interfaces xe-0/0/0 unit 0 family ethernet-switching interface-mode access
-set interfaces xe-0/0/0 unit 0 family ethernet-switching vlan members V10
-# … repeat for each single-homed server port xe-0/0/1 .. xe-0/0/${(dev.ports || 48) - 1}
+# AP4: the whole host block is configured (it was one port and a "repeat"
+# comment). The block's last port is the ESI-LAG member below.
+${jHostMax >= 2 ? `set interfaces interface-range SERVER-ACCESS member-range ${leafHostPort(dev, 1)} to ${leafHostPort(dev, jHostMax - 1)}
+set interfaces interface-range SERVER-ACCESS description "SERVER-ACCESS (tenant VLAN 10)"
+set interfaces interface-range SERVER-ACCESS unit 0 family ethernet-switching interface-mode access
+set interfaces interface-range SERVER-ACCESS unit 0 family ethernet-switching vlan members V10` : '# No single-homed server ports on this leaf'}
 #
 # ── ESI-LAG: DUAL-HOMED SERVERS (J3-3) ──────────────────────────────────────
 # Junos EVPN multihomes a server with an ESI-LAG, NOT a peer-link — that is
 # why this leaf has no MLAG. Both members of the pair (with ${esiPeer}) must
 # advertise the SAME ESI and the SAME LACP system-id, or the server sees two
 # independent links instead of one bundle and half its traffic is dropped.
-set interfaces xe-0/0/1 ether-options 802.3ad ae0
+set interfaces ${leafHostPort(dev, jHostMax)} ether-options 802.3ad ae0
 set interfaces ae0 description "ESI-LAG to dual-homed server (pair ${esiPair})"
 set interfaces ae0 esi 00:00:00:00:00:00:00:00:${String(esiPair).padStart(2, '0')}:01
 set interfaces ae0 esi all-active

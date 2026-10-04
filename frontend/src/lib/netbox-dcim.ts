@@ -9,7 +9,7 @@
 // schedule expansion; no component imports).
 
 import type { BOMDevice, CableLink, UseCase } from '@/types'
-import { physicalPortMap, handoffPortName } from '@/lib/configgen'
+import { physicalPortMap, handoffPortName, type PortEnd } from '@/lib/configgen'
 
 // ── CSV helpers (RFC 4180, same convention as ipam.ts) ────────────────────────
 
@@ -145,7 +145,7 @@ export function expandCablePlan(devices: BOMDevice[], cabling: CableLink[], useC
   // AP1: cables whose two interfaces the generated configs configure. Each is
   // consumed once, in the order the fabric is wired, so a run lands on the
   // exact interface pair the configs set up.
-  const mappedQ = new Map<string, Array<[string, string]>>()
+  const mappedQ = new Map<string, Array<[PortEnd, PortEnd]>>()
   const reserved = new Map<string, Set<string>>()
   // Device pairs per tier pair, in wiring order — where the configs define
   // which devices a cable joins, the export uses exactly those pairs.
@@ -162,13 +162,13 @@ export function expandCablePlan(devices: BOMDevice[], cabling: CableLink[], useC
   for (const p of portMap) {
     const k = `${p.a.device}|${p.b.device}`
     if (!mappedQ.has(k)) mappedQ.set(k, [])
-    mappedQ.get(k)!.push([p.a.iface, p.b.iface])
+    mappedQ.get(k)!.push([p.a, p.b])
     for (const e of [p.a, p.b]) {
       if (!reserved.has(e.device)) reserved.set(e.device, new Set())
       reserved.get(e.device)!.add(e.iface)
     }
   }
-  const takeMapped = (a: string, b: string): [string, string] | undefined => {
+  const takeMapped = (a: string, b: string): [PortEnd, PortEnd] | undefined => {
     const fwd = mappedQ.get(`${a}|${b}`)
     if (fwd?.length) return fwd.shift()
     const rev = mappedQ.get(`${b}|${a}`)
@@ -192,8 +192,8 @@ export function expandCablePlan(devices: BOMDevice[], cabling: CableLink[], useC
   const push = (a: string, b: string, link: CableLink) => {
     const m = takeMapped(a, b)
     cables.push({
-      a: { device: a, iface: m ? m[0] : nextIface(a), mapped: !!m },
-      b: { device: b, iface: m ? m[1] : nextIface(b), mapped: !!m },
+      a: { device: a, iface: m ? m[0].iface : nextIface(a), mapped: !!m && !m[0].unconfigured },
+      b: { device: b, iface: m ? m[1].iface : nextIface(b), mapped: !!m && !m[1].unconfigured },
       cableType: link.cableType, medium: link.medium, speed: link.speed, lengthM: link.lengthM,
     })
   }
