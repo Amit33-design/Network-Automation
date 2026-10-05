@@ -111,8 +111,8 @@ describe('HA peer-link cables agree with the configs (AP2)', () => {
     ['campus', 'Cisco', 'distribution'], ['campus', 'Extreme Networks', 'distribution'], ['campus', 'Juniper', 'distribution'],
     ['campus', 'Arista', 'distribution'], ['campus', 'HPE Aruba', 'distribution'], ['campus', 'Fortinet', 'distribution'],
   ]
-  /** A config builds a peer-link: an LACP/sharing bundle labelled as one, or EXOS's peer-link sharing group. */
-  const buildsPeerLink = (cfg: string) => /PEER[-_]LINK member|enable sharing \d+ grouping/.test(stripComments(cfg))
+  /** A config builds a peer-link: an LACP/sharing bundle labelled as one, EXOS's peer-link sharing group, or an OS10 VLTi (AP5). */
+  const buildsPeerLink = (cfg: string) => /PEER[-_]LINK member|enable sharing \d+ grouping \d+-\d+|^\s*discovery-interface /m.test(stripComments(cfg))
 
   it.each(CASES)('%s %s: peer-link cables are billed exactly where the %s configs build a peer-link', (uc, vendor, tier) => {
     const { devices, configs, cables, byHost } = design(vendor, uc)
@@ -123,7 +123,10 @@ describe('HA peer-link cables agree with the configs (AP2)', () => {
       expect(peerCables.length, `${vendor} builds a peer-link but none is cabled`).toBe(Math.floor(pairDevs.length / 2) * 2)
       for (const c of peerCables) {
         expect(c.a.mapped && c.b.mapped).toBe(true)
-        for (const e of [c.a, c.b]) expect(configures(configs[byHost.get(e.device)!.id], e.iface), `${e.device} ${e.iface}`).toBe(true)
+        for (const e of [c.a, c.b]) {
+          const cfg = configs[byHost.get(e.device)!.id]
+          expect(configures(cfg, e.iface) || inHostRange(cfg, e.iface), `${e.device} ${e.iface}`).toBe(true)
+        }
       }
     } else {
       expect(peerCables.length, `${vendor} ${tier} configs build no peer-link, yet ${peerCables.length} peer-link cables are billed`).toBe(0)

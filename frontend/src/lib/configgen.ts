@@ -408,6 +408,43 @@ export function haPairInfo(dev: BOMDevice, idx: number, allDevices: BOMDevice[] 
   return { pairId, isPrimary, peerHostname, domainId }
 }
 
+/**
+ * What a leaf pair shares when it multihomes servers (AP5): the pair's
+ * anycast VTEP address (the VLT / MLAG peers present ONE tunnel endpoint, so
+ * a multihomed server's MACs sit behind one next-hop), the /31 for the
+ * backup iBGP session across the peer-link, a common LACP system MAC, and an
+ * ESI for vendors that multihome with EVPN instead of a peer-link. Derived
+ * from the tier-scoped pair id, so both members compute the same values.
+ */
+export interface LeafPairPlan {
+  pairId: number
+  isPrimary: boolean
+  peerHostname: string
+  /** Shared VTEP source address of the pair. */
+  vtepVip: string
+  /** This member's / the peer's end of the backup /31 across the peer-link. */
+  localIp: string
+  peerIp: string
+  /** Common LACP system MAC presented to multihomed servers (locally administered). */
+  lacpMac: string
+  /** EVPN type-0 ESI in dotted 10-byte form (00XX.XXXX.XXXX.XXXX.XXXX). */
+  esi: string
+}
+
+export function leafPairPlan(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): LeafPairPlan {
+  const { pairId, isPrimary, peerHostname } = haPairInfo(dev, idx, allDevices)
+  const hex4 = (n: number) => n.toString(16).padStart(4, '0')
+  const mac2 = (n: number) => (n & 0xff).toString(16).padStart(2, '0')
+  return {
+    pairId, isPrimary, peerHostname,
+    vtepVip: roleIp('10.254.1.1', RoleSlot.VpcVip, pairId - 1),
+    localIp: ipAdd('10.253.1.0', (pairId - 1) * 2 + (isPrimary ? 0 : 1)),
+    peerIp:  ipAdd('10.253.1.0', (pairId - 1) * 2 + (isPrimary ? 1 : 0)),
+    lacpMac: `02:00:00:00:${mac2(pairId >> 8)}:${mac2(pairId)}`,
+    esi: `0002.0000.0000.0001.${hex4(pairId)}`,
+  }
+}
+
 // ── CLOS fabric link plan (Enterprise upgrade A5) ──────────────────────────────
 // Derives real spine↔leaf P2P links from buildDeviceList() port-math
 // (dev.uplinks / dev.ports) instead of a single static "replicate per cabling
@@ -1119,6 +1156,14 @@ export function peerLinkPorts(dev: BOMDevice): string[] {
       ? dev.uplinkStart + (dev.uplinks || 0)
       : Math.max(1, (dev.ports || (dev.vendor === 'Cisco' ? 48 : 32)) - (dev.uplinks || 0) - 1)
     return dev.vendor === 'Cisco' ? [`Ethernet1/${p1}`, `Ethernet1/${p1 + 1}`] : [aristaIf(dev, p1), aristaIf(dev, p1 + 1)]
+  }
+  if (dev.subLayer === 'leaf' && (dev.vendor === 'Dell EMC' || dev.vendor === 'Extreme Networks')) {
+    // AP5: the VLTi (Dell) / ISC (Extreme) — the two ports just below the
+    // fabric uplinks, the block `leafHostPortMax` already reserves.
+    const p1 = dev.uplinkStart
+      ? dev.uplinkStart + (dev.uplinks || 0)
+      : Math.max(1, (dev.ports || 48) - (dev.uplinks || 0) - 1)
+    return [handoffPortName(dev, p1), handoffPortName(dev, p1 + 1)]
   }
   if (dev.subLayer === 'distribution' && dev.vendor === 'Cisco') {
     // On the 100G uplink block, below the core uplink (Z4).
@@ -4523,6 +4568,15 @@ function dellOs10SwitchConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
       activate
   !`).join('\n')
   const dellHostMax = isSpine ? 0 : leafHostPortMax(dev, allDevices)
+  // AP5: a leaf pair is a VLT domain. OS10 multihomes servers with VLT, not
+  // EVPN ESI, and per Dell's VXLAN/BGP EVPN guide both VLT peers must source
+  // VXLAN from the SAME loopback address, with an iBGP session between them
+  // on a dedicated L3 VLAN. Before AP5 a Dell pair shared an ASN and nothing
+  // else, so a dual-homed server had no multihoming at all.
+  const vlt = isSpine ? null : leafPairPlan(dev, idx, allDevices)
+  const [vltIf1, vltIf2] = isSpine ? ['', ''] : peerLinkPorts(dev)
+  const dellLagMember = dellHostMax >= 2 ? `ethernet1/1/${dellHostMax}` : ''
+  const dellAccessMax = dellLagMember ? dellHostMax - 1 : dellHostMax
   const dellFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
   return `! ═══════════════════════════════════════════════════════════════
 ! Device : ${dev.hostname}
@@ -4551,7 +4605,13 @@ management route 0.0.0.0/0 <CHANGE-ME-mgmt-gw>
 interface loopback 0
   no shutdown
   ip address ${lo0ip}/32
-!
+!${vlt ? `
+! VTEP source shared by both VLT peers (AP5).
+interface loopback 1
+  description VTEP-ANYCAST (VLT pair ${vlt.pairId})
+  no shutdown
+  ip address ${vlt.vtepVip}/32
+!` : ''}
 ! ── NTP ─────────────────────────────────────────────────────────────────────
 ntp server <CHANGE-ME-ntp-primary>
 ntp server <CHANGE-ME-ntp-secondary>
@@ -4578,7 +4638,8 @@ router bgp ${asn}
   !
   address-family ipv4 unicast
     maximum-paths 64
-    network ${lo0ip}/32
+    network ${lo0ip}/32${vlt ? `
+    network ${vlt.vtepVip}/32` : ''}
   !
   address-family l2vpn evpn${isSpine ? '' : `
     advertise-all-vni`}
@@ -4589,7 +4650,17 @@ ${isSpine
   ? `  ! ── Spine: one eBGP session per leaf, derived from the BOM ──────────────
 ${dellLeafPeers || '  ! No leaves in fabric'}`
   : `  ! ── Leaf: one eBGP session per LINKED spine ─────────────────────────────
-${dellSpinePeers || '  ! No spines in fabric'}`}
+${dellSpinePeers || '  ! No spines in fabric'}
+  ! ── iBGP to the VLT peer (AP5): a member that loses every uplink still
+  !    reaches the fabric through its peer instead of black-holing ─────────
+  neighbor ${vlt!.peerIp}
+    description VLT-PEER ${vlt!.peerHostname}
+    remote-as ${asn}
+    no shutdown
+    address-family ipv4 unicast
+      activate
+      next-hop-self
+  !`}
 !
 ${isSpine ? `! The spine is NOT a VTEP — it must re-advertise EVPN routes with the
 ! originating leaf's next-hop, or the overlay black-holes at the spine. OS10
@@ -4605,7 +4676,7 @@ ${isSpine ? '' : `! ── VXLAN (leaf only — the spine is not a VTEP) ──�
 ! roles. \`interface virtual-network\` is the IRB interface; the VNI belongs
 ! under \`virtual-network N\`, and without an \`nve\` source no tunnel is built.
 nve
-  source-interface loopback 0
+  source-interface loopback 1
 !
 virtual-network 1
   vxlan-vni ${TENANT_OVERLAY.l2vni}
@@ -4622,12 +4693,39 @@ evpn
 interface vlan10
   virtual-network 1
 !
-`}${dellHostMax > 0 ? `! ── SERVER / HOST PORTS (the VNI had no member ports before Z8) ──────────────
-interface range ethernet 1/1/1-1/1/${dellHostMax}
+`}${vlt ? `! ── VLT DOMAIN (AP5 — HA pair with ${vlt.peerHostname}) ──────────────────────
+vlt-domain ${vlt.pairId}
+  backup destination <CHANGE-ME-${vlt.peerHostname.toLowerCase()}-mgmt-ip> vrf management
+  discovery-interface ${vltIf1}-${vltIf2.replace(/^ethernet/, '')}
+  peer-routing
+  primary-priority ${vlt.isPrimary ? 4096 : 8192}
+  vlt-mac ${vlt.lacpMac}
+!
+! iBGP peering VLAN across the VLTi (the VLTi carries every VLAN).
+interface vlan3999
+  description VLT-PEER-L3 to ${vlt.peerHostname}
+  mtu 9216
+  ip address ${vlt.localIp}/31
+  no shutdown
+!
+` : ''}${dellHostMax > 0 ? `! ── SERVER / HOST PORTS (the VNI had no member ports before Z8) ──────────────
+${dellAccessMax > 0 ? `interface range ethernet 1/1/1-1/1/${dellAccessMax}
   switchport access vlan 10
   mtu 9216
   no shutdown
-!` : ''}${dellFwLinks.length ? `
+!` : ''}${dellLagMember ? `
+! Dual-homed server: one port-channel spanning both VLT peers (AP5).
+interface port-channel 1
+  description DUAL-HOMED SERVER (VLT pair ${vlt!.pairId})
+  switchport access vlan 10
+  mtu 9216
+  vlt-port-channel 1
+  no shutdown
+!
+interface ${dellLagMember}
+  channel-group 1 mode active
+  no shutdown
+!` : ''}` : ''}${dellFwLinks.length ? `
 ! ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster; the inside
 !    address floats between the units, so the leaf routes on a VLAN SVI) ────
 ip vrf TENANT-A
@@ -4793,6 +4891,11 @@ function arubaFabricConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] 
         neighbor ${p.ip} next-hop-unchanged` : ''}`).join('\n')
 
   const hostMax = isSpine ? 0 : leafHostPortMax(dev, allDevices)
+  // AP5: AOS-CX multihomes a server with an EVPN Ethernet segment on a LAG
+  // (no ISL / peer-link). Both pair members advertise the SAME ESI.
+  const esiPlan = isSpine ? null : leafPairPlan(dev, idx, allDevices)
+  const esiMember = hostMax >= 2 ? hostMax : 0
+  const accessMax = esiMember ? hostMax - 1 : hostMax
   const fwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
 
   return `! ═══════════════════════════════════════════════════════════════
@@ -4827,7 +4930,7 @@ evpn
         route-target export 65000:10010
         route-target import 65000:10010
 !
-${hostMax > 0 ? `interface 1/1/1-1/1/${hostMax}
+${accessMax > 0 ? `interface 1/1/1-1/1/${accessMax}
     no shutdown
     description SERVER-ACCESS
     no routing
@@ -4835,6 +4938,23 @@ ${hostMax > 0 ? `interface 1/1/1-1/1/${hostMax}
     mtu 9198
     spanning-tree bpdu-guard
     spanning-tree port-type admin-edge
+!` : ''}${esiMember ? `
+! Dual-homed server: an EVPN Ethernet segment on a LAG (AP5). The ESI is the
+! same on both members of the pair (${dev.hostname} / ${esiPlan!.peerHostname});
+! the server must also see one LACP partner, so confirm the LAG's LACP
+! system ID is aligned on both members for this AOS-CX release.
+interface lag 1
+    no shutdown
+    description DUAL-HOMED SERVER (ES pair ${esiPlan!.pairId})
+    no routing
+    vlan access 10
+    lacp mode active
+    evpn-ethernet-segment esi type-0 ${esiPlan!.esi}
+!
+interface 1/1/${esiMember}
+    no shutdown
+    description SERVER-ACCESS (ESI-LAG member)
+    lag 1
 !` : ''}${fwLinks.length ? `
 ! ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster; the inside
 !    address floats between the units, so the leaf routes on a VLAN SVI) ────
@@ -5050,6 +5170,14 @@ function nvidiaSpectrumConfig(dev: BOMDevice, idx: number, isGpu = false, allDev
   // Host ports stop below the handoff ports so the two never collide — same
   // helper the other vendors use, so the two allocators can never drift.
   const nvHostMax = isSpine ? ports : leafHostPortMax(dev, allDevices)
+  // AP5: on an EVPN fabric a leaf pair multihomes servers with EVPN-MH — a
+  // bond whose Ethernet segment (MAC + local-id → type-3 ESI) is identical on
+  // both members, plus uplink tracking. The pure-L3 GPU fabric routes to the
+  // host and has no Ethernet segments.
+  const nvEs = !isSpine && evpnFabric ? leafPairPlan(dev, idx, allDevices) : null
+  const nvEsMember = nvEs && nvHostMax >= 2 ? nvHostMax : 0
+  const nvAccessMax = nvEsMember ? nvHostMax - 1 : nvHostMax
+  const nvEsMac = nvEs ? `44:38:39:ff:${(nvEs.pairId >> 8 & 0xff).toString(16).padStart(2, '0')}:${(nvEs.pairId & 0xff).toString(16).padStart(2, '0')}` : ''
   const nvFwBlock = nvFwLinks.length ? `#
 # ── FIREWALL HANDOFF (AN10: one transit VLAN per HA cluster; the inside
 #    address floats between the units, so the leaf routes on a VLAN SVI) ────
@@ -5136,8 +5264,18 @@ nv set interface swp1-${ports} link mtu 9216
 nv set interface swp1-${ports} link state up
 ${isSpine ? '' : evpnFabric ? `#
 # ── SERVER PORTS — access ports in the tenant VLAN (AN11) ────────────────────
-nv set interface swp1-${nvHostMax} bridge domain br_default access ${t.vlan}
-#` : `#
+${nvAccessMax > 0 ? `nv set interface swp1-${nvAccessMax} bridge domain br_default access ${t.vlan}\n` : ''}${nvEsMember ? `#
+# ── EVPN MULTIHOMING (AP5): dual-homed server bond. The segment MAC and
+#    local-id are the same on both members of the pair, so both advertise one
+#    Ethernet segment (NVIDIA's reserved 44:38:39:ff:xx:xx range). ──────────
+nv set evpn multihoming enable on
+nv set interface bond1 bond member swp${nvEsMember}
+nv set interface bond1 description DUAL-HOMED-SERVER-ES${nvEs!.pairId}
+nv set interface bond1 bridge domain br_default access ${t.vlan}
+nv set interface bond1 evpn multihoming segment local-id 1
+nv set interface bond1 evpn multihoming segment mac-address ${nvEsMac}
+${peerPorts.map(p => `nv set interface swp${p} evpn multihoming uplink on`).join('\n')}
+` : ''}#` : `#
 # ── GPU SERVER PORTS (Z1 — swp1-${nvHostMax} are cabled to compute nodes but had no
 # L3 config at all: 512 GPUs had no network. Rail-optimized L3-to-the-host:
 # each server port is a routed /31 in the default VRF, RoCE DSCP trust is
@@ -5276,6 +5414,12 @@ enable bgp neighbor ${ip} capability l2vpn-evpn`
 configure bgp neighbor ${l.peerIp} bfd on`,
   ).join('\n')
   const exosFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
+  // AP5: a leaf pair is an MLAG pair. Extreme's EVPN designs multihome with
+  // MLAG: both peers share ONE local-endpoint (LTEP) address and a common LACP
+  // MAC, the ISC carries the tenant VLAN, and iBGP runs between the peers.
+  const mlag = isSpine ? null : leafPairPlan(dev, idx, allDevices)
+  const [isc1, isc2] = isSpine ? ['', ''] : peerLinkPorts(dev)
+  const exosLagPort = exosHostMax >= 2 ? exosHostMax : 0
   return `# ═══════════════════════════════════════════════════════════════
 # Device : ${dev.hostname}
 # Role   : ${dev.subLayer}
@@ -5300,7 +5444,8 @@ enable bgp
 # Underlay (AM6): one IPv4 session per fabric /31 carries the loopbacks. It was
 # missing — only loopback-to-loopback sessions existed, with no IGP and nothing
 # advertising a loopback, so no EXOS fabric session could ever come up.
-configure bgp add network ${lo0ip}/32
+configure bgp add network ${lo0ip}/32${mlag ? `
+configure bgp add network ${mlag.vtepVip}/32` : ''}
 ${exosUnderlayPeers || '# No fabric links in this design'}
 ${isSpine
   ? `# Spine: one eBGP session per leaf, derived from the BOM. next-hop-unchanged is
@@ -5309,7 +5454,11 @@ ${isSpine
 # loopback, which EXOS refuses for eBGP without it.
 ${exosLeafPeers || '# No leaves in fabric'}`
   : `# Leaf: one eBGP session per LINKED spine
-${exosSpinePeers || '# No spines in fabric'}`}
+${exosSpinePeers || '# No spines in fabric'}
+# iBGP to the MLAG peer across the ISC (AP5): a member that loses every uplink
+# still reaches the fabric through its peer.
+create bgp neighbor ${mlag!.peerIp} remote-AS-number ${asn}
+configure bgp neighbor ${mlag!.peerIp} address-family ipv4-unicast next-hop-self`}
 configure bgp neighbor all timer keep-alive 3 hold-time 9
 enable bgp neighbor all
 #${exosFwLinks.length ? `
@@ -5330,12 +5479,32 @@ ${isSpine ? `#
 # The spine is not a VTEP (AM3: it used to create the VNI too).` : `#
 # VXLAN / EVPN — the local endpoint is the tunnel source; without it (AM3)
 # the leaf had a VNI and nowhere to originate a tunnel from.
-configure virtual-network local-endpoint ipaddress ${lo0ip} vr VR-Default
+# AP5: the MLAG pair presents ONE local endpoint — its shared LTEP address.
+create vlan LTEP
+enable loopback-mode vlan LTEP
+configure vlan LTEP ipaddress ${mlag!.vtepVip} 255.255.255.255
+enable ipforwarding vlan LTEP
+configure virtual-network local-endpoint ipaddress ${mlag!.vtepVip} vr VR-Default
 # AN6: the tenant VLAN and its server ports. This leaf used to attach a VLAN
 # named Data that only access switches create, so the VNI had no member VLAN
 # and no host could attach to it.
 create vlan ${TENANT_OVERLAY.vlanName} tag ${TENANT_OVERLAY.vlan}
-${exosHostMax > 0 ? `configure vlan ${TENANT_OVERLAY.vlanName} add ports 1-${exosHostMax} untagged\n` : ''}create virtual-network "VNI-${TENANT_OVERLAY.l2vni}" vxlan vni ${TENANT_OVERLAY.l2vni}
+${exosHostMax > 0 ? `configure vlan ${TENANT_OVERLAY.vlanName} add ports 1-${exosHostMax} untagged\n` : ''}#
+# ── MLAG (AP5 — HA pair with ${mlag!.peerHostname}) ────────────────────────────
+enable sharing ${isc1} grouping ${isc1}-${isc2} algorithm address-based L3 lacp
+create vlan ISC tag 4094
+configure vlan ISC add ports ${isc1} tagged
+configure vlan ISC ipaddress ${mlag!.localIp} 255.255.255.254
+enable ipforwarding vlan ISC
+configure vlan ${TENANT_OVERLAY.vlanName} add ports ${isc1} tagged
+create mlag peer "${mlag!.peerHostname}"
+configure mlag peer "${mlag!.peerHostname}" ipaddress ${mlag!.peerIp} vr VR-Default
+configure mlag peer "${mlag!.peerHostname}" lacp-mac ${mlag!.lacpMac}
+${exosLagPort ? `# Dual-homed server: one LACP LAG spanning both MLAG peers.
+enable sharing ${exosLagPort} grouping ${exosLagPort} lacp
+enable mlag port ${exosLagPort} peer "${mlag!.peerHostname}" id 1
+` : ''}#
+create virtual-network "VNI-${TENANT_OVERLAY.l2vni}" vxlan vni ${TENANT_OVERLAY.l2vni}
 configure virtual-network "VNI-${TENANT_OVERLAY.l2vni}" add vlan ${TENANT_OVERLAY.vlanName}
 # EVPN instance with an EXPLICIT route-target (AM8). EXOS auto-derives RTs from
 # the local AS (RFC 8365), and each leaf pair has its own AS, so auto RTs would
@@ -5557,15 +5726,47 @@ function nokiaSrLinuxConfig(dev: BOMDevice, idx: number, isMultisite = false, pr
     .map(l => `        interface ${fabricPort(dev, isSpine ? 'spine' : 'leaf', l.ifIndex).name}.0 { }`).join('\n')
   // Server-facing ports — the mac-vrf and its VNI had no member ports (Z1 class).
   const nokiaHostMax = isSpine ? 0 : leafHostPortMax(dev, allDevices)
-  const nokiaHostIfaces = nokiaHostMax > 0 ? `    # ── SERVER / HOST PORTS (tenant VLAN 10) ────────────────────────────────
-    interface ethernet-1/{1..${nokiaHostMax}} {
+  // AP5: SR Linux multihomes a server with an EVPN Ethernet segment on a LACP
+  // LAG (all-active, RFC 8365). Both pair members carry the SAME ESI and the
+  // SAME LACP system-id, or the server sees two partners and splits the bundle.
+  const nokiaEs = isSpine ? null : leafPairPlan(dev, idx, allDevices)
+  const nokiaEsMember = nokiaHostMax >= 2 ? nokiaHostMax : 0
+  const nokiaAccessMax = nokiaEsMember ? nokiaHostMax - 1 : nokiaHostMax
+  const nokiaEsi = nokiaEs ? nokiaEs.esi.replace(/\./g, '').match(/../g)!.join(':') : ''
+  const nokiaHostIfaces = nokiaHostMax > 0 ? `    # ── SERVER / HOST PORTS (tenant VLAN 10) ────────────────────────────────${nokiaAccessMax > 0 ? `
+    interface ethernet-1/{1..${nokiaAccessMax}} {
         description "SERVER-ACCESS"
         admin-state enable
         vlan-tagging false
         subinterface 0 {
             type bridged
         }
-    }` : ''
+    }` : ''}${nokiaEsMember ? `
+    # Dual-homed server: LACP LAG in an EVPN Ethernet segment (AP5).
+    interface ethernet-1/${nokiaEsMember} {
+        description "SERVER-ACCESS (ES-LAG member)"
+        admin-state enable
+        ethernet {
+            aggregate-id lag1
+        }
+    }
+    interface lag1 {
+        description "DUAL-HOMED SERVER (ES pair ${nokiaEs!.pairId})"
+        admin-state enable
+        vlan-tagging false
+        subinterface 0 {
+            type bridged
+        }
+        lag {
+            lag-type lacp
+            lacp {
+                interval FAST
+                lacp-mode ACTIVE
+                system-id-mac ${nokiaEs!.lacpMac.toUpperCase()}
+                system-priority 100
+            }
+        }
+    }` : ''}` : ''
   // Border-leaf firewall handoff (Z3b) — routed /31 inside the tenant ip-vrf.
   const nokiaFwLinks = isSpine ? [] : fwHandoffPlan(dev, allDevices, 'border-leaf')
   const nokiaFwIfaces = nokiaFwLinks.length ? `
@@ -5642,7 +5843,8 @@ ${nokiaSpinePeers || '                # No spines in fabric'}`
   const evpnBlock = isSpine ? '' : `
     network-instance vxlan-default {
         type mac-vrf
-${nokiaHostMax > 0 ? `        interface ethernet-1/{1..${nokiaHostMax}}.0 { }` : ''}
+${nokiaAccessMax > 0 ? `        interface ethernet-1/{1..${nokiaAccessMax}}.0 { }` : ''}${nokiaEsMember ? `
+        interface lag1.0 { }` : ''}
         protocols {
             bgp-evpn {
                 bgp-instance 1 {
@@ -5717,7 +5919,28 @@ ${nokiaHostMax > 0 ? `        interface ethernet-1/{1..${nokiaHostMax}}.0 { }` :
         gnmi-server {
             admin-state enable
             network-instance mgmt
-        }
+        }${nokiaEsMember ? `
+        network-instance {
+            protocols {
+                evpn {
+                    ethernet-segments {
+                        bgp-instance 1 {
+                            ethernet-segment ES-${nokiaEs!.pairId} {
+                                admin-state enable
+                                esi ${nokiaEsi}
+                                multi-homing-mode all-active
+                                interface lag1 {
+                                }
+                            }
+                        }
+                    }
+                }
+                bgp-vpn {
+                    bgp-instance 1 {
+                    }
+                }
+            }
+        }` : ''}
     }
 
     interface mgmt0 {
