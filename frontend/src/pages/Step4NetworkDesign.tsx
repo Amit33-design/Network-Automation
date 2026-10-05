@@ -1252,7 +1252,7 @@ export function Step4NetworkDesign() {
       {/* ── Rack & Cabling tab (G-A14) ──────────────────────────────── */}
       {activeTab === 'rack' && (
         <Card>
-          <RackElevation devices={generatedDevices} cabling={cablingData} siteCode={siteCode} />
+          <RackElevation devices={generatedDevices} cabling={cablingData} siteCode={siteCode} useCase={useCase} />
         </Card>
       )}
 
