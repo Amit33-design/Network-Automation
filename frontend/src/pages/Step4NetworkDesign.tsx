@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { HLDTopologyDiagram } from '@/components/HLDTopologyDiagram'
 import { LLDTopologyDiagram } from '@/components/LLDTopologyDiagram'
-import { RackElevation, computeRackLayout } from '@/components/RackElevation'
+import { RackElevation, computeRackLayout, rackRedundancy } from '@/components/RackElevation'
 import { formatUSD, cn } from '@/lib/utils'
 import { haPairInfo, DCI_RT_ASN } from '@/lib/configgen'
 import { genIPBlocks, genIPRows, genVLANs, genVNIs, buildNetBoxIpamExport } from '@/lib/ipam'
@@ -692,7 +692,7 @@ function buildSummaryText(
 
 export function Step4NetworkDesign() {
   const {
-    useCase, scale, siteCode, numSites, linkDistances,
+    useCase, scale, siteCode, numSites, linkDistances, redundancy,
     underlayProtocol, overlayProtocols, protoFeatures, redundancyModel,
     totalEndpoints, bandwidthPerServer, oversubscription,
     trafficPattern, firewallModel, compliance, vendorPrefs, appTypes,
@@ -969,14 +969,14 @@ export function Step4NetworkDesign() {
                 <p className="text-xs text-gray-500 mt-0.5">
                   Bulk-import CSVs for the physical layer — devices (with rack positions), interfaces, cables, and racks
                   {cablingData.length > 0 && (() => {
-                    const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices), useCase as UseCase)
+                    const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices, { redundancy: rackRedundancy(redundancy, redundancyModel) }), useCase as UseCase)
                     return ` (${x.cableCount} cables, ${x.rackCount ?? 0} racks)`
                   })()}.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => {
-                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices), useCase as UseCase)
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices, { redundancy: rackRedundancy(redundancy, redundancyModel) }), useCase as UseCase)
                   downloadCsv(x.devicesCsv, `netbox-devices-${useCase || 'network'}`)
                 }}>↓ Devices CSV</Button>
                 <Button variant="secondary" onClick={() => {
@@ -988,7 +988,7 @@ export function Step4NetworkDesign() {
                   downloadCsv(x.cablesCsv, `netbox-cables-${useCase || 'network'}`)
                 }}>↓ Cables CSV</Button>
                 <Button variant="secondary" onClick={() => {
-                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices), useCase as UseCase)
+                  const x = buildNetBoxDcimExport(generatedDevices, cablingData, siteCode, computeRackLayout(generatedDevices, { redundancy: rackRedundancy(redundancy, redundancyModel) }), useCase as UseCase)
                   if (x.racksCsv) downloadCsv(x.racksCsv, `netbox-racks-${useCase || 'network'}`)
                 }}>↓ Racks CSV</Button>
               </div>
@@ -1252,7 +1252,7 @@ export function Step4NetworkDesign() {
       {/* ── Rack & Cabling tab (G-A14) ──────────────────────────────── */}
       {activeTab === 'rack' && (
         <Card>
-          <RackElevation devices={generatedDevices} cabling={cablingData} siteCode={siteCode} useCase={useCase} />
+          <RackElevation devices={generatedDevices} cabling={cablingData} siteCode={siteCode} useCase={useCase} redundancy={rackRedundancy(redundancy, redundancyModel)} />
         </Card>
       )}
 
