@@ -256,7 +256,7 @@ export function Step2Design() {
   const { useCase, scale, siteCode, linkDistances, devices, setDevices,
           totalEndpoints, bandwidthPerServer, oversubscription,
           underlayProtocol, compliance, vendorPrefs, overlayProtocols,
-          trafficPattern, firewallModel, budgetTier,
+          trafficPattern, firewallModel, budgetTier, appTypes, protoFeatures,
           nextStep, prevStep } = useAppStore()
   const [activeTab, setActiveTab] = useState<Tab>('devices')
 
@@ -639,6 +639,8 @@ export function Step2Design() {
             useCase={useCase}
             underlayProtocol={underlayProtocol}
             siteCode={siteCode}
+            appTypes={appTypes}
+            protoFeatures={protoFeatures}
           />
         </div>
       )}

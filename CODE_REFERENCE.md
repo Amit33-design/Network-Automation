@@ -1896,71 +1896,20 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
 ### Components
 
 #### `frontend/src/components/HLDTopologyDiagram.tsx`
-**Purpose:** Renders a pure-SVG, use-case-aware HLD topology diagram with security-zone bands, animated packet-flow scenarios, ambient link animation, and an interactive device-inspect panel.
+**Purpose:** Pure-SVG HLD drawn **from the design** (AQ1, 2026-10-05): every node is a BOM device, addresses and ports come from the config allocators, link speeds from the cabling, and protocol captions from the generated configs. Security-zone bands, tier labels, a fabric region, border-leaf callout, traffic axes, packet-flow scenarios, a device-inspect panel and a health overlay.
 
 **Key exports / structure:**
-- Single export: `export function HLDTopologyDiagram({ devices, useCase, underlayProtocol, overlayProtocols, siteCode })`
-- `Props` (file-local): `{ devices: BOMDevice[]; useCase?: string (default 'dc'); underlayProtocol?: string (default 'isis'); overlayProtocols?: string[] (default ['vxlan_evpn']); siteCode?: string (default '') }`
-- Internal types: `HLDNode` (id, label, model, layer, vendor, loopback, mgmtIp, asn?, role, x/y/w/h, isCloud?, haRole?: 'active'|'standby'|'none', features[], color/border/textColor, plus D1 fields `mlagPairId?: number`, `mlagPeerLabel?: string`, `fhrpVip?: string`), `HLDLink` (id, from, to, speed, protocol, fromPort, toPort, linkSubnet, isHaSync?, isOob?), `SecurityZone` (id, label, sublabel, yStart/yEnd, fill, stroke, icon), `PacketFlow` (id, icon, label, desc, nodeSeq: string[], color, animDur), `Topo` (nodes, links, zones, flows, title, subtitle, svgH)
-- Layout constants: `SVG_W=1280`, `LEFT_W=148`, `RIGHT_PAD=16`, `CONTENT_W = SVG_W - LEFT_W - RIGHT_PAD`, `NW=136`, `NH=66`; `svgH` per-topology (760-920) drives `viewBox`
-- `LAYER_STYLE` maps layer names (internet, wan-edge, corp-fw, edge-fw, spine, core, distribution, leaf, access, host, gpu, storage, oob, cloud-gw) → `{ color, border, textColor }`
-- Helpers: `style(layer)`, `xCentered(count, gap)`, `mkLink(...)`, `mkNode(...)`, `linkPath(n1, n2, isHa?)` (bezier paths; HA-sync = horizontal dashed)
-- **`pairInfo(i, count): { pairId, isPrimary, peerIdx } | null`** *(Enterprise
-  Upgrade D1, 2026-06-11)* — mirrors `configgen.ts`'s `haPairInfo()`
-  `pairId`/`isPrimary` formula (`Math.floor(i/2)+1`, `i%2===0`) for the
-  synthetic, sequentially-numbered HLD node arrays (which don't fit
-  `haPairInfo`'s `01`/`02`-hostname-suffix regex). Returns `null` when
-  `peerIdx` falls outside `[0, count)` (odd one out). Callers resolve
-  `peerIdx` to a peer label by indexing into the same node array *after* it's
-  fully built (`array[pair.peerIdx].label`) — label formats vary by layer
-  (3-digit `LEAF-001`/`ACC-SW-001` vs 2-digit `DIST-SW-01`/`GPU-LEAF-01`), so
-  no string formula is assumed.
-- **Per-use-case topology builders** (each returns `Topo`): `buildDCTopology(devices, underlay, overlay, sc, useCase='dc')` (used for `dc`, `multisite`, `multicloud`, `aviatrix`), `buildCampusTopology(devices, underlay, sc)`, `buildGPUTopology(devices, sc)`, `buildWANTopology(devices, underlay, sc)` — dispatched via `buildTopology(devices, useCase, underlay, overlay, sc)`
-- **Vendor-awareness (E3 + D3):** spine/leaf/dist/access (E3) **and** firewall / wan-edge / campus-core (D3, 2026-06-29) node vendor+model are derived from the BOM `devices` (e.g. `devices.filter(d => d.subLayer === 'firewall')[0]?.model ?? 'PA-5450'`). Hardcoded Cisco/Palo-Alto SKUs are fallback only (when the BOM lacks that role). So selecting Fortinet/Juniper/etc. shows the correct firewall + routers, consistent with the LLD (D2). Tests in `test/HLDTopologyDiagram.test.tsx`.
-- **D1 computed-topology annotations** (2026-06-11), all derived in-builder via `pairInfo()`:
-  - DC/multisite/multicloud/aviatrix leaves (`buildDCTopology`) and GPU ToR
-    leaves (`buildGPUTopology`): adjacent leaf pairs get `mlagPairId` +
-    `mlagPeerLabel` + a `vPC/MLAG Pair #N` feature chip; a dashed
-    `vPC/MLAG Peer-Link` (`isHaSync: true`) is added between each pair's two
-    nodes. Multisite leaves additionally get an `EVPN DCI Type-5 · RT
-    ${DCI_RT_ASN}:10010 (L2) / ${DCI_RT_ASN}:50000 (L3)` feature chip.
-  - Campus distribution switches (`buildCampusTopology`): adjacent dist pairs
-    get `mlagPairId` + `mlagPeerLabel` + a `vPC/MLAG Pair #N` feature chip, a
-    dashed `vPC/MLAG Peer-Link`, and an `fhrpVip` (`10.10.${pairId-1}.1`,
-    HSRP VIP for Vlan10/DATA).
-  - Campus access switches: each gets a `MEC uplink: Port-channel${i+1} →
-    DIST-SW-0${di+1} (vPC pair #${distPairId})` feature chip, computed from
-    the access switch's index within its `perDist`-sized slice of the
-    distribution array.
-- Each builder defines fixed `Y` per-layer y-centers, `zones[]` (colored bands w/ left-column labels/icons), `nodes` via `xCentered()`, `links` (full-mesh spine↔leaf, HA-sync pairs, OOB)
-- **Packet-flow scenarios:** `Topo.flows: PacketFlow[]` — DC has 6 (N-S inbound/egress, E-W VXLAN, HA failover, GPU RDMA, OOB mgmt); Campus has 6 (N-S inbound/egress, intra-campus, voice, HA failover, 802.1X); GPU has 4 (GPU↔GPU RDMA, NVMe-oF read, AllReduce, OOB mgmt); WAN has 4 (HQ→branch, local breakout, PE failover, branch-to-branch)
-- **Flow selection/highlighting:** `activeFlow` state (defaults to `topo.flows[0]?.id`), pill buttons in "Packet Flow" bar; `flowLinkIds`/`flowNodeIds` (Sets from `nodeSeq`, bidirectional `from--to`/`to--from`); `flowPath` chains `linkPath()` segments into one combined SVG path for `<animateMotion>`
-- **Device-inspect panel:** clicking a node `<g>` (or background to deselect) sets `selectedNode`; panel shows label, model, HA badge, layer, vendor, loopback, mgmt IP, ASN, feature/protocol chips, "Connected Links" list (peer/ports/speed/protocol/subnet from `topo.links`)
-  - **D1 (2026-06-11):** when `selectedNodeObj.mlagPairId !== undefined`, a
-    "Fabric Pairing" section shows `vPC/MLAG Pair #${mlagPairId}` plus `—
-    peer: ${mlagPeerLabel}` if set; when `selectedNodeObj.fhrpVip` is set, an
-    "FHRP Gateway" section shows `HSRP VIP (Vlan10/DATA): ${fhrpVip}` (the VIP
-    is intentionally *not* duplicated in the feature-chip list, to avoid
-    `getByText` ambiguity / visual repetition).
-- **"Primary Path Only" toggle:** pill button (visible only when `activeFlow` set) flips `primaryPathOnly`; when true, both `topo.links` and `topo.nodes` filtered to only `flowLinkIds`/`flowNodeIds` (non-flow elements fully hidden, not dimmed)
-- **Cloud overlays:** `isCloud` flag on `HLDNode` renders `<ellipse>` + 🌐 emoji (used for `internet`/`isp` nodes); multicloud/multisite/aviatrix reuse `buildDCTopology` — no dedicated cloud builder
-- **Animation:** (1) ambient background packets on every non-OOB, non-active-flow link via per-link `<circle>` + `<animateMotion>` riding `<mpath>` (staggered dur/begin by link index); (2) active-flow packets — glowing trail (`<path opacity=0.25>`) + 3 staggered `<circle>` packets along `#flow-path` at offsets 0%/40%/70% of `animDur`
-- **Health overlay (Enterprise Upgrade C2):** additional exports `HealthStatus` (`'healthy'|'degraded'|'down'|'unknown'`), `NodeHealth` (`{ status, cpu, mem, uptimeSec, bgpSessionsUp, ifaceErrors, pfcDrops, alerts: string[] }`), `HEALTH_COLOR`/`HEALTH_LABEL` (status→color/label maps, colors match `MonitoringResult` statuses), and `simulateNodeHealth(node: HLDNode): NodeHealth` (deterministic per-node telemetry snapshot seeded from `node.id`, with per-layer CPU baselines via `HEALTH_BASELINE_CPU`; thresholds mirror `genPrometheusAlertRules` — cpu>85% or PFC>200 → `down`, cpu>65%/iface-errors>8/PFC>100 → `degraded`, else `healthy`; PFC drops only for `gpu` layer, BGP session counts only for routing layers `spine|core|leaf|distribution|wan-edge`)
-  - "🩺 Health Overlay: On/Off" pill toggle (`showHealth` state, top-right of the Packet Flow bar, always visible)
-  - When on: every non-cloud node renders a small status-color `<circle r=5 stroke="#080E1A">` badge at its top-left corner; `down` status additionally pulses via `<animate>` on a surrounding ring
-  - Device-inspect panel gains a "Live Health" drill-down section (status badge + CPU/Mem/Uptime/BGP-sessions/iface-errors/PFC-drops grid + alert list) when a node is selected and the overlay is on
-  - Self-contained simulation — no new props/hooks/backend calls; works identically in Step 2/4 design views without `useBackendMode()`/`useMonitoring()` wiring
+- `HLDTopologyDiagram({ devices, useCase, underlayProtocol?, overlayProtocols?, siteCode?, appTypes?, protoFeatures? })` — generates the configs it describes with `generateAllConfigs(devices, useCase, [], appTypes, protoFeatures)` (so inputs that change the configs change the diagram, AQ4) and renders `buildTopology(...)`. Empty `devices` → `EmptyState`, never an invented topology. `underlayProtocol`/`overlayProtocols` are only a labelled "(selected)" fallback when no device has a config.
+- `buildTopology(devices, useCase, underlay, overlay, sc, configs?)` → `buildDesignTopology(devices, useCase, sc, configs?, selection?)`: one row per tier the BOM contains (`HLD_ROWS`, capped per tier; leaves show the first pairs plus the border pair; the subtitle says "showing N" when truncated); nodes carry the loopback from `fabricInterfaceView`, the ASN from the device's own config (`configAsn`), feature chips from its config (`nodeFeatures`: IS-IS/OSPF/BGP/VXLAN/EVPN/BFD/jumbo/PFC/ECN, the pairing construct, FHRP, IPv6 dual-stack, storage class, 802.1X, firewall HA, border-leaf handoff), `pairTech` (vPC/MLAG/VLT/EVPN ESI) and `fhrpLabel`/`fhrpVip`. Links: `physicalPortMap` grouped per device pair (real interface names, the /31 or handoff address, `N×speed` from `buildCabling`), the firewall HA control link, `LAYER_ADJACENCY` fallbacks for tier pairs with no configured port, and the cloud transit overlay. Zones per tier group (cloud / edge / fabric / compute / RAN), a fabric region captioned by `fabricCaption`, flows built only through nodes that exist (north–south follows firewall → border leaf → spine → leaf).
+- `fabricCaption` / `transportCaption` — protocol summary from the config facts (`extractFacts`): e.g. "IS-IS underlay · VXLAN/EVPN overlay", "eBGP unnumbered (RFC 7938) · pure L3 fabric · RoCEv2 lossless (PFC · ECN)", "OSPF · VRRP first hop", "SD-WAN overlay (OMP · IPsec)", "IS-IS + Segment Routing · PTP timing".
+- Types: `HLDNode` (… `pairTech?`, `fhrpLabel?`, `mlagPairId?`, `mlagPeerLabel?`, `fhrpVip?`), `HLDLink`, `SecurityZone`, `PacketFlow`, `TierLabel`, `TopoRegion`, `NodeGroup`, `TrafficAxis`, `Topo`.
+- Health overlay (C2): `HealthStatus`, `NodeHealth`, `HEALTH_COLOR`/`HEALTH_LABEL`, `simulateNodeHealth(node)` (delegates to `monitoring.evaluateDevice`).
+- Layout: `SVG_W=1280`, `LEFT_W=148`, `NW=136`, `NH=66`, rows 124px apart from y=104; tier labels right-aligned to the edge so long names are not clipped.
 
 **Notes:**
-- Used by `Step2Design.tsx` and `Step4NetworkDesign.tsx` (both pass `devices, useCase, underlayProtocol, overlayProtocols, siteCode`).
-- Responsive SVG: no fixed `width`/`height`, `style={{ width:'100%', height:'auto', display:'block' }}`, `viewBox="0 0 SVG_W svgH"` (per CLAUDE.md §16).
-- Per CLAUDE.md G-A2/D1: D1 complete (2026-06-11) — vPC/MLAG pairs, FHRP VIPs,
-  and multisite DCI route-targets are now reflected as node annotations,
-  peer-links, and inspect-panel sections (see "D1 computed-topology
-  annotations" above). Node/link *positions* remain template-driven from
-  device counts (port-math-driven layout is a possible future refinement).
+- Used by `Step2Design.tsx` and `Step4NetworkDesign.tsx` (both pass the design inputs).
+- Tests: `test/HLDTopologyDiagram.test.tsx` drive real BOMs — BOM-only nodes, addresses in the device's own config, only BOM tiers, cabling speeds, configured ports, firewall → border leaf only, flows through real nodes, caption-per-vendor, inputs reflected.
 - No external graph libraries (pure SVG/JSX) — per Implementation Rule 9.
-- `multisite`, `multicloud`, `aviatrix` all fall through to `buildDCTopology` (no dedicated builders yet).
 
 ---
 
