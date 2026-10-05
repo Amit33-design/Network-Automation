@@ -361,6 +361,8 @@ class DesignState(BaseModel):
     compliance: list[str] = []
     vlans: list[dict[str, Any]] = []
     appFlows: list[dict[str, Any]] = []
+    # AQ6 — workload types; "hpc" (HPC / AI) makes any fabric lossless.
+    appTypes: list[str] = []
     include_bgp_policy: bool = True
     include_acl:        bool = True
     include_dot1x:      bool = True

@@ -54,7 +54,7 @@ const APP_TYPES: Array<{ id: AppType; label: string }> = [
   { id: 'voice',    label: 'Voice' },
   { id: 'video',    label: 'Video' },
   { id: 'storage',  label: 'Storage' },
-  { id: 'hpc',      label: 'HPC' },
+  { id: 'hpc',      label: 'HPC / AI (lossless RoCEv2)' },
   { id: 'internet', label: 'Internet' },
 ]
 

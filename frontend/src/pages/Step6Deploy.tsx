@@ -2587,6 +2587,7 @@ export function Step6Deploy() {
       configs: storeConfigs,
       devices: storeDevices,
       useCase: storeUseCase,
+      appTypes: useAppStore.getState().appTypes,
     })
     setBatfishResult(result)
     setBatfishRunning(false)
@@ -3300,7 +3301,7 @@ export function Step6Deploy() {
                           oversubscription: st.oversubscription,
                         }),
                         validation: validateConfigs({
-                          configs: storeConfigs, devices: storeDevices, useCase: st.useCase,
+                          configs: storeConfigs, devices: storeDevices, useCase: st.useCase, appTypes: st.appTypes,
                         }),
                       })
                       downloadBlob(runbookFilename(st.siteCode), md)

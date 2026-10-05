@@ -8007,14 +8007,24 @@ function oranConfig(dev: BOMDevice, idx: number, allDevices: BOMDevice[] = []): 
 
 const NON_NETWORK_LAYERS = new Set(['gpu-compute', 'cloud-gw', 'cloud-transit'])
 
+/**
+ * Whether a design's fabric carries RDMA and must be lossless (AQ6): the GPU
+ * use case always does, and any other design does when the HPC / AI workload
+ * type is selected. The same answer for every vendor — it used to be on for
+ * every Dell or NVIDIA DC design whether or not anything asked for it.
+ */
+export function needsLosslessFabric(useCase: UseCase | '', appTypes: readonly AppType[] = []): boolean {
+  return useCase === 'gpu' || appTypes.includes('hpc')
+}
+
 export function generateConfig(dev: BOMDevice, idx: number, useCase: UseCase | '' = '', appTypes: AppType[] = [], allDevices: BOMDevice[] = [], protoFeatures: string[] = []): string {
   if (NON_NETWORK_LAYERS.has(dev.subLayer)) return ''
-  const isGpu = useCase === 'gpu'
   const v = dev.vendor
   const l = dev.subLayer
-  // Dell EMC and NVIDIA DC fabrics are lossless-first; always enable full RoCEv2/DCB config.
-  // Other vendors (Cisco/Arista) only get the lossless path when use case is explicitly gpu.
-  const needsRoce = isGpu || ((v === 'Dell EMC' || v === 'NVIDIA') && useCase === 'dc')
+  // Lossless RoCEv2 QoS follows the inputs, never the vendor (AQ6). PFC on a
+  // fabric with no RDMA traffic risks pause storms and head-of-line blocking,
+  // so a general-purpose DC gets it only when the design asks for it.
+  const needsRoce = needsLosslessFabric(useCase, appTypes)
 
   if (v === 'Palo Alto' && l === 'firewall')                        return paloAltoFirewallConfig(dev, idx, useCase, allDevices)
   if (isOranSubLayer(l))                                             return oranConfig(dev, idx, allDevices)
