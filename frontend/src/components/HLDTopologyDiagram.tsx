@@ -1,10 +1,16 @@
 import { useState, useMemo } from 'react'
-import type { BOMDevice, DeviceMetrics } from '@/types'
+import type { AppType, BOMDevice, DeviceMetrics, UseCase } from '@/types'
 import { formatUptime } from '@/lib/utils'
-import { DCI_RT_ASN } from '@/lib/configgen'
+import {
+  generateAllConfigs, fabricInterfaceView, physicalPortMap, borderLeaves, peerLinkPorts,
+  CAMPUS_VLANS, ORAN_FRONTHAUL_VLAN, ORAN_PTP_DOMAIN,
+} from '@/lib/configgen'
+import { buildCabling, LAYER_ADJACENCY } from '@/lib/bom'
+import { extractFacts, factPlatform, type DeviceFacts } from '@/lib/config-facts'
 import { evaluateDevice, BGP_LAYERS } from '@/lib/monitoring'
 import { deviceIcon, IconGlobe } from '@/components/icons'
 import { CloseButton } from '@/components/ui/CloseButton'
+import { EmptyState } from '@/components/ui/EmptyState'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,8 +34,12 @@ export interface HLDNode {
   mlagPairId?: number
   /** Label of this node's vPC/MLAG peer, if any (D1) */
   mlagPeerLabel?: string
-  /** FHRP (HSRP) virtual-gateway IP for this node's pair, if any (D1) */
+  /** FHRP virtual-gateway IP for this node's pair, if any (D1) */
   fhrpVip?: string
+  /** What the FHRP is, as the config configures it, e.g. "VRRP VIP (Vlan99 mgmt)" (AQ1). */
+  fhrpLabel?: string
+  /** The pairing construct the config uses: vPC, MLAG, VLT, EVPN ESI, Peer-link (AQ1). */
+  pairTech?: string
   features: string[]
   color: string
   border: string
@@ -319,7 +329,7 @@ function mkNode(
   x: number, y: number,
   opts: {
     isCloud?: boolean; haRole?: 'active' | 'standby' | 'none'; asn?: string; role?: string; features?: string[]
-    mlagPairId?: number; mlagPeerLabel?: string; fhrpVip?: string
+    mlagPairId?: number; mlagPeerLabel?: string; fhrpVip?: string; fhrpLabel?: string; pairTech?: string
   } = {},
 ): HLDNode {
   const s = style(layer)
@@ -332,864 +342,360 @@ function mkNode(
     mlagPairId: opts.mlagPairId,
     mlagPeerLabel: opts.mlagPeerLabel,
     fhrpVip: opts.fhrpVip,
+    fhrpLabel: opts.fhrpLabel,
+    pairTech: opts.pairTech,
     features: opts.features ?? [],
     ...s,
   }
 }
 
-// ─── vPC / MLAG pairing helper (Enterprise Upgrade D1) ─────────────────────────
-// Mirrors configgen.ts haPairInfo()'s pairId/isPrimary formula
-// (Math.floor(idx/2)+1, idx%2===0) for the synthetic, sequentially-numbered HLD
-// node lists, which don't fit haPairInfo's 01/02-suffix hostname regex.
-// `count` is the total number of nodes in the layer — a node has no peer (and
-// is excluded from pairing) when its computed peer index would fall outside
-// [0, count). Callers resolve `peerIdx` to a label by indexing into the same
-// node array (label formats vary by layer, so no string formula is assumed).
-function pairInfo(i: number, count: number): { pairId: number; isPrimary: boolean; peerIdx: number } | null {
-  const pairId = Math.floor(i / 2) + 1
-  const isPrimary = i % 2 === 0
-  const peerIdx = isPrimary ? i + 1 : i - 1
-  if (peerIdx < 0 || peerIdx >= count) return null
-  return { pairId, isPrimary, peerIdx }
+// ─── Design-driven HLD (AQ1) ──────────────────────────────────────────────────
+//
+// The HLD used to be a fixed reference architecture per use case: two WAN
+// routers, four firewalls (one a hardcoded Cisco FPR-4150), a DGX A100, a 25G
+// spine↔leaf full mesh with invented /31s, and firewalls cabled to the spines
+// — none of it the user's design (0 of 25 DC nodes were BOM devices; 87 of 100
+// addresses appeared in no config). It is now drawn from the design the way
+// AO4 redrew the LLD: every node is a BOM device, addresses and ports come
+// from the same allocators the configs use, link speeds from the cabling, and
+// every protocol caption from the generated configs rather than the store's
+// underlay selection.
+
+interface HldRowSpec {
+  sub: string
+  /** LAYER_STYLE key for the node colours. */
+  layer: string
+  label: string
+  cap: number
+  group: 'cloud' | 'edge' | 'fabric' | 'compute' | 'ran'
 }
 
-// ─── DC / Multisite topology ──────────────────────────────────────────────────
+const HLD_ROWS: HldRowSpec[] = [
+  { sub: 'cloud-transit',    layer: 'cloud-gw',     label: 'CLOUD TRANSIT',      cap: 4, group: 'cloud' },
+  { sub: 'cloud-gw',         layer: 'cloud-gw',     label: 'CLOUD GATEWAYS',     cap: 6, group: 'cloud' },
+  { sub: 'sdwan-controller', layer: 'core',         label: 'SD-WAN CONTROLLERS', cap: 5, group: 'edge' },
+  { sub: 'wan-edge',         layer: 'wan-edge',     label: 'WAN EDGE',           cap: 6, group: 'edge' },
+  { sub: 'firewall',         layer: 'corp-fw',      label: 'FIREWALL',           cap: 2, group: 'edge' },
+  { sub: 'core',             layer: 'core',         label: 'CORE',               cap: 2, group: 'fabric' },
+  { sub: 'spine',            layer: 'spine',        label: 'SPINE',              cap: 4, group: 'fabric' },
+  { sub: 'distribution',     layer: 'distribution', label: 'DISTRIBUTION',       cap: 4, group: 'fabric' },
+  { sub: 'leaf',             layer: 'leaf',         label: 'LEAF',               cap: 6, group: 'fabric' },
+  { sub: 'access',           layer: 'access',       label: 'ACCESS',             cap: 6, group: 'fabric' },
+  { sub: 'gpu-compute',      layer: 'gpu',          label: 'GPU COMPUTE',        cap: 6, group: 'compute' },
+  { sub: 'oran-core',        layer: 'oran-core',    label: '5GC / UPF',          cap: 2, group: 'ran' },
+  { sub: 'oran-midhaul',     layer: 'oran-midhaul', label: 'MIDHAUL',            cap: 2, group: 'ran' },
+  { sub: 'oran-cu',          layer: 'oran-cu',      label: 'O-CU',               cap: 2, group: 'ran' },
+  { sub: 'oran-timing',      layer: 'oran-timing',  label: 'PTP TIMING',         cap: 2, group: 'ran' },
+  { sub: 'oran-fronthaul',   layer: 'oran-fronthaul', label: 'FRONTHAUL SW',     cap: 4, group: 'ran' },
+  { sub: 'oran-du',          layer: 'oran-du',      label: 'O-DU',               cap: 4, group: 'ran' },
+  { sub: 'oran-ru',          layer: 'oran-ru',      label: 'O-RU (RADIO)',       cap: 6, group: 'ran' },
+]
 
-function buildDCTopology(devices: BOMDevice[], underlay: string, overlay: string[], sc: string, useCase = 'dc'): Topo {
-  const spineDevs = devices.filter(d => d.subLayer === 'spine')
-  const leafDevs  = devices.filter(d => d.subLayer === 'leaf')
-  const nSpines = Math.min(Math.max(spineDevs.length, 2), 4)
-  const nLeaves = Math.min(Math.max(leafDevs.length, 4), 8)
-  const spineModel = spineDevs[0]?.model ?? 'N9K-C9508'
-  const leafModel  = leafDevs[0]?.model  ?? 'N9K-C9332C'
-  // Firewall + WAN-edge reflect the BOM vendor/model instead of hardcoded SKUs.
-  const fwDevs   = devices.filter(d => d.subLayer === 'firewall')
-  const fwModel  = fwDevs[0]?.model  ?? 'PA-5450'
-  const fwVendor = fwDevs[0]?.vendor ?? 'Palo Alto'
-  const wanDevs   = devices.filter(d => d.subLayer === 'wan-edge')
-  const wanModel  = wanDevs[0]?.model  ?? 'ASR-1002-HX'
-  const wanVendor = wanDevs[0]?.vendor ?? 'Cisco'
+const GROUP_ZONE: Record<HldRowSpec['group'], { fill: string; stroke: string }> = {
+  cloud:   { fill: 'rgba(13,148,136,0.18)', stroke: '#0D9488' },
+  edge:    { fill: 'rgba(127,29,29,0.26)',  stroke: '#B91C1C' },
+  fabric:  { fill: 'rgba(29,78,216,0.24)',  stroke: '#1D4ED8' },
+  compute: { fill: 'rgba(21,128,61,0.24)',  stroke: '#15803D' },
+  ran:     { fill: 'rgba(91,33,182,0.22)',  stroke: '#7C3AED' },
+}
 
-  // Layer Y-centers
-  const Y: Record<string, number> = {
-    internet: 72,
-    wan:      188,
-    corpfw:   308,
-    edgefw:   428,
-    spine:    548,
-    leaf:     672,
-    servers:  796,
-  }
+/** Read the BGP ASN a config declares, in any of the generated dialects. */
+function configAsn(cfg: string): string | undefined {
+  const m = cfg.match(/^\s*router bgp (\d+)/m)
+    ?? cfg.match(/^set routing-options autonomous-system (\d+)/m)
+    ?? cfg.match(/^configure bgp AS-number (\d+)/m)
+    ?? cfg.match(/^nv set router bgp autonomous-system (\d+)/m)
+    ?? cfg.match(/^\s*autonomous-system (\d+)/m)
+  return m?.[1]
+}
 
-  const zones: SecurityZone[] = [
-    { id:'z-internet', label:'INTERNET', sublabel:'Untrusted / Public',
-      yStart:0, yEnd:136, fill:'rgba(17,17,17,0.9)', stroke:'#374151', icon:'🌐' },
-    { id:'z-edge', label:'EDGE / UNTRUST', sublabel:'WAN · Corp FW · BGP eBGP',
-      yStart:136, yEnd:380, fill:'rgba(127,29,29,0.26)', stroke:'#B91C1C', icon:'🔴' },
-    { id:'z-dmz', label:'DMZ', sublabel:'Perimeter FW · IPS · TLS Inspect',
-      yStart:380, yEnd:500, fill:'rgba(154,52,18,0.26)', stroke:'#C2410C', icon:'🟠' },
-    { id:'z-fabric', label:'DC FABRIC / TRUST', sublabel:`${underlay.toUpperCase()} underlay · ${overlayLabel(overlay)} overlay`,
-      yStart:500, yEnd:746, fill:'rgba(29,78,216,0.24)', stroke:'#1D4ED8', icon:'🔵' },
-    { id:'z-compute', label:'COMPUTE', sublabel:'Servers · GPU · Storage',
-      yStart:746, yEnd:860, fill:'rgba(21,128,61,0.24)', stroke:'#15803D', icon:'🟢' },
-  ]
+/** The construct a config uses to pair two devices (AP5 / AN7 / AN10). */
+function pairTech(cfg: string): string | undefined {
+  if (/^\s*vpc peer-link/m.test(cfg)) return 'vPC'
+  if (/^mlag configuration/m.test(cfg) || /^create mlag peer/m.test(cfg)) return 'MLAG'
+  if (/^vlt-domain /m.test(cfg)) return 'VLT'
+  if (/esi \S+|ethernet-segment|evpn multihoming segment/.test(cfg)) return 'EVPN ESI'
+  return undefined
+}
 
-  // WAN routers (always 2 for HA)
-  const [wx1, wx2] = xCentered(2, 240)
-  const wan1 = mkNode('wan1','WAN-RTR-01',wanModel,'wan-edge',wanVendor,'10.255.0.1','10.0.0.1',wx1,Y.wan,
-    { haRole:'active', asn:'65000', features:['BGP eBGP','BFD','ECMP','RPKI'] })
-  const wan2 = mkNode('wan2','WAN-RTR-02',wanModel,'wan-edge',wanVendor,'10.255.0.2','10.0.0.2',wx2,Y.wan,
-    { haRole:'standby', asn:'65000', features:['BGP eBGP','BFD','ECMP','RPKI'] })
+function fhrpKind(cfg: string): string | undefined {
+  if (/^\s*standby \d+ ip /m.test(cfg)) return 'HSRP'
+  if (/vrrp/i.test(cfg) || /ip virtual-router/.test(cfg) || /virtual-gateway-address/.test(cfg)) return 'VRRP'
+  return undefined
+}
 
-  // Corp firewalls (HA pair)
-  const [fx1, fx2] = xCentered(2, 240)
-  const cfw1 = mkNode('cfw1','CORP-FW-01',fwModel,'corp-fw',fwVendor,'10.255.0.11','10.0.0.11',fx1,Y.corpfw,
-    { haRole:'active', features:['NGFW','IPS','URL-Filter','TLS-Decrypt','App-ID'] })
-  const cfw2 = mkNode('cfw2','CORP-FW-02',fwModel,'corp-fw',fwVendor,'10.255.0.12','10.0.0.12',fx2,Y.corpfw,
-    { haRole:'standby', features:['NGFW','HA-Sync','State-Sync'] })
+/** Feature chips for a node, read from its own generated config (AQ1/AQ4). */
+function nodeFeatures(dev: BOMDevice, cfg: string, f: DeviceFacts | undefined, border: boolean): string[] {
+  const out: string[] = []
+  const on = (n: keyof DeviceFacts) => f?.[n]?.state === 'present'
+  if (on('isis')) out.push('IS-IS')
+  if (on('ospf')) out.push('OSPF')
+  if (on('bgp')) out.push(/unnumbered/.test(cfg) ? 'eBGP unnumbered' : 'BGP')
+  if (on('vxlan')) out.push('VXLAN VTEP')
+  if (on('evpn')) out.push('EVPN')
+  if (on('bfd')) out.push('BFD')
+  if (on('jumboMtu')) out.push('Jumbo MTU')
+  if (on('pfc')) out.push('PFC no-drop')
+  if (on('ecnLossless')) out.push('ECN (RoCE)')
+  const pt = pairTech(cfg)
+  if (pt) out.push(`${pt} pair`)
+  const fh = dev.subLayer === 'distribution' ? fhrpKind(cfg) : undefined
+  if (fh) out.push(fh)
+  if (/^\s*(ipv6 address|.*family inet6 address|nv set interface \S+ ip address [0-9a-f:]+\/|.*ipv6-unicast)/m.test(cfg)) out.push('IPv6 dual-stack')
+  if (/ISCSI|NVME|FCOE|vsan \d+|STORAGE/i.test(cfg) && dev.subLayer === 'leaf') out.push('Storage lossless class')
+  if (/dot1x|authentication port-control|802\.1X/i.test(cfg) && dev.subLayer === 'access') out.push('802.1X')
+  if (/high-availability|chassis cluster|config system ha|failover/i.test(cfg) && dev.subLayer === 'firewall') out.push('HA cluster')
+  if (border) out.push('Firewall handoff (border leaf)')
+  if (dev.subLayer.startsWith('cloud-')) out.push('Provisioned by Terraform')
+  return out
+}
 
-  // Edge / Perimeter firewalls
-  const [ef1x, ef2x] = xCentered(2, 240)
-  const efw1 = mkNode('efw1','EDGE-FW-01','FPR-4150','edge-fw','Cisco','10.255.0.21','10.0.0.21',ef1x,Y.edgefw,
-    { haRole:'active', features:['NGFW','IPS/IDS','AntiMalware','AMP'] })
-  const efw2 = mkNode('efw2','EDGE-FW-02','FPR-4150','edge-fw','Cisco','10.255.0.22','10.0.0.22',ef2x,Y.edgefw,
-    { haRole:'standby', features:['NGFW','HA-Sync','Stateful-Failover'] })
+/**
+ * Caption for designs with no switching fabric — WAN, multi-cloud, O-RAN —
+ * read from the edge / RAN configs. The store's underlay selection is shown
+ * only when no device has a config at all, and is labelled as a selection.
+ */
+function transportCaption(devs: BOMDevice[], facts: Map<string, DeviceFacts>, configs: Record<string, string>, fallback: string): string {
+  const net = devs.filter(d => !d.subLayer.startsWith('cloud-') && configs[d.id])
+  const parts: string[] = []
+  if (devs.some(d => d.subLayer.startsWith('cloud-'))) parts.push('Cloud transit (Terraform)')
+  if (!net.length) return parts.join(' · ') || fallback
+  const text = net.map(d => configs[d.id]).join('\n')
+  const has = (n: keyof DeviceFacts) => net.some(d => facts.get(d.id)?.[n]?.state === 'present')
+  if (/tunnel mode sdwan|^\s*sdwan\b|^\s*omp\b|vbond/m.test(text)) parts.push('SD-WAN overlay (OMP · IPsec)')
+  if (has('isis')) parts.push(/segment-routing|prefix-sid/.test(text) ? 'IS-IS + Segment Routing' : 'IS-IS')
+  else if (has('ospf')) parts.push('OSPF')
+  if (has('bgp') && !parts.some(p => p.startsWith('SD-WAN'))) parts.push('BGP')
+  if (/\bptp\b/i.test(text)) parts.push('PTP timing')
+  return parts.join(' · ') || fallback
+}
 
-  // Spines
-  const spineGap = nSpines <= 2 ? 280 : 90
-  const spineXs = xCentered(nSpines, spineGap)
-  const spines = spineXs.map((x, i) => mkNode(
-    `sp${i+1}`, `SPINE-0${i+1}`, spineModel, 'spine', spineDevs[i]?.vendor ?? 'Cisco',
-    `10.255.1.${i+1}`, `10.0.0.${31+i}`, x, Y.spine,
-    { asn: `6500${i+1}`, features: ['BGP ECMP','VXLAN','BFD','ECMP 16-path'] },
-  ))
+/** One-line protocol summary of the fabric, from the configs (never the selection). */
+function fabricCaption(devs: BOMDevice[], facts: Map<string, DeviceFacts>, configs: Record<string, string>, fallback: string): string {
+  const fab = devs.filter(d => ['spine', 'leaf', 'core', 'distribution'].includes(d.subLayer))
+  if (!fab.length) return transportCaption(devs, facts, configs, fallback)
+  const has = (n: keyof DeviceFacts) => fab.some(d => facts.get(d.id)?.[n]?.state === 'present')
+  const parts: string[] = []
+  if (has('isis')) parts.push('IS-IS underlay')
+  else if (has('ospf')) parts.push('OSPF')
+  else if (has('bgp')) parts.push(fab.some(d => /unnumbered/.test(configs[d.id] ?? '')) ? 'eBGP unnumbered (RFC 7938)' : 'eBGP underlay')
+  if (has('vxlan') && has('evpn')) parts.push('VXLAN/EVPN overlay')
+  else if (fab.some(d => d.subLayer === 'spine') && has('bgp')) parts.push('pure L3 fabric')
+  if (has('pfc')) parts.push('RoCEv2 lossless (PFC · ECN)')
+  const fh = fab.map(d => d.subLayer === 'distribution' ? fhrpKind(configs[d.id] ?? '') : undefined).find(Boolean)
+  if (fh) parts.push(`${fh} first hop`)
+  return parts.join(' · ') || fallback
+}
 
-  // Leaves
-  const leafGap = nLeaves <= 4 ? 30 : 16
-  const leafXs = xCentered(nLeaves, leafGap)
-  const leaves = leafXs.map((x, i) => {
-    const pair = pairInfo(i, nLeaves)
-    const features = ['VXLAN NVE','BGP EVPN','Anycast-GW','BFD']
-    if (pair) features.push(`vPC/MLAG Pair #${pair.pairId}`)
-    if (useCase === 'multisite') {
-      features.push(`EVPN DCI Type-5 · RT ${DCI_RT_ASN}:10010 (L2) / ${DCI_RT_ASN}:50000 (L3)`)
+export function buildDesignTopology(
+  devices: BOMDevice[], useCase: string, sc: string,
+  configs?: Record<string, string>,
+  selection: { underlay?: string; overlay?: string[] } = {},
+): Topo {
+  const uc = useCase as UseCase
+  const cfgs = configs ?? generateAllConfigs(devices, uc)
+  const facts = new Map(devices.map(d => [d.id, extractFacts(cfgs[d.id] ?? '', factPlatform(d))]))
+  const border = new Set(useCase === 'dc' || useCase === 'multisite' ? borderLeaves(devices).map(d => d.id) : [])
+
+  const pick = (r: HldRowSpec): BOMDevice[] => {
+    const all = devices.filter(d => d.subLayer === r.sub)
+    if (r.sub === 'leaf') {
+      // The first pairs plus the border pair, so the handoff is visible.
+      const head = all.filter(d => !border.has(d.id)).slice(0, Math.max(2, r.cap - border.size))
+      return [...head, ...all.filter(d => border.has(d.id))].slice(0, r.cap)
     }
-    return mkNode(
-      `lf${i+1}`, `LEAF-0${i+1 < 10 ? '0' : ''}${i+1}`, leafModel, 'leaf', leafDevs[i]?.vendor ?? 'Cisco',
-      `10.255.2.${i+1}`, `10.0.0.${51+i}`, x, Y.leaf,
-      { asn: `65100`, features, mlagPairId: pair?.pairId },
-    )
-  })
-  leaves.forEach((node, i) => {
-    const pair = pairInfo(i, nLeaves)
-    if (pair) node.mlagPeerLabel = leaves[pair.peerIdx].label
-  })
-
-  // vPC/MLAG peer-links between adjacent leaf pairs
-  const leafPeerLinks: HLDLink[] = []
-  for (let i = 0; i + 1 < nLeaves; i += 2) {
-    leafPeerLinks.push(mkLink(leaves[i].id, leaves[i+1].id, '2x40G LAG', 'vPC/MLAG Peer-Link', 'Po1', 'Po1', '—', { isHaSync: true }))
+    return all.slice(0, r.cap)
   }
+  const rows = HLD_ROWS
+    .filter(r => devices.some(d => d.subLayer === r.sub))
+    .map(r => ({ r, devs: pick(r), total: devices.filter(d => d.subLayer === r.sub).length }))
 
-  // Servers (representative)
-  const serverXs = xCentered(Math.min(nLeaves, 6), leafGap)
-  const servers = serverXs.slice(0, nLeaves - 1).map((x, i) => mkNode(
-    `srv${i+1}`, `SRV-0${i+1 < 10 ? '0' : ''}${i+1}`, 'x86 2U', 'host', 'Dell',
-    '', `10.200.0.${i+1}`, x, Y.servers,
-    { features: ['25GE dual-homed', 'LAG', 'jumbo 9000'] },
-  ))
-  // Add 1 GPU server at the end
-  const gpuX = serverXs[serverXs.length - 1] ?? (LEFT_W + CONTENT_W - NW)
-  const gpuSrv = mkNode('gpusrv1', 'GPU-SRV-01', 'DGX A100', 'gpu', 'NVIDIA',
-    '', `10.200.1.1`, gpuX, Y.servers,
-    { features: ['400GE RoCEv2','PFC P3','GPUDirect RDMA','NVLink'] },
-  )
+  const ROW_H = 124
+  // Clear of the title and subtitle, which sit at the top of the canvas.
+  const TOP = 104
+  const yOf = (i: number) => TOP + i * ROW_H
+  const shown = new Map<string, BOMDevice>()
+  const nodes: HLDNode[] = []
+  const nodeId = (d: BOMDevice) => `n-${d.id}`
+  rows.forEach(({ r, devs }, ri) => {
+    const gap = devs.length > 4 ? 16 : devs.length > 2 ? 40 : 200
+    const xs = xCentered(devs.length, gap)
+    devs.forEach((d, i) => {
+      const cfg = cfgs[d.id] ?? ''
+      const view = fabricInterfaceView(d, devices, uc)
+      const lo = view.find(v => v.kind === 'loopback')
+      const tier = devices.filter(x => x.subLayer === d.subLayer)
+      const ti = tier.findIndex(x => x.id === d.id)
+      const pt = pairTech(cfg)
+      const paired = (d.subLayer === 'leaf' && pt) || (d.subLayer === 'distribution' && peerLinkPorts(d).length > 0)
+      const peer = paired ? tier[ti % 2 === 0 ? ti + 1 : ti - 1] : undefined
+      const fh = d.subLayer === 'distribution' ? fhrpKind(cfg) : undefined
+      nodes.push(mkNode(nodeId(d), d.hostname, d.model, r.layer, d.vendor, lo?.ip ?? '—', '<CHANGE-ME-mgmt-ip>', xs[i], yOf(ri), {
+        isCloud: d.subLayer.startsWith('cloud-'),
+        haRole: d.subLayer === 'firewall' && tier.length >= 2 ? (ti % 2 === 0 ? 'active' : 'standby') : 'none',
+        asn: configAsn(cfg),
+        features: nodeFeatures(d, cfg, facts.get(d.id), border.has(d.id)),
+        mlagPairId: peer ? Math.floor(ti / 2) + 1 : undefined,
+        mlagPeerLabel: peer?.hostname,
+        pairTech: d.subLayer === 'distribution' ? (pt ?? 'Peer-link') : pt,
+        fhrpVip: fh ? CAMPUS_VLANS.mgmt.vip : undefined,
+        fhrpLabel: fh ? `${fh} VIP (Vlan${CAMPUS_VLANS.mgmt.id} mgmt)` : undefined,
+      }))
+      shown.set(d.hostname, d)
+    })
+  })
 
-  // Internet cloud node (centered)
-  const [icx] = xCentered(1, 0)
-  const inet = mkNode('inet','INTERNET','Dual-ISP','internet','ISP','—','—',icx - NW/2 + CONTENT_W/2 - NW,Y.internet,
-    { isCloud:true, features:['BGP eBGP ISP-A (AS64512)','BGP eBGP ISP-B (AS64513)','Anycast DNS'] },
-  )
+  // ── Links ─────────────────────────────────────────────────────────────────
+  const cabling = buildCabling(devices, {} as Parameters<typeof buildCabling>[1])
+  const speedOf = (a: string, b: string) =>
+    cabling.find(c => (c.fromLayer === a && c.toLayer === b) || (c.fromLayer === b && c.toLayer === a))?.speed ?? ''
+  // Link labels are narrow: the underlay in its short form ("IS-IS", "eBGP /31").
+  const underlayShort = ({ 'IS-IS underlay': 'IS-IS', 'eBGP underlay': 'eBGP /31', 'eBGP unnumbered (RFC 7938)': 'eBGP unnumbered' } as Record<string, string>)[
+    fabricCaption(devices, facts, cfgs, '').split(' · ')[0]] ?? 'Routed'
+  const byPair = new Map<string, { a: BOMDevice; b: BOMDevice; ports: [string, string]; n: number; kind: string }>()
+  for (const p of physicalPortMap(devices, uc)) {
+    const a = shown.get(p.a.device), b = shown.get(p.b.device)
+    if (!a || !b) continue
+    const key = [a.id, b.id].sort().join('|') + '|' + p.kind
+    const e = byPair.get(key)
+    if (e) e.n++
+    else byPair.set(key, { a, b, ports: [p.a.iface, p.b.iface], n: 1, kind: p.kind })
+  }
+  const links: HLDLink[] = []
+  const linked = new Set<string>()
+  const tierLinked = new Set<string>()
+  for (const { a, b, ports, n, kind } of byPair.values()) {
+    const sp = speedOf(a.subLayer, b.subLayer)
+    const speed = n > 1 ? `${n}×${sp}` : sp
+    const va = fabricInterfaceView(a, devices, uc)
+    const subnet = va.find(v => v.peer === b.hostname && v.ip.includes('.'))?.ip
+      ?? fabricInterfaceView(b, devices, uc).find(v => v.peer === a.hostname && v.ip.includes('.'))?.ip ?? ''
+    const protocol = kind === 'fabric' ? `${underlayShort}`
+      : kind === 'firewall' ? 'Routed handoff (transit VLAN)'
+      : kind === 'peer-link' ? `${pairTech(cfgs[a.id] ?? '') ?? 'HA'} peer-link`
+      : kind === 'campus' ? '802.1Q trunk'
+      : kind === 'host' ? 'Server access' : kind
+    links.push(mkLink(nodeId(a), nodeId(b), speed, protocol, ports[0], ports[1], subnet, { isHaSync: kind === 'peer-link' }))
+    linked.add([a.id, b.id].sort().join('|'))
+    tierLinked.add([a.subLayer, b.subLayer].sort().join('|'))
+  }
+  // HA control link between firewall cluster members (AN10).
+  const fws = rows.find(x => x.r.sub === 'firewall')?.devs ?? []
+  for (let i = 0; i + 1 < fws.length; i += 2) {
+    links.push(mkLink(nodeId(fws[i]), nodeId(fws[i + 1]), '', 'HA control / state sync', '', '', '', { isHaSync: true }))
+  }
+  // Tier pairs the BOM cables that no configured port already drew.
+  for (const c of LAYER_ADJACENCY) {
+    if (c.from === 'firewall' && c.to === 'firewall') continue
+    const froms = rows.find(x => x.r.sub === c.from)?.devs ?? []
+    const tos = rows.find(x => x.r.sub === c.to)?.devs ?? []
+    if (!froms.length || !tos.length) continue
+    if (tierLinked.has([c.from, c.to].sort().join('|'))) continue
+    const sp = speedOf(c.from, c.to)
+    if (c.from === c.to) {
+      for (let i = 0; i + 1 < froms.length; i += 2) links.push(mkLink(nodeId(froms[i]), nodeId(froms[i + 1]), sp, 'Site pair', '', '', '', { isHaSync: true }))
+      continue
+    }
+    tos.forEach((t, i) => {
+      const f = froms[i % froms.length]
+      if (linked.has([f.id, t.id].sort().join('|'))) return
+      links.push(mkLink(nodeId(f), nodeId(t), sp, 'Cabled (BOM)', '', '', ''))
+    })
+  }
+  // Overlay sessions with no cable of their own (cloud transit).
+  const overlay = (fromSub: string, toSub: string, protocol: string) => {
+    const froms = rows.find(x => x.r.sub === fromSub)?.devs ?? []
+    const tos = rows.find(x => x.r.sub === toSub)?.devs ?? []
+    tos.forEach((t, i) => froms.length && links.push(mkLink(nodeId(froms[i % froms.length]), nodeId(t), '', protocol, '', '', '', { isOob: true })))
+  }
+  overlay('cloud-transit', 'cloud-gw', 'Transit peering')
+  overlay('cloud-transit', 'wan-edge', 'IPsec / BGP')
 
-  const nodes = [inet, wan1, wan2, cfw1, cfw2, efw1, efw2, ...spines, ...leaves, ...servers, gpuSrv]
-
-  // ── Links ───────────────────────────────────────────────────────
-
-  const links: HLDLink[] = [
-    // Internet → WAN routers
-    mkLink('inet','wan1','100G','BGP eBGP (ISP-A)','—','Gi0/0/0','203.0.113.0/30'),
-    mkLink('inet','wan2','100G','BGP eBGP (ISP-B)','—','Gi0/0/0','198.51.100.0/30'),
-    // WAN iBGP peer
-    mkLink('wan1','wan2','10G','iBGP / BFD','Gi0/1','Gi0/1','192.168.0.0/30', { isHaSync:true }),
-    // WAN → Corp FW (full cross-mesh)
-    mkLink('wan1','cfw1','100G LAG','L3 Routed','Po10','eth1/1','10.100.0.0/30'),
-    mkLink('wan1','cfw2','100G LAG','L3 Routed','Po11','eth1/1','10.100.0.4/30'),
-    mkLink('wan2','cfw1','100G LAG','L3 Routed','Po10','eth1/2','10.100.0.8/30'),
-    mkLink('wan2','cfw2','100G LAG','L3 Routed','Po11','eth1/2','10.100.0.12/30'),
-    // Corp FW HA sync
-    mkLink('cfw1','cfw2','10G','HA-Sync / State','ha1','ha1','10.10.0.0/30', { isHaSync:true }),
-    // Corp FW → Edge FW
-    mkLink('cfw1','efw1','100G','L3 Routed · IPS','eth1/3','Gi0/0','10.100.1.0/30'),
-    mkLink('cfw2','efw2','100G','L3 Routed · IPS','eth1/3','Gi0/0','10.100.1.4/30'),
-    // Edge FW HA
-    mkLink('efw1','efw2','10G','HA-Sync','ha1','ha1','10.10.1.0/30', { isHaSync:true }),
-    // Edge FW → Spines
-    ...spines.map((sp, i) => mkLink('efw1', sp.id, '40G', 'L3 Routed', `eth1/${4+i}`, 'e1/1', `10.1.0.${i*4}/30`)),
-    ...spines.map((sp, i) => mkLink('efw2', sp.id, '40G', 'L3 Routed', `eth1/${4+i}`, 'e1/2', `10.1.0.${16+i*4}/30`)),
-    // Spine → Leaf (full mesh)
-    ...spines.flatMap((sp, si) =>
-      leaves.map((lf, li) => mkLink(sp.id, lf.id, '25G', `${underlay.toUpperCase()} / VXLAN`, `e1/${li+1}`, `e1/${si+1}`, `10.1.${si+1}.${li*4}/31`))
-    ),
-    // Leaf → servers (dual-homed: each server connects to leaf pair)
-    ...servers.map((s, i) => mkLink(leaves[Math.min(i, nLeaves-1)].id, s.id, '25G', 'LACP LAG', `e1/49`, `eth0`, `10.200.0.${i*4}/30`)),
-    mkLink(leaves[nLeaves > 1 ? nLeaves - 1 : 0].id, 'gpusrv1', '400G RoCEv2', 'PFC P3 lossless', 'e1/49', 'mlx0', '192.168.100.0/30'),
-    // vPC/MLAG peer-links between adjacent leaf pairs (D1)
-    ...leafPeerLinks,
-  ]
-
-  // ── Packet flow scenarios ────────────────────────────────────────
-
-  const flows: PacketFlow[] = [
-    {
-      id:'ns-inbound', icon:'⬇', label:'N-S Inbound',
-      desc:'Internet → Corp FW → Edge FW → Spine → Leaf → Server (HTTP/HTTPS)',
-      nodeSeq:['inet','wan1','cfw1','efw1','sp1','lf1','srv1'],
-      color:'#F59E0B', animDur: 2.2,
-    },
-    {
-      id:'ew-vxlan', icon:'↔', label:'E-W VXLAN',
-      desc:'Server-to-Server east-west via VXLAN overlay (same fabric, different leaf)',
-      nodeSeq:['srv1','lf1','sp1','lf2','srv2'],
-      color:'#3B82F6', animDur: 1.8,
-    },
-    {
-      id:'ns-egress', icon:'⬆', label:'N-S Egress',
-      desc:'Server → Edge FW → Corp FW → WAN → Internet (SNAT)',
-      nodeSeq:['srv1','lf1','sp1','efw1','cfw1','wan1','inet'],
-      color:'#8B5CF6', animDur: 2.4,
-    },
-    {
-      id:'ha-failover', icon:'🔄', label:'HA Failover',
-      desc:'Corp FW active→standby failover via HA sync link (sub-second)',
-      nodeSeq:['wan1','cfw1','cfw2','efw1'],
-      color:'#EF4444', animDur: 1.5,
-    },
-    {
-      id:'gpu-rdma', icon:'⚡', label:'GPU RoCEv2',
-      desc:'GPU-to-GPU RDMA (RoCEv2) via lossless PFC fabric (zero packet loss)',
-      nodeSeq:['gpusrv1','lf' + nLeaves,'sp1','lf1','srv1'],
-      color:'#10B981', animDur: 1.2,
-    },
-    {
-      id:'mgmt', icon:'🔧', label:'OOB Mgmt',
-      desc:'Out-of-band SSH/SNMP management to all devices via MGMT VLAN 10',
-      nodeSeq:['wan1','cfw1','efw1','sp1','lf1'],
-      color:'#6B7280', animDur: 3.0,
-    },
-  ]
-
-  // Tier bifurcation. The last leaf pair are the border leaves — the same
-  // rule configgen's borderLeaves() uses to place the firewall handoff, so
-  // the diagram and the generated configs name the same devices.
-  const borderIds = leaves.slice(-2).map(n => n.id)
-  const tiers: TierLabel[] = [
-    { id: 't-wan',    y: Y.wan,     label: 'WAN EDGE',    side: 'right', color: '#F59E0B' },
-    { id: 't-fw',     y: Y.edgefw,  label: 'FIREWALL',    side: 'right', color: '#FB923C' },
-    { id: 't-spine',  y: Y.spine,   label: 'SPINE',       side: 'right', color: '#60A5FA' },
-    { id: 't-leaf',   y: Y.leaf,    label: 'LEAF',        side: 'right', color: '#4ADE80' },
-    { id: 't-srv',    y: Y.servers, label: 'SERVER FARM', side: 'right', color: '#A8A29E' },
-  ]
-  const regions: TopoRegion[] = [
-    { id: 'r-fabric', yStart: Y.spine - 46, yEnd: Y.leaf + 46,
-      label: 'FABRIC',
-      // Store values are raw enum strings (`vxlan_evpn`); a diagram caption
-      // should read like a protocol name, not a field value.
-      protocol: `${underlay.toUpperCase()} underlay · ${overlayLabel(overlay)} overlay`,
-      fill: 'rgba(56,189,248,0.10)', stroke: '#38BDF8' },
-  ]
-  // multicloud/aviatrix reuse this builder but have no on-prem border pair —
-  // the callout would name devices their design does not contain.
-  const hasBorderPair = useCase === 'dc' || useCase === 'multisite'
-  const groups: NodeGroup[] = (hasBorderPair && borderIds.length)
-    ? [{ id: 'g-border', nodeIds: borderIds, label: 'BORDER LEAF', color: '#F87171' }]
+  // ── Zones, regions, tiers ─────────────────────────────────────────────────
+  const caption = fabricCaption(devices, facts, cfgs,
+    selection.underlay ? `${selection.underlay.toUpperCase()} underlay · ${overlayLabel(selection.overlay ?? [])} overlay (selected)` : '')
+  const fabricLabel = useCase === 'campus' ? 'CAMPUS LAN'
+    : useCase === 'gpu' ? (caption.includes('lossless') ? 'LOSSLESS FABRIC' : 'GPU FABRIC') : 'FABRIC'
+  const zones: SecurityZone[] = []
+  const groups = [...new Set(rows.map(x => x.r.group))]
+  for (const g of groups) {
+    const idx = rows.map((x, i) => (x.r.group === g ? i : -1)).filter(i => i >= 0)
+    const label = g === 'cloud' ? 'CLOUD' : g === 'edge' ? 'EDGE / PERIMETER' : g === 'compute' ? 'COMPUTE' : g === 'ran' ? 'RAN' : fabricLabel
+    const sub = g === 'fabric' ? caption
+      : g === 'edge' ? (fws.length ? 'Firewall HA cluster · routed handoff' : 'WAN transport')
+      : g === 'cloud' ? 'Provider-managed · Terraform'
+      : g === 'compute' ? 'Hosts attached to the leaves'
+      : `eCPRI VLAN ${ORAN_FRONTHAUL_VLAN} · PTP domain ${ORAN_PTP_DOMAIN}`
+    zones.push({ id: `z-${g}`, label, sublabel: sub, yStart: yOf(idx[0]) - ROW_H / 2 + 6, yEnd: yOf(idx[idx.length - 1]) + ROW_H / 2 + 6, ...GROUP_ZONE[g], icon: '' })
+  }
+  const fabricIdx = rows.map((x, i) => (x.r.group === 'fabric' ? i : -1)).filter(i => i >= 0)
+  const regions: TopoRegion[] = fabricIdx.length
+    ? [{ id: 'r-fabric', yStart: yOf(fabricIdx[0]) - 46, yEnd: yOf(fabricIdx[fabricIdx.length - 1]) + NH + 12, label: fabricLabel, protocol: caption || undefined, fill: 'rgba(56,189,248,0.10)', stroke: '#38BDF8' }]
     : []
-  const traffic: TrafficAxis[] = [
-    { id: 'tr-ns', axis: 'ns', label: 'NORTH–SOUTH', color: '#F87171',
-      at: LEFT_W + 14, from: Y.internet, to: Y.servers },
-    { id: 'tr-ew', axis: 'ew', label: 'EAST–WEST', color: '#38BDF8',
-      at: Y.servers + 62, from: LEFT_W + 40, to: SVG_W - 40 },
-  ]
+  const tiers: TierLabel[] = rows.map(({ r }, i) => ({
+    id: `t-${r.sub}`, y: yOf(i), side: 'right',
+    label: useCase === 'gpu' && r.sub === 'leaf' ? 'ToR / LEAF' : r.label,
+    color: LAYER_STYLE[r.layer]?.border ?? '#9CA3AF',
+  }))
+  const borderIds = nodes.filter(n => border.has(n.id.slice(2))).map(n => n.id)
+  const nodeGroups: NodeGroup[] = borderIds.length ? [{ id: 'g-border', nodeIds: borderIds, label: 'BORDER LEAF', color: '#F87171' }] : []
+  const lastY = yOf(Math.max(0, rows.length - 1))
+  const traffic: TrafficAxis[] = rows.length > 1 ? [
+    { id: 'tr-ns', axis: 'ns', label: 'NORTH–SOUTH', color: '#F87171', at: LEFT_W + 14, from: yOf(0), to: lastY },
+    ...(fabricIdx.length ? [{ id: 'tr-ew', axis: 'ew' as const, label: 'EAST–WEST', color: '#38BDF8', at: lastY + NH + 24, from: LEFT_W + 40, to: SVG_W - 40 }] : []),
+  ] : []
 
+  // ── Packet flows, only through nodes the design has ──────────────────────
+  const first = (sub: string, n = 0) => rows.find(x => x.r.sub === sub)?.devs[n]
+  const id = (d?: BOMDevice) => (d ? nodeId(d) : '')
+  const leaves = rows.find(x => x.r.sub === 'leaf')?.devs ?? []
+  const otherPairLeaf = leaves.find((_, i) => i >= 2) ?? leaves[1]
+  const candidates: PacketFlow[] = [
+    { id: 'ns', icon: '⬇', label: 'North–South', color: '#F59E0B', animDur: 2.2,
+      desc: 'Perimeter → border leaf → spine → leaf (the configured firewall handoff path)',
+      nodeSeq: [id(first('firewall')), id(leaves.find(l => border.has(l.id))), id(first('spine')), id(leaves[0])] },
+    { id: 'ew', icon: '↔', label: 'East–West', color: '#3B82F6', animDur: 1.8,
+      desc: 'Leaf → spine → leaf in another pair',
+      nodeSeq: [id(leaves[0]), id(first('spine')), id(otherPairLeaf)] },
+    { id: 'gpu', icon: '⚡', label: 'GPU RDMA', color: '#10B981', animDur: 1.2,
+      desc: 'GPU server → ToR → spine → ToR → GPU server',
+      nodeSeq: [id(first('gpu-compute')), id(leaves[0]), id(first('spine')), id(leaves[1]), id(first('gpu-compute', 1))] },
+    { id: 'campus', icon: '⬆', label: 'Campus egress', color: '#8B5CF6', animDur: 2.0,
+      desc: 'Access → distribution → firewall',
+      nodeSeq: [id(first('access')), id(first('distribution')), id(first('firewall'))] },
+    { id: 'wan', icon: '↔', label: 'Site to site', color: '#F59E0B', animDur: 2.0,
+      desc: 'WAN edge pair at a site',
+      nodeSeq: [id(first('wan-edge')), id(first('wan-edge', 1))] },
+    { id: 'ran', icon: '📶', label: 'RAN uplink', color: '#A78BFA', animDur: 2.4,
+      desc: 'Radio → DU → CU → core',
+      nodeSeq: [id(first('oran-ru')), id(first('oran-du')), id(first('oran-cu')), id(first('oran-core'))] },
+    { id: 'ha', icon: '🔄', label: 'HA failover', color: '#EF4444', animDur: 1.5,
+      desc: 'Firewall cluster: active → standby over the HA control link',
+      nodeSeq: [id(first('firewall')), id(first('firewall', 1))] },
+  ]
+  const flows = candidates.filter(f => f.nodeSeq.every(Boolean) && new Set(f.nodeSeq).size === f.nodeSeq.length)
+
+  const counts = rows.map(x => `${x.total} ${x.r.label.toLowerCase()}${x.total > x.devs.length ? ` (showing ${x.devs.length})` : ''}`)
   return {
-    nodes, links, zones, flows, tiers, regions, groups, traffic,
-    title: `DC Spine-Leaf HLD${sc ? ` — ${sc}` : ''}`,
-    subtitle: `${nSpines} Spine · ${nLeaves} Leaf · ${underlay.toUpperCase()} underlay · ${overlayLabel(overlay)} overlay`,
-    svgH: 920,
+    nodes, links, zones, flows, tiers, regions, groups: nodeGroups, traffic,
+    title: `${(USE_CASE_TITLE[useCase] ?? 'Network')} HLD${sc ? ` — ${sc}` : ''}`,
+    subtitle: [counts.join(' · '), caption].filter(Boolean).join(' · '),
+    svgH: Math.max(rows.length, 1) * ROW_H + TOP + 70,
   }
 }
 
-// ─── Campus topology ──────────────────────────────────────────────────────────
-
-function buildCampusTopology(devices: BOMDevice[], underlay: string, sc: string): Topo {
-  const distDevs   = devices.filter(d => d.subLayer === 'distribution')
-  const accessDevs = devices.filter(d => d.subLayer === 'access')
-  const nDist   = Math.min(Math.max(distDevs.length, 4), 6)
-  const nAccess = Math.min(Math.max(accessDevs.length, 6), 10)
-  const distModel   = distDevs[0]?.model ?? 'C9500-48Y4C'
-  const accessModel = accessDevs[0]?.model ?? 'C9300-48P'
-  // Firewall / WAN-edge / core reflect the BOM vendor/model when present.
-  const fwDevs    = devices.filter(d => d.subLayer === 'firewall')
-  const fwModel   = fwDevs[0]?.model  ?? 'PA-3430'
-  const fwVendor  = fwDevs[0]?.vendor ?? 'Palo Alto'
-  const wanDevs   = devices.filter(d => d.subLayer === 'wan-edge')
-  const wanModel  = wanDevs[0]?.model  ?? 'ASR-1001X'
-  const wanVendor = wanDevs[0]?.vendor ?? 'Cisco'
-  const coreDevs   = devices.filter(d => d.subLayer === 'core')
-  const coreModel  = coreDevs[0]?.model  ?? 'C9500-32QC'
-  const coreVendor = coreDevs[0]?.vendor ?? 'Cisco'
-
-  const Y: Record<string, number> = {
-    internet: 72, wan: 192, fw: 312, core: 432, dist: 552, access: 672, hosts: 800,
-  }
-
-  const zones: SecurityZone[] = [
-    { id:'z-int',  label:'INTERNET', sublabel:'Dual ISP BGP',
-      yStart:0,   yEnd:140, fill:'rgba(17,17,17,0.9)', stroke:'#374151', icon:'🌐' },
-    { id:'z-edge', label:'EDGE / UNTRUST', sublabel:'WAN Edge · BGP eBGP',
-      yStart:140, yEnd:260, fill:'rgba(127,29,29,0.26)', stroke:'#B91C1C', icon:'🔴' },
-    { id:'z-fw',   label:'PERIMETER FW', sublabel:'NGFW · IPS · 802.1X NAC',
-      yStart:260, yEnd:380, fill:'rgba(154,52,18,0.26)', stroke:'#C2410C', icon:'🟠' },
-    { id:'z-core', label:'CAMPUS CORE', sublabel:`${underlay.toUpperCase()} Area 0 · VSS/StackWise · L3 GW`,
-      yStart:380, yEnd:620, fill:'rgba(88,28,135,0.24)', stroke:'#7E22CE', icon:'🟣' },
-    { id:'z-access', label:'ACCESS', sublabel:'802.1X · PoE+ · DAI · LLDP',
-      yStart:620, yEnd:870, fill:'rgba(21,128,61,0.24)', stroke:'#15803D', icon:'🟢' },
-  ]
-
-  const [icx] = xCentered(1, 0)
-  const inet = mkNode('inet','INTERNET','Dual-ISP','internet','ISP','—','—', icx - NW/2 + CONTENT_W/2 - NW, Y.internet,
-    { isCloud:true, features:['BGP ISP-A (AS64512)', 'BGP ISP-B (AS64513)'] })
-  const [wx1, wx2] = xCentered(2, 240)
-  const wan1 = mkNode('wan1','WAN-RTR-01',wanModel,'wan-edge',wanVendor,'10.255.0.1','10.0.0.1',wx1,Y.wan,
-    { haRole:'active', asn:'65000', features:['BGP eBGP','OSPF Area 0','BFD'] })
-  const wan2 = mkNode('wan2','WAN-RTR-02',wanModel,'wan-edge',wanVendor,'10.255.0.2','10.0.0.2',wx2,Y.wan,
-    { haRole:'standby', asn:'65000', features:['BGP eBGP','OSPF Area 0','BFD'] })
-  const [fw1x, fw2x] = xCentered(2, 240)
-  const fw1 = mkNode('fw1','CORP-FW-01',fwModel,'corp-fw',fwVendor,'10.255.0.11','10.0.0.11',fw1x,Y.fw,
-    { haRole:'active', features:['NGFW','IPS','URL-Filter','App-ID','802.1X NAC'] })
-  const fw2 = mkNode('fw2','CORP-FW-02',fwModel,'corp-fw',fwVendor,'10.255.0.12','10.0.0.12',fw2x,Y.fw,
-    { haRole:'standby', features:['NGFW','HA-Sync'] })
-  const [c1x, c2x] = xCentered(2, 240)
-  const core1 = mkNode('core1','CORE-SW-01',coreModel,'core',coreVendor,'10.255.0.21','10.0.0.21',c1x,Y.core,
-    { haRole:'active', features:['VSS','OSPF Area0','HSRP','DHCP-Server','VLAN trunk'] })
-  const core2 = mkNode('core2','CORE-SW-02',coreModel,'core',coreVendor,'10.255.0.22','10.0.0.22',c2x,Y.core,
-    { haRole:'standby', features:['VSS member','OSPF Area0','HSRP standby'] })
-
-  const distGap = nDist <= 4 ? 60 : 28
-  const distXs = xCentered(nDist, distGap)
-  const dists = distXs.map((x, i) => {
-    const pair = pairInfo(i, nDist)
-    const features = ['MLAG','OSPF Area0','DHCP-Relay','Inter-VLAN']
-    let fhrpVip: string | undefined
-    if (pair) {
-      features.push(`vPC/MLAG Pair #${pair.pairId}`)
-      fhrpVip = `10.10.${pair.pairId - 1}.1`
-    }
-    return mkNode(
-      `dist${i+1}`, `DIST-SW-0${i+1}`, distModel, 'distribution', distDevs[i]?.vendor ?? 'Cisco',
-      `10.255.0.${30+i}`, `10.0.0.${31+i}`, x, Y.dist,
-      { features, mlagPairId: pair?.pairId, fhrpVip },
-    )
-  })
-  dists.forEach((node, i) => {
-    const pair = pairInfo(i, nDist)
-    if (pair) node.mlagPeerLabel = dists[pair.peerIdx].label
-  })
-
-  // vPC/MLAG peer-links between adjacent distribution pairs (D1)
-  const distPeerLinks: HLDLink[] = []
-  for (let i = 0; i + 1 < nDist; i += 2) {
-    distPeerLinks.push(mkLink(dists[i].id, dists[i+1].id, '2x40G LAG', 'vPC/MLAG Peer-Link', 'Po1', 'Po1', '—', { isHaSync: true }))
-  }
-
-  // Each access switch's MEC uplink lands on the dist switch it's wired to
-  // below (perDist-sized slices of `dists`); annotate with that dist's vPC pair.
-  const perDist = Math.ceil(nAccess / nDist)
-  const accessGap = nAccess <= 6 ? 28 : 14
-  const accessXs = xCentered(nAccess, accessGap)
-  const accesses = accessXs.map((x, i) => {
-    const di = Math.min(Math.floor(i / perDist), nDist - 1)
-    const distPairId = Math.floor(di / 2) + 1
-    const features = ['802.1X','PoE+','DAI','LLDP','VLAN', `MEC uplink: Port-channel${i+1} → DIST-SW-0${di+1} (vPC pair #${distPairId})`]
-    return mkNode(
-      `acc${i+1}`, `ACC-SW-0${i+1 < 10 ? '0' : ''}${i+1}`, accessModel, 'access', accessDevs[i]?.vendor ?? 'Cisco',
-      `10.255.0.${50+i}`, `10.0.0.${51+i}`, x, Y.access,
-      { features },
-    )
-  })
-
-  // Host icons (representative)
-  const hostXs = xCentered(5, 80)
-  const hostLabels = ['PC-01','PHONE-01','AP-01','PRINTER','SERVER']
-  const hosts = hostLabels.map((label, i) => mkNode(
-    `host${i+1}`, label, 'Endpoint', 'host', '—', '', `10.10.0.${i+1}`, hostXs[i], Y.hosts,
-    { features:['VLAN20 Corp'] },
-  ))
-
-  const nodes = [inet, wan1, wan2, fw1, fw2, core1, core2, ...dists, ...accesses, ...hosts]
-
-  const links: HLDLink[] = [
-    mkLink('inet','wan1','1G','BGP ISP-A','—','Gi0/0/0','203.0.113.0/30'),
-    mkLink('inet','wan2','1G','BGP ISP-B','—','Gi0/0/0','198.51.100.0/30'),
-    mkLink('wan1','wan2','1G','iBGP peer','Gi0/1','Gi0/1','192.168.0.0/30', { isHaSync:true }),
-    mkLink('wan1','fw1','10G','L3 Routed','Te0/0/0','eth1/1','10.100.0.0/30'),
-    mkLink('wan2','fw2','10G','L3 Routed','Te0/0/0','eth1/1','10.100.0.4/30'),
-    mkLink('fw1','fw2','1G','HA-Sync','ha1','ha1','10.10.0.0/30', { isHaSync:true }),
-    mkLink('fw1','core1','10G',`L3 · ${underlay.toUpperCase()}`,'eth1/3','Te1/0/1','10.100.1.0/30'),
-    mkLink('fw2','core2','10G',`L3 · ${underlay.toUpperCase()}`,'eth1/3','Te1/0/1','10.100.1.4/30'),
-    mkLink('core1','core2','40G','VSS / MEC','Te1/0/48','Te1/0/48','—', { isHaSync:true }),
-    ...dists.map((d, i) => mkLink('core1', d.id, '40G', `${underlay.toUpperCase()} · MLAG`, `Te1/0/${i+2}`, 'Te1/0/1', `10.0.${1+i*2}.0/31`)),
-    ...dists.map((d, i) => mkLink('core2', d.id, '40G', `${underlay.toUpperCase()} · MLAG`, `Te1/0/${i+2}`, 'Te1/0/2', `10.0.${2+i*2}.0/31`)),
-    ...dists.flatMap((dist, di) =>
-      accesses.slice(di * perDist, (di+1) * perDist).map((acc) =>
-        mkLink(dist.id, acc.id, '10G', '802.1Q Trunk', 'Te1/0/3', 'Gi0/1', '—')
-      )
-    ),
-    ...hosts.map((h, i) => mkLink(accesses[Math.min(i, nAccess-1)].id, h.id, '1G', '802.1X Access', 'Gi1/0/1', 'eth0', '—')),
-    // vPC/MLAG peer-links between adjacent distribution pairs (D1)
-    ...distPeerLinks,
-  ]
-
-  const flows: PacketFlow[] = [
-    {
-      id:'ns-inbound', icon:'⬇', label:'N-S Inbound',
-      desc:'Internet → WAN → Corp FW → Core → Distribution → PC (HTTP)',
-      nodeSeq:['inet','wan1','fw1','core1','dist1','acc1','host1'],
-      color:'#F59E0B', animDur: 2.5,
-    },
-    {
-      id:'intra-campus', icon:'↔', label:'Intra-Campus',
-      desc:'PC-to-PC traffic routed at core via OSPF inter-VLAN',
-      nodeSeq:['host1','acc1','dist1','core1','dist2','acc2','host2'],
-      color:'#3B82F6', animDur: 2.0,
-    },
-    {
-      id:'ns-egress', icon:'⬆', label:'Internet Egress',
-      desc:'PC → Core → FW (SNAT) → WAN → Internet',
-      nodeSeq:['host1','acc1','dist1','core1','fw1','wan1','inet'],
-      color:'#8B5CF6', animDur: 2.4,
-    },
-    {
-      id:'voice', icon:'📞', label:'Voice / UC',
-      desc:'IP Phone → Access (VLAN 30) → Distribution → Core → UC Server',
-      nodeSeq:['host2','acc2','dist2','core2','dist1','acc1'],
-      color:'#22C55E', animDur: 1.8,
-    },
-    {
-      id:'ha-failover', icon:'🔄', label:'HA Failover',
-      desc:'Corp FW active→standby switchover via HA sync link',
-      nodeSeq:['wan1','fw1','fw2','core1'],
-      color:'#EF4444', animDur: 1.5,
-    },
-    {
-      id:'8021x-auth', icon:'🔐', label:'802.1X Auth',
-      desc:'Endpoint authentication via 802.1X → RADIUS → FW → Identity Policy',
-      nodeSeq:['host1','acc1','dist1','fw1'],
-      color:'#F97316', animDur: 2.2,
-    },
-  ]
-
-  const campusTiers: TierLabel[] = [
-    { id: 't-wan',    y: Y.wan,    label: 'WAN EDGE',     side: 'right', color: '#F59E0B' },
-    { id: 't-fw',     y: Y.fw,     label: 'FIREWALL',     side: 'right', color: '#FB923C' },
-    { id: 't-core',   y: Y.core,   label: 'CORE',         side: 'right', color: '#A78BFA' },
-    { id: 't-dist',   y: Y.dist,   label: 'DISTRIBUTION', side: 'right', color: '#38BDF8' },
-    { id: 't-acc',    y: Y.access, label: 'ACCESS',       side: 'right', color: '#22C55E' },
-    { id: 't-hosts',  y: Y.hosts,  label: 'END USERS',    side: 'right', color: '#A8A29E' },
-  ]
-  const campusRegions: TopoRegion[] = [
-    { id: 'r-campus', yStart: Y.core - 46, yEnd: Y.access + 46,
-      label: 'CAMPUS LAN',
-      protocol: `${underlay.toUpperCase()} area 0 · HSRP first-hop · RPVST+`,
-      fill: 'rgba(56,189,248,0.10)', stroke: '#38BDF8' },
-  ]
-  const campusTraffic: TrafficAxis[] = [
-    { id: 'tr-ns', axis: 'ns', label: 'NORTH–SOUTH', color: '#F87171',
-      at: LEFT_W + 14, from: Y.internet, to: Y.hosts },
-  ]
-
-  return {
-    nodes, links, zones, flows,
-    tiers: campusTiers, regions: campusRegions, traffic: campusTraffic,
-    title: `Campus LAN HLD${sc ? ` — ${sc}` : ''}`,
-    subtitle: `2 Core · ${nDist} Distribution · ${nAccess} Access · ${underlay.toUpperCase()} · OSPF Area 0`,
-    svgH: 900,
-  }
-}
-
-// ─── GPU topology ─────────────────────────────────────────────────────────────
-
-function buildGPUTopology(devices: BOMDevice[], sc: string): Topo {
-  const spineDevs = devices.filter(d => d.subLayer === 'spine')
-  const leafDevs = devices.filter(d => d.subLayer === 'leaf')
-  const nLeaves  = Math.min(Math.max(leafDevs.length, 4), 8)
-  const nGPU     = Math.min(nLeaves * 2, 8)
-  // Reflect the actual BOM hardware rather than hardcoding one vendor.
-  const leafModel    = leafDevs[0]?.model  ?? 'SN4600C'
-  const leafVendor   = leafDevs[0]?.vendor ?? 'NVIDIA'
-  const spineModel   = spineDevs[0]?.model  ?? 'SN4800'
-  const spineVendor  = spineDevs[0]?.vendor ?? 'NVIDIA'
-
-  const Y: Record<string, number> = {
-    oob: 72, spine: 220, leaf: 360, gpu: 500, storage: 630,
-  }
-
-  const zones: SecurityZone[] = [
-    { id:'z-oob',  label:'OOB MGMT', sublabel:'Out-of-band · SSH · SNMP · Syslog',
-      yStart:0,   yEnd:148, fill:'rgba(28,25,23,0.9)', stroke:'#57534E', icon:'⚙' },
-    { id:'z-fabric', label:'GPU FABRIC', sublabel:'RoCEv2 lossless · PFC priority 3 · ECN/DCQCN · BFD',
-      yStart:148, yEnd:580, fill:'rgba(6,78,59,0.26)', stroke:'#065F46', icon:'🟢' },
-    { id:'z-compute', label:'GPU COMPUTE', sublabel:'NVIDIA A100/H100 · NVLink · GPUDirect RDMA · NVMe-oF',
-      yStart:580, yEnd:730, fill:'rgba(30,27,75,0.28)', stroke:'#3730A3', icon:'⚡' },
-  ]
-
-  const oob = mkNode('oob','OOB-MGMT-SW','C9300-24T','oob','Cisco','10.0.0.250','10.0.0.250',
-    LEFT_W + CONTENT_W/2 - NW/2, Y.oob,
-    { features:['VLAN10 OOB','SSH','SNMPv3','Syslog'] })
-
-  const [sx1, sx2] = xCentered(2, 320)
-  const sp1 = mkNode('sp1',spineDevs[0]?.hostname ?? 'GPU-SPINE-01',spineModel,'spine',spineVendor,'10.255.1.1','10.0.0.31',sx1,Y.spine,
-    { haRole:'active', asn:'65001', features:['400G QSFP-DD','RoCEv2 lossless','ECN','DCQCN'] })
-  const sp2 = mkNode('sp2',spineDevs[1]?.hostname ?? 'GPU-SPINE-02',spineModel,'spine',spineVendor,'10.255.1.2','10.0.0.32',sx2,Y.spine,
-    { haRole:'active', asn:'65001', features:['400G QSFP-DD','RoCEv2 lossless','ECN','DCQCN'] })
-
-  const leafGap = nLeaves <= 4 ? 30 : 16
-  const leafXs = xCentered(nLeaves, leafGap)
-  const leaves = leafXs.map((x, i) => {
-    const pair = pairInfo(i, nLeaves)
-    const features = ['400G ToR','PFC P3','ECN','VXLAN NVE','BFD']
-    if (pair) features.push(`vPC/MLAG Pair #${pair.pairId}`)
-    return mkNode(
-      `lf${i+1}`, leafDevs[i]?.hostname ?? `GPU-LEAF-0${i+1}`, leafModel, 'leaf', leafVendor,
-      `10.255.2.${i+1}`, `10.0.0.${51+i}`, x, Y.leaf,
-      { features, mlagPairId: pair?.pairId },
-    )
-  })
-  leaves.forEach((node, i) => {
-    const pair = pairInfo(i, nLeaves)
-    if (pair) node.mlagPeerLabel = leaves[pair.peerIdx].label
-  })
-
-  // vPC/MLAG peer-links between adjacent ToR pairs (D1)
-  const leafPeerLinks: HLDLink[] = []
-  for (let i = 0; i + 1 < nLeaves; i += 2) {
-    leafPeerLinks.push(mkLink(leaves[i].id, leaves[i+1].id, '2x100G LAG', 'vPC/MLAG Peer-Link', 'Po1', 'Po1', '—', { isHaSync: true }))
-  }
-
-  const gpuXs = xCentered(nGPU, 16)
-  const gpuNodes = gpuXs.map((x, i) => mkNode(
-    `gpu${i+1}`, `A100-SRV-0${i+1}`, 'DGX A100', 'gpu', 'NVIDIA',
-    '', `192.168.100.${i+1}`, x, Y.gpu,
-    { features:['8× A100 GPU','NVLink 4th','400GE dual-port','RDMA GPUDirect'] },
-  ))
-
-  const [st1x, st2x] = xCentered(2, 200)
-  const stor1 = mkNode('stor1','NVMe-STOR-01','EF-570','storage','NetApp','','192.168.200.1',st1x,Y.storage,
-    { features:['NVMe-oF TCP','24×7.68TB NVMe','GPUDirect Storage'] })
-  const stor2 = mkNode('stor2','NVMe-STOR-02','EF-570','storage','NetApp','','192.168.200.2',st2x,Y.storage,
-    { features:['NVMe-oF TCP','24×7.68TB NVMe','GPUDirect Storage'] })
-
-  const nodes = [oob, sp1, sp2, ...leaves, ...gpuNodes, stor1, stor2]
-
-  const links: HLDLink[] = [
-    mkLink('oob','sp1','1G','OOB Mgmt','Gi0/1','Gi0/48','—', { isOob:true }),
-    mkLink('oob','sp2','1G','OOB Mgmt','Gi0/2','Gi0/48','—', { isOob:true }),
-    ...leaves.map((lf, i) => mkLink('oob', lf.id, '1G', 'OOB Mgmt', `Gi0/${3+i}`, 'Gi0/48', '—', { isOob:true })),
-    ...leaves.map((lf, i) => mkLink('sp1', lf.id, '400G', 'IS-IS / RoCEv2', `e1/${i+1}`, 'e1/1', `10.1.0.${i*4}/31`)),
-    ...leaves.map((lf, i) => mkLink('sp2', lf.id, '400G', 'IS-IS / RoCEv2', `e1/${i+1}`, 'e1/2', `10.1.1.${i*4}/31`)),
-    ...gpuNodes.map((g, i) => mkLink(leaves[Math.floor(i / 2)].id, g.id, '400G', 'RoCEv2 PFC lossless', `e1/${20+i}`, 'mmc0', `192.168.100.${i*4}/30`)),
-    mkLink(leaves[0].id, 'stor1', '400G', 'NVMe-oF TCP / RDMA', 'e1/40', 'e0a', '192.168.200.0/30'),
-    mkLink(leaves[nLeaves > 1 ? 1 : 0].id, 'stor2', '400G', 'NVMe-oF TCP / RDMA', 'e1/40', 'e0a', '192.168.200.4/30'),
-    // vPC/MLAG peer-links between adjacent ToR pairs (D1)
-    ...leafPeerLinks,
-  ]
-
-  const flows: PacketFlow[] = [
-    {
-      id:'gpu-rdma', icon:'⚡', label:'GPU↔GPU RDMA',
-      desc:'RoCEv2 RDMA between GPU servers via lossless PFC fabric (sub-μs latency)',
-      nodeSeq:['gpu1','lf1','sp1','lf2','gpu3'],
-      color:'#10B981', animDur: 0.9,
-    },
-    {
-      id:'nvme-read', icon:'💾', label:'NVMe-oF Read',
-      desc:'GPU server reads training data from NVMe-oF storage via GPUDirect Storage',
-      nodeSeq:['gpu1','lf1','sp1','lf1','stor1'],
-      color:'#6366F1', animDur: 1.2,
-    },
-    {
-      id:'allreduce', icon:'🔁', label:'AllReduce',
-      desc:'NCCL AllReduce gradient sync across all GPUs (ring / tree algorithm)',
-      nodeSeq:['gpu1','lf1','sp1','sp2','lf2','gpu3'],
-      color:'#F59E0B', animDur: 1.0,
-    },
-    {
-      id:'oob-mgmt', icon:'🔧', label:'OOB Mgmt',
-      desc:'Out-of-band SSH/SNMPv3 management to all network devices',
-      nodeSeq:['oob','sp1','lf1','gpu1'],
-      color:'#6B7280', animDur: 3.0,
-    },
-  ]
-
-  const gpuTiers: TierLabel[] = [
-    { id: 't-oob',   y: Y.oob,     label: 'OOB MGMT',    side: 'right', color: '#78716C' },
-    { id: 't-spine', y: Y.spine,   label: 'SPINE',       side: 'right', color: '#60A5FA' },
-    { id: 't-tor',   y: Y.leaf,    label: 'ToR / LEAF',  side: 'right', color: '#4ADE80' },
-    { id: 't-gpu',   y: Y.gpu,     label: 'GPU COMPUTE', side: 'right', color: '#34D399' },
-    { id: 't-stor',  y: Y.storage, label: 'STORAGE',     side: 'right', color: '#818CF8' },
-  ]
-  const gpuRegions: TopoRegion[] = [
-    { id: 'r-lossless', yStart: Y.spine - 46, yEnd: Y.leaf + 46,
-      label: 'LOSSLESS FABRIC',
-      protocol: 'RoCEv2 · PFC priority 3 no-drop · ECN/DCQCN',
-      fill: 'rgba(52,211,153,0.10)', stroke: '#34D399' },
-  ]
-  const gpuTraffic: TrafficAxis[] = [
-    { id: 'tr-ew', axis: 'ew', label: 'EAST–WEST (RDMA)', color: '#38BDF8',
-      at: Y.gpu + 62, from: LEFT_W + 40, to: SVG_W - 40 },
-  ]
-
-  return {
-    nodes, links, zones, flows,
-    tiers: gpuTiers, regions: gpuRegions, traffic: gpuTraffic,
-    title: `GPU AI Fabric HLD${sc ? ` — ${sc}` : ''}`,
-    subtitle: `2 Spine · ${nLeaves} ToR · ${nGPU} GPU Servers · RoCEv2 lossless · PFC priority 3`,
-    svgH: 760,
-  }
-}
-
-// ─── WAN topology ─────────────────────────────────────────────────────────────
-
-function buildWANTopology(devices: BOMDevice[], underlay: string, sc: string): Topo {
-  const nBranches = Math.min(Math.max(devices.filter(d => d.subLayer === 'wan-edge' || d.role === 'wan').length, 3), 5)
-
-  const Y: Record<string, number> = {
-    isp: 72, hub: 200, wan: 340, branch: 490, hosts: 640,
-  }
-
-  const zones: SecurityZone[] = [
-    { id:'z-isp', label:'SP BACKBONE', sublabel:'MPLS / Internet Transit',
-      yStart:0, yEnd:140, fill:'rgba(17,17,17,0.9)', stroke:'#374151', icon:'🌐' },
-    { id:'z-hub', label:'HQ / HUB', sublabel:'BGP Route Reflector · PE handoff',
-      yStart:140, yEnd:280, fill:'rgba(127,29,29,0.26)', stroke:'#B91C1C', icon:'🔴' },
-    { id:'z-wan', label:'WAN TRANSPORT', sublabel:`${underlay.toUpperCase()} · SD-WAN · MPLS · BFD`,
-      yStart:280, yEnd:430, fill:'rgba(29,78,216,0.24)', stroke:'#1D4ED8', icon:'🔵' },
-    { id:'z-branch', label:'BRANCH SITES', sublabel:'CPE · L3 VPN · QoS · Local Internet Breakout',
-      yStart:430, yEnd:720, fill:'rgba(21,128,61,0.24)', stroke:'#15803D', icon:'🟢' },
-  ]
-
-  const ispX = LEFT_W + CONTENT_W/2 - NW/2
-  const isp = mkNode('isp','SP-BACKBONE','MPLS/Internet','internet','ISP','—','—', ispX, Y.isp,
-    { isCloud:true, features:['MPLS L3VPN','Internet Transit','BGP full-table'] })
-
-  // HQ PE routers reflect the BOM's WAN-edge vendor/model selection.
-  const wanDevs   = devices.filter(d => d.subLayer === 'wan-edge')
-  const hubModel  = wanDevs[0]?.model  ?? 'ASR-9001'
-  const hubVendor = wanDevs[0]?.vendor ?? 'Cisco'
-
-  const [hub1x, hub2x] = xCentered(2, 200)
-  const hub1 = mkNode('hub1','HQ-PE-RTR-01',hubModel,'wan-edge',hubVendor,'10.0.0.1','10.0.0.1',hub1x,Y.hub,
-    { haRole:'active', asn:'65000', features:['BGP RR','MPLS PE','SR-MPLS','BFD'] })
-  const hub2 = mkNode('hub2','HQ-PE-RTR-02',hubModel,'wan-edge',hubVendor,'10.0.0.2','10.0.0.2',hub2x,Y.hub,
-    { haRole:'standby', asn:'65000', features:['BGP RR standby','MPLS PE','SR-MPLS'] })
-
-  const wanXs = xCentered(nBranches, 40)
-  const wanRtrs = wanXs.map((x, i) => mkNode(
-    `wan${i+1}`, `WAN-CPE-0${i+1}`, 'ISR-4331', 'wan-edge', 'Cisco',
-    `10.0.1.${i+1}`, `10.0.0.${11+i}`, x, Y.wan,
-    { features: ['L3VPN PE','QoS DSCP 6-class','BFD','SD-WAN overlay'] },
-  ))
-
-  const branchXs = xCentered(nBranches, 40)
-  const branches = branchXs.map((x, i) => mkNode(
-    `br${i+1}`, `BR-RTR-0${i+1}`, 'ISR-1100', 'distribution', 'Cisco',
-    `10.10.${i+1}.1`, `10.0.0.${51+i}`, x, Y.branch,
-    { features: ['OSPF Area 10','IPSec fallback','Local-breakout','ZBF'] },
-  ))
-
-  const hostXs = xCentered(nBranches, 40)
-  const branchHosts = hostXs.map((x, i) => mkNode(
-    `brhost${i+1}`, `BR${i+1}-HOST`, 'Endpoint', 'host', '—', '', `10.10.${i+1}.10`,
-    x, Y.hosts, { features: ['VLAN20'] },
-  ))
-
-  const nodes = [isp, hub1, hub2, ...wanRtrs, ...branches, ...branchHosts]
-
-  const links: HLDLink[] = [
-    mkLink('isp','hub1','10G','MPLS / BGP full-table','—','Gi0/0/0','203.0.0.0/30'),
-    mkLink('isp','hub2','10G','MPLS / BGP full-table','—','Gi0/0/0','203.0.0.4/30'),
-    mkLink('hub1','hub2','1G','iBGP RR peering','Gi0/1','Gi0/1','10.0.0.0/30', { isHaSync:true }),
-    ...wanRtrs.map((w, i) => mkLink('hub1', w.id, '1G', 'MPLS L3VPN / SR', `Gi0/${i+2}`, 'Gi0/0/0', `10.100.${i}.0/30`)),
-    ...wanRtrs.map((w, i) => mkLink('hub2', w.id, '1G', 'MPLS backup', `Gi0/${i+2}`, 'Gi0/0/1', `10.101.${i}.0/30`)),
-    ...wanRtrs.map((w, i) => mkLink(w.id, branches[i].id, '100M', 'OSPF / QoS', 'Gi0/1', 'Gi0/0', `10.10.${i+1}.0/30`)),
-    ...branches.map((b, i) => mkLink(b.id, branchHosts[i].id, '1G', '802.1Q Trunk', 'Gi0/1', 'eth0', '—')),
-  ]
-
-  const flows: PacketFlow[] = [
-    {
-      id:'hq-branch', icon:'⬇', label:'HQ → Branch',
-      desc:'HQ server to branch user via MPLS L3VPN (guaranteed bandwidth, QoS)',
-      nodeSeq:['hub1','wan1','br1','brhost1'],
-      color:'#F59E0B', animDur: 2.5,
-    },
-    {
-      id:'branch-internet', icon:'⬆', label:'Local Breakout',
-      desc:'Branch internet breakout — direct internet without hairpinning to HQ',
-      nodeSeq:['brhost2','br2','isp'],
-      color:'#3B82F6', animDur: 2.0,
-    },
-    {
-      id:'ha-failover', icon:'🔄', label:'PE Failover',
-      desc:'HQ PE router failover — traffic reroutes via secondary PE (BFD sub-second)',
-      nodeSeq:['wan1','hub1','hub2','wan2'],
-      color:'#EF4444', animDur: 1.5,
-    },
-    {
-      id:'b2b', icon:'↔', label:'Branch-to-Branch',
-      desc:'Branch-to-branch MPLS L3VPN (via hub) or SD-WAN direct tunnel',
-      nodeSeq:['brhost1','br1','wan1','hub1','wan2','br2','brhost2'],
-      color:'#8B5CF6', animDur: 3.0,
-    },
-  ]
-
-  const wanTiers: TierLabel[] = [
-    { id: 't-isp',    y: Y.isp,    label: 'SERVICE PROVIDER', side: 'right', color: '#94A3B8' },
-    { id: 't-hub',    y: Y.hub,    label: 'HUB / DC EDGE',    side: 'right', color: '#A78BFA' },
-    { id: 't-wan',    y: Y.wan,    label: 'WAN EDGE',         side: 'right', color: '#F59E0B' },
-    { id: 't-branch', y: Y.branch, label: 'BRANCH',           side: 'right', color: '#22C55E' },
-    { id: 't-hosts',  y: Y.hosts,  label: 'BRANCH USERS',     side: 'right', color: '#A8A29E' },
-  ]
-  const wanRegions: TopoRegion[] = [
-    { id: 'r-overlay', yStart: Y.hub - 46, yEnd: Y.branch + 46,
-      label: 'WAN OVERLAY',
-      protocol: `${underlay.toUpperCase()} · MPLS L3VPN · IPSec hub-and-spoke`,
-      fill: 'rgba(245,158,11,0.10)', stroke: '#F59E0B' },
-  ]
-  const wanTraffic: TrafficAxis[] = [
-    { id: 'tr-ns', axis: 'ns', label: 'BRANCH → HUB', color: '#F87171',
-      at: LEFT_W + 14, from: Y.isp, to: Y.hosts },
-  ]
-
-  return {
-    nodes, links, zones, flows,
-    tiers: wanTiers, regions: wanRegions, traffic: wanTraffic,
-    title: `WAN HLD${sc ? ` — ${sc}` : ''}`,
-    subtitle: `Hub-and-Spoke · ${nBranches} branch sites · ${underlay.toUpperCase()} · MPLS L3VPN`,
-    svgH: 760,
-  }
-}
-
-// ─── O-RAN / Private 5G topology (G-A10) ──────────────────────────────────────
-
-function buildORANTopology(devices: BOMDevice[], sc: string): Topo {
-  const duDevs = devices.filter(d => d.subLayer === 'oran-du')
-  const ruDevs = devices.filter(d => d.subLayer === 'oran-ru')
-  const fhDevs = devices.filter(d => d.subLayer === 'oran-fronthaul')
-  const nDU = Math.min(Math.max(duDevs.length, 2), 4)
-  const nRU = Math.min(Math.max(ruDevs.length, 4), 8)
-  const nFH = Math.min(Math.max(fhDevs.length, 1), 2)
-
-  const Y: Record<string, number> = {
-    timing: 78, core: 78, midhaul: 230, cu: 230, fronthaul: 380, du: 530, ru: 680,
-  }
-
-  const zones: SecurityZone[] = [
-    { id:'z-core', label:'5G CORE + TIMING', sublabel:'UPF (N3/N6) · PTP Grandmaster (G.8275.1) · GNSS-locked PRC',
-      yStart:0, yEnd:170, fill:'rgba(30,13,80,0.28)', stroke:'#3730A3', icon:'🛰' },
-    { id:'z-transport', label:'TRANSPORT (MIDHAUL + CU)', sublabel:'SR-MPLS · PTP boundary-clock · F1/E1 · SyncE',
-      yStart:170, yEnd:460, fill:'rgba(42,26,5,0.26)', stroke:'#92400E', icon:'🔗' },
-    { id:'z-fronthaul', label:'FRONTHAUL (O-RAN 7.2x)', sublabel:'eCPRI Class C7 · PTP transparent-clock · DU↔RU lossless',
-      yStart:460, yEnd:760, fill:'rgba(6,78,59,0.26)', stroke:'#065F46', icon:'📡' },
-  ]
-
-  // ── 5G Core (UPF) + PTP Grandmaster ──
-  const [coreX, gmX] = xCentered(2, 280)
-  const core = mkNode('upf','5GC-UPF-01','5G Core UPF','oran-core','Dell EMC','10.250.0.1','10.250.0.1',coreX,Y.core,
-    { haRole:'active', features:['N3 GTP-U','N6 DN','N4 PFCP','DPDK','SmartNIC'] })
-  const gm = mkNode('ptpgm','PTP-GM-01','Calnex PTP GM','oran-timing','Calnex','10.250.9.1','10.250.9.1',gmX,Y.timing,
-    { features:['GNSS GPS+Galileo','G.8275.1','PRC SyncE','Class A ±100ns'] })
-
-  // ── Midhaul routers + CU ──
-  const [mhX, cuX] = xCentered(2, 280)
-  const mh = mkNode('mh1','5G-MH-RTR-01','ASR 9901','oran-midhaul','Cisco','10.250.1.1','10.250.1.1',mhX,Y.midhaul,
-    { asn:'65200', features:['SR-MPLS','PTP BC','SyncE','FlexE','TI-LFA'] })
-  const cu = mkNode('cu1','O-CU-01','O-CU Server','oran-cu','Dell EMC','10.250.2.1','10.250.2.1',cuX,Y.cu,
-    { features:['CU-CP','CU-UP','F1/E1','NG to AMF','PTP slave'] })
-
-  // ── Fronthaul switches ──
-  const fhXs = xCentered(nFH, 80)
-  const fhSwitches = fhXs.map((x, i) => mkNode(
-    `fh${i+1}`, `5G-FH-SW-0${i+1}`, fhDevs[i]?.model ?? 'N9K-93180YC-FX3', 'oran-fronthaul', 'Cisco',
-    `10.250.3.${i+1}`, `10.250.3.${i+1}`, x, Y.fronthaul,
-    { features:['PTP TC','eCPRI C7','PFC','9216 MTU','25/100G'] },
-  ))
-
-  // ── O-DU servers ──
-  const duXs = xCentered(nDU, 22)
-  const duNodes = duXs.map((x, i) => mkNode(
-    `du${i+1}`, `O-DU-0${i+1}`, duDevs[i]?.model ?? 'O-DU Server', 'oran-du', 'Dell EMC',
-    `10.250.4.${i+1}`, `10.250.4.${i+1}`, x, Y.du,
-    { features:['High-PHY/MAC/RLC','eCPRI 25G','FAPI','L1 FPGA','PTP slave'] },
-  ))
-
-  // ── O-RU radios ──
-  const ruXs = xCentered(nRU, 16)
-  const ruNodes = ruXs.map((x, i) => mkNode(
-    `ru${i+1}`, `O-RU-0${i+1}`, ruDevs[i]?.model ?? 'O-RU Radio', 'oran-ru', 'Fujitsu',
-    '', `10.250.5.${i+1}`, x, Y.ru,
-    { features:['64T64R mMIMO','n78 3.5GHz','Low-PHY/RF','beamforming','PTP slave'] },
-  ))
-
-  const nodes = [core, gm, mh, cu, ...fhSwitches, ...duNodes, ...ruNodes]
-
-  const links: HLDLink[] = [
-    // Timing distribution (PTP) — GM is the root of the timing tree
-    mkLink('ptpgm','mh1','1G','PTP G.8275.1','p1','Gi0/0','—', { isHaSync:false }),
-    mkLink('ptpgm','upf','1G','SyncE / NTP','p3','eth0','—', { isOob:true }),
-    // Core ↔ CU (NG / N3) and CU ↔ midhaul
-    mkLink('upf','mh1','100G','N3 GTP-U','eth1','Te0/1','10.250.10.0/30'),
-    mkLink('mh1','cu1','100G','F1/NG SR-MPLS','Te0/2','eth1','10.250.11.0/30'),
-    // CU ↔ Fronthaul switches (F1)
-    ...fhSwitches.map((fh, i) => mkLink('cu1', fh.id, '100G', 'F1-U/C', `eth${2+i}`, 'e1/49', `10.250.12.${i*4}/30`)),
-    // Midhaul ↔ Fronthaul (timing + transport)
-    ...fhSwitches.map((fh, i) => mkLink('mh1', fh.id, '100G', 'PTP TC / SR', `Te0/${3+i}`, 'e1/50', `10.250.13.${i*4}/30`)),
-    // Fronthaul switches ↔ O-DU
-    ...duNodes.map((du, i) => mkLink(fhSwitches[i % nFH].id, du.id, '25G', 'eCPRI fronthaul', `e1/${1+i}`, 'eth0', `10.250.14.${i*4}/30`)),
-    // O-DU ↔ O-RU (eCPRI 7.2x split)
-    ...ruNodes.map((ru, i) => mkLink(duNodes[Math.floor(i / Math.ceil(nRU / nDU))]?.id ?? duNodes[0].id, ru.id, '25G', 'eCPRI 7.2x', `eth${1+i}`, 'sfp0', `10.250.15.${i*4}/30`)),
-  ]
-
-  const flows: PacketFlow[] = [
-    {
-      id:'uplink-ue', icon:'📱', label:'UE Uplink',
-      desc:'User equipment uplink: O-RU → O-DU → O-CU → UPF → data network (N6)',
-      nodeSeq:['ru1','du1','fh1','cu1','mh1','upf'],
-      color:'#34D399', animDur: 1.1,
-    },
-    {
-      id:'downlink-ue', icon:'📶', label:'UE Downlink',
-      desc:'Downlink user-plane: UPF (N3 GTP-U) → CU → DU → RU → air interface',
-      nodeSeq:['upf','mh1','cu1','fh1','du1','ru1'],
-      color:'#60A5FA', animDur: 1.1,
-    },
-    {
-      id:'ptp-sync', icon:'🛰', label:'PTP Timing',
-      desc:'IEEE 1588 PTP timing distribution: GNSS grandmaster → boundary/transparent clocks → DU/RU (±65ns fronthaul budget)',
-      nodeSeq:['ptpgm','mh1','fh1','du1','ru1'],
-      color:'#F87171', animDur: 2.4,
-    },
-    {
-      id:'ecpri-fh', icon:'📡', label:'eCPRI Fronthaul',
-      desc:'O-RAN 7.2x split eCPRI IQ-data between O-DU (high-PHY) and O-RU (low-PHY/RF)',
-      nodeSeq:['du1','fh1','ru1'],
-      color:'#FB923C', animDur: 0.9,
-    },
-  ]
-
-  const oranTiers: TierLabel[] = [
-    { id: 't-core',  y: Y.core,      label: '5GC / UPF',   side: 'right', color: '#A78BFA' },
-    { id: 't-cu',    y: Y.cu,        label: 'O-CU',        side: 'right', color: '#60A5FA' },
-    { id: 't-fh',    y: Y.fronthaul, label: 'FRONTHAUL SW', side: 'right', color: '#4ADE80' },
-    { id: 't-du',    y: Y.du,        label: 'O-DU',        side: 'right', color: '#38BDF8' },
-    { id: 't-ru',    y: Y.ru,        label: 'O-RU (RADIO)', side: 'right', color: '#FB923C' },
-  ]
-  const oranRegions: TopoRegion[] = [
-    { id: 'r-fh', yStart: Y.fronthaul - 46, yEnd: Y.ru + 46,
-      label: 'FRONTHAUL',
-      protocol: 'eCPRI 7.2x split · PTP G.8275.1 · SyncE',
-      fill: 'rgba(74,222,128,0.10)', stroke: '#4ADE80' },
-  ]
-  const oranTraffic: TrafficAxis[] = [
-    { id: 'tr-ns', axis: 'ns', label: 'RADIO → CORE', color: '#F87171',
-      at: LEFT_W + 14, from: Y.core, to: Y.ru },
-  ]
-
-  return {
-    nodes, links, zones, flows,
-    tiers: oranTiers, regions: oranRegions, traffic: oranTraffic,
-    title: `Private 5G / O-RAN HLD${sc ? ` — ${sc}` : ''}`,
-    subtitle: `5GC UPF · 1 O-CU · ${nDU} O-DU · ${nRU} O-RU · eCPRI 7.2x fronthaul · PTP G.8275.1 timing`,
-    svgH: 800,
-  }
+const USE_CASE_TITLE: Record<string, string> = {
+  dc: 'DC Spine-Leaf', gpu: 'GPU Fabric', campus: 'Campus', wan: 'WAN', multisite: 'Multisite DCI',
+  multicloud: 'Multi-Cloud', aviatrix: 'Aviatrix Multi-Cloud', oran: 'O-RAN / Private 5G',
 }
 
 // ─── Topology dispatcher ──────────────────────────────────────────────────────
 
-function buildTopology(devices: BOMDevice[], useCase: string, underlay: string, overlay: string[], sc: string): Topo {
-  if (useCase === 'gpu')       return buildGPUTopology(devices, sc)
-  if (useCase === 'campus')    return buildCampusTopology(devices, underlay, sc)
-  if (useCase === 'wan')       return buildWANTopology(devices, underlay, sc)
-  if (useCase === 'oran')      return buildORANTopology(devices, sc)
-  return buildDCTopology(devices, underlay, overlay, sc, useCase)  // dc, multisite, multicloud, aviatrix
+export function buildTopology(
+  devices: BOMDevice[], useCase: string, underlay: string, overlay: string[], sc: string,
+  configs?: Record<string, string>,
+): Topo {
+  return buildDesignTopology(devices, useCase, sc, configs, { underlay, overlay })
 }
 
 // ─── SVG helpers ──────────────────────────────────────────────────────────────
@@ -1213,20 +719,34 @@ function linkPath(n1: HLDNode, n2: HLDNode, isHa?: boolean): string {
 interface Props {
   devices: BOMDevice[]
   useCase?: string
+  /** Used only as a labelled fallback when no generated config states a protocol (AQ1). */
   underlayProtocol?: string
   overlayProtocols?: string[]
   siteCode?: string
+  /** Wizard inputs the configs honour, so the diagram shows what they produce (AQ4). */
+  appTypes?: AppType[]
+  protoFeatures?: string[]
 }
 
-export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol = 'isis', overlayProtocols = ['vxlan_evpn'], siteCode = '' }: Props) {
+export function HLDTopologyDiagram({
+  devices, useCase = 'dc', underlayProtocol = 'isis', overlayProtocols = ['vxlan_evpn'], siteCode = '',
+  appTypes = [], protoFeatures = [],
+}: Props) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
   const [hoveredLink, setHoveredLink] = useState<string | null>(null)
   const [primaryPathOnly, setPrimaryPathOnly] = useState(false)
   const [showHealth, setShowHealth] = useState(false)
 
+  // The configs the diagram describes — generated from the same inputs the
+  // Config Gen step uses, so a selection that changes the configs changes the
+  // diagram too (AQ4).
+  const configs = useMemo(
+    () => generateAllConfigs(devices, useCase as UseCase, [], appTypes, protoFeatures),
+    [devices, useCase, appTypes, protoFeatures],
+  )
   const topo = useMemo(
-    () => buildTopology(devices.length ? devices : [], useCase, underlayProtocol, overlayProtocols, siteCode),
-    [devices, useCase, underlayProtocol, overlayProtocols, siteCode],
+    () => buildTopology(devices, useCase, underlayProtocol, overlayProtocols, siteCode, configs),
+    [devices, useCase, underlayProtocol, overlayProtocols, siteCode, configs],
   )
 
   // C2: per-node health overlay — simulated telemetry snapshot, keyed by node id.
@@ -1276,6 +796,16 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
   }, [activeFlowObj, nodeMap, topo.links])
 
   const LEGEND_Y = topo.svgH - 56
+
+  if (!devices.length) {
+    return (
+      <EmptyState
+        Icon={deviceIcon('spine')}
+        title="No devices in the design yet"
+        description="The HLD is drawn from the BOM and the configs it generates. Choose a use case and requirements to build one."
+      />
+    )
+  }
 
   return (
     <div className="space-y-3">
@@ -1494,9 +1024,11 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
           {/* ── Tier row labels (right edge) ── */}
           {(topo.tiers ?? []).map(t => (
             <g key={t.id}>
-              <line x1={SVG_W - 70} y1={t.y} x2={SVG_W - 58} y2={t.y}
-                    stroke={t.color} strokeWidth={1.2} opacity={0.8} />
-              <text x={SVG_W - 54} y={t.y + 3} fill={t.color}
+              {/* Right-aligned to the edge so long tier names (DISTRIBUTION,
+                  SD-WAN CONTROLLERS) are never clipped by the viewBox. */}
+              <line x1={SVG_W - 90} y1={t.y + 3} x2={SVG_W - 8} y2={t.y + 3}
+                    stroke={t.color} strokeWidth={1} opacity={0.5} />
+              <text x={SVG_W - 8} y={t.y - 1} fill={t.color} textAnchor="end"
                     fontSize={8.5} fontWeight="700" letterSpacing="0.06em">
                 {t.label}
               </text>
@@ -1640,7 +1172,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
                 {node.loopback && node.loopback !== '—' && node.loopback !== '' && (
                   <text x={NW / 2} y={52} textAnchor="middle"
                     fill="#94A3B8" fontSize={6.5}>
-                    {node.loopback}/32
+                    {node.loopback.includes("/") ? node.loopback : `${node.loopback}/32`}
                   </text>
                 )}
                 {/* ASN badge */}
@@ -1725,7 +1257,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
               <div>
                 <div className="text-gray-600 uppercase tracking-wider text-xs">Fabric Pairing</div>
                 <div className="text-cyan-400 mt-0.5">
-                  vPC/MLAG Pair #{selectedNodeObj.mlagPairId}
+                  {selectedNodeObj.pairTech ?? 'HA'} pair #{selectedNodeObj.mlagPairId}
                   {selectedNodeObj.mlagPeerLabel && <> — peer: {selectedNodeObj.mlagPeerLabel}</>}
                 </div>
               </div>
@@ -1734,7 +1266,7 @@ export function HLDTopologyDiagram({ devices, useCase = 'dc', underlayProtocol =
             {selectedNodeObj.fhrpVip && (
               <div>
                 <div className="text-gray-600 uppercase tracking-wider text-xs">FHRP Gateway</div>
-                <div className="text-cyan-400 mt-0.5">HSRP VIP (Vlan10/DATA): {selectedNodeObj.fhrpVip}</div>
+                <div className="text-cyan-400 mt-0.5">{selectedNodeObj.fhrpLabel ?? 'FHRP VIP'}: {selectedNodeObj.fhrpVip}</div>
               </div>
             )}
           </div>

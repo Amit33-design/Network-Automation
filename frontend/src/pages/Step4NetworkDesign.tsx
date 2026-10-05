@@ -905,6 +905,8 @@ export function Step4NetworkDesign() {
               underlayProtocol={underlayProtocol}
               overlayProtocols={overlayProtocols}
               siteCode={siteCode}
+              appTypes={appTypes}
+              protoFeatures={protoFeatures}
             />
           </div>
         </Card>
