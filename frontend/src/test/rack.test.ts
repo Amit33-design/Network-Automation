@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  computeRackLayout, buildCableSchedule,
+  computeRackLayout, buildCableSchedule, rackRedundancy, faultDomain,
   RACK_POWER_BUDGET_W, GPU_RACK_POWER_BUDGET_W,
 } from '@/components/RackElevation'
 import type { BOMDevice, CableLink } from '@/types'
@@ -336,5 +336,67 @@ describe('cable schedule matches the billed plan and the configs (AQ2)', () => {
       expect(r.fromRack, `${r.from} has no rack`).toBeTruthy()
       expect(r.toRack, `${r.to} has no rack`).toBeTruthy()
     }
+  })
+})
+
+// ── AQ3: dual redundancy splits HA pairs across racks ───────────────────────
+describe('rack layout follows the redundancy selection (AQ3)', () => {
+  const SPLIT = ['firewall', 'wan-edge', 'core', 'spine', 'distribution']
+  const layout = (vendor: string, useCase: 'dc' | 'campus' | 'gpu' | 'wan', redundancy: 'single' | 'dual') => {
+    const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'AQ3', vendorPrefs: [vendor], totalEndpoints: 512 })
+    return { devices, racks: computeRackLayout(devices, { redundancy }) }
+  }
+  const rackOf = (racks: ReturnType<typeof computeRackLayout>) =>
+    new Map(racks.flatMap(r => r.slots.map(s => [s.device.id, r.rackId] as const)))
+
+  it.each([['Cisco', 'dc'], ['Juniper', 'campus'], ['NVIDIA', 'gpu'], ['Cisco', 'wan']] as const)(
+    '%s %s dual: no rack holds both members of an HA pair', (vendor, uc) => {
+      const { devices, racks } = layout(vendor, uc, 'dual')
+      const where = rackOf(racks)
+      let pairs = 0
+      for (const tier of SPLIT) {
+        const t = devices.filter(d => d.subLayer === tier)
+        for (let i = 0; i + 1 < t.length; i += 2) {
+          pairs++
+          expect(where.get(t[i].id), `${t[i].hostname} and ${t[i + 1].hostname} share a rack`).not.toBe(where.get(t[i + 1].id))
+        }
+      }
+      expect(pairs).toBeGreaterThan(0)
+      for (const r of racks) expect(r.side, `${r.label} has no fault domain`).toMatch(/^[AB]$/)
+    })
+
+  it('dual keeps each leaf pair together — it is the top-of-rack pair for that rack', () => {
+    const { devices, racks } = layout('Arista', 'dc', 'dual')
+    const where = rackOf(racks)
+    const leaves = devices.filter(d => d.subLayer === 'leaf')
+    for (let i = 0; i + 1 < leaves.length; i += 2) expect(where.get(leaves[i].id)).toBe(where.get(leaves[i + 1].id))
+  })
+
+  it('the selection changes the layout: single packs pair members into one rack, dual never does', () => {
+    const single = layout('Cisco', 'dc', 'single')
+    const fw = single.devices.filter(d => d.subLayer === 'firewall')
+    expect(fw.length).toBe(2)
+    expect(rackOf(single.racks).get(fw[0].id)).toBe(rackOf(single.racks).get(fw[1].id))
+    const dual = layout('Cisco', 'dc', 'dual')
+    expect(rackOf(dual.racks).get(fw[0].id)).not.toBe(rackOf(dual.racks).get(fw[1].id))
+    expect(faultDomain(fw[0], dual.devices)).not.toBe(faultDomain(fw[1], dual.devices))
+  })
+
+  it('dual still respects the unit and power budgets and places every device once', () => {
+    const { devices, racks } = layout('Cisco', 'dc', 'dual')
+    const placed = racks.flatMap(r => r.slots.map(s => s.device.id))
+    expect(new Set(placed).size).toBe(placed.length)
+    expect(placed.length).toBe(devices.filter(d => !d.subLayer.startsWith('cloud-')).length)
+    for (const r of racks) {
+      expect(r.usedU).toBeLessThanOrEqual(r.totalU)
+      expect(r.totalPowerW).toBeLessThanOrEqual(RACK_POWER_BUDGET_W)
+    }
+  })
+
+  it('Step 2 redundancy model wins over Step 1 when set', () => {
+    expect(rackRedundancy('single', 'ha')).toBe('dual')
+    expect(rackRedundancy('dual', 'none')).toBe('single')
+    expect(rackRedundancy('dual', undefined)).toBe('dual')
+    expect(rackRedundancy(undefined, undefined)).toBe('single')
   })
 })

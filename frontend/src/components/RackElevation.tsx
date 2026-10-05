@@ -19,6 +19,42 @@ export interface RackAssignment {
   totalU: number
   usedU: number
   totalPowerW: number
+  /** Fault domain this rack belongs to when redundancy is dual (AQ3). */
+  side?: 'A' | 'B'
+}
+
+/** Inputs that shape the layout (AQ3). */
+export interface RackLayoutOpts {
+  /** The Step 1 redundancy selection. `dual` splits every HA pair across two fault domains. */
+  redundancy?: 'single' | 'dual'
+}
+
+/**
+ * Tiers whose pair members are redundant FOR EACH OTHER, so they must not
+ * share a rack (AQ3): a rack losing power would otherwise take out both
+ * firewalls of the cluster, both spines, both distribution switches. A leaf
+ * pair is different — it is the top-of-rack pair for the servers in that same
+ * rack, so it stays together and pairs alternate between domains instead.
+ */
+const SPLIT_PAIR_TIERS = new Set(['firewall', 'wan-edge', 'core', 'spine', 'distribution', 'sdwan-controller', 'oran-midhaul', 'oran-core', 'oran-timing', 'oran-cu'])
+
+/**
+ * The layout's redundancy from the two wizard selections (AQ3). Step 2's
+ * redundancy model is the more specific choice, so it wins when set (HA/full
+ * split pairs; none/basic keep them together); Step 1's single/dual is the
+ * fallback.
+ */
+export function rackRedundancy(redundancy?: string, redundancyModel?: string): 'single' | 'dual' {
+  if (redundancyModel === 'ha' || redundancyModel === 'full') return 'dual'
+  if (redundancyModel === 'none' || redundancyModel === 'basic') return 'single'
+  return redundancy === 'dual' ? 'dual' : 'single'
+}
+
+/** Which fault domain a device belongs to under dual redundancy. */
+export function faultDomain(dev: BOMDevice, devices: BOMDevice[]): 'A' | 'B' {
+  const tier = devices.filter(d => d.subLayer === dev.subLayer)
+  const i = Math.max(0, tier.findIndex(d => d.id === dev.id))
+  return (SPLIT_PAIR_TIERS.has(dev.subLayer) ? i % 2 : Math.floor(i / 2) % 2) === 0 ? 'A' : 'B'
 }
 
 export interface CableRun {
@@ -120,13 +156,43 @@ function devicePower(d: BOMDevice): number {
 
 // ── Rack layout computation ──────────────────────────────────────────────────
 
-export function computeRackLayout(devices: BOMDevice[]): RackAssignment[] {
+export function computeRackLayout(devices: BOMDevice[], opts: RackLayoutOpts = {}): RackAssignment[] {
   const hasCompute = devices.some(d => d.subLayer === 'gpu-compute')
-  return hasCompute ? computeToRLayout(devices) : computeDenseLayout(devices)
+  return hasCompute ? computeToRLayout(devices, opts) : computeDenseLayout(devices, opts)
 }
 
-function computeDenseLayout(devices: BOMDevice[]): RackAssignment[] {
-  const physical = devices.filter(d => ruForRole(d.subLayer) > 0)
+/**
+ * Pack `devices` into racks, and under dual redundancy pack each fault domain
+ * separately so no HA pair shares a rack (AQ3). Domains interleave (A, B, A,
+ * B…) so adjacent racks are the two halves of the design.
+ */
+function packByDomain(
+  devices: BOMDevice[], all: BOMDevice[], opts: RackLayoutOpts,
+  pack: (devs: BOMDevice[]) => RackAssignment[], relabel: (r: RackAssignment, n: number) => void,
+): RackAssignment[] {
+  if (opts.redundancy !== 'dual') return pack(devices)
+  const a = pack(devices.filter(d => faultDomain(d, all) === 'A')).filter(r => r.slots.length)
+  const b = pack(devices.filter(d => faultDomain(d, all) === 'B')).filter(r => r.slots.length)
+  a.forEach(r => { r.side = 'A' }); b.forEach(r => { r.side = 'B' })
+  const out: RackAssignment[] = []
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i]) out.push(a[i])
+    if (b[i]) out.push(b[i])
+  }
+  out.forEach((r, i) => relabel(r, i + 1))
+  return out
+}
+
+function computeDenseLayout(devices: BOMDevice[], opts: RackLayoutOpts = {}): RackAssignment[] {
+  const racks = packByDomain(
+    devices.filter(d => ruForRole(d.subLayer) > 0), devices, opts, packDense,
+    (r, n) => { r.rackId = `R${n}`; r.label = `Rack ${alphaLabel(n - 1)}` },
+  )
+  return racks.length ? racks : [{ rackId: 'R1', label: 'Rack A', slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0 }]
+}
+
+function packDense(devices: BOMDevice[]): RackAssignment[] {
+  const physical = devices
 
   const sorted = [...physical].sort((a, b) => {
     const ai = ROLE_ORDER.indexOf(a.subLayer)
@@ -165,9 +231,6 @@ function computeDenseLayout(devices: BOMDevice[]): RackAssignment[] {
     currentU += h
   }
   if (currentRack.slots.length > 0) racks.push(currentRack)
-  if (racks.length === 0) {
-    racks.push({ rackId: 'R1', label: 'Rack A', slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0 })
-  }
   return racks
 }
 
@@ -180,7 +243,36 @@ function addSlot(rack: RackAssignment, startU: number, dev: BOMDevice): number {
   return startU + h
 }
 
-function computeToRLayout(devices: BOMDevice[]): RackAssignment[] {
+/** Network racks of the ToR layout: role order, closed on units OR power (AF2). */
+function packNetwork(devices: BOMDevice[]): RackAssignment[] {
+  const sorted = [...devices].sort((a, b) => {
+    const ai = ROLE_ORDER.indexOf(a.subLayer)
+    const bi = ROLE_ORDER.indexOf(b.subLayer)
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi)
+  })
+  const racks: RackAssignment[] = []
+  const fresh = (): RackAssignment => ({
+    rackId: `NW${racks.length + 1}`, label: `Network Rack ${racks.length + 1}`,
+    slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
+  })
+  let rack = fresh()
+  let currentU = 1
+  for (const dev of sorted) {
+    const h = ruForRole(dev.subLayer)
+    const overPower = rack.slots.length > 0 && rack.totalPowerW + devicePower(dev) > RACK_POWER_BUDGET_W
+    if (currentU + h - 1 > RACK_U || overPower) {
+      racks.push(rack)
+      rack = fresh()
+      currentU = 1
+    }
+    currentU = addSlot(rack, currentU, dev)
+  }
+  if (rack.slots.length > 0) racks.push(rack)
+  return racks
+}
+
+function computeToRLayout(devices: BOMDevice[], opts: RackLayoutOpts = {}): RackAssignment[] {
+  const dual = opts.redundancy === 'dual'
   const leaves = devices.filter(d => d.subLayer === 'leaf')
   const compute = devices.filter(d => d.subLayer === 'gpu-compute')
   const network = devices.filter(d =>
@@ -213,6 +305,9 @@ function computeToRLayout(devices: BOMDevice[]): RackAssignment[] {
     const rack: RackAssignment = {
       rackId: `CR${rn}`, label: `Compute ${alphaLabel(rn - 1)}`,
       slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
+      // AQ3: a compute rack is its leaf pair plus servers, so it takes the
+      // pair's fault domain — alternating, the same rule faultDomain() uses.
+      ...(dual ? { side: pairIdx % 2 === 0 ? 'A' as const : 'B' as const } : {}),
     }
     let currentU = 1
 
@@ -239,6 +334,7 @@ function computeToRLayout(devices: BOMDevice[]): RackAssignment[] {
     const rack: RackAssignment = {
       rackId: `LR${rn}`, label: `Leaf Rack ${alphaLabel(rn - 1)}`,
       slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
+      ...(dual ? { side: pairIdx % 2 === 0 ? 'A' as const : 'B' as const } : {}),
     }
     let currentU = 1
     for (const leaf of leafPairs[pairIdx]) {
@@ -250,33 +346,8 @@ function computeToRLayout(devices: BOMDevice[]): RackAssignment[] {
 
   // Network rack(s) for spines, firewalls
   if (network.length > 0) {
-    const sortedNet = [...network].sort((a, b) => {
-      const ai = ROLE_ORDER.indexOf(a.subLayer)
-      const bi = ROLE_ORDER.indexOf(b.subLayer)
-      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi)
-    })
-
-    let netNum = 1
-    let netRack: RackAssignment = {
-      rackId: `NW${netNum}`, label: `Network Rack ${netNum}`,
-      slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
-    }
-    let currentU = 1
-
-    for (const dev of sortedNet) {
-      const h = ruForRole(dev.subLayer)
-      if (currentU + h - 1 > RACK_U) {
-        racks.push(netRack)
-        netNum++
-        netRack = {
-          rackId: `NW${netNum}`, label: `Network Rack ${netNum}`,
-          slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0,
-        }
-        currentU = 1
-      }
-      currentU = addSlot(netRack, currentU, dev)
-    }
-    if (netRack.slots.length > 0) racks.push(netRack)
+    racks.push(...packByDomain(network, devices, opts, packNetwork,
+      (r, n) => { r.rackId = `NW${n}`; r.label = `Network Rack ${n}` }))
   }
 
   if (racks.length === 0) {
@@ -329,7 +400,7 @@ function RackSVG({ rack }: { rack: RackAssignment }) {
       <title>{rack.label} — {rack.usedU}U / {rack.totalU}U ({pctUsed}% utilized)</title>
       {/* Rack title */}
       <text x={RACK_W / 2 + 30} y={18} textAnchor="middle" fill="#E5E7EB" fontSize={13} fontWeight="bold">
-        {rack.label} — {rack.usedU}U / {rack.totalU}U ({pctUsed}%)
+        {rack.label}{rack.side ? ` · domain ${rack.side}` : ''} — {rack.usedU}U / {rack.totalU}U ({pctUsed}%)
       </text>
       <text x={RACK_W / 2 + 30} y={32} textAnchor="middle" fill="#9CA3AF" fontSize={10}>
         Power: {rack.totalPowerW.toLocaleString()}W
@@ -470,10 +541,12 @@ interface Props {
   cabling: CableLink[]
   siteCode: string
   useCase?: UseCase | ''
+  /** The redundancy selection; `dual` splits every HA pair across racks (AQ3). */
+  redundancy?: 'single' | 'dual'
 }
 
-export function RackElevation({ devices, cabling, siteCode, useCase = '' }: Props) {
-  const racks = useMemo(() => computeRackLayout(devices), [devices])
+export function RackElevation({ devices, cabling, siteCode, useCase = '', redundancy = 'single' }: Props) {
+  const racks = useMemo(() => computeRackLayout(devices, { redundancy }), [devices, redundancy])
   const cableRuns = useMemo(() => buildCableSchedule(devices, cabling, useCase, racks), [devices, cabling, useCase, racks])
 
   const totalPower = racks.reduce((s, r) => s + r.totalPowerW, 0)
