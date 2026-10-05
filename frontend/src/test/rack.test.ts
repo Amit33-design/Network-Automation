@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   computeRackLayout, buildCableSchedule, rackRedundancy, faultDomain,
-  RACK_POWER_BUDGET_W, GPU_RACK_POWER_BUDGET_W,
+  RACK_POWER_BUDGET_W, GPU_RACK_POWER_BUDGET_W, assumedHeights,
 } from '@/components/RackElevation'
 import type { BOMDevice, CableLink } from '@/types'
-import { buildDeviceList, buildCabling } from '@/lib/bom'
+import { buildDeviceList, buildCabling, computeTCO, deviceRackUnits } from '@/lib/bom'
 import { expandCablePlan } from '@/lib/netbox-dcim'
 
 function makeDevice(overrides: Partial<BOMDevice> = {}): BOMDevice {
@@ -398,5 +398,57 @@ describe('rack layout follows the redundancy selection (AQ3)', () => {
     expect(rackRedundancy('dual', 'none')).toBe('single')
     expect(rackRedundancy('dual', undefined)).toBe('dual')
     expect(rackRedundancy(undefined, undefined)).toBe('single')
+  })
+})
+
+describe('rack units come from the SKU datasheet (AQ5)', () => {
+  const heightOf = (devices: BOMDevice[], model: string) => {
+    const racks = computeRackLayout(devices)
+    const slot = racks.flatMap(r => r.slots).find(sl => sl.device.model === model)
+    return slot?.heightU
+  }
+
+  it('draws each model at its datasheet height, not the role guess', () => {
+    const nv = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'AQ5', vendorPrefs: ['NVIDIA'], totalEndpoints: 512 })
+    expect(heightOf(nv, 'NVIDIA Spectrum SN4600C')).toBe(2)   // a 2U leaf, the role default said 1
+    const cisco = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'AQ5', vendorPrefs: ['Cisco'], totalEndpoints: 512 })
+    const spine = cisco.find(d => d.subLayer === 'spine')!
+    expect(spine.rackUnits).toBe(1)                           // Nexus 9336C-FX2 is 1RU, the role default said 2
+    expect(heightOf(cisco, spine.model)).toBe(1)
+  })
+
+  it('a 3U firewall occupies three units', () => {
+    const fw = makeDevice({ id: 'pa', hostname: 'FW-A01', subLayer: 'firewall', model: 'PA-5260', rackUnits: 3 })
+    const [rack] = computeRackLayout([fw])
+    expect(rack.slots[0].heightU).toBe(3)
+    expect(rack.usedU).toBe(3)
+  })
+
+  it('TCO footprint equals the units the rack elevation occupies', () => {
+    for (const vendor of ['Cisco', 'NVIDIA', 'Arista', 'Juniper']) {
+      for (const useCase of ['dc', 'gpu', 'campus'] as const) {
+        const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'AQ5', vendorPrefs: [vendor], totalEndpoints: 512 })
+        const racks = computeRackLayout(devices)
+        const placed = racks.reduce((s, r) => s + r.usedU, 0)
+        expect(computeTCO(devices).totalRackUnits, `${vendor} ${useCase}`).toBe(placed)
+      }
+    }
+  })
+
+  it('names the models drawn at an assumed height', () => {
+    const arista = buildDeviceList({ useCase: 'dc', scale: 'large', siteCode: 'AQ5', vendorPrefs: ['Arista'], totalEndpoints: 2048 })
+    const chassis = arista.filter(d => d.rackUnitsNote)
+    expect(chassis.length).toBeGreaterThan(0)                 // the 7800R3 spine is a chassis family
+    const notes = assumedHeights(arista)
+    expect(notes.map(n => n.model).sort()).toEqual([...new Set(chassis.map(d => d.model))].sort())
+    for (const n of notes) expect(n.note.length).toBeGreaterThan(10)
+    // a datasheet height is never listed as assumed
+    const cisco = buildDeviceList({ useCase: 'dc', scale: 'medium', siteCode: 'AQ5', vendorPrefs: ['Cisco'], totalEndpoints: 512 })
+    expect(assumedHeights(cisco)).toEqual([])
+  })
+
+  it('the PTP grandmaster is racked, the radio is not', () => {
+    expect(deviceRackUnits({ subLayer: 'oran-timing' })).toBe(1)
+    expect(deviceRackUnits({ subLayer: 'oran-ru' })).toBe(0)
   })
 })

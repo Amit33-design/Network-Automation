@@ -531,6 +531,8 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
         uplinkSpeed: product.uplinkSpeed,
         portIf: product.portIf,
         uplinkIf: product.uplinkIf,
+        rackUnits: product.rackUnits,
+        rackUnitsNote: product.rackUnitsNote,
         features: product.features,
       })
     }
@@ -593,6 +595,8 @@ export function buildDeviceList(state: Pick<AppState, 'useCase' | 'scale' | 'sit
           uplinkSpeed: product.uplinkSpeed,
           portIf: product.portIf,
           uplinkIf: product.uplinkIf,
+          rackUnits: product.rackUnits,
+          rackUnitsNote: product.rackUnitsNote,
           features: product.features,
         })
       }
@@ -738,7 +742,7 @@ const ROLE_DEFAULT_POWER_W: Record<string, number> = {
   'gpu-compute': 6500,
 }
 
-/** Rack units consumed by a device, derived from its sub-layer role. */
+/** Role default, used only when the SKU has no datasheet height. */
 function rackUnitsFor(subLayer: string): number {
   switch (subLayer) {
     case 'spine':
@@ -756,8 +760,9 @@ function rackUnitsFor(subLayer: string): number {
     case 'oran-core':
       return 2 // COTS servers — 2RU
     case 'oran-ru':
+      return 0 // mast-mounted radio — not racked
     case 'oran-timing':
-      return 0 // field-mounted — no rack RU
+      return 1 // PTP grandmaster — a 1RU rack appliance
     case 'oran-midhaul':
       return 2
     case 'gpu-compute':
@@ -765,6 +770,21 @@ function rackUnitsFor(subLayer: string): number {
     default:
       return 1 // leaf / distribution / access — 1RU ToR/fixed
   }
+}
+
+/**
+ * Rack units a device occupies (AQ5). The datasheet height from the catalogue
+ * wins; the role default applies only where the SKU does not state one — a
+ * modular chassis family, a VM, or a hand-built device. TCO and the rack
+ * elevation both read this, so the footprint they report cannot disagree.
+ */
+export function deviceRackUnits(dev: Pick<BOMDevice, 'subLayer'> & { rackUnits?: number }): number {
+  return dev.rackUnits ?? rackUnitsFor(dev.subLayer)
+}
+
+/** True when a device's height is the role default rather than its datasheet. */
+export function rackUnitsAssumed(dev: Pick<BOMDevice, 'subLayer'> & { rackUnits?: number }): boolean {
+  return dev.rackUnits === undefined && rackUnitsFor(dev.subLayer) > 0
 }
 
 /**
@@ -829,7 +849,7 @@ export function computeTCO(devices: BOMDevice[], opts: Partial<TCOOpts> = {}): T
 
   // Aggregate power draw and rack footprint.
   const totalPowerW = devices.reduce((s, d) => s + devicePowerW(d, rates.defaultPowerW), 0)
-  const totalRackUnits = devices.reduce((s, d) => s + rackUnitsFor(d.subLayer), 0)
+  const totalRackUnits = devices.reduce((s, d) => s + deviceRackUnits(d), 0)
 
   // Annual power: W → kWh/yr (×24×365÷1000), × PUE (cooling overhead), × $/kWh.
   const kWhPerYear = (totalPowerW * 24 * 365) / 1000

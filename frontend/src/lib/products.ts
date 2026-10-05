@@ -4,6 +4,7 @@ export const PRODUCTS: Product[] = [
   // ── Spine / Core ────────────────────────────────────────────────────────────
   {
     id: 'nxos-9336c',
+    rackUnits: 1,
     model: 'Nexus 9336C-FX2',
     vendor: 'Cisco',
     subLayer: 'spine',
@@ -19,6 +20,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'nxos-9364c',
+    rackUnits: 2,
     model: 'Nexus 9364C-GX',
     vendor: 'Cisco',
     subLayer: 'spine',
@@ -34,6 +36,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'arista-7800r3',
+    rackUnitsNote: 'modular chassis — height depends on the slot count (7804R3 to 7816R3)',
     model: 'Arista 7800R3',
     vendor: 'Arista',
     subLayer: 'spine',
@@ -52,6 +55,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'juniper-qfx10002',
+    rackUnits: 2,
     model: 'QFX10002-72Q',
     vendor: 'Juniper',
     subLayer: 'spine',
@@ -69,6 +73,7 @@ export const PRODUCTS: Product[] = [
   // ── Leaf / ToR ──────────────────────────────────────────────────────────────
   {
     id: 'nxos-93180yc',
+    rackUnits: 1,
     model: 'Nexus 93180YC-FX',
     vendor: 'Cisco',
     subLayer: 'leaf',
@@ -88,6 +93,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'nxos-9332c',
+    rackUnits: 1,
     model: 'Nexus 9332C',
     vendor: 'Cisco',
     subLayer: 'leaf',
@@ -106,6 +112,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'arista-7050cx3',
+    rackUnits: 1,
     model: 'Arista 7050CX3-32S',
     vendor: 'Arista',
     subLayer: 'leaf',
@@ -122,6 +129,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'juniper-qfx5120',
+    rackUnits: 1,
     model: 'QFX5120-48Y',
     vendor: 'Juniper',
     subLayer: 'leaf',
@@ -140,6 +148,7 @@ export const PRODUCTS: Product[] = [
   // ── Distribution ────────────────────────────────────────────────────────────
   {
     id: 'cat9500',
+    rackUnits: 1,
     model: 'Catalyst 9500-48Y4C',
     vendor: 'Cisco',
     subLayer: 'distribution',
@@ -162,6 +171,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'cat9300l',
+    rackUnits: 1,
     model: 'Catalyst 9300L-48T-4G',
     vendor: 'Cisco',
     subLayer: 'access',
@@ -181,6 +191,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'cat9200',
+    rackUnits: 1,
     model: 'Catalyst 9200-48P',
     vendor: 'Cisco',
     subLayer: 'access',
@@ -203,6 +214,7 @@ export const PRODUCTS: Product[] = [
   // ── WAN / Edge ───────────────────────────────────────────────────────────────
   {
     id: 'asr1002hx',
+    rackUnits: 2,
     model: 'ASR 1002-HX',
     vendor: 'Cisco',
     subLayer: 'wan-edge',
@@ -218,6 +230,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'asr9904',
+    rackUnits: 6,
     model: 'ASR 9904',
     vendor: 'Cisco',
     subLayer: 'wan-edge',
@@ -233,6 +246,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'ncs540',
+    rackUnits: 1,
     model: 'NCS 540',
     vendor: 'Cisco',
     subLayer: 'wan-edge',
@@ -248,6 +262,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'viptela-vedge',
+    rackUnits: 1,
     model: 'Catalyst SD-WAN vEdge 2000',
     vendor: 'Cisco',
     subLayer: 'wan-edge',
@@ -315,6 +330,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'cat8300-edge',
+    rackUnitsNote: 'height depends on the variant — the 1N1S models are 1RU, the 2N2S models 2RU',
     model: 'Catalyst 8300 Edge',
     vendor: 'Cisco',
     subLayer: 'wan-edge',
@@ -332,6 +348,7 @@ export const PRODUCTS: Product[] = [
   // ── Private 5G / O-RAN (G-A10) ──────────────────────────────────────────────
   {
     id: 'oran-cu',
+    rackUnits: 2,
     model: 'O-CU Server (Dell R750)',
     vendor: 'Dell EMC',
     subLayer: 'oran-cu',
@@ -347,6 +364,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'oran-du',
+    rackUnits: 2,
     model: 'O-DU Server (Dell XR4000)',
     vendor: 'Dell EMC',
     subLayer: 'oran-du',
@@ -377,6 +395,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'oran-fronthaul-sw',
+    rackUnits: 1,
     model: 'Nexus 93180YC-FX3',
     vendor: 'Cisco',
     subLayer: 'oran-fronthaul',
@@ -392,6 +411,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'oran-midhaul-rtr',
+    rackUnits: 2,
     model: 'ASR 9901',
     vendor: 'Cisco',
     subLayer: 'oran-midhaul',
@@ -422,6 +442,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'ptp-grandmaster',
+    rackUnits: 1,
     model: 'Calnex PTP GM (IEEE 1588)',
     vendor: 'Calnex',
     subLayer: 'oran-timing',
@@ -439,6 +460,7 @@ export const PRODUCTS: Product[] = [
   // ── GPU Compute Servers ──────────────────────────────────────────────────
   {
     id: 'gpu-server-4u',
+    rackUnits: 4,
     model: 'GPU Server 4U (8x H100)',
     vendor: 'NVIDIA',
     subLayer: 'gpu-compute',
@@ -488,6 +510,7 @@ export const PRODUCTS: Product[] = [
   // ── Firewalls / Security ────────────────────────────────────────────────────
   {
     id: 'ftd4145',
+    rackUnits: 1,
     model: 'Firepower 4145 NGFW',
     vendor: 'Cisco',
     subLayer: 'firewall',
@@ -503,6 +526,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'panos-pa5260',
+    rackUnits: 3,
     model: 'PA-5260 NGFW',
     vendor: 'Palo Alto',
     subLayer: 'firewall',
@@ -520,6 +544,7 @@ export const PRODUCTS: Product[] = [
   // ── Fortinet ─────────────────────────────────────────────────────────────────
   {
     id: 'fortinet-fg2600f',
+    rackUnits: 2,
     model: 'FortiGate 2600F',
     vendor: 'Fortinet',
     subLayer: 'firewall',
@@ -535,6 +560,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'fortinet-fst1024e',
+    rackUnits: 1,
     model: 'FortiSwitch T1024E',
     vendor: 'Fortinet',
     subLayer: 'distribution',
@@ -551,6 +577,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'fortinet-fst148f',
+    rackUnits: 1,
     model: 'FortiSwitch 148F-POE',
     vendor: 'Fortinet',
     subLayer: 'access',
@@ -569,6 +596,7 @@ export const PRODUCTS: Product[] = [
   // ── Dell EMC ─────────────────────────────────────────────────────────────────
   {
     id: 'dell-z9332f',
+    rackUnits: 1,
     model: 'PowerSwitch Z9332F-ON',
     vendor: 'Dell EMC',
     subLayer: 'spine',
@@ -584,6 +612,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'dell-s5248f',
+    rackUnits: 1,
     model: 'PowerSwitch S5248F-ON',
     vendor: 'Dell EMC',
     subLayer: 'leaf',
@@ -602,6 +631,7 @@ export const PRODUCTS: Product[] = [
   // ── HPE Aruba ────────────────────────────────────────────────────────────────
   {
     id: 'aruba-cx10000',
+    rackUnits: 1,
     model: 'Aruba CX 10000',
     vendor: 'HPE Aruba',
     subLayer: 'spine',
@@ -617,6 +647,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'aruba-cx6400',
+    rackUnitsNote: 'modular chassis — 6405 and 6410 differ in height',
     model: 'Aruba CX 6400',
     vendor: 'HPE Aruba',
     subLayer: 'distribution',
@@ -634,6 +665,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'aruba-cx6300',
+    rackUnits: 1,
     model: 'Aruba CX 6300M',
     vendor: 'HPE Aruba',
     subLayer: 'access',
@@ -652,6 +684,7 @@ export const PRODUCTS: Product[] = [
   // ── NVIDIA ───────────────────────────────────────────────────────────────────
   {
     id: 'nvidia-sn5600',
+    rackUnits: 2,
     model: 'NVIDIA Spectrum SN5600',
     vendor: 'NVIDIA',
     subLayer: 'spine',
@@ -667,6 +700,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'nvidia-sn4600c',
+    rackUnits: 2,
     model: 'NVIDIA Spectrum SN4600C',
     vendor: 'NVIDIA',
     subLayer: 'leaf',
@@ -685,6 +719,7 @@ export const PRODUCTS: Product[] = [
   // ── Nokia ────────────────────────────────────────────────────────────────────
   {
     id: 'nokia-srl-7220d3',
+    rackUnits: 1,
     model: 'Nokia 7220 IXR-D3',
     vendor: 'Nokia',
     subLayer: 'leaf',
@@ -700,6 +735,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'nokia-srl-7250ixr',
+    rackUnitsNote: 'modular chassis — height depends on the IXR chassis variant',
     model: 'Nokia 7250 IXR-10',
     vendor: 'Nokia',
     subLayer: 'spine',
@@ -717,6 +753,7 @@ export const PRODUCTS: Product[] = [
   // ── Budget / Entry-Level — Cisco ────────────────────────────────────────────
   {
     id: 'nxos-3232c',
+    rackUnits: 1,
     model: 'Nexus 3232C',
     vendor: 'Cisco',
     subLayer: 'spine',
@@ -732,6 +769,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'nxos-93108tc',
+    rackUnits: 1,
     model: 'Nexus 93108TC-FX',
     vendor: 'Cisco',
     subLayer: 'leaf',
@@ -748,6 +786,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'cat9300',
+    rackUnits: 1,
     model: 'Catalyst 9300-48UXM',
     vendor: 'Cisco',
     subLayer: 'distribution',
@@ -767,6 +806,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'isr4331',
+    rackUnits: 1,
     model: 'ISR 4331',
     vendor: 'Cisco',
     subLayer: 'wan-edge',
@@ -782,6 +822,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'ftd1150',
+    rackUnits: 1,
     model: 'Firepower 1150 NGFW',
     vendor: 'Cisco',
     subLayer: 'firewall',
@@ -799,6 +840,7 @@ export const PRODUCTS: Product[] = [
   // ── Budget / Entry-Level — Arista ───────────────────────────────────────────
   {
     id: 'arista-7020r',
+    rackUnits: 1,
     model: 'Arista 7020R-48YM',
     vendor: 'Arista',
     subLayer: 'leaf',
@@ -814,6 +856,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'arista-7060x',
+    rackUnits: 1,
     model: 'Arista 7060X4-32',
     vendor: 'Arista',
     subLayer: 'spine',
@@ -829,6 +872,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'arista-7010t',
+    rackUnits: 1,
     model: 'Arista 7010T-48',
     vendor: 'Arista',
     subLayer: 'leaf',
@@ -844,6 +888,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'arista-720xp',
+    rackUnits: 1,
     model: 'Arista CCS-720XP-48Y6',
     vendor: 'Arista',
     subLayer: 'access',
@@ -860,6 +905,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'arista-750',
+    rackUnitsNote: 'modular chassis — height depends on the 750-series slot count',
     model: 'Arista CCS-750-24',
     vendor: 'Arista',
     subLayer: 'distribution',
@@ -878,6 +924,7 @@ export const PRODUCTS: Product[] = [
   // ── Budget / Entry-Level — Juniper ──────────────────────────────────────────
   {
     id: 'juniper-ex4400',
+    rackUnits: 1,
     model: 'EX4400-48T',
     vendor: 'Juniper',
     subLayer: 'access',
@@ -894,6 +941,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'juniper-ex4650',
+    rackUnits: 1,
     model: 'EX4650-48Y-AFO',
     vendor: 'Juniper',
     subLayer: 'distribution',
@@ -909,6 +957,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'juniper-qfx5130',
+    rackUnits: 1,
     model: 'QFX5130-32CD',
     vendor: 'Juniper',
     subLayer: 'spine',
@@ -924,6 +973,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'juniper-srx1500',
+    rackUnits: 1,
     model: 'SRX1500',
     vendor: 'Juniper',
     subLayer: 'firewall',
@@ -939,6 +989,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'juniper-srx4600',
+    rackUnits: 1,
     model: 'SRX4600',
     vendor: 'Juniper',
     subLayer: 'firewall',
@@ -954,6 +1005,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'juniper-mx204',
+    rackUnits: 1,
     model: 'MX204',
     vendor: 'Juniper',
     subLayer: 'wan-edge',
@@ -971,6 +1023,7 @@ export const PRODUCTS: Product[] = [
   // ── Budget / Entry-Level — Palo Alto ────────────────────────────────────────
   {
     id: 'panos-pa460',
+    rackUnits: 1,
     model: 'PA-460',
     vendor: 'Palo Alto',
     subLayer: 'firewall',
@@ -986,6 +1039,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'panos-pa3260',
+    rackUnits: 2,
     model: 'PA-3260',
     vendor: 'Palo Alto',
     subLayer: 'firewall',
@@ -1003,6 +1057,7 @@ export const PRODUCTS: Product[] = [
   // ── Budget / Entry-Level — Fortinet ─────────────────────────────────────────
   {
     id: 'fortinet-fg100f',
+    rackUnits: 1,
     model: 'FortiGate 100F',
     vendor: 'Fortinet',
     subLayer: 'firewall',
@@ -1018,6 +1073,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'fortinet-fg600f',
+    rackUnits: 1,
     model: 'FortiGate 600F',
     vendor: 'Fortinet',
     subLayer: 'firewall',
@@ -1035,6 +1091,7 @@ export const PRODUCTS: Product[] = [
   // ── Budget / Entry-Level — Dell EMC ─────────────────────────────────────────
   {
     id: 'dell-s5232f',
+    rackUnits: 1,
     model: 'PowerSwitch S5232F-ON',
     vendor: 'Dell EMC',
     subLayer: 'spine',
@@ -1050,6 +1107,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'dell-n3248te',
+    rackUnits: 1,
     model: 'PowerSwitch N3248TE-ON',
     vendor: 'Dell EMC',
     subLayer: 'leaf',
@@ -1067,6 +1125,7 @@ export const PRODUCTS: Product[] = [
   // ── Budget / Entry-Level — HPE Aruba ────────────────────────────────────────
   {
     id: 'aruba-cx6200',
+    rackUnits: 1,
     model: 'Aruba CX 6200 48G',
     vendor: 'HPE Aruba',
     subLayer: 'access',
@@ -1085,6 +1144,7 @@ export const PRODUCTS: Product[] = [
   // ── Extreme Networks ──────────────────────────────────────────────────────────
   {
     id: 'extreme-8720',
+    rackUnits: 1,
     model: 'ExtremeSwitching 8720',
     vendor: 'Extreme Networks',
     subLayer: 'spine',
@@ -1100,6 +1160,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'extreme-8520',
+    rackUnits: 1,
     model: 'ExtremeSwitching 8520',
     vendor: 'Extreme Networks',
     subLayer: 'leaf',
@@ -1116,6 +1177,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'extreme-5720',
+    rackUnits: 1,
     model: 'ExtremeSwitching 5720',
     vendor: 'Extreme Networks',
     subLayer: 'distribution',
@@ -1132,6 +1194,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'extreme-5420',
+    rackUnits: 1,
     model: 'ExtremeSwitching 5420',
     vendor: 'Extreme Networks',
     subLayer: 'access',
