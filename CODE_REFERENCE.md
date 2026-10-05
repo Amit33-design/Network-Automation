@@ -1913,6 +1913,14 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
 
 ---
 
+#### `frontend/src/lib/design-caption.ts` — *added 2026-10-05, AQ4*
+**Purpose:** The one place diagram words are read from the generated configs, so the HLD and LLD cannot claim what the configs do not do.
+- `designFacts(devices, configs)` → per-device `DeviceFacts`; `codeOnlyConfigs(configs)` strips whole-line and trailing inline comments (keeps a Firepower's FMC manifest whole).
+- `configAsn`, `pairTech` (vPC/MLAG/VLT/EVPN ESI), `fhrpKind` (HSRP/VRRP), `nodeFeatures` / `featuresOf` (feature chips), `fabricCaption` / `transportCaption` (one-line protocol summary), `tierCaption(sub, devices, configs, facts)` (per-tier caption), `campusEndpointCaption` (voice VLAN only when configured).
+- Used by `HLDTopologyDiagram.buildDesignTopology` and `LLDTopologyDiagram.buildLLDTopology(devices, useCase, sc, configs?)`; both components take `appTypes`/`protoFeatures` and generate the configs they describe.
+
+---
+
 #### `frontend/src/components/RackElevation.tsx` — *added 2026-06-18, gap G-A14*
 **Purpose:** Pure-SVG 42U rack elevation diagram with cable schedule and rack assignment tables.
 

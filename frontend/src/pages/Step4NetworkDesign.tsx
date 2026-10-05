@@ -930,6 +930,8 @@ export function Step4NetworkDesign() {
             devices={generatedDevices}
             useCase={useCase}
             siteCode={siteCode}
+            appTypes={appTypes}
+            protoFeatures={protoFeatures}
           />
           </div>
         </Card>

@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react'
-import type { BOMDevice, UseCase } from '@/types'
-import { fabricInterfaceView, borderLeaves, TENANT_OVERLAY, CAMPUS_VLANS, ORAN_FRONTHAUL_VLAN, ORAN_PTP_DOMAIN } from '@/lib/configgen'
+import type { AppType, BOMDevice, UseCase } from '@/types'
+import { generateAllConfigs, fabricInterfaceView, borderLeaves, TENANT_OVERLAY, CAMPUS_VLANS, ORAN_FRONTHAUL_VLAN, ORAN_PTP_DOMAIN } from '@/lib/configgen'
 import { LAYER_ADJACENCY } from '@/lib/bom'
+import { designFacts, codeOnlyConfigs, tierCaption, campusEndpointCaption, featuresOf } from '@/lib/design-caption'
 import { tierIcon } from '@/components/icons'
 import { CloseButton } from '@/components/ui/CloseButton'
 
@@ -541,7 +542,7 @@ function buildORANLLD(devices: BOMDevice[], sc: string): LLDTopo {
 
 // ─── Topology dispatcher ─────────────────────────────────────────────────────
 
-export function buildLLDTopology(devices: BOMDevice[], useCase: string, sc: string): LLDTopo {
+function buildRawLLD(devices: BOMDevice[], useCase: string, sc: string): LLDTopo {
   switch (useCase) {
     case 'campus':     return buildCampusLLD(devices, sc)
     case 'gpu':        return buildGPULLD(devices, sc)
@@ -552,6 +553,44 @@ export function buildLLDTopology(devices: BOMDevice[], useCase: string, sc: stri
     case 'oran':       return buildORANLLD(devices, sc)
     default:           return buildDCLLD(devices, sc, useCase)
   }
+}
+
+/** Zone id → the BOM tier whose configs caption it. */
+const ZONE_TIER: Record<string, string> = {
+  'z-fw': 'firewall', 'z-firewall': 'firewall', 'z-spine': 'spine', 'z-leaf': 'leaf',
+  'z-dist': 'distribution', 'z-access': 'access', 'z-wan-edge': 'wan-edge', 'z-oran-midhaul': 'oran-midhaul',
+}
+
+/**
+ * The LLD, with every protocol caption and service chip read from the
+ * generated configs (AQ4). The builders' row captions were static text, so
+ * the Cisco and Arista DC LLDs said "eBGP underlay /31s" over an IS-IS
+ * underlay, every campus said "802.1X · PoE" and offered a voice VLAN, and the
+ * perimeter said "routed /31 handoff" after AN10 made it a transit VLAN /29.
+ */
+export function buildLLDTopology(devices: BOMDevice[], useCase: string, sc: string, configs?: Record<string, string>): LLDTopo {
+  const topo = buildRawLLD(devices, useCase, sc)
+  const cfgs = codeOnlyConfigs(configs ?? generateAllConfigs(devices, useCase as UseCase))
+  const facts = designFacts(devices, cfgs)
+  const zones = topo.zones.map(z => {
+    if (z.id === 'z-ep') return { ...z, sublabel: campusEndpointCaption(devices, cfgs) }
+    if (z.id === 'z-srv') {
+      const lossless = devices.some(d => d.subLayer === 'leaf' && facts.get(d.id)?.pfc.state === 'present')
+      return { ...z, sublabel: z.sublabel.replace(/ · PFC priority 3 lossless$/, '') + (lossless ? ' · PFC priority 3 lossless' : '') }
+    }
+    const tier = ZONE_TIER[z.id]
+    const caption = tier ? tierCaption(tier, devices, cfgs, facts) : undefined
+    return caption ? { ...z, sublabel: caption } : z
+  })
+  const byHost = new Map(devices.map(d => [d.hostname, d]))
+  const border = new Set(borderLeaves(devices).map(d => d.id))
+  const nodes = topo.nodes.map(n => {
+    const d = byHost.get(n.hostname)
+    if (!d || d.subLayer.startsWith('cloud-') || !cfgs[d.id]) return n
+    const services = featuresOf(d, cfgs, facts, border.has(d.id) && (useCase === 'dc' || useCase === 'multisite'))
+    return services.length ? { ...n, services } : n
+  })
+  return { ...topo, zones, nodes }
 }
 
 // ─── SVG link path ────────────────────────────────────────────────────────────
@@ -576,15 +615,22 @@ interface Props {
   devices: BOMDevice[]
   useCase?: string
   siteCode?: string
+  /** Wizard inputs the configs honour, so the LLD shows what they produce (AQ4). */
+  appTypes?: AppType[]
+  protoFeatures?: string[]
 }
 
-export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '' }: Props) {
+export function LLDTopologyDiagram({ devices, useCase = 'dc', siteCode = '', appTypes = [], protoFeatures = [] }: Props) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
   const [hoveredLink, setHoveredLink] = useState<string | null>(null)
 
+  const configs = useMemo(
+    () => generateAllConfigs(devices, useCase as UseCase, [], appTypes, protoFeatures),
+    [devices, useCase, appTypes, protoFeatures],
+  )
   const topo = useMemo(
-    () => buildLLDTopology(devices.length ? devices : [], useCase, siteCode),
-    [devices, useCase, siteCode],
+    () => buildLLDTopology(devices, useCase, siteCode, configs),
+    [devices, useCase, siteCode, configs],
   )
 
   const nodeMap: Record<string, LLDNode> = useMemo(
