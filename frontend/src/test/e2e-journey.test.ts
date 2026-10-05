@@ -16,7 +16,7 @@
  * the endpoints they asked for.
  */
 import { describe, it, expect } from 'vitest'
-import { buildBOM, buildCabling, buildOptics, validateBOM, computeTCO } from '@/lib/bom'
+import { buildBOM, buildCabling, buildOptics, validateBOM, computeTCO, deviceRackUnits } from '@/lib/bom'
 import { computeRackLayout } from '@/components/RackElevation'
 import { generateAllConfigs } from '@/lib/configgen'
 import { validateConfigs } from '@/lib/config-validator'
@@ -268,7 +268,15 @@ function assertUniversalInvariants(j: Journey, p: ReturnType<typeof runPipeline>
   for (const rack of p.racks) {
     for (const slot of rack.slots) rackedIds.add(slot.device.id)
   }
-  const rackable = p.devices.filter(d => !NON_NETWORK.has(d.subLayer) || d.subLayer === 'gpu-compute')
+  // Rack-mountable = occupies rack units (AQ5). A mast-mounted O-RU does not,
+  // and before AQ5 the elevation stacked hundreds of them into racks while TCO
+  // counted them as zero units.
+  const rackable = p.devices.filter(d => deviceRackUnits(d) > 0 && (!NON_NETWORK.has(d.subLayer) || d.subLayer === 'gpu-compute'))
+  for (const rack of p.racks) {
+    for (const slot of rack.slots) {
+      expect(deviceRackUnits(slot.device), `${ctx}: ${slot.device.hostname} is not rack-mounted but was racked`).toBeGreaterThan(0)
+    }
+  }
   // every device that occupies rack units should be placed
   for (const d of rackable) {
     expect(rackedIds.has(d.id), `${ctx}: device ${d.hostname} not placed in any rack`).toBe(true)

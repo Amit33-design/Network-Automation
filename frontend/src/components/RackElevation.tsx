@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { alphaLabel, devicePowerW } from '@/lib/bom'
+import { alphaLabel, devicePowerW, deviceRackUnits, rackUnitsAssumed } from '@/lib/bom'
 import type { BOMDevice, CableLink, UseCase } from '@/types'
 import { expandCablePlan } from '@/lib/netbox-dcim'
 
@@ -125,21 +125,6 @@ function roleColor(subLayer: string) {
   return ROLE_COLORS[subLayer] ?? { bg: '#1F2937', border: '#6B7280', text: '#D1D5DB' }
 }
 
-function ruForRole(subLayer: string): number {
-  switch (subLayer) {
-    case 'spine': case 'core': case 'wan-edge': case 'sdwan-controller':
-      return 2
-    case 'gpu-compute':
-      return 4
-    case 'firewall':
-      return 1
-    case 'cloud-gw': case 'cloud-transit':
-      return 0
-    default:
-      return 1
-  }
-}
-
 const ROLE_POWER: Record<string, number> = {
   spine: 800, core: 800, leaf: 480, distribution: 600, access: 400,
   'wan-edge': 300, 'sdwan-controller': 300, firewall: 800,
@@ -185,7 +170,7 @@ function packByDomain(
 
 function computeDenseLayout(devices: BOMDevice[], opts: RackLayoutOpts = {}): RackAssignment[] {
   const racks = packByDomain(
-    devices.filter(d => ruForRole(d.subLayer) > 0), devices, opts, packDense,
+    devices.filter(d => deviceRackUnits(d) > 0), devices, opts, packDense,
     (r, n) => { r.rackId = `R${n}`; r.label = `Rack ${alphaLabel(n - 1)}` },
   )
   return racks.length ? racks : [{ rackId: 'R1', label: 'Rack A', slots: [], totalU: RACK_U, usedU: 0, totalPowerW: 0 }]
@@ -207,7 +192,7 @@ function packDense(devices: BOMDevice[]): RackAssignment[] {
   let currentU = 1
 
   for (const dev of sorted) {
-    const h = ruForRole(dev.subLayer)
+    const h = deviceRackUnits(dev)
     const pwNext = devicePower(dev)
     // A rack is full when it runs out of EITHER units or power. `hasSlots`
     // keeps a single device that exceeds the budget on its own from looping
@@ -235,7 +220,7 @@ function packDense(devices: BOMDevice[]): RackAssignment[] {
 }
 
 function addSlot(rack: RackAssignment, startU: number, dev: BOMDevice): number {
-  const h = ruForRole(dev.subLayer)
+  const h = deviceRackUnits(dev)
   const pw = devicePower(dev)
   rack.slots.push({ startU, heightU: h, device: dev, powerW: pw })
   rack.usedU += h
@@ -258,7 +243,7 @@ function packNetwork(devices: BOMDevice[]): RackAssignment[] {
   let rack = fresh()
   let currentU = 1
   for (const dev of sorted) {
-    const h = ruForRole(dev.subLayer)
+    const h = deviceRackUnits(dev)
     const overPower = rack.slots.length > 0 && rack.totalPowerW + devicePower(dev) > RACK_POWER_BUDGET_W
     if (currentU + h - 1 > RACK_U || overPower) {
       racks.push(rack)
@@ -276,7 +261,7 @@ function computeToRLayout(devices: BOMDevice[], opts: RackLayoutOpts = {}): Rack
   const leaves = devices.filter(d => d.subLayer === 'leaf')
   const compute = devices.filter(d => d.subLayer === 'gpu-compute')
   const network = devices.filter(d =>
-    d.subLayer !== 'leaf' && d.subLayer !== 'gpu-compute' && ruForRole(d.subLayer) > 0,
+    d.subLayer !== 'leaf' && d.subLayer !== 'gpu-compute' && deviceRackUnits(d) > 0,
   )
 
   const leafPairs: BOMDevice[][] = []
@@ -284,8 +269,9 @@ function computeToRLayout(devices: BOMDevice[], opts: RackLayoutOpts = {}): Rack
     leafPairs.push(leaves.slice(i, Math.min(i + 2, leaves.length)))
   }
 
-  const computeRU = ruForRole('gpu-compute')
-  const leafRU = ruForRole('leaf')
+  // Heights from the SKUs actually in the design (AQ5) — an SN4600C leaf is 2U.
+  const computeRU = compute.length ? deviceRackUnits(compute[0]) : deviceRackUnits({ subLayer: 'gpu-compute' })
+  const leafRU = leaves.length ? Math.max(...leaves.map(deviceRackUnits)) : deviceRackUnits({ subLayer: 'leaf' })
   const torU = leafRU * 2
   // How many servers FIT is not how many can be POWERED. Eight H100 nodes at
   // 6.5 kW each is 52 kW; the U-only answer was 10, i.e. 66 kW with the ToR
@@ -545,6 +531,28 @@ interface Props {
   redundancy?: 'single' | 'dual'
 }
 
+/** A model whose drawn height is the role default, not its datasheet (AQ5). */
+export interface AssumedHeight { model: string; heightU: number; count: number; note: string }
+
+/**
+ * Models drawn at an assumed height — modular chassis families whose height
+ * depends on the slot count, or SKUs the catalogue gives no height for. Shown
+ * beside the elevation so a reader never takes a guessed U count as measured.
+ */
+export function assumedHeights(devices: BOMDevice[]): AssumedHeight[] {
+  const byModel = new Map<string, AssumedHeight>()
+  for (const d of devices) {
+    if (!rackUnitsAssumed(d)) continue
+    const e = byModel.get(d.model)
+    if (e) { e.count += d.count ?? 1; continue }
+    byModel.set(d.model, {
+      model: d.model, heightU: deviceRackUnits(d), count: d.count ?? 1,
+      note: d.rackUnitsNote ?? 'no datasheet height in the catalogue',
+    })
+  }
+  return [...byModel.values()]
+}
+
 export function RackElevation({ devices, cabling, siteCode, useCase = '', redundancy = 'single' }: Props) {
   const racks = useMemo(() => computeRackLayout(devices, { redundancy }), [devices, redundancy])
   const cableRuns = useMemo(() => buildCableSchedule(devices, cabling, useCase, racks), [devices, cabling, useCase, racks])
@@ -552,6 +560,7 @@ export function RackElevation({ devices, cabling, siteCode, useCase = '', redund
   const totalPower = racks.reduce((s, r) => s + r.totalPowerW, 0)
   const totalUsedU = racks.reduce((s, r) => s + r.usedU, 0)
   const totalCapacity = racks.reduce((s, r) => s + r.totalU, 0)
+  const assumed = useMemo(() => assumedHeights(devices), [devices])
 
   return (
     <div className="space-y-6">
@@ -565,6 +574,19 @@ export function RackElevation({ devices, cabling, siteCode, useCase = '', redund
         </div>
         <RackLegend />
       </div>
+
+      {assumed.length > 0 && (
+        <div className="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2" data-testid="assumed-heights">
+          <span className="font-semibold">Assumed heights — confirm before ordering racks:</span>
+          <ul className="mt-1 space-y-0.5">
+            {assumed.map(a => (
+              <li key={a.model}>
+                <span className="font-mono text-amber-200">{a.model}</span> ×{a.count} drawn at {a.heightU}U — {a.note}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Rack SVGs */}
       {(() => {

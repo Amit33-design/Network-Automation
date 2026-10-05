@@ -1938,6 +1938,14 @@ hooks they used (`useRunZTP`/`useRunChecks`/`usePollMonitoring`) are retained
     "Network Rack 1/2…".
   - **Dense mode** (no compute): sorts by role priority and packs into racks
     (sdwan-controller → firewall → wan-edge → core → spine → dist → leaf → access)
+  - **Heights (AQ5)**: every slot height is `bom.deviceRackUnits(dev)` — the
+    datasheet `Product.rackUnits` (threaded onto `BOMDevice`) wins, the role
+    default only where the SKU states none. `computeTCO().totalRackUnits` reads
+    the same function, so the two footprints agree. Devices with 0 U (cloud,
+    mast-mounted O-RU) are never racked.
+- `assumedHeights(devices): AssumedHeight[]` — models drawn at a role-default
+  height (chassis families carrying `rackUnitsNote`, or no catalogue height),
+  shown above the elevation as "Assumed heights — confirm before ordering racks".
   - 4U for gpu-compute, 2U for spine/core/wan-edge/sdwan-controller,
     1U for leaf/access/firewall/distribution
   - 0U for cloud-gw/cloud-transit (excluded from physical rack)
