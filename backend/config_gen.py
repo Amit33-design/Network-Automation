@@ -359,8 +359,13 @@ def _build_device_context(state: dict[str, Any], layer: str, index: int) -> dict
     # GPU/RoCEv2 context variables — a GPU fabric is lossless by definition
     # (§6 rule 5), so roce is on for GPU use cases even when the protocol list
     # doesn't carry an explicit roce keyword (the frontend usually doesn't).
+    # AQ6 — and on any other design when the HPC / AI workload type is
+    # selected, matching the browser engine's needsLosslessFabric(). Never
+    # inferred from the vendor.
+    app_types = [str(a).lower() for a in (state.get("appTypes") or state.get("app_types") or [])]
     roce_enabled  = (
         use_case in ("gpu", "ai_fabric", "gpu_cluster")
+        or "hpc" in app_types
         or any(x in (protocols + overlay) for x in ("rocev2", "roce_v2", "roce"))
     )
     ecn_threshold = state.get("ecn_threshold", 100_000_000)  # 100 MB default

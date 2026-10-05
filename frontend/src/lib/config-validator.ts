@@ -5,7 +5,8 @@
  * generated device configs against intent constraints.
  */
 
-import type { BOMDevice, UseCase } from '@/types'
+import type { AppType, BOMDevice, UseCase } from '@/types'
+import { needsLosslessFabric } from '@/lib/configgen'
 import { isCommentLine, stripComments } from '@/lib/config-text'
 import { deviceForConfig, extractFacts, extractFactsAnyDialect, factPlatform, type DeviceFacts, type FactName } from '@/lib/config-facts'
 
@@ -529,14 +530,16 @@ function checkGPUQoS(
   facts: FactMap,
   devices: BOMDevice[],
   useCase: UseCase | '',
+  appTypes: AppType[] = [],
 ): ValidationCheck {
-  if (useCase !== 'gpu') {
+  // The same rule that decides whether the generators emit lossless QoS (AQ6).
+  if (!needsLosslessFabric(useCase, appTypes)) {
     return {
       id: 'V-09',
       name: 'GPU QoS (PFC/ECN/DCQCN)',
       category: 'QoS',
       severity: 'info',
-      detail: 'GPU QoS not required for this use case',
+      detail: 'Lossless QoS not required — not a GPU design and HPC / AI is not selected',
     }
   }
 
@@ -786,10 +789,12 @@ export interface ValidateInput {
   configs: Record<string, string>
   devices: BOMDevice[]
   useCase: UseCase | ''
+  /** Workload types — HPC / AI makes any fabric lossless (AQ6), so V-09 applies. */
+  appTypes?: AppType[]
 }
 
 export function validateConfigs(input: ValidateInput): ValidationResult {
-  const { configs, devices, useCase } = input
+  const { configs, devices, useCase, appTypes = [] } = input
 
   if (Object.keys(configs).length === 0) {
     // AA1: a multicloud/Aviatrix design is made entirely of cloud gateways and
@@ -831,7 +836,7 @@ export function validateConfigs(input: ValidateInput): ValidationResult {
     checkManagementBlock(live, facts),
     checkNoHardcodedSecrets(live),
     checkUndefinedACLReferences(live),
-    checkGPUQoS(facts, devices, useCase),
+    checkGPUQoS(facts, devices, useCase, appTypes),
     checkLoopbackPresence(live, facts),
     checkBFDEnabled(facts, useCase),
     checkJumboMtu(facts, useCase),

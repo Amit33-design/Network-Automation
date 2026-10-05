@@ -825,10 +825,11 @@ JWT, optional `/api/auth/totp-verify` MFA step) and **local demo profiles**
   string[] = []): string`** *(signature extended 2026-06-11 to add
   `appTypes`, then `allDevices` — Enterprise Upgrade A5 — then
   `protoFeatures` — Enterprise Upgrade A6)* — the big if/else dispatcher by
-  `(dev.vendor, dev.subLayer)`. `needsRoce = isGpu ||
-  ((vendor==='Dell EMC'||vendor==='NVIDIA') && useCase==='dc')` — Dell/NVIDIA
-  DC fabrics always get lossless QoS; Cisco/Arista only when
-  `useCase==='gpu'`. Cisco `distribution`/`access` →
+  `(dev.vendor, dev.subLayer)`. `needsRoce = needsLosslessFabric(useCase,
+  appTypes)` (AQ6, exported): lossless RoCEv2 QoS on every GPU design, and on
+  any other design only when the `hpc` app type ("HPC / AI") is selected — for
+  every vendor alike, never inferred from the vendor. The validator's V-09 and
+  the backend's `roce_enabled` use the same rule. Cisco `distribution`/`access` →
   `iosxeCampusConfig(dev, idx, appTypes)`. Arista `distribution`/`access` →
   `aristaCampusConfig`. Juniper `spine` → `juniperSpineConfig`, `leaf` →
   `juniperLeafConfig` (split in Q3); `distribution`/`access` →
