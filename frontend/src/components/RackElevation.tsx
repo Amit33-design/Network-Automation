@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { alphaLabel, devicePowerW } from '@/lib/bom'
-import type { BOMDevice, CableLink } from '@/types'
+import type { BOMDevice, CableLink, UseCase } from '@/types'
+import { expandCablePlan } from '@/lib/netbox-dcim'
 
 // ── Rack assignment types ──────────────────────────────────────────────────────
 
@@ -26,6 +27,13 @@ export interface CableRun {
   to: string
   fromPort: string
   toPort: string
+  /** Rack each end sits in, from the rack layout (AQ2). */
+  fromRack?: string
+  toRack?: string
+  /** True when the generated config configures this end's interface (AP1). */
+  fromConfigured?: boolean
+  toConfigured?: boolean
+  medium?: string
   cableType: string
   speed: string
   lengthM: number
@@ -279,37 +287,28 @@ function computeToRLayout(devices: BOMDevice[]): RackAssignment[] {
 
 // ── Cable schedule computation ───────────────────────────────────────────────
 
-export function buildCableSchedule(devices: BOMDevice[], cabling: CableLink[]): CableRun[] {
-  const runs: CableRun[] = []
-  let idx = 0
-  for (const link of cabling) {
-    const fromDevs = devices.filter(d => d.subLayer === link.fromLayer)
-    const toDevs = devices.filter(d => d.subLayer === link.toLayer)
-    if (fromDevs.length === 0 || toDevs.length === 0) {
-      runs.push({
-        id: `cable-${++idx}`,
-        from: link.fromDevice, to: link.toDevice,
-        fromPort: `${link.speed} uplink`, toPort: `${link.speed} downlink`,
-        cableType: link.cableType, speed: link.speed, lengthM: link.lengthM,
-      })
-      continue
-    }
-    for (const fd of fromDevs) {
-      for (const td of toDevs) {
-        runs.push({
-          id: `cable-${++idx}`,
-          from: fd.hostname || fd.model,
-          to: td.hostname || td.model,
-          fromPort: `${link.speed} uplink`,
-          toPort: `${link.speed} downlink`,
-          cableType: link.cableType,
-          speed: link.speed,
-          lengthM: link.lengthM,
-        })
-      }
-    }
-  }
-  return runs
+/**
+ * The cable schedule a contractor pulls from (AQ2). It used to be its own
+ * froms×tos full mesh with `100G uplink` / `100G downlink` for every port —
+ * the AG2 defect, fixed in the NetBox export but never here — so a 20-device
+ * DC listed 280 runs for 74 billed cables, none with a real interface. It now
+ * reads `expandCablePlan`, the same expansion the NetBox DCIM export uses:
+ * exactly the billed quantity, landed on the interfaces the configs configure
+ * (AP1–AP4), with each end's rack from the rack layout.
+ */
+export function buildCableSchedule(
+  devices: BOMDevice[], cabling: CableLink[], useCase: UseCase | '' = '', racks?: RackAssignment[],
+): CableRun[] {
+  const rackOf = new Map<string, string>()
+  for (const r of racks ?? computeRackLayout(devices)) for (const s of r.slots) rackOf.set(s.device.hostname, r.label)
+  return expandCablePlan(devices, cabling, useCase).map((c, i) => ({
+    id: `cable-${i + 1}`,
+    from: c.a.device, to: c.b.device,
+    fromPort: c.a.iface, toPort: c.b.iface,
+    fromRack: rackOf.get(c.a.device), toRack: rackOf.get(c.b.device),
+    fromConfigured: !!c.a.mapped, toConfigured: !!c.b.mapped,
+    cableType: c.cableType, medium: c.medium, speed: c.speed, lengthM: c.lengthM,
+  }))
 }
 
 // ── SVG Rack Component ───────────────────────────────────────────────────────
@@ -470,11 +469,12 @@ interface Props {
   devices: BOMDevice[]
   cabling: CableLink[]
   siteCode: string
+  useCase?: UseCase | ''
 }
 
-export function RackElevation({ devices, cabling, siteCode }: Props) {
+export function RackElevation({ devices, cabling, siteCode, useCase = '' }: Props) {
   const racks = useMemo(() => computeRackLayout(devices), [devices])
-  const cableRuns = useMemo(() => buildCableSchedule(devices, cabling), [devices, cabling])
+  const cableRuns = useMemo(() => buildCableSchedule(devices, cabling, useCase, racks), [devices, cabling, useCase, racks])
 
   const totalPower = racks.reduce((s, r) => s + r.totalPowerW, 0)
   const totalUsedU = racks.reduce((s, r) => s + r.usedU, 0)
@@ -519,15 +519,21 @@ export function RackElevation({ devices, cabling, siteCode }: Props) {
       {/* Cable Schedule Table */}
       {cableRuns.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-gray-100 mb-2">Cable Schedule</h3>
+          <h3 className="text-sm font-semibold text-gray-100 mb-1">Cable Schedule</h3>
+          <p className="text-xs text-gray-500 mb-2">
+            {cableRuns.length} runs — the billed quantity, on the interfaces the generated configs configure.
+            Ports in amber are not assigned by the config engine and need confirming on site.
+          </p>
           <div className="overflow-x-auto border border-white/10 rounded-xl">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-white/5 text-gray-400">
                   <th className="px-3 py-2 text-left">#</th>
                   <th className="px-3 py-2 text-left">From</th>
+                  <th className="px-3 py-2 text-left">Rack</th>
                   <th className="px-3 py-2 text-left">From Port</th>
                   <th className="px-3 py-2 text-left">To</th>
+                  <th className="px-3 py-2 text-left">Rack</th>
                   <th className="px-3 py-2 text-left">To Port</th>
                   <th className="px-3 py-2 text-left">Cable</th>
                   <th className="px-3 py-2 text-left">Speed</th>
@@ -539,9 +545,11 @@ export function RackElevation({ devices, cabling, siteCode }: Props) {
                   <tr key={run.id} className={i % 2 === 0 ? 'bg-white/[0.02]' : ''}>
                     <td className="px-3 py-1.5 text-gray-500">{i + 1}</td>
                     <td className="px-3 py-1.5 text-gray-200 font-mono">{run.from}</td>
-                    <td className="px-3 py-1.5 text-gray-400">{run.fromPort}</td>
+                    <td className="px-3 py-1.5 text-gray-500">{run.fromRack ?? '—'}</td>
+                    <td className={`px-3 py-1.5 font-mono ${run.fromConfigured ? 'text-gray-300' : 'text-amber-400'}`} title={run.fromConfigured ? 'Configured in the generated config' : 'Not assigned by the config engine — confirm on site'}>{run.fromPort}</td>
                     <td className="px-3 py-1.5 text-gray-200 font-mono">{run.to}</td>
-                    <td className="px-3 py-1.5 text-gray-400">{run.toPort}</td>
+                    <td className="px-3 py-1.5 text-gray-500">{run.toRack ?? '—'}</td>
+                    <td className={`px-3 py-1.5 font-mono ${run.toConfigured ? 'text-gray-300' : 'text-amber-400'}`} title={run.toConfigured ? 'Configured in the generated config' : 'Not assigned by the config engine — confirm on site'}>{run.toPort}</td>
                     <td className="px-3 py-1.5">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                         run.cableType === 'DAC' ? 'bg-blue-900/50 text-blue-300' :

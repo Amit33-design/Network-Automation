@@ -4,6 +4,8 @@ import {
   RACK_POWER_BUDGET_W, GPU_RACK_POWER_BUDGET_W,
 } from '@/components/RackElevation'
 import type { BOMDevice, CableLink } from '@/types'
+import { buildDeviceList, buildCabling } from '@/lib/bom'
+import { expandCablePlan } from '@/lib/netbox-dcim'
 
 function makeDevice(overrides: Partial<BOMDevice> = {}): BOMDevice {
   return {
@@ -297,5 +299,42 @@ describe('buildCableSchedule (G-A14)', () => {
   it('returns empty array when no cabling data', () => {
     const runs = buildCableSchedule([], [])
     expect(runs).toHaveLength(0)
+  })
+})
+
+// ── AQ2: the schedule is the real cable plan, not a full mesh ──────────────
+describe('cable schedule matches the billed plan and the configs (AQ2)', () => {
+  const design = (vendor: string, useCase: 'dc' | 'campus' | 'gpu') => {
+    const devices = buildDeviceList({ useCase, scale: 'medium', siteCode: 'AQ2', vendorPrefs: [vendor], totalEndpoints: 512 })
+    const cabling = buildCabling(devices, {} as never)
+    return { devices, cabling, runs: buildCableSchedule(devices, cabling, useCase) }
+  }
+
+  it.each([['Cisco', 'dc'], ['Juniper', 'dc'], ['Arista', 'campus'], ['NVIDIA', 'gpu']] as const)('%s %s: one run per billed cable', (vendor, uc) => {
+    const { cabling, runs } = design(vendor, uc)
+    expect(runs.length).toBe(cabling.reduce((s, c) => s + c.quantity, 0))
+  })
+
+  it('lands on the same interfaces as the NetBox DCIM export', () => {
+    const { devices, cabling, runs } = design('Cisco', 'dc')
+    const dcim = expandCablePlan(devices, cabling, 'dc')
+    expect(runs.map(r => `${r.from}:${r.fromPort}|${r.to}:${r.toPort}`)).toEqual(dcim.map(c => `${c.a.device}:${c.a.iface}|${c.b.device}:${c.b.iface}`))
+  })
+
+  it('names real interfaces — no placeholder "uplink"/"downlink" ports — and every fabric end is configured', () => {
+    const { devices, runs } = design('Arista', 'dc')
+    const byHost = new Map(devices.map(d => [d.hostname, d]))
+    for (const r of runs) expect(`${r.fromPort} ${r.toPort}`).not.toMatch(/uplink|downlink/)
+    const fabric = runs.filter(r => byHost.get(r.from)?.subLayer === 'spine' && byHost.get(r.to)?.subLayer === 'leaf')
+    expect(fabric.length).toBeGreaterThan(0)
+    for (const r of fabric) expect(r.fromConfigured && r.toConfigured, `${r.from}:${r.fromPort} ↔ ${r.to}:${r.toPort}`).toBe(true)
+  })
+
+  it('every run names the rack each end sits in', () => {
+    const { runs } = design('Cisco', 'dc')
+    for (const r of runs) {
+      expect(r.fromRack, `${r.from} has no rack`).toBeTruthy()
+      expect(r.toRack, `${r.to} has no rack`).toBeTruthy()
+    }
   })
 })

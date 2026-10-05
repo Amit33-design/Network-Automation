@@ -1009,7 +1009,7 @@ NetBox DCIM. Pure + deterministic (no component imports).
 
 **Key exports:**
 - Interfaces: `DcimEndpoint {device, iface}`, `DcimCable {a, b, cableType, speed, lengthM}`, `RackExportSlot {startU, heightU, device}` / `RackExport {label, totalU, slots}` (structurally assignable from `RackElevation.computeRackLayout` output), `NetBoxDcimExport {devicesCsv, interfacesCsv, cablesCsv, cableCount, racksCsv?, rackCount?}`.
-- `expandCablePlan(devices, cabling): DcimCable[]` — pure mirror of `RackElevation.buildCableSchedule`; expands each aggregate `CableLink` (by `fromLayer`/`toLayer`) into concrete device×device runs, allocating UNIQUE sequential per-device interface names (`Ethernet1/N`); falls back to aggregate labels when a layer is absent from the BOM.
+- `expandCablePlan(devices, cabling, useCase?): DcimCable[]` — the single cable-plan expansion: exactly `quantity` runs per `CableLink`, landed on `physicalPortMap` interfaces where the configs assign them (AP1–AP4), vendor-style names otherwise; falls back to aggregate labels when a layer is absent from the BOM. `RackElevation.buildCableSchedule(devices, cabling, useCase?, racks?)` is a view over it that adds each end's rack and `fromConfigured`/`toConfigured` (AQ2).
 - `netboxInterfaceType(speed)` — speed → NetBox interface type (400G→`400gbase-x-qsfpdd`, 100G→`100gbase-x-qsfp28`, 40G→`qsfpp`, 25G→`sfp28`, 10G→`sfpp`, 1G→`1000base-t`, else `other`).
 - `netboxCableType(cableType)` — DAC/twinax→`dac-passive`, AOC→`aoc`, SMF/fiber→`smf`, MMF→`mmf`, Cat/RJ45→`cat6`.
 - `netboxRackPosition(slot, totalU)` — converts the layout's top-counted 1-based `startU` to NetBox's bottom-counted lowest-occupied-U `position` (`totalU - startU - heightU + 2`).
