@@ -6,7 +6,7 @@ import {
   CAMPUS_VLANS, ORAN_FRONTHAUL_VLAN, ORAN_PTP_DOMAIN,
 } from '@/lib/configgen'
 import { buildCabling, LAYER_ADJACENCY } from '@/lib/bom'
-import { extractFacts, factPlatform, type DeviceFacts } from '@/lib/config-facts'
+import { designFacts, codeOnlyConfigs, configAsn, pairTech, fhrpKind, nodeFeatures, fabricCaption } from '@/lib/design-caption'
 import { evaluateDevice, BGP_LAYERS } from '@/lib/monitoring'
 import { deviceIcon, IconGlobe } from '@/components/icons'
 import { CloseButton } from '@/components/ui/CloseButton'
@@ -399,102 +399,14 @@ const GROUP_ZONE: Record<HldRowSpec['group'], { fill: string; stroke: string }> 
   ran:     { fill: 'rgba(91,33,182,0.22)',  stroke: '#7C3AED' },
 }
 
-/** Read the BGP ASN a config declares, in any of the generated dialects. */
-function configAsn(cfg: string): string | undefined {
-  const m = cfg.match(/^\s*router bgp (\d+)/m)
-    ?? cfg.match(/^set routing-options autonomous-system (\d+)/m)
-    ?? cfg.match(/^configure bgp AS-number (\d+)/m)
-    ?? cfg.match(/^nv set router bgp autonomous-system (\d+)/m)
-    ?? cfg.match(/^\s*autonomous-system (\d+)/m)
-  return m?.[1]
-}
-
-/** The construct a config uses to pair two devices (AP5 / AN7 / AN10). */
-function pairTech(cfg: string): string | undefined {
-  if (/^\s*vpc peer-link/m.test(cfg)) return 'vPC'
-  if (/^mlag configuration/m.test(cfg) || /^create mlag peer/m.test(cfg)) return 'MLAG'
-  if (/^vlt-domain /m.test(cfg)) return 'VLT'
-  if (/esi \S+|ethernet-segment|evpn multihoming segment/.test(cfg)) return 'EVPN ESI'
-  return undefined
-}
-
-function fhrpKind(cfg: string): string | undefined {
-  if (/^\s*standby \d+ ip /m.test(cfg)) return 'HSRP'
-  if (/vrrp/i.test(cfg) || /ip virtual-router/.test(cfg) || /virtual-gateway-address/.test(cfg)) return 'VRRP'
-  return undefined
-}
-
-/** Feature chips for a node, read from its own generated config (AQ1/AQ4). */
-function nodeFeatures(dev: BOMDevice, cfg: string, f: DeviceFacts | undefined, border: boolean): string[] {
-  const out: string[] = []
-  const on = (n: keyof DeviceFacts) => f?.[n]?.state === 'present'
-  if (on('isis')) out.push('IS-IS')
-  if (on('ospf')) out.push('OSPF')
-  if (on('bgp')) out.push(/unnumbered/.test(cfg) ? 'eBGP unnumbered' : 'BGP')
-  if (on('vxlan')) out.push('VXLAN VTEP')
-  if (on('evpn')) out.push('EVPN')
-  if (on('bfd')) out.push('BFD')
-  if (on('jumboMtu')) out.push('Jumbo MTU')
-  if (on('pfc')) out.push('PFC no-drop')
-  if (on('ecnLossless')) out.push('ECN (RoCE)')
-  const pt = pairTech(cfg)
-  if (pt) out.push(`${pt} pair`)
-  const fh = dev.subLayer === 'distribution' ? fhrpKind(cfg) : undefined
-  if (fh) out.push(fh)
-  if (/^\s*(ipv6 address|.*family inet6 address|nv set interface \S+ ip address [0-9a-f:]+\/|.*ipv6-unicast)/m.test(cfg)) out.push('IPv6 dual-stack')
-  if (/ISCSI|NVME|FCOE|vsan \d+|STORAGE/i.test(cfg) && dev.subLayer === 'leaf') out.push('Storage lossless class')
-  if (/dot1x|authentication port-control|802\.1X/i.test(cfg) && dev.subLayer === 'access') out.push('802.1X')
-  if (/high-availability|chassis cluster|config system ha|failover/i.test(cfg) && dev.subLayer === 'firewall') out.push('HA cluster')
-  if (border) out.push('Firewall handoff (border leaf)')
-  if (dev.subLayer.startsWith('cloud-')) out.push('Provisioned by Terraform')
-  return out
-}
-
-/**
- * Caption for designs with no switching fabric — WAN, multi-cloud, O-RAN —
- * read from the edge / RAN configs. The store's underlay selection is shown
- * only when no device has a config at all, and is labelled as a selection.
- */
-function transportCaption(devs: BOMDevice[], facts: Map<string, DeviceFacts>, configs: Record<string, string>, fallback: string): string {
-  const net = devs.filter(d => !d.subLayer.startsWith('cloud-') && configs[d.id])
-  const parts: string[] = []
-  if (devs.some(d => d.subLayer.startsWith('cloud-'))) parts.push('Cloud transit (Terraform)')
-  if (!net.length) return parts.join(' · ') || fallback
-  const text = net.map(d => configs[d.id]).join('\n')
-  const has = (n: keyof DeviceFacts) => net.some(d => facts.get(d.id)?.[n]?.state === 'present')
-  if (/tunnel mode sdwan|^\s*sdwan\b|^\s*omp\b|vbond/m.test(text)) parts.push('SD-WAN overlay (OMP · IPsec)')
-  if (has('isis')) parts.push(/segment-routing|prefix-sid/.test(text) ? 'IS-IS + Segment Routing' : 'IS-IS')
-  else if (has('ospf')) parts.push('OSPF')
-  if (has('bgp') && !parts.some(p => p.startsWith('SD-WAN'))) parts.push('BGP')
-  if (/\bptp\b/i.test(text)) parts.push('PTP timing')
-  return parts.join(' · ') || fallback
-}
-
-/** One-line protocol summary of the fabric, from the configs (never the selection). */
-function fabricCaption(devs: BOMDevice[], facts: Map<string, DeviceFacts>, configs: Record<string, string>, fallback: string): string {
-  const fab = devs.filter(d => ['spine', 'leaf', 'core', 'distribution'].includes(d.subLayer))
-  if (!fab.length) return transportCaption(devs, facts, configs, fallback)
-  const has = (n: keyof DeviceFacts) => fab.some(d => facts.get(d.id)?.[n]?.state === 'present')
-  const parts: string[] = []
-  if (has('isis')) parts.push('IS-IS underlay')
-  else if (has('ospf')) parts.push('OSPF')
-  else if (has('bgp')) parts.push(fab.some(d => /unnumbered/.test(configs[d.id] ?? '')) ? 'eBGP unnumbered (RFC 7938)' : 'eBGP underlay')
-  if (has('vxlan') && has('evpn')) parts.push('VXLAN/EVPN overlay')
-  else if (fab.some(d => d.subLayer === 'spine') && has('bgp')) parts.push('pure L3 fabric')
-  if (has('pfc')) parts.push('RoCEv2 lossless (PFC · ECN)')
-  const fh = fab.map(d => d.subLayer === 'distribution' ? fhrpKind(configs[d.id] ?? '') : undefined).find(Boolean)
-  if (fh) parts.push(`${fh} first hop`)
-  return parts.join(' · ') || fallback
-}
-
 export function buildDesignTopology(
   devices: BOMDevice[], useCase: string, sc: string,
   configs?: Record<string, string>,
   selection: { underlay?: string; overlay?: string[] } = {},
 ): Topo {
   const uc = useCase as UseCase
-  const cfgs = configs ?? generateAllConfigs(devices, uc)
-  const facts = new Map(devices.map(d => [d.id, extractFacts(cfgs[d.id] ?? '', factPlatform(d))]))
+  const cfgs = codeOnlyConfigs(configs ?? generateAllConfigs(devices, uc))
+  const facts = designFacts(devices, cfgs)
   const border = new Set(useCase === 'dc' || useCase === 'multisite' ? borderLeaves(devices).map(d => d.id) : [])
 
   const pick = (r: HldRowSpec): BOMDevice[] => {
