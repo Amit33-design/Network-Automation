@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Family Land Register</title>
+<style>
+  :root {
+    --bg: #f6f4ee; --card: #ffffff; --ink: #22281f; --muted: #6b7265;
+    --line: #e2dfd3; --accent: #2f6b3c; --accent-ink: #ffffff; --chip: #ecebe2;
+    --family: #7a4b9a; --farm: #2f6b3c; --house: #b3621b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151812; --card: #1f231b; --ink: #ecefe6; --muted: #a0a797;
+      --line: #32382c; --accent: #6fbf7f; --accent-ink: #10140e; --chip: #2a2f25;
+      --family: #c39be0; --farm: #7fcf8f; --house: #f0a865;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 28px 16px 8px; max-width: 1100px; margin: 0 auto; }
+  h1 { margin: 0; font-size: 1.7rem; letter-spacing: -0.01em; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 48px; }
+
+  .controls { position: sticky; top: 0; z-index: 5; background: var(--bg);
+    padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .row .label { width: 72px; font-size: .8rem; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); }
+  .chip { border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    padding: 6px 14px; border-radius: 999px; font: inherit; font-size: .92rem; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent);
+    color: var(--accent-ink); font-weight: 600; }
+  .chip .n { opacity: .7; margin-left: 4px; font-size: .82em; }
+  input[type=search] { flex: 1; min-width: 200px; padding: 8px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .count { color: var(--muted); margin: 14px 0 10px; font-size: .92rem; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; cursor: pointer; padding: 0; text-align: left; color: inherit;
+    font: inherit; display: flex; flex-direction: column; }
+  .card:hover { border-color: var(--accent); }
+  .thumb { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block; background: var(--chip); }
+  .body { padding: 12px 14px 14px; }
+  .card h2 { margin: 6px 0 4px; font-size: 1.05rem; }
+  .meta { color: var(--muted); font-size: .9rem; margin: 0; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: .74rem; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid currentColor; }
+  .tag.loc { color: var(--muted); }
+  .t-family { color: var(--family); } .t-farm { color: var(--farm); } .t-house { color: var(--house); }
+  .empty { padding: 40px 0; text-align: center; color: var(--muted); }
+
+  dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(720px, 94vw);
+    max-height: 92vh; background: var(--card); color: var(--ink); }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  .d-head { display: flex; justify-content: space-between; align-items: start; gap: 12px;
+    padding: 16px 18px 8px; }
+  .d-head h2 { margin: 6px 0 0; font-size: 1.3rem; }
+  .close { border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .d-body { padding: 0 18px 18px; }
+  .gallery { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+  .gallery img { height: 240px; max-width: 100%; border-radius: 8px; object-fit: cover; flex: none; }
+  dl { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 14px 0 0; }
+  dt { color: var(--muted); font-size: .9rem; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  a { color: var(--accent); }
+  @media (max-width: 480px) { dl { grid-template-columns: 1fr; } dt { margin-top: 6px; }
+    .row .label { width: 100%; } .gallery img { height: 180px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Family Land Register</h1>
+  <p>Family land, farm land and house land — Harpur (Bihar) and Greater Noida.</p>
+</header>
+<main>
+  <div class="controls">
+    <div class="row" id="locRow"><span class="label">City</span></div>
+    <div class="row" id="typeRow"><span class="label">Land type</span></div>
+    <div class="row">
+      <input type="search" id="q" placeholder="Search name, address, khata / khesra, owner…" aria-label="Search land">
+    </div>
+  </div>
+  <p class="count" id="count" aria-live="polite"></p>
+  <div class="grid" id="grid"></div>
+</main>
+
+<dialog id="dlg" aria-labelledby="dTitle">
+  <div class="d-head">
+    <div><div class="tags" id="dTags"></div><h2 id="dTitle"></h2></div>
+    <button class="close" id="dClose">Close</button>
+  </div>
+  <div class="d-body">
+    <div class="gallery" id="dGallery"></div>
+    <dl id="dList"></dl>
+  </div>
+</dialog>
+
+<script src="lands.js"></script>
+<script>
+const state = { loc: "All", type: "All", q: "" };
+const $ = (id) => document.getElementById(id);
+const typeClass = (t) => "t-" + t.split(" ")[0].toLowerCase();
+
+function el(tag, props = {}, ...kids) {
+  const n = Object.assign(document.createElement(tag), props);
+  kids.forEach((k) => n.append(k));
+  return n;
+}
+
+// Drawn placeholder used when a land has no photo (or the file is missing).
+function placeholder(label) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">
+    <rect width="320" height="200" fill="#dfe6d3"/>
+    <path d="M0 150 Q80 110 160 140 T320 125 V200 H0Z" fill="#a9c48d"/>
+    <path d="M0 170 Q100 140 200 165 T320 155 V200 H0Z" fill="#7fa866"/>
+    <circle cx="255" cy="55" r="22" fill="#f3d27a"/>
+    <text x="160" y="100" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#55624a">${label}</text>
+  </svg>`;
+  return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+}
+
+function photoImg(file, alt, cls) {
+  const img = el("img", { alt, className: cls || "", loading: "lazy" });
+  img.onerror = () => { img.onerror = null; img.src = placeholder("Photo not found"); };
+  img.src = file ? "photos/" + file : placeholder("No photo yet");
+  return img;
+}
+
+function matches(l, skip) {
+  if (skip !== "loc" && state.loc !== "All" && l.location !== state.loc) return false;
+  if (skip !== "type" && state.type !== "All" && l.type !== state.type) return false;
+  if (state.q) {
+    const hay = [l.name, l.location, l.type, l.address, l.khata, l.khesra, l.owner, l.notes, l.status]
+      .join(" ").toLowerCase();
+    if (!hay.includes(state.q)) return false;
+  }
+  return true;
+}
+
+function chips(rowId, key, options) {
+  const row = $(rowId);
+  row.querySelectorAll(".chip").forEach((c) => c.remove());
+  ["All", ...options].forEach((opt) => {
+    // Count shows what you'd get by picking this chip, given the other filter.
+    const n = LANDS.filter((l) => matches(l, key) && (opt === "All" || l[key === "loc" ? "location" : "type"] === opt)).length;
+    const b = el("button", { className: "chip", type: "button" },
+      opt === "All" ? (key === "loc" ? "All cities" : "All land") : opt,
+      el("span", { className: "n", textContent: n }));
+    b.setAttribute("aria-pressed", state[key] === opt);
+    b.onclick = () => { state[key] = opt; render(); };
+    row.append(b);
+  });
+}
+
+function tags(l) {
+  return [
+    el("span", { className: "tag " + typeClass(l.type), textContent: l.type }),
+    el("span", { className: "tag loc", textContent: l.location }),
+  ];
+}
+
+function render() {
+  chips("locRow", "loc", LOCATIONS);
+  chips("typeRow", "type", TYPES);
+  const list = LANDS.filter((l) => matches(l));
+  $("count").textContent = `Showing ${list.length} of ${LANDS.length} land record${LANDS.length === 1 ? "" : "s"}`;
+  const grid = $("grid");
+  grid.replaceChildren();
+  if (!list.length) {
+    grid.append(el("p", { className: "empty", textContent: "No land matches these filters." }));
+    return;
+  }
+  list.forEach((l) => {
+    const card = el("button", { className: "card", type: "button" },
+      photoImg((l.photos || [])[0], l.name, "thumb"),
+      el("div", { className: "body" },
+        el("div", { className: "tags" }, ...tags(l)),
+        el("h2", { textContent: l.name }),
+        el("p", { className: "meta", textContent: [l.area, l.address].filter(Boolean).join(" · ") })));
+    card.onclick = () => openDetail(l);
+    grid.append(card);
+  });
+}
+
+function openDetail(l) {
+  $("dTitle").textContent = l.name;
+  $("dTags").replaceChildren(...tags(l));
+  const photos = l.photos && l.photos.length ? l.photos : [null];
+  $("dGallery").replaceChildren(...photos.map((p) => {
+    const img = photoImg(p, l.name);
+    if (!p) return img;
+    return el("a", { href: "photos/" + p, target: "_blank", rel: "noopener" }, img);
+  }));
+  const map = l.mapLink || "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(l.address || l.location);
+  const rows = [
+    ["Address", l.address], ["Area", l.area], ["Khata no.", l.khata], ["Khesra / plot no.", l.khesra],
+    ["Owner", l.owner], ["Status", l.status], ["Notes", l.notes],
+  ].filter(([, v]) => v);
+  const dl = $("dList");
+  dl.replaceChildren();
+  rows.forEach(([k, v]) => dl.append(el("dt", { textContent: k }), el("dd", { textContent: v })));
+  dl.append(el("dt", { textContent: "Map" }),
+    el("dd", {}, el("a", { href: map, target: "_blank", rel: "noopener", textContent: "Open in Google Maps" })));
+  $("dlg").showModal();
+}
+
+$("dClose").onclick = () => $("dlg").close();
+$("dlg").addEventListener("click", (e) => { if (e.target === $("dlg")) $("dlg").close(); });
+$("q").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
+render();
+</script>
+</body>
+</html>
