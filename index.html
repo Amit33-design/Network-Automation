@@ -7,78 +7,85 @@
 <title>Family Land Register</title>
 <style>
   :root {
-    --bg: #f6f4ee; --card: #ffffff; --ink: #22281f; --muted: #6b7265;
-    --line: #e2dfd3; --accent: #2f6b3c; --accent-ink: #ffffff; --chip: #ecebe2;
-    --family: #7a4b9a; --farm: #2f6b3c; --house: #b3621b; --danger: #b3261e;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #151812; --card: #1f231b; --ink: #ecefe6; --muted: #a0a797;
-      --line: #32382c; --accent: #6fbf7f; --accent-ink: #10140e; --chip: #2a2f25;
-      --family: #c39be0; --farm: #7fcf8f; --house: #f0a865; --danger: #f2827a;
-    }
+    --bg: #fbfcf9; --panel: #ffffff; --side: #f3f6ef; --ink: #2b3127; --muted: #737b6c;
+    --line: #e3e8dc; --accent: #3f7d4e; --accent-soft: #e4efe2; --accent-ink: #ffffff;
+    --chip: #eef2ea; --family: #7d5aa6; --farm: #3f7d4e; --house: #b56a25; --danger: #b3261e;
   }
   * { box-sizing: border-box; }
+  html { color-scheme: light; }
   body { margin: 0; background: var(--bg); color: var(--ink);
     font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { padding: 28px 16px 8px; max-width: 1100px; margin: 0 auto;
-    display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: end; }
-  h1 { margin: 0; font-size: 1.7rem; letter-spacing: -0.01em; }
-  header p { margin: 4px 0 0; color: var(--muted); }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 48px; }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+
+  /* ---- Left sidebar: every control lives here ---- */
+  aside { background: var(--side); border-right: 1px solid var(--line); padding: 20px 16px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  aside h1 { margin: 0; font-size: 1.25rem; line-height: 1.25; }
+  aside .sub { margin: 4px 0 16px; color: var(--muted); font-size: .88rem; }
+  .ctl { width: 100%; border-collapse: collapse; margin: 0 0 18px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .ctl caption { text-align: left; font-size: .76rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--muted); padding: 0 2px 6px; }
+  .ctl td { border-top: 1px solid var(--line); padding: 0; }
+  .ctl tr:first-child td { border-top: 0; }
+  .ctl button.opt { width: 100%; display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; padding: 9px 12px; border: 0; background: transparent; color: var(--ink);
+    font: inherit; font-size: .95rem; text-align: left; cursor: pointer; }
+  .ctl button.opt:hover { background: var(--chip); }
+  .ctl button.opt[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600;
+    box-shadow: inset 3px 0 0 var(--accent); }
+  .ctl .n { font-size: .8rem; color: var(--muted); background: var(--chip); border-radius: 999px;
+    padding: 0 8px; min-width: 26px; text-align: center; }
+  .ctl td.pad { padding: 10px 12px; }
+  .ctl td.pad .btn { width: 100%; }
+  .ctl td.pad .btn + .btn { margin-top: 8px; }
+
+  input, select, textarea { width: 100%; padding: 8px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink); font: inherit; }
 
   .btn { border: 1px solid var(--line); background: var(--chip); color: var(--ink);
     border-radius: 8px; padding: 8px 14px; font: inherit; font-size: .95rem; cursor: pointer; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .btn.danger { color: var(--danger); border-color: currentColor; background: transparent; }
+  .btn.small { padding: 5px 12px; font-size: .88rem; }
   .btn:disabled { opacity: .55; cursor: progress; }
 
-  .controls { position: sticky; top: 0; z-index: 5; background: var(--bg);
-    padding: 12px 0; border-bottom: 1px solid var(--line); }
-  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .row .label { width: 72px; font-size: .8rem; text-transform: uppercase;
-    letter-spacing: .06em; color: var(--muted); }
-  .chip { border: 1px solid var(--line); background: var(--chip); color: var(--ink);
-    padding: 6px 14px; border-radius: 999px; font: inherit; font-size: .92rem; cursor: pointer; }
-  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent);
-    color: var(--accent-ink); font-weight: 600; }
-  .chip .n { opacity: .7; margin-left: 4px; font-size: .82em; }
-  input, select, textarea { width: 100%; padding: 8px 12px; border-radius: 8px;
-    border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; }
-  #q { flex: 1; min-width: 200px; width: auto; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-  .count { color: var(--muted); margin: 14px 0 10px; font-size: .92rem; }
-  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    overflow: hidden; cursor: pointer; padding: 0; text-align: left; color: inherit;
-    font: inherit; display: flex; flex-direction: column; }
-  .card:hover { border-color: var(--accent); }
-  .thumb { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block; background: var(--chip); }
-  .body { padding: 12px 14px 14px; }
-  .card h2 { margin: 6px 0 4px; font-size: 1.05rem; }
-  .meta { color: var(--muted); font-size: .9rem; margin: 0; }
+  /* ---- Main: full details of every land ---- */
+  main { padding: 20px 28px 56px; max-width: 1100px; width: 100%; }
+  .count { color: var(--muted); margin: 0 0 14px; font-size: .92rem; }
+  .land { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 18px; }
+  .land-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+  .land h2 { margin: 6px 0 12px; font-size: 1.2rem; }
   .tags { display: flex; gap: 6px; flex-wrap: wrap; }
-  .tag { font-size: .74rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+  .tag { font-size: .74rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor; }
   .tag.loc { color: var(--muted); }
   .t-family { color: var(--family); } .t-farm { color: var(--farm); } .t-house { color: var(--house); }
-  .empty { padding: 40px 0; text-align: center; color: var(--muted); }
+  .land-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: start; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+  .gallery > :first-child { grid-column: 1 / -1; }
+  .gallery img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; display: block;
+    background: var(--chip); }
+  table.details { width: 100%; border-collapse: collapse; font-size: .95rem; }
+  table.details th { width: 38%; text-align: left; font-weight: 500; color: var(--muted);
+    padding: 7px 10px 7px 0; vertical-align: top; }
+  table.details td { padding: 7px 0; overflow-wrap: anywhere; white-space: pre-line; }
+  table.details tr + tr th, table.details tr + tr td { border-top: 1px solid var(--line); }
+  .empty { padding: 48px 0; text-align: center; color: var(--muted); }
+  .banner { background: var(--accent-soft); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; margin: 0 0 14px; font-size: .92rem; }
 
+  /* ---- Dialogs (add / edit, connect) ---- */
   dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(720px, 94vw);
-    max-height: 92vh; background: var(--card); color: var(--ink); }
-  dialog::backdrop { background: rgba(0,0,0,.55); }
+    max-height: 92vh; background: var(--panel); color: var(--ink); }
+  dialog::backdrop { background: rgba(40,50,35,.35); }
   .d-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 16px 18px 8px; }
   .d-head h2 { margin: 6px 0 0; font-size: 1.3rem; }
   .d-body { padding: 0 18px 18px; }
   .d-foot { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
-  .gallery { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
-  .gallery img { height: 240px; max-width: 100%; border-radius: 8px; object-fit: cover; flex: none; }
-  dl { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 14px 0 0; }
-  dt { color: var(--muted); font-size: .9rem; }
-  dd { margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
-  a { color: var(--accent); }
-
   form .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   form label { display: block; font-size: .85rem; color: var(--muted); }
   form label > input, form label > select, form label > textarea { margin-top: 4px; }
@@ -88,58 +95,48 @@
   .thumbs figure { margin: 0; position: relative; }
   .thumbs img { width: 96px; height: 72px; object-fit: cover; border-radius: 6px; display: block; }
   .thumbs button { position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%;
-    border: 1px solid var(--line); background: var(--card); color: var(--danger); cursor: pointer; line-height: 1; }
+    border: 1px solid var(--line); background: #fff; color: var(--danger); cursor: pointer; line-height: 1; }
   .msg { margin: 12px 0 0; font-size: .92rem; }
   .msg.err { color: var(--danger); }
   .hint { color: var(--muted); font-size: .88rem; }
-  .banner { background: var(--chip); border: 1px solid var(--line); border-radius: 10px;
-    padding: 10px 14px; margin: 12px 0 0; font-size: .92rem; }
 
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    main { padding: 16px; }
+    .land-body { grid-template-columns: 1fr; }
+  }
   @media (max-width: 520px) {
-    dl { grid-template-columns: 1fr; } dt { margin-top: 6px; }
-    .row .label { width: 100%; } .gallery img { height: 180px; }
     form .grid2 { grid-template-columns: 1fr; }
+    table.details th { width: 42%; }
   }
 </style>
 </head>
 <body>
-<header>
-  <div>
+<div class="layout">
+  <aside aria-label="Filters and actions">
     <h1>Family Land Register</h1>
-    <p>Family land, farm land and house land — Harpur (Bihar) and Greater Noida.</p>
-  </div>
-  <div class="actions">
-    <button class="btn" id="connectBtn" type="button">Connect to edit</button>
-    <button class="btn primary" id="addBtn" type="button">+ Add land</button>
-  </div>
-</header>
-<main>
-  <div class="controls">
-    <div class="row" id="locRow"><span class="label">City</span></div>
-    <div class="row" id="typeRow"><span class="label">Land type</span></div>
-    <div class="row">
-      <input type="search" id="q" placeholder="Search name, address, khata / khesra, owner…" aria-label="Search land">
-    </div>
-  </div>
-  <div id="notice"></div>
-  <p class="count" id="count" aria-live="polite"></p>
-  <div class="grid" id="grid"></div>
-</main>
+    <p class="sub">Family, farm and house land — Harpur (Bihar) and Greater Noida.</p>
 
-<!-- Land details -->
-<dialog id="dlg" aria-labelledby="dTitle">
-  <div class="d-head">
-    <div><div class="tags" id="dTags"></div><h2 id="dTitle"></h2></div>
-    <button class="btn" data-close type="button">Close</button>
-  </div>
-  <div class="d-body">
-    <div class="gallery" id="dGallery"></div>
-    <dl id="dList"></dl>
-    <div class="d-foot">
-      <button class="btn" id="editBtn" type="button">Edit / add photos</button>
-    </div>
-  </div>
-</dialog>
+    <table class="ctl"><caption>Search</caption>
+      <tr><td class="pad"><input type="search" id="q" placeholder="Name, address, khata, owner…" aria-label="Search land"></td></tr>
+    </table>
+    <table class="ctl" id="locTable"><caption>City</caption><tbody id="locRows"></tbody></table>
+    <table class="ctl" id="typeTable"><caption>Land type</caption><tbody id="typeRows"></tbody></table>
+    <table class="ctl"><caption>Manage</caption>
+      <tr><td class="pad">
+        <button class="btn primary" id="addBtn" type="button">+ Add land</button>
+        <button class="btn" id="connectBtn" type="button">Connect to edit</button>
+      </td></tr>
+    </table>
+  </aside>
+
+  <main>
+    <div id="notice"></div>
+    <p class="count" id="count" aria-live="polite"></p>
+    <div id="list"></div>
+  </main>
+</div>
 
 <!-- Add / edit land -->
 <dialog id="formDlg" aria-labelledby="fTitle">
@@ -220,7 +217,6 @@ const MAX_PHOTO_PX = 1600;
 
 let DATA = { locations: [], types: [], lands: [] };
 const state = { loc: "All", type: "All", q: "" };
-let current = null;      // land shown in the details dialog
 let editing = null;      // land being edited (null = adding)
 let keptPhotos = [];     // existing photos kept while editing
 let newFiles = [];       // File objects picked while editing
@@ -349,19 +345,17 @@ function matches(l, skip) {
   }
   return true;
 }
-function chips(rowId, key, options) {
-  const row = $(rowId);
-  row.querySelectorAll(".chip").forEach((c) => c.remove());
+function optionRows(tbodyId, key, options) {
   const field = key === "loc" ? "location" : "type";
-  ["All", ...options].forEach((opt) => {
+  $(tbodyId).replaceChildren(...["All", ...options].map((opt) => {
     const n = DATA.lands.filter((l) => matches(l, key) && (opt === "All" || l[field] === opt)).length;
-    const b = el("button", { className: "chip", type: "button" },
-      opt === "All" ? (key === "loc" ? "All cities" : "All land") : opt,
+    const b = el("button", { className: "opt", type: "button" },
+      el("span", { textContent: opt === "All" ? (key === "loc" ? "All cities" : "All land") : opt }),
       el("span", { className: "n", textContent: n }));
     b.setAttribute("aria-pressed", state[key] === opt);
     b.onclick = () => { state[key] = opt; render(); };
-    row.append(b);
-  });
+    return el("tr", {}, el("td", {}, b));
+  }));
 }
 function tags(l) {
   return [
@@ -369,56 +363,44 @@ function tags(l) {
     el("span", { className: "tag loc", textContent: l.location }),
   ];
 }
-function render() {
-  if (state.loc !== "All" && !allLocations().includes(state.loc)) state.loc = "All";
-  chips("locRow", "loc", allLocations());
-  chips("typeRow", "type", DATA.types);
-  const list = DATA.lands.filter((l) => matches(l));
-  const total = DATA.lands.length;
-  $("count").textContent = `Showing ${list.length} of ${total} land record${total === 1 ? "" : "s"}`;
-  const grid = $("grid");
-  grid.replaceChildren();
-  if (!list.length) {
-    grid.append(el("p", { className: "empty", textContent: total ? "No land matches these filters." : "No land added yet. Use “+ Add land”." }));
-    return;
-  }
-  list.forEach((l) => {
-    const card = el("button", { className: "card", type: "button" },
-      photoImg((l.photos || [])[0], l.name, "thumb"),
-      el("div", { className: "body" },
-        el("div", { className: "tags" }, ...tags(l)),
-        el("h2", { textContent: l.name }),
-        el("p", { className: "meta", textContent: [l.area, l.address].filter(Boolean).join(" · ") })));
-    card.onclick = () => openDetail(l);
-    grid.append(card);
-  });
-  $("connectBtn").textContent = getToken() ? "Connected ✓" : "Connect to edit";
-}
-function notice(text) {
-  $("notice").replaceChildren(...(text ? [el("div", { className: "banner", textContent: text })] : []));
-}
-
-// ---- Details --------------------------------------------------------------
-function openDetail(l) {
-  current = l;
-  $("dTitle").textContent = l.name;
-  $("dTags").replaceChildren(...tags(l));
+function landPanel(l) {
   const photos = l.photos && l.photos.length ? l.photos : [null];
-  $("dGallery").replaceChildren(...photos.map((p) => {
+  const gallery = el("div", { className: "gallery" }, ...photos.map((p) => {
     const img = photoImg(p, l.name);
-    return p ? el("a", { href: photoSrc(p), target: "_blank", rel: "noopener" }, img) : img;
+    return p ? el("a", { href: photoSrc(p), target: "_blank", rel: "noopener", title: "Open full photo" }, img) : img;
   }));
   const map = l.mapLink || "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(l.address || l.location);
   const rows = [
-    ["Address", l.address], ["Area", l.area], ["Khata no.", l.khata], ["Khesra / plot no.", l.khesra],
-    ["Owner", l.owner], ["Status", l.status], ["Details / notes", l.notes],
+    ["City / place", l.location], ["Land type", l.type], ["Area", l.area], ["Address", l.address],
+    ["Khata no.", l.khata], ["Khesra / plot no.", l.khesra], ["Owner", l.owner], ["Status", l.status],
+    ["Other details", l.notes],
   ].filter(([, v]) => v);
-  const dl = $("dList");
-  dl.replaceChildren();
-  rows.forEach(([k, v]) => dl.append(el("dt", { textContent: k }), el("dd", { textContent: v })));
-  dl.append(el("dt", { textContent: "Map" }),
-    el("dd", {}, el("a", { href: map, target: "_blank", rel: "noopener", textContent: "Open in Google Maps" })));
-  $("dlg").showModal();
+  const table = el("table", { className: "details" },
+    el("tbody", {},
+      ...rows.map(([k, v]) => el("tr", {}, el("th", { scope: "row", textContent: k }), el("td", { textContent: v }))),
+      el("tr", {}, el("th", { scope: "row", textContent: "Map" }),
+        el("td", {}, el("a", { href: map, target: "_blank", rel: "noopener", textContent: "Open in Google Maps" })))));
+  const edit = el("button", { className: "btn small", type: "button", textContent: "Edit / add photos" });
+  edit.onclick = () => openForm(l);
+  return el("article", { className: "land" },
+    el("div", { className: "land-head" },
+      el("div", {}, el("div", { className: "tags" }, ...tags(l)), el("h2", { textContent: l.name })),
+      edit),
+    el("div", { className: "land-body" }, gallery, table));
+}
+function render() {
+  if (state.loc !== "All" && !allLocations().includes(state.loc)) state.loc = "All";
+  optionRows("locRows", "loc", allLocations());
+  optionRows("typeRows", "type", DATA.types);
+  $("connectBtn").textContent = getToken() ? "Connected ✓" : "Connect to edit";
+  const list = DATA.lands.filter((l) => matches(l));
+  const total = DATA.lands.length;
+  $("count").textContent = `Showing ${list.length} of ${total} land record${total === 1 ? "" : "s"}`;
+  $("list").replaceChildren(...(list.length ? list.map(landPanel)
+    : [el("p", { className: "empty", textContent: total ? "No land matches these filters." : "No land added yet. Use “+ Add land”." })]));
+}
+function notice(text) {
+  $("notice").replaceChildren(...(text ? [el("div", { className: "banner", textContent: text })] : []));
 }
 
 // ---- Add / edit -----------------------------------------------------------
@@ -561,11 +543,8 @@ $("disconnectBtn").onclick = () => { setToken(""); $("tokenDlg").close(); render
 
 // ---- Wiring ---------------------------------------------------------------
 document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => b.closest("dialog").close()));
-document.querySelectorAll("dialog").forEach((d) =>
-  d.addEventListener("click", (e) => { if (e.target === d && d.id === "dlg") d.close(); }));
 $("addBtn").onclick = () => openForm(null);
 $("connectBtn").onclick = () => openToken();
-$("editBtn").onclick = () => { $("dlg").close(); openForm(current); };
 $("q").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
 
 async function load() {
