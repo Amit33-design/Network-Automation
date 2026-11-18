@@ -196,7 +196,7 @@
     <ol class="hint">
       <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → new fine-grained token</a>.</li>
       <li>Repository access: <b>Only select repositories</b> → <b id="repoName"></b>.</li>
-      <li>Permissions → Repository → <b>Contents: Read and write</b>. Generate and copy it.</li>
+      <li>Permissions → Repository permissions → <b>Contents</b> → change “Read-only” to <b>Read and write</b>. Generate and copy it.</li>
     </ol>
     <label>Access key
       <input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
@@ -254,9 +254,13 @@ async function gh(path, opts = {}) {
   }
   return res.json();
 }
+const NO_WRITE = "This access key can read the land list but is not allowed to save. On GitHub, open the key " +
+  "(Settings → Developer settings → Personal access tokens → Fine-grained tokens), make sure Repository access " +
+  "includes " + GH.repo + " and Permissions → Contents is set to “Read and write”, then click Update. " +
+  "The key itself does not change, so after updating it just try again here.";
 function explain(status, detail) {
   if (status === 401) return "The access key is wrong or has expired. Use “Connect to edit” to enter a new one.";
-  if (status === 403 || status === 404) return "This access key is not allowed to change the repository. It needs Contents: Read and write on " + GH.repo + ".";
+  if (status === 403 || status === 404) return NO_WRITE + (detail ? " (GitHub: " + detail + ")" : "");
   if (status === 409) return "Someone else saved at the same moment. Please try again.";
   return "GitHub said: " + status + " " + detail;
 }
@@ -268,6 +272,15 @@ function bytesToB64(bytes) {
 const textToB64 = (t) => bytesToB64(new TextEncoder().encode(t));
 const b64ToText = (b) => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
 
+async function checkCanWrite() {
+  try {
+    await gh(DATA_FILE, { method: "PUT", body: JSON.stringify({
+      message: "permission check", content: textToB64("{}"), branch: GH.branch, sha: "0".repeat(40) }) });
+  } catch (e) {
+    if (e.status === 409 || e.status === 422) return;   // write allowed; nothing was changed
+    throw e;
+  }
+}
 async function readData() {
   const f = await gh(DATA_FILE);
   return { data: JSON.parse(b64ToText(f.content)), sha: f.sha };
@@ -530,6 +543,8 @@ $("tokenForm").addEventListener("submit", async (e) => {
   m.textContent = "Checking…"; m.className = "msg";
   try {
     const { data } = await readData();
+    m.textContent = "Checking the key can save…";
+    await checkCanWrite();
     DATA = data;
     $("tokenDlg").close();
     render();
