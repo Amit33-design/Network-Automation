@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#3f7d4e">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
 <meta name="robots" content="noindex, nofollow">
 <title>Family Land Register</title>
 <style>
@@ -100,21 +105,92 @@
   .msg.err { color: var(--danger); }
   .hint { color: var(--muted); font-size: .88rem; }
 
+  /* Shown on phones only */
+  .topbar, .fab, .scrim, .activeFilters, .drawerClose { display: none; }
+  .photoBtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .photoBtns input { display: none; }
+  .photoBtns label.btn { color: var(--ink); font-size: .95rem; margin: 0; }
+
   @media (max-width: 860px) {
+    html, body { -webkit-tap-highlight-color: transparent; }
     .layout { grid-template-columns: 1fr; }
-    aside { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-    main { padding: 16px; }
-    .land-body { grid-template-columns: 1fr; }
+
+    .topbar { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 20;
+      background: var(--accent); color: #fff; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top));
+      box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+    .topbar h1 { margin: 0; font-size: 1.1rem; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .iconBtn { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px;
+      padding: 0 12px; border: 0; border-radius: 10px; background: rgba(255,255,255,.16); color: #fff;
+      font: inherit; font-size: .95rem; cursor: pointer; }
+    .iconBtn .badge { background: #fff; color: var(--accent); border-radius: 999px; font-size: .75rem;
+      font-weight: 700; padding: 0 7px; }
+
+    /* Left panel becomes a slide-out menu */
+    aside { position: fixed; z-index: 40; top: 0; left: 0; bottom: 0; height: 100dvh;
+      width: min(86vw, 330px); border-right: 1px solid var(--line); border-bottom: 0;
+      transform: translateX(-105%); transition: transform .22s ease; box-shadow: 4px 0 18px rgba(0,0,0,.15);
+      padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+    body.menuOpen aside { transform: none; }
+    .scrim { display: block; position: fixed; inset: 0; z-index: 35; background: rgba(30,40,25,.35);
+      opacity: 0; pointer-events: none; transition: opacity .22s ease; }
+    body.menuOpen .scrim { opacity: 1; pointer-events: auto; }
+    body.menuOpen { overflow: hidden; }
+    .drawerClose { display: block; width: 100%; margin-top: 4px; }
+    .ctl button.opt { min-height: 48px; font-size: 1rem; }
+    .ctl td.pad .btn { min-height: 46px; }
+
+    .activeFilters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+    .activeFilters button { border: 1px solid var(--line); background: var(--accent-soft); color: var(--accent);
+      border-radius: 999px; padding: 6px 12px; font: inherit; font-size: .88rem; min-height: 36px; }
+
+    main { padding: 14px 12px calc(96px + env(safe-area-inset-bottom)); }
+    .land { padding: 14px; border-radius: 12px; }
+    .land-head { flex-direction: column; gap: 8px; }
+    .land-head .btn { align-self: stretch; min-height: 44px; }
+    .land h2 { margin-bottom: 4px; }
+    .land-body { grid-template-columns: 1fr; gap: 12px; }
+
+    .fab { display: flex; align-items: center; justify-content: center; position: fixed; z-index: 25;
+      right: 18px; bottom: calc(18px + env(safe-area-inset-bottom)); width: 60px; height: 60px; border-radius: 50%;
+      border: 0; background: var(--accent); color: #fff; font-size: 2rem; line-height: 1;
+      box-shadow: 0 4px 14px rgba(0,0,0,.25); cursor: pointer; }
+
+    /* Forms fill the screen; Save stays visible above the keyboard */
+    dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; border: 0; }
+    dialog[open] { display: flex; flex-direction: column; }
+    .d-head { position: sticky; top: 0; background: var(--panel); z-index: 2; border-bottom: 1px solid var(--line);
+      padding: 10px 14px; padding-top: max(10px, env(safe-area-inset-top)); align-items: center; }
+    .d-head h2 { margin: 0; font-size: 1.15rem; }
+    .d-head .btn { min-height: 44px; }
+    .d-body { padding: 14px; flex: 1; overflow-y: auto; }
+    .d-foot { position: sticky; bottom: 0; background: var(--panel); margin: 16px -14px -14px;
+      padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+    .d-foot .btn { min-height: 48px; flex: 1; }
+    .photoBtns label.btn { min-height: 48px; display: inline-flex; align-items: center; flex: 1; justify-content: center; }
+    .thumbs img { width: 84px; height: 84px; }
+    .thumbs button { width: 30px; height: 30px; }
   }
   @media (max-width: 520px) {
     form .grid2 { grid-template-columns: 1fr; }
-    table.details th { width: 42%; }
+    /* Details: label above value so long addresses get the full width */
+    table.details, table.details tbody, table.details tr, table.details th, table.details td { display: block; width: auto; }
+    table.details th { padding: 8px 0 0; font-size: .82rem; }
+    table.details td { padding: 0 0 8px; }
+    table.details tr + tr th { border-top: 1px solid var(--line); }
+    table.details tr + tr td { border-top: 0; }
   }
 </style>
 </head>
 <body>
+<header class="topbar">
+  <button class="iconBtn" id="menuBtn" type="button" aria-label="Open filters and menu" aria-controls="sidebar" aria-expanded="false">
+    <span aria-hidden="true">☰</span> Filters <span class="badge" id="filterBadge" hidden></span>
+  </button>
+  <h1>Family Land Register</h1>
+</header>
+<div class="scrim" id="scrim"></div>
 <div class="layout">
-  <aside aria-label="Filters and actions">
+  <aside id="sidebar" aria-label="Filters and actions">
     <h1>Family Land Register</h1>
     <p class="sub">Family, farm, house land and flats — Harpur (Bihar) and Greater Noida.</p>
 
@@ -129,14 +205,18 @@
         <button class="btn" id="connectBtn" type="button">Connect to edit</button>
       </td></tr>
     </table>
+    <button class="btn drawerClose" id="drawerClose" type="button">Show land</button>
   </aside>
 
   <main>
+    <div class="activeFilters" id="activeFilters"></div>
     <div id="notice"></div>
     <p class="count" id="count" aria-live="polite"></p>
     <div id="list"></div>
   </main>
 </div>
+
+<button class="fab" id="fab" type="button" aria-label="Add land">+</button>
 
 <!-- Add / edit land -->
 <dialog id="formDlg" aria-labelledby="fTitle">
@@ -170,9 +250,12 @@
       <label class="full">Other details / notes
         <textarea name="notes" rows="4" maxlength="4000"></textarea></label>
       <div class="full">
-        <label>Photographs
-          <input name="photos" type="file" accept="image/*" multiple></label>
-        <p class="hint">You can pick several photos. They are resized before upload.</p>
+        <span class="hint">Photographs</span>
+        <div class="photoBtns">
+          <label class="btn">📷 Take photo<input name="camera" type="file" accept="image/*" capture="environment"></label>
+          <label class="btn">🖼 Choose from gallery<input name="photos" type="file" accept="image/*" multiple></label>
+        </div>
+        <p class="hint">You can add several photos. They are resized before upload.</p>
         <div class="thumbs" id="thumbs"></div>
       </div>
     </div>
@@ -366,7 +449,7 @@ function optionRows(tbodyId, key, options) {
       el("span", { textContent: opt === "All" ? (key === "loc" ? "All cities" : "All land") : opt }),
       el("span", { className: "n", textContent: n }));
     b.setAttribute("aria-pressed", state[key] === opt);
-    b.onclick = () => { state[key] = opt; render(); };
+    b.onclick = () => { state[key] = opt; render(); if (isPhone()) closeMenu(); };
     return el("tr", {}, el("td", {}, b));
   }));
 }
@@ -406,12 +489,45 @@ function render() {
   optionRows("locRows", "loc", allLocations());
   optionRows("typeRows", "type", DATA.types);
   $("connectBtn").textContent = getToken() ? "Connected ✓" : "Connect to edit";
+  renderActiveFilters();
   const list = DATA.lands.filter((l) => matches(l));
   const total = DATA.lands.length;
   $("count").textContent = `Showing ${list.length} of ${total} land record${total === 1 ? "" : "s"}`;
   $("list").replaceChildren(...(list.length ? list.map(landPanel)
     : [el("p", { className: "empty", textContent: total ? "No land matches these filters." : "No land added yet. Use “+ Add land”." })]));
 }
+// Phones: show the chosen filters above the list, each tappable to clear it.
+function renderActiveFilters() {
+  const parts = [];
+  if (state.loc !== "All") parts.push([state.loc, () => (state.loc = "All")]);
+  if (state.type !== "All") parts.push([state.type, () => (state.type = "All")]);
+  if (state.q) parts.push([`“${state.q}”`, () => { state.q = ""; $("q").value = ""; }]);
+  $("activeFilters").replaceChildren(...parts.map(([label, clear]) => {
+    const b = el("button", { type: "button", textContent: label + "  ×" });
+    b.setAttribute("aria-label", "Clear filter " + label);
+    b.onclick = () => { clear(); render(); };
+    return b;
+  }));
+  $("filterBadge").hidden = !parts.length;
+  $("filterBadge").textContent = parts.length;
+}
+
+// ---- Phone menu (the left panel slides in; the Back button closes it) ----
+const isPhone = () => matchMedia("(max-width: 860px)").matches;
+function openMenu() {
+  if (document.body.classList.contains("menuOpen")) return;
+  document.body.classList.add("menuOpen");
+  $("menuBtn").setAttribute("aria-expanded", "true");
+  history.pushState({ menu: true }, "");
+}
+function closeMenu(fromBack) {
+  if (!document.body.classList.contains("menuOpen")) return;
+  document.body.classList.remove("menuOpen");
+  $("menuBtn").setAttribute("aria-expanded", "false");
+  if (!fromBack && history.state && history.state.menu) history.back();
+}
+window.addEventListener("popstate", () => closeMenu(true));
+
 function notice(text) {
   $("notice").replaceChildren(...(text ? [el("div", { className: "banner", textContent: text })] : []));
 }
@@ -457,11 +573,13 @@ function setMsg(text, isErr) {
   m.className = "msg" + (isErr ? " err" : "");
 }
 
-$("landForm").photos.addEventListener("change", (e) => {
+function addPicked(e) {
   for (const file of e.target.files) newFiles.push({ file, preview: URL.createObjectURL(file) });
   e.target.value = "";
   renderThumbs();
-});
+}
+$("landForm").photos.addEventListener("change", addPicked);
+$("landForm").camera.addEventListener("change", addPicked);
 
 $("landForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -558,9 +676,14 @@ $("disconnectBtn").onclick = () => { setToken(""); $("tokenDlg").close(); render
 
 // ---- Wiring ---------------------------------------------------------------
 document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => b.closest("dialog").close()));
-$("addBtn").onclick = () => openForm(null);
-$("connectBtn").onclick = () => openToken();
+$("addBtn").onclick = () => { closeMenu(); openForm(null); };
+$("fab").onclick = () => openForm(null);
+$("menuBtn").onclick = openMenu;
+$("scrim").onclick = () => closeMenu();
+$("drawerClose").onclick = () => closeMenu();
+$("connectBtn").onclick = () => { closeMenu(); openToken(); };
 $("q").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.target.blur(); closeMenu(); } });
 
 async function load() {
   try {
