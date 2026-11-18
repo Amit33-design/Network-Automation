@@ -9,22 +9,30 @@
   :root {
     --bg: #f6f4ee; --card: #ffffff; --ink: #22281f; --muted: #6b7265;
     --line: #e2dfd3; --accent: #2f6b3c; --accent-ink: #ffffff; --chip: #ecebe2;
-    --family: #7a4b9a; --farm: #2f6b3c; --house: #b3621b;
+    --family: #7a4b9a; --farm: #2f6b3c; --house: #b3621b; --danger: #b3261e;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #151812; --card: #1f231b; --ink: #ecefe6; --muted: #a0a797;
       --line: #32382c; --accent: #6fbf7f; --accent-ink: #10140e; --chip: #2a2f25;
-      --family: #c39be0; --farm: #7fcf8f; --house: #f0a865;
+      --family: #c39be0; --farm: #7fcf8f; --house: #f0a865; --danger: #f2827a;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
     font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { padding: 28px 16px 8px; max-width: 1100px; margin: 0 auto; }
+  header { padding: 28px 16px 8px; max-width: 1100px; margin: 0 auto;
+    display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: end; }
   h1 { margin: 0; font-size: 1.7rem; letter-spacing: -0.01em; }
   header p { margin: 4px 0 0; color: var(--muted); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 48px; }
+
+  .btn { border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    border-radius: 8px; padding: 8px 14px; font: inherit; font-size: .95rem; cursor: pointer; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn.danger { color: var(--danger); border-color: currentColor; background: transparent; }
+  .btn:disabled { opacity: .55; cursor: progress; }
 
   .controls { position: sticky; top: 0; z-index: 5; background: var(--bg);
     padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -36,8 +44,9 @@
   .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent);
     color: var(--accent-ink); font-weight: 600; }
   .chip .n { opacity: .7; margin-left: 4px; font-size: .82em; }
-  input[type=search] { flex: 1; min-width: 200px; padding: 8px 12px; border-radius: 8px;
+  input, select, textarea { width: 100%; padding: 8px 12px; border-radius: 8px;
     border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; }
+  #q { flex: 1; min-width: 200px; width: auto; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .count { color: var(--muted); margin: 14px 0 10px; font-size: .92rem; }
@@ -51,8 +60,7 @@
   .card h2 { margin: 6px 0 4px; font-size: 1.05rem; }
   .meta { color: var(--muted); font-size: .9rem; margin: 0; }
   .tags { display: flex; gap: 6px; flex-wrap: wrap; }
-  .tag { font-size: .74rem; font-weight: 600; padding: 2px 8px; border-radius: 999px;
-    border: 1px solid currentColor; }
+  .tag { font-size: .74rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
   .tag.loc { color: var(--muted); }
   .t-family { color: var(--family); } .t-farm { color: var(--farm); } .t-house { color: var(--house); }
   .empty { padding: 40px 0; text-align: center; color: var(--muted); }
@@ -60,26 +68,50 @@
   dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(720px, 94vw);
     max-height: 92vh; background: var(--card); color: var(--ink); }
   dialog::backdrop { background: rgba(0,0,0,.55); }
-  .d-head { display: flex; justify-content: space-between; align-items: start; gap: 12px;
-    padding: 16px 18px 8px; }
+  .d-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 16px 18px 8px; }
   .d-head h2 { margin: 6px 0 0; font-size: 1.3rem; }
-  .close { border: 1px solid var(--line); background: var(--chip); color: var(--ink);
-    border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
   .d-body { padding: 0 18px 18px; }
+  .d-foot { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
   .gallery { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
   .gallery img { height: 240px; max-width: 100%; border-radius: 8px; object-fit: cover; flex: none; }
   dl { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 14px 0 0; }
   dt { color: var(--muted); font-size: .9rem; }
-  dd { margin: 0; overflow-wrap: anywhere; }
+  dd { margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
   a { color: var(--accent); }
-  @media (max-width: 480px) { dl { grid-template-columns: 1fr; } dt { margin-top: 6px; }
-    .row .label { width: 100%; } .gallery img { height: 180px; } }
+
+  form .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  form label { display: block; font-size: .85rem; color: var(--muted); }
+  form label > input, form label > select, form label > textarea { margin-top: 4px; }
+  form .full { grid-column: 1 / -1; }
+  .req { color: var(--danger); }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .thumbs figure { margin: 0; position: relative; }
+  .thumbs img { width: 96px; height: 72px; object-fit: cover; border-radius: 6px; display: block; }
+  .thumbs button { position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%;
+    border: 1px solid var(--line); background: var(--card); color: var(--danger); cursor: pointer; line-height: 1; }
+  .msg { margin: 12px 0 0; font-size: .92rem; }
+  .msg.err { color: var(--danger); }
+  .hint { color: var(--muted); font-size: .88rem; }
+  .banner { background: var(--chip); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; margin: 12px 0 0; font-size: .92rem; }
+
+  @media (max-width: 520px) {
+    dl { grid-template-columns: 1fr; } dt { margin-top: 6px; }
+    .row .label { width: 100%; } .gallery img { height: 180px; }
+    form .grid2 { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>Family Land Register</h1>
-  <p>Family land, farm land and house land — Harpur (Bihar) and Greater Noida.</p>
+  <div>
+    <h1>Family Land Register</h1>
+    <p>Family land, farm land and house land — Harpur (Bihar) and Greater Noida.</p>
+  </div>
+  <div class="actions">
+    <button class="btn" id="connectBtn" type="button">Connect to edit</button>
+    <button class="btn primary" id="addBtn" type="button">+ Add land</button>
+  </div>
 </header>
 <main>
   <div class="controls">
@@ -89,34 +121,196 @@
       <input type="search" id="q" placeholder="Search name, address, khata / khesra, owner…" aria-label="Search land">
     </div>
   </div>
+  <div id="notice"></div>
   <p class="count" id="count" aria-live="polite"></p>
   <div class="grid" id="grid"></div>
 </main>
 
+<!-- Land details -->
 <dialog id="dlg" aria-labelledby="dTitle">
   <div class="d-head">
     <div><div class="tags" id="dTags"></div><h2 id="dTitle"></h2></div>
-    <button class="close" id="dClose">Close</button>
+    <button class="btn" data-close type="button">Close</button>
   </div>
   <div class="d-body">
     <div class="gallery" id="dGallery"></div>
     <dl id="dList"></dl>
+    <div class="d-foot">
+      <button class="btn" id="editBtn" type="button">Edit / add photos</button>
+    </div>
   </div>
 </dialog>
 
-<script src="lands.js"></script>
-<script>
-const state = { loc: "All", type: "All", q: "" };
-const $ = (id) => document.getElementById(id);
-const typeClass = (t) => "t-" + t.split(" ")[0].toLowerCase();
+<!-- Add / edit land -->
+<dialog id="formDlg" aria-labelledby="fTitle">
+  <div class="d-head">
+    <h2 id="fTitle">Add land</h2>
+    <button class="btn" data-close type="button">Cancel</button>
+  </div>
+  <form class="d-body" id="landForm" novalidate>
+    <div class="grid2">
+      <label class="full">Name (e.g. "Harpur farm near canal", "Noida house") <span class="req">*</span>
+        <input name="name" required maxlength="120"></label>
+      <label>City / place <span class="req">*</span>
+        <input name="location" list="locList" required maxlength="80">
+        <datalist id="locList"></datalist></label>
+      <label>Land type <span class="req">*</span>
+        <select name="type" required></select></label>
+      <label>Area (bigha / katha / sq. m)
+        <input name="area" maxlength="80"></label>
+      <label>Owner
+        <input name="owner" maxlength="120"></label>
+      <label class="full">Address
+        <textarea name="address" rows="2" maxlength="400"></textarea></label>
+      <label>Khata no.
+        <input name="khata" maxlength="60"></label>
+      <label>Khesra / plot no.
+        <input name="khesra" maxlength="60"></label>
+      <label>Status (e.g. cultivated, rented, vacant)
+        <input name="status" maxlength="120"></label>
+      <label>Google Maps link
+        <input name="mapLink" type="url" maxlength="500" placeholder="https://maps.app.goo.gl/…"></label>
+      <label class="full">Other details / notes
+        <textarea name="notes" rows="4" maxlength="4000"></textarea></label>
+      <div class="full">
+        <label>Photographs
+          <input name="photos" type="file" accept="image/*" multiple></label>
+        <p class="hint">You can pick several photos. They are resized before upload.</p>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
+    </div>
+    <p class="msg" id="formMsg" aria-live="polite"></p>
+    <div class="d-foot">
+      <button class="btn danger" id="deleteBtn" type="button" hidden>Delete this land</button>
+      <button class="btn primary" id="saveBtn" type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
 
+<!-- Connect -->
+<dialog id="tokenDlg" aria-labelledby="tTitle">
+  <div class="d-head">
+    <h2 id="tTitle">Connect to edit</h2>
+    <button class="btn" data-close type="button">Close</button>
+  </div>
+  <form class="d-body" id="tokenForm">
+    <p>Changes are saved into the GitHub repository, so everyone who opens this page sees them.
+       Saving needs a GitHub access key. You only enter it once on each phone or computer.</p>
+    <ol class="hint">
+      <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → new fine-grained token</a>.</li>
+      <li>Repository access: <b>Only select repositories</b> → <b id="repoName"></b>.</li>
+      <li>Permissions → Repository → <b>Contents: Read and write</b>. Generate and copy it.</li>
+    </ol>
+    <label>Access key
+      <input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+    <p class="msg" id="tokenMsg" aria-live="polite"></p>
+    <div class="d-foot">
+      <button class="btn danger" id="disconnectBtn" type="button" hidden>Disconnect this device</button>
+      <button class="btn primary" type="submit">Connect</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+// ---- Where the data lives -------------------------------------------------
+const GH = { owner: "Amit33-design", repo: "Network-Automation", branch: "gh-pages" };
+const DATA_FILE = "lands.json";
+const TOKEN_KEY = "landRegister.token";
+const MAX_PHOTO_PX = 1600;
+
+let DATA = { locations: [], types: [], lands: [] };
+const state = { loc: "All", type: "All", q: "" };
+let current = null;      // land shown in the details dialog
+let editing = null;      // land being edited (null = adding)
+let keptPhotos = [];     // existing photos kept while editing
+let newFiles = [];       // File objects picked while editing
+
+const $ = (id) => document.getElementById(id);
+const typeClass = (t) => "t-" + String(t).split(" ")[0].toLowerCase();
 function el(tag, props = {}, ...kids) {
   const n = Object.assign(document.createElement(tag), props);
   kids.forEach((k) => n.append(k));
   return n;
 }
+function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
+function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch {} }
 
-// Drawn placeholder used when a land has no photo (or the file is missing).
+// ---- GitHub API -----------------------------------------------------------
+const API = `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/`;
+const encPath = (p) => p.split("/").map(encodeURIComponent).join("/");
+
+async function gh(path, opts = {}) {
+  const url = API + encPath(path) + (opts.method ? "" : `?ref=${GH.branch}&t=${Date.now()}`);
+  const res = await fetch(url, {
+    ...opts,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: "Bearer " + getToken(),
+      ...(opts.body ? { "Content-Type": "application/json" } : {}),
+    },
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json()).message || ""; } catch {}
+    const err = new Error(explain(res.status, detail));
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+function explain(status, detail) {
+  if (status === 401) return "The access key is wrong or has expired. Use “Connect to edit” to enter a new one.";
+  if (status === 403 || status === 404) return "This access key is not allowed to change the repository. It needs Contents: Read and write on " + GH.repo + ".";
+  if (status === 409) return "Someone else saved at the same moment. Please try again.";
+  return "GitHub said: " + status + " " + detail;
+}
+function bytesToB64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+const textToB64 = (t) => bytesToB64(new TextEncoder().encode(t));
+const b64ToText = (b) => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
+
+async function readData() {
+  const f = await gh(DATA_FILE);
+  return { data: JSON.parse(b64ToText(f.content)), sha: f.sha };
+}
+async function putFile(path, b64, message, sha) {
+  return gh(path, {
+    method: "PUT",
+    body: JSON.stringify({ message, content: b64, branch: GH.branch, ...(sha ? { sha } : {}) }),
+  });
+}
+// Re-read the file just before writing, so a save never overwrites someone else's change.
+async function updateData(change, message) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, sha } = await readData();
+    change(data);
+    try {
+      await putFile(DATA_FILE, textToB64(JSON.stringify(data, null, 2) + "\n"), message, sha);
+      return data;
+    } catch (e) {
+      if (e.status !== 409 || attempt === 1) throw e;
+    }
+  }
+}
+
+// ---- Photos ---------------------------------------------------------------
+async function resizeToJpegB64(file) {
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch { throw new Error(`“${file.name}” could not be read as a picture.`); }
+  const scale = Math.min(1, MAX_PHOTO_PX / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * scale);
+  c.height = Math.round(bmp.height * scale);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
+  return bytesToB64(new Uint8Array(await blob.arrayBuffer()));
+}
+const slug = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "land";
+
 function placeholder(label) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">
     <rect width="320" height="200" fill="#dfe6d3"/>
@@ -127,31 +321,40 @@ function placeholder(label) {
   </svg>`;
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
-
+// Photos saved a moment ago are not on the website until GitHub rebuilds it (about a minute),
+// so for those we show the copy kept in memory.
+const localPhotos = new Map();
+function photoSrc(file) {
+  if (!file) return placeholder("No photo yet");
+  return localPhotos.get(file) || "photos/" + encPath(file);
+}
 function photoImg(file, alt, cls) {
   const img = el("img", { alt, className: cls || "", loading: "lazy" });
   img.onerror = () => { img.onerror = null; img.src = placeholder("Photo not found"); };
-  img.src = file ? "photos/" + file : placeholder("No photo yet");
+  img.src = photoSrc(file);
   return img;
 }
 
+// ---- List + filters -------------------------------------------------------
+function allLocations() {
+  return [...new Set([...DATA.locations, ...DATA.lands.map((l) => l.location).filter(Boolean)])];
+}
 function matches(l, skip) {
   if (skip !== "loc" && state.loc !== "All" && l.location !== state.loc) return false;
   if (skip !== "type" && state.type !== "All" && l.type !== state.type) return false;
   if (state.q) {
-    const hay = [l.name, l.location, l.type, l.address, l.khata, l.khesra, l.owner, l.notes, l.status]
+    const hay = [l.name, l.location, l.type, l.address, l.khata, l.khesra, l.owner, l.notes, l.status, l.area]
       .join(" ").toLowerCase();
     if (!hay.includes(state.q)) return false;
   }
   return true;
 }
-
 function chips(rowId, key, options) {
   const row = $(rowId);
   row.querySelectorAll(".chip").forEach((c) => c.remove());
+  const field = key === "loc" ? "location" : "type";
   ["All", ...options].forEach((opt) => {
-    // Count shows what you'd get by picking this chip, given the other filter.
-    const n = LANDS.filter((l) => matches(l, key) && (opt === "All" || l[key === "loc" ? "location" : "type"] === opt)).length;
+    const n = DATA.lands.filter((l) => matches(l, key) && (opt === "All" || l[field] === opt)).length;
     const b = el("button", { className: "chip", type: "button" },
       opt === "All" ? (key === "loc" ? "All cities" : "All land") : opt,
       el("span", { className: "n", textContent: n }));
@@ -160,23 +363,23 @@ function chips(rowId, key, options) {
     row.append(b);
   });
 }
-
 function tags(l) {
   return [
     el("span", { className: "tag " + typeClass(l.type), textContent: l.type }),
     el("span", { className: "tag loc", textContent: l.location }),
   ];
 }
-
 function render() {
-  chips("locRow", "loc", LOCATIONS);
-  chips("typeRow", "type", TYPES);
-  const list = LANDS.filter((l) => matches(l));
-  $("count").textContent = `Showing ${list.length} of ${LANDS.length} land record${LANDS.length === 1 ? "" : "s"}`;
+  if (state.loc !== "All" && !allLocations().includes(state.loc)) state.loc = "All";
+  chips("locRow", "loc", allLocations());
+  chips("typeRow", "type", DATA.types);
+  const list = DATA.lands.filter((l) => matches(l));
+  const total = DATA.lands.length;
+  $("count").textContent = `Showing ${list.length} of ${total} land record${total === 1 ? "" : "s"}`;
   const grid = $("grid");
   grid.replaceChildren();
   if (!list.length) {
-    grid.append(el("p", { className: "empty", textContent: "No land matches these filters." }));
+    grid.append(el("p", { className: "empty", textContent: total ? "No land matches these filters." : "No land added yet. Use “+ Add land”." }));
     return;
   }
   list.forEach((l) => {
@@ -189,21 +392,26 @@ function render() {
     card.onclick = () => openDetail(l);
     grid.append(card);
   });
+  $("connectBtn").textContent = getToken() ? "Connected ✓" : "Connect to edit";
+}
+function notice(text) {
+  $("notice").replaceChildren(...(text ? [el("div", { className: "banner", textContent: text })] : []));
 }
 
+// ---- Details --------------------------------------------------------------
 function openDetail(l) {
+  current = l;
   $("dTitle").textContent = l.name;
   $("dTags").replaceChildren(...tags(l));
   const photos = l.photos && l.photos.length ? l.photos : [null];
   $("dGallery").replaceChildren(...photos.map((p) => {
     const img = photoImg(p, l.name);
-    if (!p) return img;
-    return el("a", { href: "photos/" + p, target: "_blank", rel: "noopener" }, img);
+    return p ? el("a", { href: photoSrc(p), target: "_blank", rel: "noopener" }, img) : img;
   }));
   const map = l.mapLink || "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(l.address || l.location);
   const rows = [
     ["Address", l.address], ["Area", l.area], ["Khata no.", l.khata], ["Khesra / plot no.", l.khesra],
-    ["Owner", l.owner], ["Status", l.status], ["Notes", l.notes],
+    ["Owner", l.owner], ["Status", l.status], ["Details / notes", l.notes],
   ].filter(([, v]) => v);
   const dl = $("dList");
   dl.replaceChildren();
@@ -213,10 +421,166 @@ function openDetail(l) {
   $("dlg").showModal();
 }
 
-$("dClose").onclick = () => $("dlg").close();
-$("dlg").addEventListener("click", (e) => { if (e.target === $("dlg")) $("dlg").close(); });
+// ---- Add / edit -----------------------------------------------------------
+const FIELDS = ["name", "location", "type", "area", "owner", "address", "khata", "khesra", "status", "mapLink", "notes"];
+
+function openForm(land) {
+  if (!getToken()) { openToken("Connect first, then you can add or edit land."); return; }
+  editing = land || null;
+  keptPhotos = land ? [...(land.photos || [])] : [];
+  newFiles = [];
+  const f = $("landForm");
+  f.reset();
+  $("fTitle").textContent = land ? "Edit land" : "Add land";
+  f.type.replaceChildren(...DATA.types.map((t) => el("option", { value: t, textContent: t })));
+  $("locList").replaceChildren(...allLocations().map((l) => el("option", { value: l })));
+  FIELDS.forEach((k) => { f[k].value = land ? land[k] || "" : ""; });
+  if (!land) {
+    if (state.loc !== "All") f.location.value = state.loc;
+    if (state.type !== "All") f.type.value = state.type;
+  }
+  $("deleteBtn").hidden = !land;
+  setMsg("");
+  renderThumbs();
+  $("formDlg").showModal();
+}
+function renderThumbs() {
+  const items = [
+    ...keptPhotos.map((p, i) => ({ src: photoSrc(p), drop: () => keptPhotos.splice(i, 1), label: "Remove photo" })),
+    ...newFiles.map((f, i) => ({ src: f.preview, drop: () => newFiles.splice(i, 1), label: "Remove " + f.file.name })),
+  ];
+  $("thumbs").replaceChildren(...items.map((it) => {
+    const x = el("button", { type: "button", textContent: "×", title: it.label });
+    x.setAttribute("aria-label", it.label);
+    x.onclick = () => { it.drop(); renderThumbs(); };
+    return el("figure", {}, el("img", { src: it.src, alt: "" }), x);
+  }));
+}
+function setMsg(text, isErr) {
+  const m = $("formMsg");
+  m.textContent = text;
+  m.className = "msg" + (isErr ? " err" : "");
+}
+
+$("landForm").photos.addEventListener("change", (e) => {
+  for (const file of e.target.files) newFiles.push({ file, preview: URL.createObjectURL(file) });
+  e.target.value = "";
+  renderThumbs();
+});
+
+$("landForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const values = Object.fromEntries(FIELDS.map((k) => [k, f[k].value.trim()]));
+  if (!values.name || !values.location || !values.type) {
+    setMsg("Please fill in name, city / place and land type.", true);
+    return;
+  }
+  if (values.mapLink && !/^https?:\/\//i.test(values.mapLink)) {
+    setMsg("The Google Maps link should start with https://", true);
+    return;
+  }
+  const btns = f.querySelectorAll("button");
+  btns.forEach((b) => (b.disabled = true));
+  try {
+    const id = editing ? editing.id : slug(values.name) + "-" + Date.now().toString(36);
+    const uploaded = [];
+    for (let i = 0; i < newFiles.length; i++) {
+      setMsg(`Uploading photo ${i + 1} of ${newFiles.length}…`);
+      const name = `${id}-${Date.now().toString(36)}-${i + 1}.jpg`;
+      const b64 = await resizeToJpegB64(newFiles[i].file);
+      await putFile("photos/" + name, b64, `Add photo for ${values.name}`);
+      localPhotos.set(name, newFiles[i].preview);
+      uploaded.push(name);
+    }
+    setMsg("Saving details…");
+    const land = { id, ...values, photos: [...keptPhotos, ...uploaded] };
+    DATA = await updateData((d) => {
+      const i = d.lands.findIndex((x) => x.id === id);
+      if (i >= 0) d.lands[i] = land; else d.lands.push(land);
+      if (!d.locations.includes(land.location)) d.locations.push(land.location);
+    }, `${editing ? "Update" : "Add"} land: ${values.name}`);
+    $("formDlg").close();
+    render();
+    notice(`Saved “${values.name}”. Family members will see it on this page within a minute or two.`);
+  } catch (err) {
+    setMsg(err.message || String(err), true);
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+});
+
+$("deleteBtn").onclick = async () => {
+  if (!editing || !confirm(`Delete “${editing.name}” from the register? This cannot be undone here.`)) return;
+  const id = editing.id, name = editing.name;
+  const btns = $("landForm").querySelectorAll("button");
+  btns.forEach((b) => (b.disabled = true));
+  try {
+    setMsg("Deleting…");
+    DATA = await updateData((d) => { d.lands = d.lands.filter((x) => x.id !== id); }, `Delete land: ${name}`);
+    $("formDlg").close();
+    render();
+    notice(`Deleted “${name}”.`);
+  } catch (err) {
+    setMsg(err.message || String(err), true);
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+};
+
+// ---- Connect --------------------------------------------------------------
+function openToken(message) {
+  const f = $("tokenForm");
+  f.reset();
+  $("repoName").textContent = `${GH.owner}/${GH.repo}`;
+  $("disconnectBtn").hidden = !getToken();
+  $("tokenMsg").textContent = message || "";
+  $("tokenMsg").className = "msg";
+  $("tokenDlg").showModal();
+}
+$("tokenForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = e.target.token.value.trim();
+  const m = $("tokenMsg");
+  if (!t) { m.textContent = "Paste the access key first."; m.className = "msg err"; return; }
+  const old = getToken();
+  setToken(t);
+  m.textContent = "Checking…"; m.className = "msg";
+  try {
+    const { data } = await readData();
+    DATA = data;
+    $("tokenDlg").close();
+    render();
+    notice("Connected. You can now add and edit land on this device.");
+  } catch (err) {
+    setToken(old);
+    m.textContent = err.message; m.className = "msg err";
+  }
+});
+$("disconnectBtn").onclick = () => { setToken(""); $("tokenDlg").close(); render(); notice("This device is disconnected."); };
+
+// ---- Wiring ---------------------------------------------------------------
+document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => b.closest("dialog").close()));
+document.querySelectorAll("dialog").forEach((d) =>
+  d.addEventListener("click", (e) => { if (e.target === d && d.id === "dlg") d.close(); }));
+$("addBtn").onclick = () => openForm(null);
+$("connectBtn").onclick = () => openToken();
+$("editBtn").onclick = () => { $("dlg").close(); openForm(current); };
 $("q").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
-render();
+
+async function load() {
+  try {
+    // When connected, read straight from GitHub so a fresh save shows up at once.
+    if (getToken()) { try { DATA = (await readData()).data; render(); return; } catch {} }
+    const res = await fetch(DATA_FILE + "?t=" + Date.now());
+    if (!res.ok) throw new Error(res.status);
+    DATA = await res.json();
+  } catch {
+    notice("Could not load the land list. Check your internet connection and reload.");
+  }
+  render();
+}
+load();
 </script>
 </body>
 </html>

@@ -1,27 +1,29 @@
 # Family Land Register
 
 A one-page website for tracking family land, farm land and house land in
-Harpur (Bihar) and Greater Noida. No server or build step — open `index.html`.
+Harpur (Bihar) and Greater Noida.
+
+Live at https://amit33-design.github.io/Network-Automation/
 
 ## Using it
 
-- **City filter**: All cities / Harpur, Bihar / Greater Noida
-- **Land type filter**: All land / Family land / Farm land / House land
-- Both filters work together; "All" in both shows every record.
-- Search box matches name, address, khata / khesra number, owner and notes.
+- **City filter** and **Land type filter** work together; "All" in both shows every record.
+- Search matches name, address, khata / khesra number, owner and notes.
 - Click a card for full details, all photographs and a Google Maps link.
 
-## Adding or changing land
+## Adding and editing land (from the page)
 
-1. Open `lands.js` and copy one `{ ... }` block inside `LANDS`.
-2. Fill in name, location, type, area, address and the other fields.
-3. Put photographs in the `photos/` folder and list their file names in
-   `photos: ["file1.jpg", "file2.jpg"]`. The first one is the card picture.
+1. Click **Connect to edit** once on each phone or computer and paste a GitHub
+   access key (fine-grained token, this repository only, *Contents: Read and write*).
+2. Click **+ Add land**, fill in the name, city, type and any details, pick photos, and **Save**.
+3. To change a land or add more photos, open it and click **Edit / add photos**.
+   The same screen has **Delete this land**.
 
-To add another city, add its name to `LOCATIONS` at the top of `lands.js`.
+Saves go into this branch (`gh-pages`): `lands.json` holds the details and
+`photos/` holds the pictures. The website updates within a minute or two.
 
 ## Privacy
 
-Anything published with GitHub Pages is visible to anyone who has the link,
-even from a private repository. Do not put registry documents, Aadhaar/PAN
-numbers or anything else sensitive in this folder.
+This page is public to anyone with the link. Do not upload registry documents,
+Aadhaar/PAN numbers or anything else sensitive. The access key stays only in
+the browser where it was entered; use "Disconnect this device" on shared devices.
