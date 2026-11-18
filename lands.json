@@ -54,6 +54,21 @@
       "notes": "Sample entry. Edit or delete it.",
       "mapLink": "",
       "photos": []
+    },
+    {
+      "id": "mahagun-mantra-2-apartment-mwm36qa3",
+      "name": "Mahagun Mantra-2 apartment",
+      "location": "Greater Noida",
+      "type": "Flat / Apartment",
+      "area": "",
+      "owner": "Prashant Kumar",
+      "address": "",
+      "khata": "",
+      "khesra": "",
+      "status": "",
+      "mapLink": "",
+      "notes": "",
+      "photos": []
     }
   ]
 }
