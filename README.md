@@ -1,6 +1,6 @@
 # Family Land Register
 
-A one-page website for tracking family land, farm land and house land in
+A one-page website for tracking family land, farm land, house land and flats / apartments in
 Harpur (Bihar) and Greater Noida.
 
 Live at https://amit33-design.github.io/Network-Automation/

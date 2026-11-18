@@ -9,7 +9,7 @@
   :root {
     --bg: #fbfcf9; --panel: #ffffff; --side: #f3f6ef; --ink: #2b3127; --muted: #737b6c;
     --line: #e3e8dc; --accent: #3f7d4e; --accent-soft: #e4efe2; --accent-ink: #ffffff;
-    --chip: #eef2ea; --family: #7d5aa6; --farm: #3f7d4e; --house: #b56a25; --danger: #b3261e;
+    --chip: #eef2ea; --family: #7d5aa6; --farm: #3f7d4e; --house: #b56a25; --flat: #2f6f9e; --danger: #b3261e;
   }
   * { box-sizing: border-box; }
   html { color-scheme: light; }
@@ -63,7 +63,7 @@
   .tags { display: flex; gap: 6px; flex-wrap: wrap; }
   .tag { font-size: .74rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor; }
   .tag.loc { color: var(--muted); }
-  .t-family { color: var(--family); } .t-farm { color: var(--farm); } .t-house { color: var(--house); }
+  .t-family { color: var(--family); } .t-farm { color: var(--farm); } .t-house { color: var(--house); } .t-flat { color: var(--flat); }
   .land-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: start; }
   .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
   .gallery > :first-child { grid-column: 1 / -1; }
@@ -116,7 +116,7 @@
 <div class="layout">
   <aside aria-label="Filters and actions">
     <h1>Family Land Register</h1>
-    <p class="sub">Family, farm and house land — Harpur (Bihar) and Greater Noida.</p>
+    <p class="sub">Family, farm, house land and flats — Harpur (Bihar) and Greater Noida.</p>
 
     <table class="ctl"><caption>Search</caption>
       <tr><td class="pad"><input type="search" id="q" placeholder="Name, address, khata, owner…" aria-label="Search land"></td></tr>
@@ -146,14 +146,14 @@
   </div>
   <form class="d-body" id="landForm" novalidate>
     <div class="grid2">
-      <label class="full">Name (e.g. "Harpur farm near canal", "Noida house") <span class="req">*</span>
+      <label class="full">Name (e.g. "Harpur farm near canal", "Noida house", "Noida flat 1204") <span class="req">*</span>
         <input name="name" required maxlength="120"></label>
       <label>City / place <span class="req">*</span>
         <input name="location" list="locList" required maxlength="80">
         <datalist id="locList"></datalist></label>
       <label>Land type <span class="req">*</span>
         <select name="type" required></select></label>
-      <label>Area (bigha / katha / sq. m)
+      <label>Area (bigha / katha / sq. ft / sq. m)
         <input name="area" maxlength="80"></label>
       <label>Owner
         <input name="owner" maxlength="120"></label>
@@ -161,7 +161,7 @@
         <textarea name="address" rows="2" maxlength="400"></textarea></label>
       <label>Khata no.
         <input name="khata" maxlength="60"></label>
-      <label>Khesra / plot no.
+      <label>Khesra / plot / flat no.
         <input name="khesra" maxlength="60"></label>
       <label>Status (e.g. cultivated, rented, vacant)
         <input name="status" maxlength="120"></label>
@@ -372,7 +372,7 @@ function landPanel(l) {
   const map = l.mapLink || "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(l.address || l.location);
   const rows = [
     ["City / place", l.location], ["Land type", l.type], ["Area", l.area], ["Address", l.address],
-    ["Khata no.", l.khata], ["Khesra / plot no.", l.khesra], ["Owner", l.owner], ["Status", l.status],
+    ["Khata no.", l.khata], ["Khesra / plot / flat no.", l.khesra], ["Owner", l.owner], ["Status", l.status],
     ["Other details", l.notes],
   ].filter(([, v]) => v);
   const table = el("table", { className: "details" },
