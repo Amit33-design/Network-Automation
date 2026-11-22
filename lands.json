@@ -200,18 +200,21 @@
     },
     {
       "id": "haripur-11",
-      "name": "बुढ़लिया गाछी (Budhliya Gachhi)",
+      "name": "बुढ़लिया Nasi (Budhliya Nasi)",
       "location": "Harpur, Bihar",
       "type": "Farm land",
-      "area": "4 कट्ठा (katha)",
+      "area": "4 कट्ठा (katha) 10 dhur",
+      "owner": "",
       "address": "Harpur, Bihar",
       "khata": "",
       "khesra": "",
-      "owner": "",
       "status": "",
+      "mapLink": "https://maps.app.goo.gl/wP8pSyQhP5CZZrMB8?g_st=aw",
       "notes": "Item 11 on the handwritten family land list.",
-      "mapLink": "",
-      "photos": []
+      "photos": [
+        "haripur-11-mwrk1qkl-1.jpg",
+        "haripur-11-mwrk1ugh-2.jpg"
+      ]
     },
     {
       "id": "haripur-12",
