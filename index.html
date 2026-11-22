@@ -389,10 +389,44 @@ async function updateData(change, message) {
 }
 
 // ---- Photos ---------------------------------------------------------------
+// Many Android phones (Samsung etc.) save photos as HEIC, which Chrome cannot open.
+// Those are converted to JPEG on the phone first. The converter (heic2any, MIT) is
+// hosted with this site and only downloaded when a HEIC photo is actually picked.
+const isHeic = (f) => /\.(heic|heif)$/i.test(f.name || "") || /hei[cf]/i.test(f.type || "");
+// Some phones name HEIC photos ".jpg"; recognise them by the "ftyp" header instead.
+async function looksHeic(f) {
+  if (isHeic(f)) return true;
+  try {
+    const h = new Uint8Array(await f.slice(0, 12).arrayBuffer());
+    const tag = String.fromCharCode(...h.slice(4, 12));
+    return /^ftyp(heic|heix|heim|heis|hevc|hevx|mif1|msf1)$/.test(tag);
+  } catch { return false; }
+}
+let heicLib = null;
+function loadHeicLib() {
+  heicLib ??= new Promise((ok, fail) => {
+    const sc = document.createElement("script");
+    sc.src = "vendor/heic2any.min.js";
+    sc.onload = () => (window.heic2any ? ok(window.heic2any) : fail(new Error("converter missing")));
+    sc.onerror = () => { heicLib = null; fail(new Error("Could not download the photo converter. Check your internet connection.")); };
+    document.head.append(sc);
+  });
+  return heicLib;
+}
+async function heicToJpeg(file) {
+  const heic2any = await loadHeicLib();
+  let out = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+  if (Array.isArray(out)) out = out[0];   // burst / live photos contain several images
+  return new File([out], (file.name || "photo").replace(/\.(heic|heif)$/i, "") + ".jpg", { type: "image/jpeg" });
+}
 async function resizeToJpegB64(file) {
   let bmp;
   try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
-  catch { throw new Error(`“${file.name}” could not be read as a picture.`); }
+  catch {
+    // Not recognised as HEIC by its name, but maybe it is one.
+    try { bmp = await createImageBitmap(await heicToJpeg(file)); }
+    catch { throw new Error(`“${file.name}” could not be read as a picture. Try a JPG photo, or use “Take photo”.`); }
+  }
   const scale = Math.min(1, MAX_PHOTO_PX / Math.max(bmp.width, bmp.height));
   const c = document.createElement("canvas");
   c.width = Math.round(bmp.width * scale);
@@ -573,10 +607,27 @@ function setMsg(text, isErr) {
   m.className = "msg" + (isErr ? " err" : "");
 }
 
-function addPicked(e) {
-  for (const file of e.target.files) newFiles.push({ file, preview: URL.createObjectURL(file) });
+async function addPicked(e) {
+  const picked = [...e.target.files];
   e.target.value = "";
-  renderThumbs();
+  const save = $("saveBtn");
+  for (const file of picked) {
+    let f = file;
+    if (await looksHeic(file)) {
+      save.disabled = true;
+      setMsg(`Converting “${file.name}” to JPG…`);
+      try { f = await heicToJpeg(file); }
+      catch (err) {
+        setMsg(`“${file.name}” could not be converted. ${err && err.message ? err.message : ""}`, true);
+        save.disabled = false;
+        continue;
+      }
+      save.disabled = false;
+      setMsg("");
+    }
+    newFiles.push({ file: f, preview: URL.createObjectURL(f) });
+    renderThumbs();
+  }
 }
 $("landForm").photos.addEventListener("change", addPicked);
 $("landForm").camera.addEventListener("change", addPicked);
