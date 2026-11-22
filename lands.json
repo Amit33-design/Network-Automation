@@ -11,21 +11,6 @@
   ],
   "lands": [
     {
-      "id": "sample-3",
-      "name": "Sample — House plot",
-      "location": "Greater Noida",
-      "type": "House land",
-      "area": "0 sq. m",
-      "address": "Replace with full address — Plot no., Sector, Greater Noida, Uttar Pradesh, PIN",
-      "khata": "",
-      "khesra": "",
-      "owner": "",
-      "status": "",
-      "notes": "Sample entry. Edit or delete it.",
-      "mapLink": "",
-      "photos": []
-    },
-    {
       "id": "mahagun-mantra-2-apartment-mwm36qa3",
       "name": "Mahagun Mantra-2 apartment",
       "location": "Greater Noida",
