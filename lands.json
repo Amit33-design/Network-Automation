@@ -102,14 +102,17 @@
       "location": "Harpur, Bihar",
       "type": "Farm land",
       "area": "6 कट्ठा (katha)",
+      "owner": "",
       "address": "Harpur, Bihar",
       "khata": "",
       "khesra": "",
-      "owner": "",
       "status": "",
+      "mapLink": "https://maps.app.goo.gl/yEdjxUjNa3uN8wRC9?g_st=aw",
       "notes": "Item 5 on the handwritten family land list.",
-      "mapLink": "",
-      "photos": []
+      "photos": [
+        "haripur-05-mwrik9mk-1.jpg",
+        "haripur-05-mwrikgdm-2.jpg"
+      ]
     },
     {
       "id": "haripur-06",
