@@ -77,18 +77,21 @@
     },
     {
       "id": "haripur-03",
-      "name": "मोनिया वाला गाछी (Moniya wala Gachhi)",
+      "name": "NUनिया वाला गाछी (Noniya wala Gachhi)",
       "location": "Haripur, Bihar",
       "type": "Farm land",
       "area": "1 कट्ठा (katha) 4 धुर (dhur)",
-      "address": "Haripur, Bihar",
+      "owner": "",
+      "address": "Ghar ke piche, vinay ke gachi ke piche, harpur bihar",
       "khata": "",
       "khesra": "",
-      "owner": "",
       "status": "",
-      "notes": "सड़क के साथ — along the road; Item 3 on the handwritten family land list.",
       "mapLink": "",
-      "photos": []
+      "notes": "सड़क के साथ — along the road; Item 3 on the handwritten family land list.",
+      "photos": [
+        "haripur-03-mwrgooke-1.jpg",
+        "haripur-03-mwrgoqun-2.jpg"
+      ]
     },
     {
       "id": "haripur-04",
