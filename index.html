@@ -59,7 +59,7 @@
   .btn:disabled { opacity: .55; cursor: progress; }
 
   /* ---- Main: full details of every land ---- */
-  main { padding: 20px 28px 56px; max-width: 1100px; width: 100%; }
+  main { padding: 20px 28px 56px; max-width: 1100px; width: 100%; min-width: 0; }
   .count { color: var(--muted); margin: 0 0 14px; font-size: .92rem; }
   .land { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
     padding: 18px 20px; margin-bottom: 18px; }
@@ -80,6 +80,33 @@
   table.details td { padding: 7px 0; overflow-wrap: anywhere; white-space: pre-line; }
   table.details tr + tr th, table.details tr + tr td { border-top: 1px solid var(--line); }
   .empty { padding: 48px 0; text-align: center; color: var(--muted); }
+
+  /* Land calculation view */
+  .calc h2 { font-size: 1.15rem; margin: 22px 0 8px; }
+  .calc h2:first-child { margin-top: 0; }
+  .calc .scope { color: var(--muted); font-size: .92rem; margin: 0 0 12px; }
+  .tableWrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  table.calcT { width: 100%; border-collapse: collapse; font-size: .94rem; }
+  table.calcT th, table.calcT td { padding: 9px 12px; text-align: left; border-top: 1px solid var(--line); vertical-align: top; }
+  table.calcT thead th { border-top: 0; background: var(--side); color: var(--muted); font-weight: 600; font-size: .82rem;
+    text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+  table.calcT td.num, table.calcT th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.calcT tr.total td { font-weight: 700; background: var(--accent-soft); }
+  table.calcT .big { font-weight: 600; white-space: nowrap; }
+  .warnBox { background: #fff7e6; border: 1px solid #f0d49b; border-radius: 10px; padding: 10px 14px; margin: 12px 0 0; font-size: .92rem; }
+  .warnBox ul { margin: 6px 0 0; padding-left: 20px; }
+  .flag { display: inline-block; font-size: .75rem; font-weight: 600; border-radius: 999px; padding: 1px 8px; margin-top: 3px; }
+  .flag.missing { background: var(--chip); color: var(--muted); }
+  .flag.bad { background: #fde8e6; color: var(--danger); }
+  .flag.conflict { background: #fff1d6; color: #8a5a00; }
+  .converter { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px; }
+  .converter input { max-width: 160px; }
+  .converter select { max-width: 220px; }
+  @media (max-width: 520px) {
+    .calc .minor { display: none; }      /* Katha and No-area columns: shown on wider screens */
+    table.calcT th, table.calcT td { padding: 8px 9px; }
+    table.calcT .big { white-space: normal; }
+  }
   .banner { background: var(--accent-soft); border: 1px solid var(--line); border-radius: 10px;
     padding: 10px 14px; margin: 0 0 14px; font-size: .92rem; }
 
@@ -194,6 +221,7 @@
     <h1>Family Land Register</h1>
     <p class="sub">Family, farm, house land and flats — Harpur (Bihar) and Greater Noida.</p>
 
+    <table class="ctl"><caption>View</caption><tbody id="viewRows"></tbody></table>
     <table class="ctl"><caption>Search</caption>
       <tr><td class="pad"><input type="search" id="q" placeholder="Name, address, khata, owner…" aria-label="Search land"></td></tr>
     </table>
@@ -291,6 +319,7 @@
   </form>
 </dialog>
 
+<script src="area.js"></script>
 <script>
 // ---- Where the data lives -------------------------------------------------
 const GH = { owner: "Amit33-design", repo: "Network-Automation", branch: "gh-pages" };
@@ -299,7 +328,7 @@ const TOKEN_KEY = "landRegister.token";
 const MAX_PHOTO_PX = 1600;
 
 let DATA = { locations: [], types: [], lands: [] };
-const state = { loc: "All", type: "All", q: "" };
+const state = { loc: "All", type: "All", q: "", view: "list" };
 let editing = null;      // land being edited (null = adding)
 let keptPhotos = [];     // existing photos kept while editing
 let newFiles = [];       // File objects picked while editing
@@ -524,11 +553,141 @@ function render() {
   optionRows("typeRows", "type", DATA.types);
   $("connectBtn").textContent = getToken() ? "Connected ✓" : "Connect to edit";
   renderActiveFilters();
+  renderViewRows();
   const list = DATA.lands.filter((l) => matches(l));
   const total = DATA.lands.length;
+  if (state.view === "calc") {
+    $("count").textContent = "";
+    $("list").replaceChildren(calcView(list));
+    return;
+  }
   $("count").textContent = `Showing ${list.length} of ${total} land record${total === 1 ? "" : "s"}`;
   $("list").replaceChildren(...(list.length ? list.map(landPanel)
     : [el("p", { className: "empty", textContent: total ? "No land matches these filters." : "No land added yet. Use “+ Add land”." })]));
+}
+
+function renderViewRows() {
+  $("viewRows").replaceChildren(...[["list", "Land list"], ["calc", "Land calculation"]].map(([v, label]) => {
+    const b = el("button", { className: "opt", type: "button" }, el("span", { textContent: label }));
+    b.setAttribute("aria-pressed", state.view === v);
+    b.onclick = () => { state.view = v; render(); scrollTo(0, 0); if (isPhone()) closeMenu(); };
+    return el("tr", {}, el("td", {}, b));
+  }));
+}
+
+// ---- Land calculation -----------------------------------------------------
+const A = window.LandArea;
+const fmt = (n, d = 2) => Number(A.round(n, d)).toLocaleString("en-IN", { maximumFractionDigits: d });
+function th(text, num, extra) { return el("th", { textContent: text, className: [num ? "num" : "", extra || ""].join(" ").trim(), scope: "col" }); }
+function td(text, cls) { return el("td", { textContent: text, className: cls || "" }); }
+function wrapTable(head, rows) {
+  return el("div", { className: "tableWrap" },
+    el("table", { className: "calcT" }, el("thead", {}, el("tr", {}, ...head)), el("tbody", {}, ...rows)));
+}
+function totalsRow(label, items, isTotal) {
+  const counted = items.filter((x) => x.sqft != null);
+  const sqft = counted.reduce((a, x) => a + x.sqft, 0);
+  const tr = el("tr", { className: isTotal ? "total" : "" },
+    td(label), td(String(items.length), "num"),
+    td(counted.length ? A.formatBKD(sqft) : "—", "big"),
+    td(counted.length ? fmt(sqft / A.SQFT.katha) : "—", "num minor"),
+    td(counted.length ? fmt(sqft / A.SQFT.acre, 3) : "—", "num"),
+    td(counted.length ? fmt(sqft, 0) : "—", "num"),
+    td(items.length - counted.length ? String(items.length - counted.length) : "", "num minor"));
+  return tr;
+}
+const TOTAL_HEAD = () => [th("", false), th("Records", true), th("Bigha · Katha · Dhur"), th("Katha", true, "minor"),
+  th("Acre", true), th("sq. ft", true), th("No area", true, "minor")];
+
+function calcView(list) {
+  const items = list.map((l) => {
+    const r = A.parseArea(l.area);
+    return { land: l, r, sqft: r.status === "ok" || r.status === "conflict" ? r.sqft : null };
+  });
+  const scope = [state.loc === "All" ? "All cities" : state.loc, state.type === "All" ? "all land types" : state.type]
+    .concat(state.q ? [`search “${state.q}”`] : []).join(" · ");
+  const out = el("section", { className: "calc" });
+  out.append(el("h2", { textContent: "Land calculation" }),
+    el("p", { className: "scope", textContent: `Totals for: ${scope}. Change the City / Land type filters to narrow it.` }));
+
+  // By land type
+  const types = DATA.types.filter((t) => items.some((x) => x.land.type === t));
+  out.append(wrapTable(TOTAL_HEAD(), [
+    ...types.map((t) => totalsRow(t, items.filter((x) => x.land.type === t))),
+    totalsRow("Total", items, true),
+  ]));
+
+  // By city and land type (when more than one city is shown)
+  const cities = [...new Set(items.map((x) => x.land.location))];
+  if (cities.length > 1) {
+    out.append(el("h2", { textContent: "By city" }));
+    const rows = [];
+    for (const c of cities) {
+      for (const t of DATA.types) {
+        const group = items.filter((x) => x.land.location === c && x.land.type === t);
+        if (group.length) rows.push(totalsRow(`${c} — ${t}`, group));
+      }
+      rows.push(totalsRow(`${c} total`, items.filter((x) => x.land.location === c), true));
+    }
+    const head = TOTAL_HEAD(); head[0] = th("City — type");
+    out.append(wrapTable(head, rows));
+  }
+
+  // Records that need attention
+  const missing = items.filter((x) => x.r.status === "missing");
+  const unreadable = items.filter((x) => x.r.status === "unreadable");
+  const conflict = items.filter((x) => x.r.status === "conflict");
+  if (missing.length || unreadable.length || conflict.length) {
+    const ul = el("ul");
+    conflict.forEach((x) => ul.append(el("li", { textContent:
+      `${x.land.name}: “${x.land.area}” gives two different sizes (${A.formatBKD(x.r.sqft)} and ${A.formatBKD(x.r.other)}). The first is counted — please correct the area.` })));
+    unreadable.forEach((x) => ul.append(el("li", { textContent:
+      `${x.land.name}: area “${x.land.area}” could not be read (${x.r.reason}), so it is not counted. Write it like “1 katha 4 dhur” or “900 sq. ft”.` })));
+    if (missing.length) ul.append(el("li", { textContent:
+      `No area entered, not counted: ${missing.map((x) => x.land.name).join(", ")}.` }));
+    out.append(el("div", { className: "warnBox" }, el("strong", { textContent: "Check these records" }), ul));
+  }
+
+  // Every land
+  out.append(el("h2", { textContent: "Each land" }));
+  out.append(wrapTable(
+    [th("Land"), th("City"), th("Type"), th("Area as written"), th("Bigha · Katha · Dhur"), th("sq. ft", true)],
+    items.map((x) => {
+      const flag = x.r.status === "missing" ? el("span", { className: "flag missing", textContent: "no area" })
+        : x.r.status === "unreadable" ? el("span", { className: "flag bad", textContent: "not readable" })
+        : x.r.status === "conflict" ? el("span", { className: "flag conflict", textContent: "two sizes — check" }) : null;
+      const areaCell = el("td", {}, x.land.area || "—");
+      if (flag) areaCell.append(el("br"), flag);
+      return el("tr", {}, td(x.land.name), td(x.land.location), td(x.land.type), areaCell,
+        td(x.sqft != null ? A.formatBKD(x.sqft) : "—", "big"), td(x.sqft != null ? fmt(x.sqft, 0) : "—", "num"));
+    })));
+
+  // Converter
+  out.append(el("h2", { textContent: "Unit converter" }));
+  const val = el("input", { type: "number", min: "0", step: "any", value: "1", inputMode: "decimal" });
+  val.setAttribute("aria-label", "Amount");
+  const unit = el("select", {}, ...Object.keys(A.SQFT).map((u) => el("option", { value: u, textContent: A.LABEL[u] })));
+  unit.value = "katha"; unit.setAttribute("aria-label", "Unit");
+  const res = el("tbody");
+  const update = () => {
+    const v = parseFloat(val.value) || 0;
+    const c = A.convert(v, unit.value);
+    res.replaceChildren(
+      el("tr", { className: "total" }, td("Bigha · Katha · Dhur"), td(A.formatBKD(v * A.SQFT[unit.value]), "num")),
+      ...Object.keys(A.SQFT).map((u) => el("tr", {}, td(A.LABEL[u]), td(fmt(c[u], 4), "num"))));
+  };
+  val.oninput = update; unit.onchange = update; update();
+  out.append(el("div", { className: "tableWrap" }, el("div", { className: "converter" }, val, unit),
+    el("table", { className: "calcT" }, res)));
+
+  // Reference
+  out.append(el("h2", { textContent: "Basic land measurement" }));
+  out.append(wrapTable([th("Unit"), th("Conversion")], [
+    ["1 Dhur", "68.06 sq. ft."], ["1 Katha", "20 Dhur"], ["1 Katha", "1,361.25 sq. ft."], ["1 Bigha", "20 Katha"],
+    ["1 Bigha", "27,225 sq. ft."], ["1 Bigha", "0.625 Acre"], ["1 Acre", "32 Katha"], ["1 Acre", "1.6 Bigha"],
+    ["1 Decimal (डिसमिल)", "1/100 Acre = 435.6 sq. ft."],
+  ].map(([a, b]) => el("tr", {}, td(a), td(b)))));
+  return out;
 }
 // Phones: show the chosen filters above the list, each tappable to clear it.
 function renderActiveFilters() {
