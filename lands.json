@@ -46,14 +46,17 @@
       "location": "Haripur, Bihar",
       "type": "House land",
       "area": "",
+      "owner": "",
       "address": "Haripur, Bihar",
       "khata": "",
       "khesra": "",
-      "owner": "",
       "status": "",
-      "notes": "Item 1 on the handwritten family land list.",
       "mapLink": "",
-      "photos": []
+      "notes": "Item 1 on the handwritten family land list.",
+      "photos": [
+        "haripur-01-mwrglyqj-1.jpg",
+        "haripur-01-mwrgm65b-2.jpg"
+      ]
     },
     {
       "id": "haripur-02",
