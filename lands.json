@@ -100,13 +100,16 @@
       "type": "Farm land",
       "area": "22 डि० (22 decimal)",
       "owner": "",
-      "address": "Haripur, Bihar",
+      "address": "Akhilesh chacha ke gachi ke piche, Haripur, Bihar",
       "khata": "",
       "khesra": "",
       "status": "",
       "mapLink": "https://maps.app.goo.gl/DgxUPo54kXmpkD6V8?g_st=aw",
       "notes": "Item 4 on the handwritten family land list.",
-      "photos": []
+      "photos": [
+        "haripur-04-mwrgqlnm-1.jpg",
+        "haripur-04-mwrgqo37-2.jpg"
+      ]
     },
     {
       "id": "haripur-05",
