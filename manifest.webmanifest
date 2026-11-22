@@ -1,7 +1,7 @@
 {
   "name": "Family Land Register",
   "short_name": "Land Register",
-  "description": "Family land, farm land, house land and flats — Haripur (Bihar) and Greater Noida.",
+  "description": "Family land, farm land, house land and flats — Harpur (Bihar) and Greater Noida.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
