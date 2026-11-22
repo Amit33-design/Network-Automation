@@ -230,6 +230,21 @@
       "notes": "पुराना डीह — old family homestead; Item 13 on the handwritten family land list.",
       "mapLink": "",
       "photos": []
+    },
+    {
+      "id": "greater-noida-vaidpura-house-plot",
+      "name": "Vaidpura house plot",
+      "location": "Greater Noida",
+      "type": "House land",
+      "area": "900 sq. ft",
+      "address": "Vaidpura village, Greater Noida, Uttar Pradesh",
+      "khata": "",
+      "khesra": "",
+      "owner": "",
+      "status": "",
+      "notes": "",
+      "mapLink": "",
+      "photos": []
     }
   ]
 }
