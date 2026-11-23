@@ -98,7 +98,7 @@
       "name": "लदौर नया वाला (Ladaur Naya wala)",
       "location": "Harpur, Bihar",
       "type": "Farm land",
-      "area": "5 katha, 22 डि० (22 decimal)",
+      "area": "5 katha",
       "owner": "",
       "address": "Akhilesh chacha ke gachi ke piche, Harpur, Bihar",
       "khata": "",
@@ -107,14 +107,8 @@
       "mapLink": "https://maps.app.goo.gl/DgxUPo54kXmpkD6V8?g_st=aw",
       "notes": "Item 4 on the handwritten family land list.",
       "photos": [
-        {
-          "file": "haripur-04-mwrgqlnm-1.jpg",
-          "addedAt": "2026-11-22T06:35:46.000Z"
-        },
-        {
-          "file": "haripur-04-mwrgqo37-2.jpg",
-          "addedAt": "2026-11-22T06:35:49.000Z"
-        }
+        "haripur-04-mwrgqlnm-1.jpg",
+        "haripur-04-mwrgqo37-2.jpg"
       ]
     },
     {
