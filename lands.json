@@ -67,7 +67,22 @@
           "file": "haripur-02-mwrgkg44-1.jpg",
           "addedAt": "2026-11-22T06:30:59.000Z"
         }
-      ]
+      ],
+      "thana": "",
+      "mauza": "",
+      "registryNo": "",
+      "registryDate": "",
+      "mutation": "",
+      "laganYear": "",
+      "boundN": "",
+      "boundS": "",
+      "boundE": "",
+      "boundW": "",
+      "cultivatedBy": "",
+      "cultivator": "",
+      "crop": "",
+      "lat": 26.126248,
+      "lng": 85.73303
     },
     {
       "id": "haripur-03",
