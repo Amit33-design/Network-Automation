@@ -257,18 +257,18 @@
       "notes": "Item 11 on the handwritten family land list.",
       "photos": [
         {
+          "file": "haripur-11-mwsnn0kb-1.jpg",
+          "takenAt": "2026-11-23T02:35:38.000Z",
+          "dateSource": "photo",
+          "addedAt": "2026-11-23T02:36:45.024Z"
+        },
+        {
           "file": "haripur-11-mwrk1ugh-2.jpg",
           "addedAt": "2026-11-22T08:08:30.000Z"
         },
         {
           "file": "haripur-11-mwrk1qkl-1.jpg",
           "addedAt": "2026-11-22T08:08:25.000Z"
-        },
-        {
-          "file": "haripur-11-mwsnn0kb-1.jpg",
-          "takenAt": "2026-11-23T02:35:38.000Z",
-          "dateSource": "photo",
-          "addedAt": "2026-11-23T02:36:45.024Z"
         }
       ],
       "thana": "",
