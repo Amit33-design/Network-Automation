@@ -22,6 +22,12 @@ Live at https://amit33-design.github.io/Network-Automation/
 Saves go into this branch (`gh-pages`): `lands.json` holds the details and
 `photos/` holds the pictures. The website updates within a minute or two.
 
+## Tracking features
+
+- Photos keep the date (and GPS, when the phone provides it) they were taken, plus a caption; newest first.
+- Each land can store exact coordinates ("Use my current location"), Bihar record fields (khata, khesra, thana, mauza, registry, dakhil-kharij, lagan), chauhaddi, and farming details.
+- History notes per land, a Map view of all lands, a Missing info view, and Excel / full backups.
+
 ## Privacy
 
 This page is public to anyone with the link. Do not upload registry documents,

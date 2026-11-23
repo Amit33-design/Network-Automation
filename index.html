@@ -81,6 +81,35 @@
   table.details tr + tr th, table.details tr + tr td { border-top: 1px solid var(--line); }
   .empty { padding: 48px 0; text-align: center; color: var(--muted); }
 
+  /* Land details: photos, map, history, gaps */
+  .gallery figure { margin: 0; }
+  .gallery figcaption { font-size: .78rem; color: var(--muted); margin-top: 3px; line-height: 1.3; }
+  .gallery figcaption b { color: var(--ink); font-weight: 600; }
+  .mapFrame { width: 100%; aspect-ratio: 16 / 10; border: 0; border-radius: 8px; margin-top: 10px; background: var(--chip); display: block; }
+  .land-foot { margin-top: 14px; display: grid; gap: 10px; }
+  .gaps { font-size: .86rem; color: var(--muted); }
+  .gaps span { display: inline-block; background: var(--chip); border-radius: 999px; padding: 1px 9px; margin: 2px 4px 2px 0; color: var(--ink); }
+  .dupWarn { background: #fff1d6; border: 1px solid #f0d49b; color: #6b4600; border-radius: 8px; padding: 8px 12px; font-size: .9rem; }
+  .history h3 { font-size: .95rem; margin: 0 0 6px; }
+  .history ol { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--line); }
+  .history li { position: relative; padding: 2px 0 10px 14px; font-size: .93rem; }
+  .history li::before { content: ""; position: absolute; left: -6px; top: 7px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .history time { display: block; font-size: .8rem; color: var(--muted); }
+  .history .del { border: 0; background: none; color: var(--danger); cursor: pointer; font-size: .8rem; padding: 0 4px; }
+  .rowBtns { display: flex; gap: 8px; flex-wrap: wrap; }
+  form .fsec { grid-column: 1 / -1; margin: 10px 0 -4px; font-size: .8rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--accent); border-top: 1px solid var(--line); padding-top: 12px; }
+  form .fsec:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+  .coordRow { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+  .coordRow label { flex: 1 1 220px; }
+  .thumbs figure { width: 140px; }
+  .thumbs figure img { width: 140px; height: 96px; }
+  .thumbs input { margin-top: 4px; font-size: .85rem; padding: 6px 8px; }
+  .thumbs small { display: block; font-size: .74rem; color: var(--muted); margin-top: 2px; line-height: 1.3; }
+  #landMap { height: min(70vh, 620px); border-radius: 12px; border: 1px solid var(--line); }
+  .mapLegend { display: flex; gap: 12px; flex-wrap: wrap; font-size: .88rem; margin: 10px 0; }
+  .mapLegend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+
   /* Land calculation view */
   .calc h2 { font-size: 1.15rem; margin: 22px 0 8px; }
   .calc h2:first-child { margin-top: 0; }
@@ -173,7 +202,8 @@
     main { padding: 14px 12px calc(96px + env(safe-area-inset-bottom)); }
     .land { padding: 14px; border-radius: 12px; }
     .land-head { flex-direction: column; gap: 8px; }
-    .land-head .btn { align-self: stretch; min-height: 44px; }
+    .land-head .rowBtns { align-self: stretch; }
+    .land-head .rowBtns .btn { flex: 1; min-height: 44px; }
     .land h2 { margin-bottom: 4px; }
     .land-body { grid-template-columns: 1fr; gap: 12px; }
 
@@ -233,6 +263,12 @@
         <button class="btn" id="connectBtn" type="button">Connect to edit</button>
       </td></tr>
     </table>
+    <table class="ctl"><caption>Backup</caption>
+      <tr><td class="pad">
+        <button class="btn" id="csvBtn" type="button">⬇ Download for Excel</button>
+        <button class="btn" id="jsonBtn" type="button">⬇ Download full backup</button>
+      </td></tr>
+    </table>
     <button class="btn drawerClose" id="drawerClose" type="button">Show land</button>
   </aside>
 
@@ -254,6 +290,7 @@
   </div>
   <form class="d-body" id="landForm" novalidate>
     <div class="grid2">
+      <h3 class="fsec">Basic details</h3>
       <label class="full">Name (e.g. "Harpur farm near canal", "Noida house", "Noida flat 1204") <span class="req">*</span>
         <input name="name" required maxlength="120"></label>
       <label>City / place <span class="req">*</span>
@@ -261,29 +298,85 @@
         <datalist id="locList"></datalist></label>
       <label>Land type <span class="req">*</span>
         <select name="type" required></select></label>
-      <label>Area (bigha / katha / sq. ft / sq. m)
-        <input name="area" maxlength="80"></label>
-      <label>Owner
+      <label>Area (bigha / katha / dhur / sq. ft)
+        <input name="area" maxlength="80" placeholder="e.g. 1 katha 4 dhur"></label>
+      <label>Owner (name on papers)
         <input name="owner" maxlength="120"></label>
-      <label class="full">Address
+      <label class="full">Address / how to find it
         <textarea name="address" rows="2" maxlength="400"></textarea></label>
-      <label>Khata no.
-        <input name="khata" maxlength="60"></label>
-      <label>Khesra / plot / flat no.
-        <input name="khesra" maxlength="60"></label>
-      <label>Status (e.g. cultivated, rented, vacant)
-        <input name="status" maxlength="120"></label>
-      <label>Google Maps link
-        <input name="mapLink" type="url" maxlength="500" placeholder="https://maps.app.goo.gl/…"></label>
-      <label class="full">Other details / notes
-        <textarea name="notes" rows="4" maxlength="4000"></textarea></label>
+
+      <h3 class="fsec">Location on map</h3>
       <div class="full">
-        <span class="hint">Photographs</span>
+        <div class="coordRow">
+          <label>Coordinates (latitude, longitude)
+            <input name="coords" maxlength="60" inputmode="decimal" placeholder="e.g. 25.81234, 85.50512"></label>
+          <button class="btn" id="hereBtn" type="button">📍 Use my current location</button>
+        </div>
+        <p class="hint" id="coordHint">Best: stand on the land and tap “Use my current location”. Or in Google Maps, press and hold on the land — the numbers at the top are the coordinates; tap to copy and paste them here.</p>
+      </div>
+      <label class="full">Google Maps link (optional)
+        <input name="mapLink" type="url" maxlength="500" placeholder="https://maps.app.goo.gl/…"></label>
+
+      <h3 class="fsec">Land records</h3>
+      <label>Khata no. (खाता)
+        <input name="khata" maxlength="60"></label>
+      <label>Khesra / plot / flat no. (खेसरा)
+        <input name="khesra" maxlength="60"></label>
+      <label>Thana no. (थाना नं.)
+        <input name="thana" maxlength="60"></label>
+      <label>Mauza / village (मौजा)
+        <input name="mauza" maxlength="80"></label>
+      <label>Registry / deed no.
+        <input name="registryNo" maxlength="80"></label>
+      <label>Registry date
+        <input name="registryDate" type="date"></label>
+      <label>Dakhil-kharij (mutation)
+        <select name="mutation">
+          <option value="">—</option>
+          <option>Done</option>
+          <option>Applied — pending</option>
+          <option>Not applied</option>
+          <option>Not needed</option>
+        </select></label>
+      <label>Lagan (land tax) paid up to year
+        <input name="laganYear" inputmode="numeric" maxlength="9" placeholder="e.g. 2026"></label>
+
+      <h3 class="fsec">Chauhaddi — boundaries (चौहद्दी)</h3>
+      <label>North (उत्तर)
+        <input name="boundN" maxlength="120" placeholder="e.g. Ramesh ji ka khet"></label>
+      <label>South (दक्षिण)
+        <input name="boundS" maxlength="120"></label>
+      <label>East (पूरब)
+        <input name="boundE" maxlength="120"></label>
+      <label>West (पश्चिम)
+        <input name="boundW" maxlength="120"></label>
+
+      <h3 class="fsec">Use and farming</h3>
+      <label>Who uses / farms it
+        <select name="cultivatedBy">
+          <option value="">—</option>
+          <option>Self (family)</option>
+          <option>Sharecropper (बटाईदार)</option>
+          <option>Leased / rented</option>
+          <option>Lives in it</option>
+          <option>Vacant</option>
+        </select></label>
+      <label>Their name
+        <input name="cultivator" maxlength="120"></label>
+      <label>Crop / current use
+        <input name="crop" maxlength="160" placeholder="e.g. Wheat (rabi), Paddy (kharif)"></label>
+      <label>Status
+        <input name="status" maxlength="120" placeholder="e.g. no dispute"></label>
+      <label class="full">Other details / notes
+        <textarea name="notes" rows="3" maxlength="4000"></textarea></label>
+
+      <h3 class="fsec">Photographs</h3>
+      <div class="full">
         <div class="photoBtns">
           <label class="btn">📷 Take photo<input name="camera" type="file" accept="image/*" capture="environment"></label>
           <label class="btn">🖼 Choose from gallery<input name="photos" type="file" accept="image/*" multiple></label>
         </div>
-        <p class="hint">You can add several photos. They are resized before upload.</p>
+        <p class="hint">Each photo keeps the date it was taken. Draw the boundary on the photo if you can, and add a short caption (e.g. “north side, facing east”).</p>
         <div class="thumbs" id="thumbs"></div>
       </div>
     </div>
@@ -291,6 +384,25 @@
     <div class="d-foot">
       <button class="btn danger" id="deleteBtn" type="button" hidden>Delete this land</button>
       <button class="btn primary" id="saveBtn" type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- History note -->
+<dialog id="histDlg" aria-labelledby="hTitle">
+  <div class="d-head">
+    <h2 id="hTitle">Add to history</h2>
+    <button class="btn" data-close type="button">Cancel</button>
+  </div>
+  <form class="d-body" id="histForm" novalidate>
+    <p class="hint" id="histFor"></p>
+    <label>Date
+      <input name="date" type="date" required></label>
+    <label>What happened
+      <textarea name="text" rows="4" maxlength="1000" required placeholder="e.g. Lagan paid for 2026 · Wheat sown · Boundary checked with neighbour · Visited"></textarea></label>
+    <p class="msg" id="histMsg" aria-live="polite"></p>
+    <div class="d-foot">
+      <button class="btn primary" type="submit">Save</button>
     </div>
   </form>
 </dialog>
@@ -320,6 +432,7 @@
 </dialog>
 
 <script src="area.js"></script>
+<script src="vendor/exifr.full.umd.js"></script>
 <script>
 // ---- Where the data lives -------------------------------------------------
 const GH = { owner: "Amit33-design", repo: "Network-Automation", branch: "gh-pages" };
@@ -476,10 +589,134 @@ function placeholder(label) {
   </svg>`;
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
+// ---- Photo records ----------------------------------------------------------
+// A photo is stored as { file, takenAt, lat, lng, caption, addedAt, dateSource }.
+// Older records stored just the file name; those are read as { file }.
+const photoRec = (p) => (typeof p === "string" ? { file: p } : p || {});
+const photoFile = (p) => photoRec(p).file;
+// Old uploads lost their date; the file name still contains the upload time.
+function uploadTimeFromName(file) {
+  const m = /-([0-9a-z]{7,9})-\d+\.jpg$/.exec(file || "");
+  const t = m ? parseInt(m[1], 36) : NaN;
+  return t > Date.UTC(2024, 0) && t < Date.UTC(2100, 0) ? new Date(t).toISOString() : "";
+}
+function photoWhen(p) {
+  const r = photoRec(p);
+  if (r.takenAt) return { iso: r.takenAt, label: r.dateSource === "file" ? "Saved" : "Taken" };
+  const up = r.addedAt || uploadTimeFromName(r.file);
+  return up ? { iso: up, label: "Uploaded" } : null;
+}
+const fmtDate = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
+const sortPhotos = (ps) => [...(ps || [])].map(photoRec)
+  .sort((a, b) => ((photoWhen(b) || {}).iso || "").localeCompare((photoWhen(a) || {}).iso || ""));
+
+// Read when and where a photo was taken (EXIF), before it is resized — resizing drops this.
+const hasNum = (v) => typeof v === "number" && isFinite(v);
+function tiffOffset(u) {
+  for (let i = 0; i < u.length - 4; i++) {
+    if ((u[i] === 0x4d && u[i + 1] === 0x4d && u[i + 2] === 0 && u[i + 3] === 0x2a) ||
+        (u[i] === 0x49 && u[i + 1] === 0x49 && u[i + 2] === 0x2a && u[i + 3] === 0)) return i;
+  }
+  return -1;
+}
+async function readPhotoInfo(file) {
+  const info = {};
+  const ex = window.exifr;
+  if (ex) {
+    let r = null;
+    try { r = await ex.parse(file); } catch {}
+    if (!r || (!r.DateTimeOriginal && !hasNum(r.latitude))) {
+      // Some HEIC files keep the EXIF block in a way the reader misses; find it directly.
+      try {
+        const u = new Uint8Array(await file.arrayBuffer());
+        const at = tiffOffset(u);
+        if (at >= 0) r = await ex.parse(u.slice(at));
+      } catch {}
+    }
+    if (r) {
+      const d = r.DateTimeOriginal || r.CreateDate || r.DateTime;
+      if (d instanceof Date && !isNaN(d)) { info.takenAt = d.toISOString(); info.dateSource = "photo"; }
+      if (hasNum(r.latitude) && hasNum(r.longitude) && (r.latitude || r.longitude)) {
+        info.lat = +r.latitude.toFixed(6); info.lng = +r.longitude.toFixed(6); info.gpsSource = "photo";
+      }
+    }
+  }
+  if (!info.takenAt && file.lastModified) { info.takenAt = new Date(file.lastModified).toISOString(); info.dateSource = "file"; }
+  return info;
+}
+
+// ---- Coordinates ------------------------------------------------------------
+function parseCoords(text) {
+  const t = String(text || "").trim();
+  if (!t) return null;
+  // "25.81234, 85.50512", or a full Google Maps URL containing @lat,lng / q=lat,lng / !3dlat!4dlng
+  const m = /(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/.exec(t) || /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(t);
+  if (!m) return null;
+  const lat = +m[1], lng = +m[2];
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat: +lat.toFixed(6), lng: +lng.toFixed(6) } : null;
+}
+const coordsText = (l) => (hasNum(l.lat) && hasNum(l.lng) ? `${l.lat}, ${l.lng}` : "");
+function distanceM(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+const linkKey = (u) => String(u || "").trim().replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
+// Other lands whose map link or coordinates point to the same place as this one.
+function sameSpotAs(l) {
+  return DATA.lands.filter((o) => o.id !== l.id && (
+    (l.mapLink && o.mapLink && linkKey(l.mapLink) === linkKey(o.mapLink)) ||
+    (hasNum(l.lat) && hasNum(o.lat) && distanceM(l, o) < 15)));
+}
+function gmapsLink(l) {
+  if (hasNum(l.lat) && hasNum(l.lng)) return `https://www.google.com/maps?q=${l.lat},${l.lng}`;
+  return l.mapLink || "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(l.address || l.location);
+}
+function getHere(timeout = 20000) {
+  return new Promise((ok, fail) => {
+    if (!navigator.geolocation) return fail(new Error("This browser cannot read your location."));
+    navigator.geolocation.getCurrentPosition(
+      (p) => ok({ lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) }),
+      (e) => fail(new Error(e.code === 1 ? "Location permission was refused. Allow location for this site in Chrome settings and try again."
+        : "Could not get your location. Go outside / turn on GPS (Location) and try again.")),
+      { enableHighAccuracy: true, timeout, maximumAge: 0 });
+  });
+}
+
+// ---- Missing information -----------------------------------------------------
+const isFlat = (l) => /flat|apartment/i.test(l.type || "");
+const inBihar = (l) => /bihar/i.test(l.location || "");
+function gapsOf(l) {
+  const g = [];
+  const area = window.LandArea.parseArea(l.area);
+  if (area.status === "missing") g.push("area");
+  else if (area.status !== "ok") g.push("area needs fixing");
+  if (!hasNum(l.lat) || !hasNum(l.lng)) g.push(l.mapLink ? "exact coordinates" : "map location");
+  if (sameSpotAs(l).length) g.push("location shared with another land");
+  if (!(l.photos || []).length) g.push("photo");
+  if (!l.owner) g.push("owner");
+  if (!isFlat(l)) {
+    if (!l.khata) g.push("khata no.");
+    if (!l.khesra) g.push("khesra no.");
+    if (![l.boundN, l.boundS, l.boundE, l.boundW].some(Boolean)) g.push("chauhaddi");
+  }
+  if (inBihar(l)) {
+    if (!l.thana) g.push("thana no.");
+    if (!l.laganYear) g.push("lagan year");
+  }
+  if (!l.mutation && !isFlat(l)) g.push("dakhil-kharij status");
+  return g;
+}
+
 // Photos saved a moment ago are not on the website until GitHub rebuilds it (about a minute),
 // so for those we show the copy kept in memory.
 const localPhotos = new Map();
-function photoSrc(file) {
+function photoSrc(p) {
+  const file = photoFile(p);
   if (!file) return placeholder("No photo yet");
   return localPhotos.get(file) || "photos/" + encPath(file);
 }
@@ -498,7 +735,9 @@ function matches(l, skip) {
   if (skip !== "loc" && state.loc !== "All" && l.location !== state.loc) return false;
   if (skip !== "type" && state.type !== "All" && l.type !== state.type) return false;
   if (state.q) {
-    const hay = [l.name, l.location, l.type, l.address, l.khata, l.khesra, l.owner, l.notes, l.status, l.area]
+    const hay = [l.name, l.location, l.type, l.address, l.khata, l.khesra, l.owner, l.notes, l.status, l.area,
+      l.thana, l.mauza, l.registryNo, l.cultivator, l.crop, l.boundN, l.boundS, l.boundE, l.boundW,
+      ...(l.history || []).map((h) => h.text), ...(l.photos || []).map((p) => photoRec(p).caption)]
       .join(" ").toLowerCase();
     if (!hay.includes(state.q)) return false;
   }
@@ -523,29 +762,75 @@ function tags(l) {
   ];
 }
 function landPanel(l) {
-  const photos = l.photos && l.photos.length ? l.photos : [null];
-  const gallery = el("div", { className: "gallery" }, ...photos.map((p) => {
-    const img = photoImg(p, l.name);
-    return p ? el("a", { href: photoSrc(p), target: "_blank", rel: "noopener", title: "Open full photo" }, img) : img;
-  }));
-  const map = l.mapLink || "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(l.address || l.location);
+  const photos = sortPhotos(l.photos);
+  const gallery = el("div", { className: "gallery" }, ...(photos.length ? photos.map((p) => {
+    const w = photoWhen(p);
+    const cap = el("figcaption", {});
+    if (w) cap.append(el("b", { textContent: fmtDate(w.iso) }), w.label === "Taken" ? "" : ` (${w.label.toLowerCase()})`);
+    if (hasNum(p.lat)) cap.append(" · 📍");
+    if (p.caption) cap.append(el("br"), p.caption);
+    const img = photoImg(p, p.caption || l.name);
+    return el("figure", {}, el("a", { href: photoSrc(p), target: "_blank", rel: "noopener", title: "Open full photo" }, img), cap);
+  }) : [photoImg(null, l.name)]));
+
+  const bounds = [["N", l.boundN], ["S", l.boundS], ["E", l.boundE], ["W", l.boundW]].filter(([, v]) => v)
+    .map(([k, v]) => `${k}: ${v}`).join("\n");
+  const registry = [l.registryNo && `No. ${l.registryNo}`, l.registryDate && fmtDate(l.registryDate)].filter(Boolean).join(", dated ");
+  const use = [l.cultivatedBy, l.cultivator].filter(Boolean).join(" — ");
   const rows = [
-    ["City / place", l.location], ["Land type", l.type], ["Area", l.area], ["Address", l.address],
-    ["Khata no.", l.khata], ["Khesra / plot / flat no.", l.khesra], ["Owner", l.owner], ["Status", l.status],
+    ["City / place", l.location], ["Land type", l.type], ["Area", l.area], ["Owner", l.owner], ["Address", l.address],
+    ["Khata no.", l.khata], ["Khesra / plot / flat no.", l.khesra], ["Thana no.", l.thana], ["Mauza", l.mauza],
+    ["Registry", registry], ["Dakhil-kharij", l.mutation], ["Lagan paid up to", l.laganYear],
+    ["Chauhaddi", bounds], ["Used / farmed by", use], ["Crop / use", l.crop], ["Status", l.status],
     ["Other details", l.notes],
   ].filter(([, v]) => v);
+  const locCell = el("td", {});
+  if (coordsText(l)) locCell.append(coordsText(l), el("br"));
+  locCell.append(el("a", { href: gmapsLink(l), target: "_blank", rel: "noopener", textContent: "Open in Google Maps" }));
+  if (l.mapLink && coordsText(l)) locCell.append(" · ", el("a", { href: l.mapLink, target: "_blank", rel: "noopener", textContent: "saved link" }));
   const table = el("table", { className: "details" },
     el("tbody", {},
       ...rows.map(([k, v]) => el("tr", {}, el("th", { scope: "row", textContent: k }), el("td", { textContent: v }))),
-      el("tr", {}, el("th", { scope: "row", textContent: "Map" }),
-        el("td", {}, el("a", { href: map, target: "_blank", rel: "noopener", textContent: "Open in Google Maps" })))));
+      el("tr", {}, el("th", { scope: "row", textContent: "Location" }), locCell)));
+  const right = el("div", {}, table);
+  if (coordsText(l)) {
+    right.append(el("iframe", { className: "mapFrame", loading: "lazy", title: "Satellite map of " + l.name,
+      referrerPolicy: "no-referrer-when-downgrade",
+      src: `https://maps.google.com/maps?q=${l.lat},${l.lng}&t=k&z=18&output=embed` }));
+  }
+
+  const foot = el("div", { className: "land-foot" });
+  const dup = sameSpotAs(l);
+  if (dup.length) foot.append(el("div", { className: "dupWarn", textContent:
+    `⚠ Same map location as ${dup.map((o) => o.name).join(", ")}. Different lands should have different locations — please check.` }));
+  const gaps = gapsOf(l);
+  if (gaps.length) foot.append(el("div", { className: "gaps" }, "Missing: ", ...gaps.map((g) => el("span", { textContent: g }))));
+  const hist = [...(l.history || [])].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const histBox = el("div", { className: "history" }, el("h3", { textContent: "History" }));
+  if (hist.length) {
+    histBox.append(el("ol", {}, ...hist.map((h) => {
+      const li = el("li", {}, el("time", { dateTime: h.date, textContent: fmtDate(h.date) }), h.text);
+      if (getToken()) {
+        const del = el("button", { className: "del", type: "button", textContent: "remove" });
+        del.setAttribute("aria-label", "Remove this history entry");
+        del.onclick = () => removeHistory(l, h);
+        li.append(" ", del);
+      }
+      return li;
+    })));
+  } else histBox.append(el("p", { className: "hint", textContent: "Nothing recorded yet — add visits, lagan payments, crops, disputes…" }));
+  foot.append(histBox);
+
   const edit = el("button", { className: "btn small", type: "button", textContent: "Edit / add photos" });
   edit.onclick = () => openForm(l);
+  const note = el("button", { className: "btn small", type: "button", textContent: "+ History" });
+  note.onclick = () => openHistory(l);
   return el("article", { className: "land" },
     el("div", { className: "land-head" },
       el("div", {}, el("div", { className: "tags" }, ...tags(l)), el("h2", { textContent: l.name })),
-      edit),
-    el("div", { className: "land-body" }, gallery, table));
+      el("div", { className: "rowBtns" }, note, edit)),
+    el("div", { className: "land-body" }, gallery, right),
+    foot);
 }
 function render() {
   if (state.loc !== "All" && !allLocations().includes(state.loc)) state.loc = "All";
@@ -556,9 +841,11 @@ function render() {
   renderViewRows();
   const list = DATA.lands.filter((l) => matches(l));
   const total = DATA.lands.length;
-  if (state.view === "calc") {
+  if (state.view !== "list") {
     $("count").textContent = "";
-    $("list").replaceChildren(calcView(list));
+    const view = state.view === "calc" ? calcView(list) : state.view === "map" ? mapView(list) : gapsView(list);
+    $("list").replaceChildren(view);
+    if (state.view === "map") drawMap(list);
     return;
   }
   $("count").textContent = `Showing ${list.length} of ${total} land record${total === 1 ? "" : "s"}`;
@@ -567,12 +854,118 @@ function render() {
 }
 
 function renderViewRows() {
-  $("viewRows").replaceChildren(...[["list", "Land list"], ["calc", "Land calculation"]].map(([v, label]) => {
-    const b = el("button", { className: "opt", type: "button" }, el("span", { textContent: label }));
+  const gapCount = DATA.lands.filter((l) => gapsOf(l).length).length;
+  $("viewRows").replaceChildren(...[["list", "Land list"], ["calc", "Land calculation"], ["map", "Map"],
+    ["gaps", "Missing info", gapCount]].map(([v, label, n]) => {
+    const b = el("button", { className: "opt", type: "button" }, el("span", { textContent: label }),
+      ...(n ? [el("span", { className: "n", textContent: n })] : []));
     b.setAttribute("aria-pressed", state.view === v);
     b.onclick = () => { state.view = v; render(); scrollTo(0, 0); if (isPhone()) closeMenu(); };
     return el("tr", {}, el("td", {}, b));
   }));
+}
+
+// ---- Map of all lands --------------------------------------------------------
+const TYPE_COLOR = { "Farm land": "#3f7d4e", "House land": "#b56a25", "Flat / Apartment": "#2f6f9e", "Family land": "#7d5aa6" };
+let leafletLib = null, leafletMap = null;
+function loadLeaflet() {
+  leafletLib ??= new Promise((ok, fail) => {
+    const css = el("link", { rel: "stylesheet", href: "vendor/leaflet.css" });
+    const sc = el("script", { src: "vendor/leaflet.js" });
+    sc.onload = () => ok(window.L);
+    sc.onerror = () => { leafletLib = null; fail(new Error("map")); };
+    document.head.append(css, sc);
+  });
+  return leafletLib;
+}
+function mapView(list) {
+  const placed = list.filter((l) => hasNum(l.lat) && hasNum(l.lng));
+  const out = el("section", { className: "calc" });
+  out.append(el("h2", { textContent: "Map" }),
+    el("p", { className: "scope", textContent: `${placed.length} of ${list.length} lands have exact coordinates and are shown. Tap a dot for details.` }),
+    el("div", { className: "mapLegend" }, ...Object.entries(TYPE_COLOR).filter(([t]) => DATA.types.includes(t))
+      .map(([t, c]) => el("span", {}, el("i", { style: `background:${c}` }), t))),
+    el("div", { id: "landMap" }));
+  const missing = list.filter((l) => !placed.includes(l));
+  if (missing.length) {
+    out.append(el("div", { className: "warnBox" }, el("strong", { textContent: "Not on the map yet (no coordinates)" }),
+      el("ul", {}, ...missing.map((l) => el("li", { textContent: l.name + (l.mapLink ? " — has a Google link, but the site cannot read a position from a short link" : "") }))),
+      el("p", { className: "hint", textContent: "To add one: open the land with “Edit / add photos” and either tap “📍 Use my current location” while standing on it, or paste coordinates copied from Google Maps (press and hold on the land)." })));
+  }
+  return out;
+}
+async function drawMap(list) {
+  const box = $("landMap");
+  if (!box) return;
+  let L;
+  try { L = await loadLeaflet(); } catch { box.textContent = "The map could not load. Check your internet connection."; return; }
+  if (!document.body.contains(box)) return;
+  if (leafletMap) { leafletMap.remove(); leafletMap = null; }
+  const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "Imagery © Esri" });
+  const streets = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom: 19, attribution: "© OpenStreetMap contributors" });
+  leafletMap = L.map(box, { layers: [sat] });
+  L.control.layers({ "Satellite": sat, "Streets": streets }).addTo(leafletMap);
+  const pts = [];
+  for (const l of list) {
+    if (!hasNum(l.lat) || !hasNum(l.lng)) continue;
+    pts.push([l.lat, l.lng]);
+    const pop = el("div", {}, el("strong", { textContent: l.name }), el("br"), `${l.type}${l.area ? " · " + l.area : ""}`, el("br"),
+      el("a", { href: gmapsLink(l), target: "_blank", rel: "noopener", textContent: "Open in Google Maps" }));
+    L.circleMarker([l.lat, l.lng], { radius: 9, weight: 2, color: "#fff", fillColor: TYPE_COLOR[l.type] || "#555", fillOpacity: 0.95 })
+      .bindTooltip(l.name).bindPopup(pop).addTo(leafletMap);
+  }
+  if (pts.length) leafletMap.fitBounds(pts, { padding: [30, 30], maxZoom: 17 });
+  else leafletMap.setView([25.8, 85.5], 7);
+}
+
+// ---- Missing information -----------------------------------------------------
+function gapsView(list) {
+  const out = el("section", { className: "calc" });
+  const rows = list.map((l) => ({ l, g: gapsOf(l) }));
+  const complete = rows.filter((r) => !r.g.length).length;
+  out.append(el("h2", { textContent: "Missing information" }),
+    el("p", { className: "scope", textContent: `${complete} of ${list.length} lands are complete. Filling these in makes the records useful years from now.` }));
+  const tally = {};
+  rows.forEach((r) => r.g.forEach((g) => (tally[g] = (tally[g] || 0) + 1)));
+  const order = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+  if (order.length) out.append(wrapTable([th("Missing"), th("Lands", true)],
+    order.map(([g, n]) => el("tr", {}, td(g), td(String(n), "num")))));
+  out.append(el("h2", { textContent: "By land" }));
+  out.append(wrapTable([th("Land"), th("What is missing"), th("")], rows.map(({ l, g }) => {
+    const btn = el("button", { className: "btn small", type: "button", textContent: "Fill in" });
+    btn.onclick = () => openForm(l);
+    return el("tr", {}, td(l.name), td(g.length ? g.join(", ") : "✓ complete"), el("td", {}, btn));
+  })));
+  return out;
+}
+
+// ---- Backup ------------------------------------------------------------------
+const CSV_COLS = [["name", "Name"], ["location", "City / place"], ["type", "Land type"], ["area", "Area"],
+  ["owner", "Owner"], ["address", "Address"], ["lat", "Latitude"], ["lng", "Longitude"], ["mapLink", "Google Maps link"],
+  ["khata", "Khata no."], ["khesra", "Khesra no."], ["thana", "Thana no."], ["mauza", "Mauza"], ["registryNo", "Registry no."],
+  ["registryDate", "Registry date"], ["mutation", "Dakhil-kharij"], ["laganYear", "Lagan paid up to"],
+  ["boundN", "North"], ["boundS", "South"], ["boundE", "East"], ["boundW", "West"], ["cultivatedBy", "Used / farmed by"],
+  ["cultivator", "Their name"], ["crop", "Crop / use"], ["status", "Status"], ["notes", "Notes"]];
+function download(name, text, type) {
+  const a = el("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
+  document.body.append(a); a.click(); a.remove();
+}
+function backupCsv() {
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = [...CSV_COLS.map(([, h]) => h), "Area (sq. ft)", "Photos", "History"];
+  const lines = DATA.lands.map((l) => {
+    const a = window.LandArea.parseArea(l.area);
+    return [...CSV_COLS.map(([k]) => l[k]), a.sqft != null ? Math.round(a.sqft) : "",
+      (l.photos || []).map((p) => location.href.replace(/[^/]*$/, "") + "photos/" + photoFile(p)).join(" "),
+      (l.history || []).map((h) => `${h.date}: ${h.text}`).join(" | ")].map(q).join(",");
+  });
+  // The leading BOM makes Excel open Hindi text correctly.
+  download(`land-register-${new Date().toISOString().slice(0, 10)}.csv`, "﻿" + [head.map(q).join(","), ...lines].join("\r\n"), "text/csv");
+}
+function backupJson() {
+  download(`land-register-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(DATA, null, 2), "application/json");
 }
 
 // ---- Land calculation -----------------------------------------------------
@@ -726,19 +1119,28 @@ function notice(text) {
 }
 
 // ---- Add / edit -----------------------------------------------------------
-const FIELDS = ["name", "location", "type", "area", "owner", "address", "khata", "khesra", "status", "mapLink", "notes"];
+const FIELDS = ["name", "location", "type", "area", "owner", "address", "mapLink", "khata", "khesra", "thana", "mauza",
+  "registryNo", "registryDate", "mutation", "laganYear", "boundN", "boundS", "boundE", "boundW",
+  "cultivatedBy", "cultivator", "crop", "status", "notes"];
 
 function openForm(land) {
   if (!getToken()) { openToken("Connect first, then you can add or edit land."); return; }
+  closeMenu();
   editing = land || null;
-  keptPhotos = land ? [...(land.photos || [])] : [];
+  keptPhotos = land ? sortPhotos(land.photos).map((p) => ({ ...p })) : [];
   newFiles = [];
   const f = $("landForm");
   f.reset();
   $("fTitle").textContent = land ? "Edit land" : "Add land";
   f.type.replaceChildren(...DATA.types.map((t) => el("option", { value: t, textContent: t })));
   $("locList").replaceChildren(...allLocations().map((l) => el("option", { value: l })));
-  FIELDS.forEach((k) => { f[k].value = land ? land[k] || "" : ""; });
+  FIELDS.forEach((k) => {
+    const v = land ? land[k] || "" : "";
+    if (f[k].tagName === "SELECT" && v && ![...f[k].options].some((o) => o.value === v)) f[k].append(el("option", { textContent: v }));
+    f[k].value = v;
+  });
+  f.coords.value = land ? coordsText(land) : "";
+  $("coordHint").dataset.note = "";
   if (!land) {
     if (state.loc !== "All") f.location.value = state.loc;
     if (state.type !== "All") f.type.value = state.type;
@@ -748,16 +1150,26 @@ function openForm(land) {
   renderThumbs();
   $("formDlg").showModal();
 }
+function photoMetaText(m) {
+  const parts = [];
+  const w = photoWhen(m);
+  if (w) parts.push(`${w.label} ${fmtDate(w.iso)}`);
+  if (hasNum(m.lat)) parts.push("📍 has location");
+  return parts.join(" · ");
+}
 function renderThumbs() {
   const items = [
-    ...keptPhotos.map((p, i) => ({ src: photoSrc(p), drop: () => keptPhotos.splice(i, 1), label: "Remove photo" })),
-    ...newFiles.map((f, i) => ({ src: f.preview, drop: () => newFiles.splice(i, 1), label: "Remove " + f.file.name })),
+    ...keptPhotos.map((p, i) => ({ src: photoSrc(p), rec: p, drop: () => keptPhotos.splice(i, 1), label: "Remove photo" })),
+    ...newFiles.map((f, i) => ({ src: f.preview, rec: f.meta, drop: () => newFiles.splice(i, 1), label: "Remove " + f.file.name })),
   ];
   $("thumbs").replaceChildren(...items.map((it) => {
     const x = el("button", { type: "button", textContent: "×", title: it.label });
     x.setAttribute("aria-label", it.label);
     x.onclick = () => { it.drop(); renderThumbs(); };
-    return el("figure", {}, el("img", { src: it.src, alt: "" }), x);
+    const cap = el("input", { value: it.rec.caption || "", placeholder: "Caption (optional)", maxLength: 120 });
+    cap.setAttribute("aria-label", "Photo caption");
+    cap.oninput = () => (it.rec.caption = cap.value);
+    return el("figure", {}, el("img", { src: it.src, alt: "" }), x, cap, el("small", { textContent: photoMetaText(it.rec) }));
   }));
 }
 function setMsg(text, isErr) {
@@ -765,31 +1177,57 @@ function setMsg(text, isErr) {
   m.textContent = text;
   m.className = "msg" + (isErr ? " err" : "");
 }
+function fillCoordsIfEmpty(lat, lng, why) {
+  const f = $("landForm");
+  if (f.coords.value.trim() || !hasNum(lat)) return;
+  f.coords.value = `${lat}, ${lng}`;
+  setMsg(`Location filled in ${why}. Check it is right before saving.`);
+}
 
 async function addPicked(e) {
+  const fromCamera = e.target.name === "camera";
   const picked = [...e.target.files];
   e.target.value = "";
   const save = $("saveBtn");
-  for (const file of picked) {
-    let f = file;
-    if (await looksHeic(file)) {
-      save.disabled = true;
-      setMsg(`Converting “${file.name}” to JPG…`);
-      try { f = await heicToJpeg(file); }
-      catch (err) {
-        setMsg(`“${file.name}” could not be converted. ${err && err.message ? err.message : ""}`, true);
-        save.disabled = false;
-        continue;
+  save.disabled = true;
+  // Android often removes GPS from photos given to a website, so for a photo taken
+  // right now we ask the phone where it is instead.
+  const herePromise = fromCamera ? getHere(15000).catch(() => null) : Promise.resolve(null);
+  try {
+    for (const file of picked) {
+      setMsg(`Reading “${file.name}”…`);
+      const meta = await readPhotoInfo(file);   // read date/GPS from the original, before any conversion
+      if (fromCamera) { meta.takenAt = new Date().toISOString(); meta.dateSource = "photo"; }
+      let f = file;
+      if (await looksHeic(file)) {
+        setMsg(`Converting “${file.name}” to JPG…`);
+        try { f = await heicToJpeg(file); }
+        catch (err) { setMsg(`“${file.name}” could not be converted. ${err && err.message ? err.message : ""}`, true); continue; }
       }
-      save.disabled = false;
-      setMsg("");
+      if (fromCamera && !hasNum(meta.lat)) {
+        const here = await herePromise;
+        if (here) { meta.lat = here.lat; meta.lng = here.lng; meta.gpsSource = "phone"; }
+      }
+      newFiles.push({ file: f, preview: URL.createObjectURL(f), meta });
+      if (hasNum(meta.lat)) fillCoordsIfEmpty(meta.lat, meta.lng, fromCamera ? "from where you took the photo" : "from the photo's location");
+      else setMsg("");
+      renderThumbs();
     }
-    newFiles.push({ file: f, preview: URL.createObjectURL(f) });
-    renderThumbs();
-  }
+  } finally { save.disabled = false; }
 }
 $("landForm").photos.addEventListener("change", addPicked);
 $("landForm").camera.addEventListener("change", addPicked);
+
+$("hereBtn").onclick = async () => {
+  const btn = $("hereBtn"), f = $("landForm");
+  btn.disabled = true; btn.textContent = "Finding you…";
+  try {
+    const h = await getHere();
+    f.coords.value = `${h.lat}, ${h.lng}`;
+    setMsg(`Location set (accurate to about ${h.acc} m).` + (h.acc > 50 ? " That is rough — step outside, wait a moment and tap again for a better fix." : ""), h.acc > 50);
+  } catch (err) { setMsg(err.message, true); }
+  finally { btn.disabled = false; btn.textContent = "📍 Use my current location"; }
+};
 
 $("landForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -803,6 +1241,17 @@ $("landForm").addEventListener("submit", async (e) => {
     setMsg("The Google Maps link should start with https://", true);
     return;
   }
+  // Coordinates: typed/pasted, or taken from a full Google Maps link if one was pasted.
+  let coords = parseCoords(f.coords.value);
+  if (f.coords.value.trim() && !coords) {
+    setMsg("Coordinates should look like “25.81234, 85.50512” (latitude, longitude).", true);
+    return;
+  }
+  if (!coords && !f.coords.value.trim()) coords = parseCoords(values.mapLink);
+  if (values.laganYear && !/^\d{4}(-\d{2,4})?$/.test(values.laganYear)) {
+    setMsg("Lagan year should be a year, e.g. 2026 (or 2025-26).", true);
+    return;
+  }
   const btns = f.querySelectorAll("button");
   btns.forEach((b) => (b.disabled = true));
   try {
@@ -814,12 +1263,20 @@ $("landForm").addEventListener("submit", async (e) => {
       const b64 = await resizeToJpegB64(newFiles[i].file);
       await putFile("photos/" + name, b64, `Add photo for ${values.name}`);
       localPhotos.set(name, newFiles[i].preview);
-      uploaded.push(name);
+      uploaded.push({ file: name, ...newFiles[i].meta, addedAt: new Date().toISOString() });
     }
     setMsg("Saving details…");
-    const land = { id, ...values, photos: [...keptPhotos, ...uploaded] };
+    const photos = [...keptPhotos, ...uploaded].map((p) => {
+      const r = { ...p };
+      Object.keys(r).forEach((k) => (r[k] === "" || r[k] == null) && delete r[k]);
+      return r;
+    });
     DATA = await updateData((d) => {
       const i = d.lands.findIndex((x) => x.id === id);
+      const prev = i >= 0 ? d.lands[i] : {};
+      // Start from the saved record so fields this form does not show (e.g. history) are kept.
+      const land = { ...prev, id, ...values, photos };
+      if (coords) { land.lat = coords.lat; land.lng = coords.lng; } else { delete land.lat; delete land.lng; }
       if (i >= 0) d.lands[i] = land; else d.lands.push(land);
       if (!d.locations.includes(land.location)) d.locations.push(land.location);
     }, `${editing ? "Update" : "Add"} land: ${values.name}`);
@@ -832,6 +1289,49 @@ $("landForm").addEventListener("submit", async (e) => {
     btns.forEach((b) => (b.disabled = false));
   }
 });
+
+// ---- History -------------------------------------------------------------------
+let histLand = null;
+function openHistory(l) {
+  if (!getToken()) { openToken("Connect first, then you can add history."); return; }
+  histLand = l;
+  const f = $("histForm");
+  f.reset();
+  f.date.value = new Date().toISOString().slice(0, 10);
+  $("histFor").textContent = l.name;
+  $("histMsg").textContent = "";
+  $("histDlg").showModal();
+}
+$("histForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, m = $("histMsg");
+  const entry = { date: f.date.value, text: f.text.value.trim(), addedAt: new Date().toISOString() };
+  if (!entry.date || !entry.text) { m.textContent = "Please enter a date and what happened."; m.className = "msg err"; return; }
+  const btn = f.querySelector("button[type=submit]");
+  btn.disabled = true; m.textContent = "Saving…"; m.className = "msg";
+  try {
+    const id = histLand.id;
+    DATA = await updateData((d) => {
+      const l = d.lands.find((x) => x.id === id);
+      if (!l) throw new Error("This land was deleted by someone else.");
+      (l.history ||= []).push(entry);
+    }, `History for ${histLand.name}: ${entry.text.slice(0, 50)}`);
+    $("histDlg").close();
+    render();
+    notice(`Added to the history of “${histLand.name}”.`);
+  } catch (err) { m.textContent = err.message || String(err); m.className = "msg err"; }
+  finally { btn.disabled = false; }
+});
+async function removeHistory(l, h) {
+  if (!confirm(`Remove this history entry?\n\n${fmtDate(h.date)}: ${h.text}`)) return;
+  try {
+    DATA = await updateData((d) => {
+      const x = d.lands.find((y) => y.id === l.id);
+      if (x) x.history = (x.history || []).filter((y) => !(y.date === h.date && y.text === h.text && y.addedAt === h.addedAt));
+    }, `Remove history entry for ${l.name}`);
+    render();
+  } catch (err) { notice(err.message || String(err)); }
+}
 
 $("deleteBtn").onclick = async () => {
   if (!editing || !confirm(`Delete “${editing.name}” from the register? This cannot be undone here.`)) return;
@@ -892,6 +1392,8 @@ $("menuBtn").onclick = openMenu;
 $("scrim").onclick = () => closeMenu();
 $("drawerClose").onclick = () => closeMenu();
 $("connectBtn").onclick = () => { closeMenu(); openToken(); };
+$("csvBtn").onclick = () => { closeMenu(); backupCsv(); };
+$("jsonBtn").onclick = () => { closeMenu(); backupJson(); };
 $("q").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.target.blur(); closeMenu(); } });
 

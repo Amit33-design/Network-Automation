@@ -39,8 +39,14 @@
       "mapLink": "",
       "notes": "Item 1 on the handwritten family land list.",
       "photos": [
-        "haripur-01-mwrglyqj-1.jpg",
-        "haripur-01-mwrgm65b-2.jpg"
+        {
+          "file": "haripur-01-mwrglyqj-1.jpg",
+          "addedAt": "2026-11-22T06:32:10.000Z"
+        },
+        {
+          "file": "haripur-01-mwrgm65b-2.jpg",
+          "addedAt": "2026-11-22T06:32:19.000Z"
+        }
       ]
     },
     {
@@ -57,7 +63,10 @@
       "mapLink": "https://maps.app.goo.gl/wP8pSyQhP5CZZrMB8?g_st=aw",
       "notes": "Item 2 on the handwritten family land list.",
       "photos": [
-        "haripur-02-mwrgkg44-1.jpg"
+        {
+          "file": "haripur-02-mwrgkg44-1.jpg",
+          "addedAt": "2026-11-22T06:30:59.000Z"
+        }
       ]
     },
     {
@@ -74,8 +83,14 @@
       "mapLink": "",
       "notes": "सड़क के साथ — along the road; Item 3 on the handwritten family land list.",
       "photos": [
-        "haripur-03-mwrgp6gj-1.jpg",
-        "haripur-03-mwrgp8ry-2.jpg"
+        {
+          "file": "haripur-03-mwrgp6gj-1.jpg",
+          "addedAt": "2026-11-22T06:34:40.000Z"
+        },
+        {
+          "file": "haripur-03-mwrgp8ry-2.jpg",
+          "addedAt": "2026-11-22T06:34:43.000Z"
+        }
       ]
     },
     {
@@ -92,8 +107,14 @@
       "mapLink": "https://maps.app.goo.gl/DgxUPo54kXmpkD6V8?g_st=aw",
       "notes": "Item 4 on the handwritten family land list.",
       "photos": [
-        "haripur-04-mwrgqlnm-1.jpg",
-        "haripur-04-mwrgqo37-2.jpg"
+        {
+          "file": "haripur-04-mwrgqlnm-1.jpg",
+          "addedAt": "2026-11-22T06:35:46.000Z"
+        },
+        {
+          "file": "haripur-04-mwrgqo37-2.jpg",
+          "addedAt": "2026-11-22T06:35:49.000Z"
+        }
       ]
     },
     {
@@ -110,8 +131,14 @@
       "mapLink": "https://maps.app.goo.gl/yEdjxUjNa3uN8wRC9?g_st=aw",
       "notes": "Item 5 on the handwritten family land list.",
       "photos": [
-        "haripur-05-mwrik9mk-1.jpg",
-        "haripur-05-mwrikgdm-2.jpg"
+        {
+          "file": "haripur-05-mwrik9mk-1.jpg",
+          "addedAt": "2026-11-22T07:26:50.000Z"
+        },
+        {
+          "file": "haripur-05-mwrikgdm-2.jpg",
+          "addedAt": "2026-11-22T07:26:59.000Z"
+        }
       ]
     },
     {
@@ -128,8 +155,14 @@
       "mapLink": "https://maps.app.goo.gl/wP8pSyQhP5CZZrMB8?g_st=aw",
       "notes": "Item 6 on the handwritten family land list.",
       "photos": [
-        "haripur-06-mwrjjnby-1.jpg",
-        "haripur-06-mwrjjpjy-2.jpg"
+        {
+          "file": "haripur-06-mwrjjnby-1.jpg",
+          "addedAt": "2026-11-22T07:54:21.000Z"
+        },
+        {
+          "file": "haripur-06-mwrjjpjy-2.jpg",
+          "addedAt": "2026-11-22T07:54:23.000Z"
+        }
       ]
     },
     {
@@ -146,8 +179,14 @@
       "mapLink": "https://maps.app.goo.gl/ySytPCTqq2qrFNPv8?g_st=aw",
       "notes": "Item 7 on the handwritten family land list.",
       "photos": [
-        "haripur-07-mwrithos-1.jpg",
-        "haripur-07-mwriv8z3-1.jpg"
+        {
+          "file": "haripur-07-mwrithos-1.jpg",
+          "addedAt": "2026-11-22T07:34:00.000Z"
+        },
+        {
+          "file": "haripur-07-mwriv8z3-1.jpg",
+          "addedAt": "2026-11-22T07:35:22.000Z"
+        }
       ]
     },
     {
@@ -164,8 +203,14 @@
       "mapLink": "https://maps.app.goo.gl/ViyUCV6c3X4MD2XV8?g_st=aw",
       "notes": "Item 8 on the handwritten family land list.",
       "photos": [
-        "haripur-08-mwriz8bi-1.jpg",
-        "haripur-08-mwrizame-2.jpg"
+        {
+          "file": "haripur-08-mwriz8bi-1.jpg",
+          "addedAt": "2026-11-22T07:38:28.000Z"
+        },
+        {
+          "file": "haripur-08-mwrizame-2.jpg",
+          "addedAt": "2026-11-22T07:38:31.000Z"
+        }
       ]
     },
     {
@@ -182,7 +227,10 @@
       "mapLink": "https://maps.app.goo.gl/9HxN89qah45P4ts18?g_st=aw",
       "notes": "Item 9 on the handwritten family land list.",
       "photos": [
-        "haripur-09-mwrl7k49-1.jpg"
+        {
+          "file": "haripur-09-mwrl7k49-1.jpg",
+          "addedAt": "2026-11-22T08:40:56.000Z"
+        }
       ]
     },
     {
@@ -214,8 +262,14 @@
       "mapLink": "https://maps.app.goo.gl/wP8pSyQhP5CZZrMB8?g_st=aw",
       "notes": "Item 11 on the handwritten family land list.",
       "photos": [
-        "haripur-11-mwrk1qkl-1.jpg",
-        "haripur-11-mwrk1ugh-2.jpg"
+        {
+          "file": "haripur-11-mwrk1qkl-1.jpg",
+          "addedAt": "2026-11-22T08:08:25.000Z"
+        },
+        {
+          "file": "haripur-11-mwrk1ugh-2.jpg",
+          "addedAt": "2026-11-22T08:08:30.000Z"
+        }
       ]
     },
     {
