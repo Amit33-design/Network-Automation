@@ -99,14 +99,29 @@
       "notes": "सड़क के साथ — along the road; Item 3 on the handwritten family land list.",
       "photos": [
         {
-          "file": "haripur-03-mwrgp6gj-1.jpg",
-          "addedAt": "2026-11-22T06:34:40.000Z"
-        },
-        {
           "file": "haripur-03-mwrgp8ry-2.jpg",
           "addedAt": "2026-11-22T06:34:43.000Z"
+        },
+        {
+          "file": "haripur-03-mwrgp6gj-1.jpg",
+          "addedAt": "2026-11-22T06:34:40.000Z"
         }
-      ]
+      ],
+      "thana": "",
+      "mauza": "",
+      "registryNo": "",
+      "registryDate": "",
+      "mutation": "",
+      "laganYear": "",
+      "boundN": "",
+      "boundS": "",
+      "boundE": "",
+      "boundW": "",
+      "cultivatedBy": "",
+      "cultivator": "",
+      "crop": "",
+      "lat": 26.126259,
+      "lng": 85.733026
     },
     {
       "id": "haripur-04",
