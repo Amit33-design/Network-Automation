@@ -263,6 +263,12 @@
         {
           "file": "haripur-11-mwrk1qkl-1.jpg",
           "addedAt": "2026-11-22T08:08:25.000Z"
+        },
+        {
+          "file": "haripur-11-mwsnn0kb-1.jpg",
+          "takenAt": "2026-11-23T02:35:38.000Z",
+          "dateSource": "photo",
+          "addedAt": "2026-11-23T02:36:45.024Z"
         }
       ],
       "thana": "",
@@ -275,9 +281,9 @@
       "boundS": "",
       "boundE": "",
       "boundW": "",
-      "cultivatedBy": "",
+      "cultivatedBy": "Sharecropper (बटाईदार)",
       "cultivator": "",
-      "crop": ""
+      "crop": "Masuri daal"
     },
     {
       "id": "haripur-12",
