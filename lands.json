@@ -253,18 +253,31 @@
       "khata": "",
       "khesra": "",
       "status": "",
-      "mapLink": "https://maps.app.goo.gl/wP8pSyQhP5CZZrMB8?g_st=aw",
+      "mapLink": "https://goo.gl/maps/67EpmCF335bJqZsk8?g_st=ac",
       "notes": "Item 11 on the handwritten family land list.",
       "photos": [
         {
-          "file": "haripur-11-mwrk1qkl-1.jpg",
-          "addedAt": "2026-11-22T08:08:25.000Z"
-        },
-        {
           "file": "haripur-11-mwrk1ugh-2.jpg",
           "addedAt": "2026-11-22T08:08:30.000Z"
+        },
+        {
+          "file": "haripur-11-mwrk1qkl-1.jpg",
+          "addedAt": "2026-11-22T08:08:25.000Z"
         }
-      ]
+      ],
+      "thana": "",
+      "mauza": "",
+      "registryNo": "",
+      "registryDate": "",
+      "mutation": "",
+      "laganYear": "",
+      "boundN": "",
+      "boundS": "",
+      "boundE": "",
+      "boundW": "",
+      "cultivatedBy": "",
+      "cultivator": "",
+      "crop": ""
     },
     {
       "id": "haripur-12",
