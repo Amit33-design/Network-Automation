@@ -224,8 +224,27 @@
         {
           "file": "haripur-09-mwrl7k49-1.jpg",
           "addedAt": "2026-11-22T08:40:56.000Z"
+        },
+        {
+          "file": "haripur-09-mwsns9z8-1.jpg",
+          "takenAt": "2026-11-23T02:39:39.000Z",
+          "dateSource": "photo",
+          "addedAt": "2026-11-23T02:41:04.474Z"
         }
-      ]
+      ],
+      "thana": "",
+      "mauza": "",
+      "registryNo": "",
+      "registryDate": "",
+      "mutation": "",
+      "laganYear": "",
+      "boundN": "",
+      "boundS": "",
+      "boundE": "",
+      "boundW": "",
+      "cultivatedBy": "Sharecropper (बटाईदार)",
+      "cultivator": "Ganesh",
+      "crop": "Wheat"
     },
     {
       "id": "haripur-10",
