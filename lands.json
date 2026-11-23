@@ -40,14 +40,29 @@
       "notes": "Item 1 on the handwritten family land list.",
       "photos": [
         {
-          "file": "haripur-01-mwrglyqj-1.jpg",
-          "addedAt": "2026-11-22T06:32:10.000Z"
-        },
-        {
           "file": "haripur-01-mwrgm65b-2.jpg",
           "addedAt": "2026-11-22T06:32:19.000Z"
+        },
+        {
+          "file": "haripur-01-mwrglyqj-1.jpg",
+          "addedAt": "2026-11-22T06:32:10.000Z"
         }
-      ]
+      ],
+      "thana": "",
+      "mauza": "",
+      "registryNo": "",
+      "registryDate": "",
+      "mutation": "",
+      "laganYear": "",
+      "boundN": "",
+      "boundS": "",
+      "boundE": "",
+      "boundW": "",
+      "cultivatedBy": "Lives in it",
+      "cultivator": "Ratneshwar tiwari",
+      "crop": "",
+      "lat": 26.126042,
+      "lng": 85.733366
     },
     {
       "id": "haripur-02",
